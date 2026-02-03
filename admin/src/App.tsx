@@ -1,0 +1,54 @@
+import { Routes, Route, Navigate } from 'react-router-dom';
+import { useAuthStore } from './hooks/useAuth';
+import Layout from './components/Layout';
+import LoginPage from './pages/LoginPage';
+import DashboardPage from './pages/DashboardPage';
+import SettingsPage from './pages/SettingsPage';
+import PromptsPage from './pages/PromptsPage';
+import AnalyticsPage from './pages/AnalyticsPage';
+
+// Protected Route wrapper
+const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
+  const { user, isLoading } = useAuthStore();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  return <>{children}</>;
+};
+
+const App = () => {
+  return (
+    <Routes>
+      <Route path="/login" element={<LoginPage />} />
+      
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <Layout />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<Navigate to="/dashboard" replace />} />
+        <Route path="dashboard" element={<DashboardPage />} />
+        <Route path="settings" element={<SettingsPage />} />
+        <Route path="prompts" element={<PromptsPage />} />
+        <Route path="analytics" element={<AnalyticsPage />} />
+      </Route>
+
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+};
+
+export default App;

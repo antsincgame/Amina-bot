@@ -1,0 +1,73 @@
+# Render.com Blueprint - All services in one file
+# https://render.com/docs/yaml-spec
+# Deploy: render.com/new → Blueprint → Connect Repo
+
+services:
+  # ===========================================
+  # Bot Backend - Web Service
+  # ===========================================
+  - type: web
+    name: amina-bot
+    runtime: node
+    region: frankfurt
+    plan: starter  # $7/month - 512 MB RAM
+    rootDir: bot
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      - key: LOG_LEVEL
+        value: info
+      # Secrets - set in Render Dashboard
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: VOXIMPLANT_ACCOUNT_ID
+        sync: false
+      - key: VOXIMPLANT_API_KEY
+        sync: false
+      - key: VOXIMPLANT_APP_ID
+        sync: false
+      - key: WEBHOOK_URL
+        sync: false
+      - key: WEBHOOK_SECRET
+        sync: false
+    autoDeploy: true
+
+  # ===========================================
+  # Admin Panel - Static Site
+  # ===========================================
+  - type: web
+    name: amina-admin
+    runtime: static
+    region: frankfurt
+    plan: free  # Static sites are free!
+    rootDir: admin
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_SUPABASE_URL
+        sync: false
+      - key: VITE_SUPABASE_ANON_KEY
+        sync: false
+    autoDeploy: true
