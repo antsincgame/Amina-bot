@@ -49,6 +49,8 @@ export interface ConversationMetadata {
   telegram_chat_id?: number;
   telegram_user_id?: number;
   language?: string;
+  source?: string;
+  userAgent?: string;
 }
 
 export interface AnalyticsEvent {

@@ -43,6 +43,7 @@ const getAIConfig = async (channel: 'telegram' | 'voice'): Promise<AIConfig> => 
   // Get settings from database
   const settings = await settingsRepo.getMany([
     'openrouter_model',
+    'custom_model_override',
     'max_tokens',
     'temperature',
   ]);
@@ -50,8 +51,15 @@ const getAIConfig = async (channel: 'telegram' | 'voice'): Promise<AIConfig> => 
   // Get active prompt for channel
   const prompt = await promptsRepo.getActive(channel);
 
+  // Priority: custom_model_override > openrouter_model > config default
+  let model = settings['openrouter_model'] ?? config.ai.model ?? 'openrouter/free';
+  if (settings['custom_model_override'] && settings['custom_model_override'].trim()) {
+    model = settings['custom_model_override'].trim();
+    aiLogger.info({ model }, 'Using custom_model_override');
+  }
+
   return {
-    model: settings['openrouter_model'] ?? config.ai.model ?? 'openrouter/free',
+    model,
     systemPrompt: prompt?.content ?? getDefaultSystemPrompt(),
     maxTokens: settings['max_tokens'] ? Number(settings['max_tokens']) : config.ai.maxTokens,
     temperature: settings['temperature'] ? Number(settings['temperature']) : config.ai.temperature,

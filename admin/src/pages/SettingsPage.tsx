@@ -4,10 +4,12 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { settingsApi } from '../api/supabase';
-import { Save, Loader2, RefreshCw, Info } from 'lucide-react';
+import { fetchOpenRouterModels, filterFreeModels, filterPremiumModels, transformToSimpleModel } from '../api/openrouter';
+import { Save, Loader2, RefreshCw, Info, Download } from 'lucide-react';
 
 const settingsSchema = z.object({
   openrouter_model: z.string().min(1, 'Выберите модель'),
+  custom_model_override: z.string().optional(),
   max_tokens: z.coerce.number().min(100).max(16000),
   temperature: z.coerce.number().min(0).max(2),
 });
@@ -60,6 +62,9 @@ const CUSTOM_MODEL_VALUE = '__custom__';
 const SettingsPage = () => {
   const queryClient = useQueryClient();
   const [customModelInput, setCustomModelInput] = useState('');
+  const [freeModels, setFreeModels] = useState(FREE_MODELS);
+  const [premiumModels, setPremiumModels] = useState(PREMIUM_MODELS);
+  const [isRefreshingModels, setIsRefreshingModels] = useState(false);
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings'],
@@ -83,12 +88,37 @@ const SettingsPage = () => {
     resolver: zodResolver(settingsSchema),
     defaultValues: {
       openrouter_model: 'openrouter/free',
+      custom_model_override: '',
       max_tokens: 2048,
       temperature: 0.7,
     },
   });
 
   const selectedModel = watch('openrouter_model');
+  const customModelOverride = watch('custom_model_override');
+
+  // Refresh models from OpenRouter API
+  const handleRefreshModels = async () => {
+    setIsRefreshingModels(true);
+    try {
+      const response = await fetchOpenRouterModels(undefined, 300);
+      const free = filterFreeModels(response.models).map(transformToSimpleModel);
+      const premium = filterPremiumModels(response.models)
+        .slice(0, 20) // Top 20 premium
+        .map(transformToSimpleModel);
+      
+      setFreeModels(free);
+      setPremiumModels(premium);
+      
+      // Show success message (you can add toast notification here)
+      console.log(`Загружено ${free.length} бесплатных и ${premium.length} премиум моделей`);
+    } catch (error) {
+      console.error('Failed to refresh models:', error);
+      // Show error message (you can add toast notification here)
+    } finally {
+      setIsRefreshingModels(false);
+    }
+  };
 
   // Load settings into form
   useEffect(() => {
@@ -99,23 +129,26 @@ const SettingsPage = () => {
       );
 
       const modelValue = settingsMap['openrouter_model'] ?? 'openrouter/free';
+      const customOverride = settingsMap['custom_model_override'] ?? '';
       
       // Check if model is in predefined lists
       const allPredefinedModels = [...FREE_MODELS, ...PREMIUM_MODELS];
       const isKnownModel = allPredefinedModels.some(m => m.id === modelValue);
       
-      if (!isKnownModel) {
+      if (!isKnownModel && !customOverride) {
         // Custom model - set select to __custom__ and store model in separate input
         setCustomModelInput(modelValue);
         reset({
           openrouter_model: CUSTOM_MODEL_VALUE,
+          custom_model_override: '',
           max_tokens: Number(settingsMap['max_tokens']) || 2048,
           temperature: Number(settingsMap['temperature']) || 0.7,
         });
       } else {
-        // Known model - just set it
+        // Known model or custom_model_override exists - just set it
         reset({
           openrouter_model: modelValue,
+          custom_model_override: customOverride,
           max_tokens: Number(settingsMap['max_tokens']) || 2048,
           temperature: Number(settingsMap['temperature']) || 0.7,
         });
@@ -124,13 +157,20 @@ const SettingsPage = () => {
   }, [settings, reset]);
 
   const onSubmit = (data: SettingsForm) => {
-    // If custom model is selected, use the custom input value
-    const actualModel = data.openrouter_model === CUSTOM_MODEL_VALUE 
-      ? customModelInput 
-      : data.openrouter_model;
+    // Priority: custom_model_override > custom select > normal select
+    let actualModel = data.openrouter_model;
+    
+    if (data.custom_model_override && data.custom_model_override.trim()) {
+      // Custom override has highest priority
+      actualModel = data.custom_model_override.trim();
+    } else if (data.openrouter_model === CUSTOM_MODEL_VALUE) {
+      // If custom select is chosen, use the custom input
+      actualModel = customModelInput;
+    }
 
     saveSettings({
       openrouter_model: actualModel,
+      custom_model_override: data.custom_model_override || '',
       max_tokens: String(data.max_tokens),
       temperature: String(data.temperature),
     });
@@ -167,11 +207,31 @@ const SettingsPage = () => {
           <h3 className="font-semibold text-lg mb-4">Параметры OpenRouter</h3>
           
           <div className="space-y-4">
-            {/* Model Selection */}
+            {/* Model Selection with Refresh Button */}
             <div>
-              <label htmlFor="openrouter_model" className="label">
-                Модель AI
-              </label>
+              <div className="flex items-center justify-between mb-2">
+                <label htmlFor="openrouter_model" className="label mb-0">
+                  Модель AI
+                </label>
+                <button
+                  type="button"
+                  onClick={handleRefreshModels}
+                  disabled={isRefreshingModels}
+                  className="flex items-center gap-2 px-3 py-1.5 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isRefreshingModels ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Загрузка...
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-4 h-4" />
+                      Обновить модели
+                    </>
+                  )}
+                </button>
+              </div>
               
               <select
                 id="openrouter_model"
@@ -179,8 +239,8 @@ const SettingsPage = () => {
                 style={{ colorScheme: 'light' }}
                 {...register('openrouter_model')}
               >
-                <optgroup label="🆓 Бесплатные модели (23 шт)" className="bg-white text-gray-900">
-                  {FREE_MODELS.map((model) => (
+                <optgroup label={`🆓 Бесплатные модели (${freeModels.length} шт)`} className="bg-white text-gray-900">
+                  {freeModels.map((model) => (
                     <option 
                       key={model.id} 
                       value={model.id}
@@ -191,8 +251,8 @@ const SettingsPage = () => {
                   ))}
                 </optgroup>
                 
-                <optgroup label="💎 Премиум модели" className="bg-white text-gray-900">
-                  {PREMIUM_MODELS.map((model) => (
+                <optgroup label={`💎 Премиум модели (${premiumModels.length} шт)`} className="bg-white text-gray-900">
+                  {premiumModels.map((model) => (
                     <option 
                       key={model.id} 
                       value={model.id}
@@ -301,6 +361,44 @@ const SettingsPage = () => {
                   Креативность: 0 = точный, 2 = творческий
                 </p>
               </div>
+            </div>
+
+            {/* Custom Model Override (highest priority) */}
+            <div className="border-2 border-primary-500 rounded-lg p-4 bg-primary-50">
+              <div className="flex items-start gap-2 mb-2">
+                <Info className="w-5 h-5 text-primary-600 mt-0.5 flex-shrink-0" />
+                <div>
+                  <label htmlFor="custom_model_override" className="label text-primary-900 mb-1">
+                    🎯 Ручной ввод модели (приоритет над селектором)
+                  </label>
+                  <p className="text-xs text-primary-700 mb-2">
+                    Если здесь введена модель, она будет использоваться вместо выбранной выше
+                  </p>
+                </div>
+              </div>
+              <input
+                id="custom_model_override"
+                type="text"
+                className="input bg-white text-gray-900 font-mono text-sm"
+                style={{ colorScheme: 'light' }}
+                placeholder="Оставьте пустым для использования селектора или введите: provider/model-name"
+                {...register('custom_model_override')}
+              />
+              {customModelOverride && customModelOverride.trim() && (
+                <div className="mt-2 p-2 bg-green-100 border border-green-300 rounded text-sm text-green-800">
+                  ✅ Активна модель: <code className="font-mono font-semibold">{customModelOverride}</code>
+                </div>
+              )}
+              <p className="mt-2 text-xs text-gray-600">
+                💡 Найди модели: <a 
+                  href="https://openrouter.ai/models" 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="text-primary-600 hover:underline font-medium"
+                >
+                  openrouter.ai/models
+                </a>
+              </p>
             </div>
           </div>
         </div>

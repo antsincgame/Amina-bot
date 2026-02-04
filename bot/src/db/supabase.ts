@@ -355,6 +355,21 @@ export const conversationsRepo = {
     return messages.slice(-validLimit);
   },
 
+  async get(conversationId: string): Promise<Conversation> {
+    const { data, error } = await getSupabase()
+      .from('conversations')
+      .select('*')
+      .eq('id', conversationId)
+      .single();
+
+    if (error) {
+      dbLogger.error({ error, conversationId }, 'Failed to get conversation');
+      throw new Error(`Conversation not found: ${conversationId}`);
+    }
+
+    return data as Conversation;
+  },
+
   async clearMessages(conversationId: string): Promise<void> {
     const { error } = await getSupabase()
       .from('conversations')

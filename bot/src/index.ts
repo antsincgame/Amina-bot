@@ -7,6 +7,7 @@ import { logger, serverLogger, httpLogger } from './config/logger.js';
 import { createBot } from './telegram/bot.js';
 import { getSupabase } from './db/supabase.js';
 import { aiService } from './ai/openrouter.js';
+import { registerApiRoutes } from './api/routes.js';
 
 // --------------------------------------------
 // Application Entry Point
@@ -117,6 +118,9 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
       };
     }
   });
+
+  // Register REST API routes for LLM interaction
+  await registerApiRoutes(server);
 };
 
 // --------------------------------------------
