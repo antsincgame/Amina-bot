@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { settingsApi } from '../api/supabase';
-import { Save, Loader2, RefreshCw, Info, Eye, Mic, CheckCircle, AlertCircle } from 'lucide-react';
+import { Save, Loader2, RefreshCw, Eye, Mic, CheckCircle, AlertCircle } from 'lucide-react';
 
 // Schema — максимально простой
 const settingsSchema = z.object({
@@ -183,15 +183,6 @@ const MultimodalSettingsPage = () => {
             </label>
           </div>
 
-          {/* Info box */}
-          <div className="mt-4 p-3 bg-blue-50 rounded-lg flex items-start gap-2">
-            <Info className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
-            <p className="text-sm text-blue-700">
-              {audioMode === 'groq' 
-                ? 'Если GROQ_API_KEY не задан в Render, бот автоматически переключится на OpenRouter.'
-                : 'Транскрипция будет списываться с баланса OpenRouter.'}
-            </p>
-          </div>
         </div>
 
         {/* ============ VISION ============ */}
