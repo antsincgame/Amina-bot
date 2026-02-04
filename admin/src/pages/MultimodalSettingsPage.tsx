@@ -21,12 +21,10 @@ interface ModelsResponse {
   premium: ModelInfo[];
 }
 
-// Schema
+// Schema — только две модели: для изображений и для аудио
 const multimodalSchema = z.object({
   vision_model: z.string().min(1, 'Выберите модель'),
-  vision_model_override: z.string().optional(),
   audio_model: z.string().min(1, 'Выберите модель'),
-  audio_model_override: z.string().optional(),
 });
 
 type MultimodalForm = z.infer<typeof multimodalSchema>;
@@ -48,7 +46,6 @@ const DEFAULT_VISION_MODELS: ModelsResponse = {
 // Audio модели - Groq Whisper БЕСПЛАТНО!
 const DEFAULT_AUDIO_MODELS: ModelsResponse = {
   free: [
-    // Groq Whisper - БЕСПЛАТНО!
     { id: 'groq/whisper-large-v3', name: 'Groq Whisper Large V3 (FREE)', description: 'Бесплатная транскрипция через Groq' },
     { id: 'groq/whisper-large-v3-turbo', name: 'Groq Whisper Turbo (FREE)', description: 'Быстрая бесплатная транскрипция' },
     { id: 'groq/distil-whisper-large-v3-en', name: 'Groq Distil Whisper (FREE)', description: 'Облегчённая версия для английского' },
@@ -66,7 +63,6 @@ const MultimodalSettingsPage = () => {
   const [customVisionInput, setCustomVisionInput] = useState('');
   const [customAudioInput, setCustomAudioInput] = useState('');
   
-  // Refresh states
   const [isRefreshingVision, setIsRefreshingVision] = useState(false);
   const [isRefreshingAudio, setIsRefreshingAudio] = useState(false);
   const [visionRefreshMessage, setVisionRefreshMessage] = useState('');
@@ -185,75 +181,47 @@ const MultimodalSettingsPage = () => {
     resolver: zodResolver(multimodalSchema),
     defaultValues: {
       vision_model: 'google/gemini-2.0-flash-exp:free',
-      vision_model_override: '',
       audio_model: 'google/gemini-2.0-flash-exp:free',
-      audio_model_override: '',
     },
   });
 
   const selectedVisionModel = watch('vision_model');
   const selectedAudioModel = watch('audio_model');
-  const visionOverride = watch('vision_model_override');
-  const audioOverride = watch('audio_model_override');
 
-  // Load settings into form
+  // Load settings into form (только выбранные модели; приоритет у сохранённого значения)
   useEffect(() => {
     if (settings) {
       const settingsMap = settings.reduce(
         (acc, s) => ({ ...acc, [s.key]: s.value }),
         {} as Record<string, string>
       );
+      const visionValue = settingsMap['vision_model_override']?.trim() || settingsMap['vision_model'] ?? 'google/gemini-2.0-flash-exp:free';
+      const audioValue = settingsMap['audio_model_override']?.trim() || settingsMap['audio_model'] ?? 'google/gemini-2.0-flash-exp:free';
 
-      const visionValue = settingsMap['vision_model'] ?? 'google/gemini-2.0-flash-exp:free';
-      const audioValue = settingsMap['audio_model'] ?? 'google/gemini-2.0-flash-exp:free';
-      const visionOverrideValue = settingsMap['vision_model_override'] ?? '';
-      const audioOverrideValue = settingsMap['audio_model_override'] ?? '';
-
-      // Check if models are in predefined lists
       const allVisionModels = [...visionModels.free, ...visionModels.premium];
       const allAudioModels = [...audioModels.free, ...audioModels.premium];
-      
       const isKnownVision = allVisionModels.some(m => m.id === visionValue);
       const isKnownAudio = allAudioModels.some(m => m.id === audioValue);
 
-      if (!isKnownVision && !visionOverrideValue) {
-        setCustomVisionInput(visionValue);
-      }
-      if (!isKnownAudio && !audioOverrideValue) {
-        setCustomAudioInput(audioValue);
-      }
+      if (!isKnownVision) setCustomVisionInput(visionValue);
+      if (!isKnownAudio) setCustomAudioInput(audioValue);
 
       reset({
         vision_model: isKnownVision ? visionValue : CUSTOM_MODEL_VALUE,
-        vision_model_override: visionOverrideValue,
         audio_model: isKnownAudio ? audioValue : CUSTOM_MODEL_VALUE,
-        audio_model_override: audioOverrideValue,
       });
     }
   }, [settings, reset, visionModels, audioModels]);
 
   const onSubmit = (data: MultimodalForm) => {
-    // Vision model priority
-    let actualVisionModel = data.vision_model;
-    if (data.vision_model_override?.trim()) {
-      actualVisionModel = data.vision_model_override.trim();
-    } else if (data.vision_model === CUSTOM_MODEL_VALUE) {
-      actualVisionModel = customVisionInput;
-    }
-
-    // Audio model priority
-    let actualAudioModel = data.audio_model;
-    if (data.audio_model_override?.trim()) {
-      actualAudioModel = data.audio_model_override.trim();
-    } else if (data.audio_model === CUSTOM_MODEL_VALUE) {
-      actualAudioModel = customAudioInput;
-    }
+    const actualVisionModel = data.vision_model === CUSTOM_MODEL_VALUE ? customVisionInput.trim() : data.vision_model;
+    const actualAudioModel = data.audio_model === CUSTOM_MODEL_VALUE ? customAudioInput.trim() : data.audio_model;
 
     saveSettings({
       vision_model: actualVisionModel,
-      vision_model_override: data.vision_model_override || '',
+      vision_model_override: '',
       audio_model: actualAudioModel,
-      audio_model_override: data.audio_model_override || '',
+      audio_model_override: '',
     });
   };
 
@@ -371,10 +339,9 @@ const MultimodalSettingsPage = () => {
               )}
             </div>
 
-            {/* Custom Vision Input */}
             {selectedVisionModel === CUSTOM_MODEL_VALUE && (
               <div className="border-l-4 border-purple-500 pl-4 py-2 bg-purple-50 rounded-r">
-                <label className="label text-sm">ID Vision Модели</label>
+                <label className="label text-sm">ID модели (например provider/model-name)</label>
                 <input
                   type="text"
                   className="input bg-white text-gray-900 font-mono text-sm"
@@ -385,26 +352,6 @@ const MultimodalSettingsPage = () => {
                 />
               </div>
             )}
-
-            {/* Vision Override */}
-            <div className="border-2 border-purple-300 rounded-lg p-3 bg-purple-50">
-              <label htmlFor="vision_model_override" className="label text-sm text-purple-900">
-                🎯 Ручной ввод (приоритет)
-              </label>
-              <input
-                id="vision_model_override"
-                type="text"
-                className="input bg-white text-gray-900 font-mono text-sm"
-                style={{ colorScheme: 'light' }}
-                placeholder="Оставьте пустым или введите: provider/model-name"
-                {...register('vision_model_override')}
-              />
-              {visionOverride?.trim() && (
-                <div className="mt-2 p-2 bg-green-100 border border-green-300 rounded text-sm text-green-800">
-                  ✅ Активна: <code className="font-mono font-semibold">{visionOverride}</code>
-                </div>
-              )}
-            </div>
           </div>
         </div>
 
@@ -495,10 +442,9 @@ const MultimodalSettingsPage = () => {
               )}
             </div>
 
-            {/* Custom Audio Input */}
             {selectedAudioModel === CUSTOM_MODEL_VALUE && (
               <div className="border-l-4 border-blue-500 pl-4 py-2 bg-blue-50 rounded-r">
-                <label className="label text-sm">ID Audio Модели</label>
+                <label className="label text-sm">ID модели (например provider/model-name)</label>
                 <input
                   type="text"
                   className="input bg-white text-gray-900 font-mono text-sm"
@@ -510,25 +456,9 @@ const MultimodalSettingsPage = () => {
               </div>
             )}
 
-            {/* Audio Override */}
-            <div className="border-2 border-blue-300 rounded-lg p-3 bg-blue-50">
-              <label htmlFor="audio_model_override" className="label text-sm text-blue-900">
-                🎯 Ручной ввод (приоритет)
-              </label>
-              <input
-                id="audio_model_override"
-                type="text"
-                className="input bg-white text-gray-900 font-mono text-sm"
-                style={{ colorScheme: 'light' }}
-                placeholder="Оставьте пустым или введите: provider/model-name"
-                {...register('audio_model_override')}
-              />
-              {audioOverride?.trim() && (
-                <div className="mt-2 p-2 bg-green-100 border border-green-300 rounded text-sm text-green-800">
-                  ✅ Активна: <code className="font-mono font-semibold">{audioOverride}</code>
-                </div>
-              )}
-            </div>
+            <p className="text-xs text-gray-500">
+              Если выбрана модель Groq, но ключ GROQ_API_KEY не задан — бот автоматически использует OpenRouter (GPT Audio Mini).
+            </p>
           </div>
         </div>
 

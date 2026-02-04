@@ -106,6 +106,7 @@ const getGroqClient = (): OpenAI | null => {
 interface MultimodalConfig {
   visionModel: string;
   audioModel: string;
+  audioFallbackModel: string;
   maxTokens: number;
 }
 
@@ -113,6 +114,8 @@ interface MultimodalConfig {
 const DEFAULT_VISION_MODEL = 'allenai/molmo-2-8b:free';
 // Используем Groq Whisper по умолчанию (бесплатно!)
 const DEFAULT_AUDIO_MODEL = 'groq/whisper-large-v3';
+// Дефолт fallback при Groq без ключа (настраивается в админке)
+const DEFAULT_AUDIO_FALLBACK_MODEL = 'openai/gpt-audio-mini';
 
 const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
   const settings = await settingsRepo.getMany([
@@ -120,6 +123,7 @@ const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
     'audio_model',
     'vision_model_override',
     'audio_model_override',
+    'audio_fallback_model',
     'max_tokens',
   ]);
 
@@ -149,16 +153,22 @@ const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
     audioSource = 'override';
   }
 
+  // Fallback модель (OpenRouter) — когда Groq выбран, но GROQ_API_KEY не задан
+  const audioFallbackModel =
+    settings['audio_fallback_model']?.trim() || DEFAULT_AUDIO_FALLBACK_MODEL;
+
   aiLogger.debug({
     visionModel,
     visionSource,
     audioModel,
     audioSource,
+    audioFallbackModel,
   }, 'Multimodal config loaded');
 
   return {
     visionModel,
     audioModel,
+    audioFallbackModel,
     maxTokens: settings['max_tokens'] ? Number(settings['max_tokens']) : 2048,
   };
 };
@@ -296,9 +306,17 @@ export async function analyzeImageUrl(
 // Audio Service
 // --------------------------------------------
 
+// Константы для валидации
+const MAX_GROQ_FILE_SIZE = 25 * 1024 * 1024; // 25MB лимит Groq
+
 /**
  * Транскрибировать аудио в текст
- * Приоритет: Groq Whisper (бесплатно) → OpenRouter Audio → OpenAI Whisper
+ * Приоритет: Groq Whisper (бесплатно) → OpenRouter Audio (fallback)
+ * 
+ * Fallback срабатывает если:
+ * - GROQ_API_KEY не задан
+ * - Groq API вернул ошибку (401, 413, 429, 500 и др.)
+ * - Файл слишком большой для Groq (>25MB)
  */
 export async function transcribeAudio(
   audioBase64: string,
@@ -306,26 +324,56 @@ export async function transcribeAudio(
 ): Promise<AudioTranscriptionResult> {
   const multimodalConfig = await getMultimodalConfig();
   const audioBuffer = Buffer.from(audioBase64, 'base64');
+  const fileSizeMB = (audioBuffer.length / 1024 / 1024).toFixed(2);
 
-  aiLogger.info({ model: multimodalConfig.audioModel, size: audioBuffer.length }, 'Transcribing audio');
+  aiLogger.info({ 
+    model: multimodalConfig.audioModel, 
+    size: audioBuffer.length,
+    sizeMB: fileSizeMB,
+  }, 'Transcribing audio');
 
-  // Если выбрана Groq модель — используем бесплатный Groq Whisper
+  // Если выбрана Groq модель — пробуем бесплатный Groq Whisper
   if (multimodalConfig.audioModel.startsWith('groq/')) {
     const groq = getGroqClient();
-    if (groq) {
-      return transcribeAudioGroq(audioBuffer, 'voice.ogg');
-    } else {
+    
+    // Проверка 1: есть ли ключ?
+    if (!groq) {
       aiLogger.warn('Groq model selected but GROQ_API_KEY not set, falling back to OpenRouter');
+    }
+    // Проверка 2: размер файла в пределах лимита Groq?
+    else if (audioBuffer.length > MAX_GROQ_FILE_SIZE) {
+      aiLogger.warn({ sizeMB: fileSizeMB, limit: '25MB' }, 
+        'File too large for Groq (>25MB), falling back to OpenRouter');
+    }
+    // Всё ок — пробуем Groq с fallback при ошибке
+    else {
+      try {
+        return await transcribeAudioGroq(audioBuffer, 'voice.ogg');
+      } catch (groqError: unknown) {
+        const err = groqError as { status?: number; code?: string; message?: string };
+        aiLogger.warn({ 
+          error: err.message, 
+          status: err.status,
+          code: err.code,
+        }, 'Groq transcription failed, falling back to OpenRouter');
+        
+        // НЕ пробрасываем ошибку — идём в fallback
+      }
     }
   }
 
-  // Fallback на OpenRouter audio модели
+  // Fallback на OpenRouter audio модели (не передаём groq/* в OpenRouter!)
   const client = getClient();
+  const openRouterModel = multimodalConfig.audioModel.startsWith('groq/')
+    ? multimodalConfig.audioFallbackModel
+    : multimodalConfig.audioModel;
+  
+  aiLogger.info({ model: openRouterModel }, 'Using OpenRouter for audio transcription');
 
   try {
     // OpenRouter использует chat completions API для аудио
     const response = await client.chat.completions.create({
-      model: multimodalConfig.audioModel,
+      model: openRouterModel,
       messages: [
         {
           role: 'user',
@@ -338,7 +386,7 @@ export async function transcribeAudio(
               type: 'input_audio' as any,
               input_audio: {
                 data: audioBase64,
-                format: mimeType.includes('ogg') ? 'ogg' : mimeType.includes('mp3') ? 'mp3' : 'wav',
+                format: getAudioFormatForOpenRouter(mimeType),
               },
             } as any,
           ],
@@ -363,11 +411,11 @@ export async function transcribeAudio(
     };
   } catch (error: unknown) {
     const err = error as { status?: number; message?: string };
-    aiLogger.error({ error, model: multimodalConfig.audioModel }, 'Audio transcription failed');
+    aiLogger.error({ error, model: openRouterModel }, 'Audio transcription failed');
     
     // Создаём понятную ошибку
     if (err.status === 404) {
-      const customError = new Error(`Audio модель "${multimodalConfig.audioModel}" не найдена на OpenRouter. Измените в настройках.`);
+      const customError = new Error(`Audio модель "${openRouterModel}" не найдена на OpenRouter. Измените в настройках.`);
       (customError as any).code = 'AUDIO_MODEL_NOT_FOUND';
       throw customError;
     }
@@ -377,12 +425,55 @@ export async function transcribeAudio(
       throw customError;
     }
     if (err.status === 400 && err.message?.includes('input_audio')) {
-      const customError = new Error(`Модель "${multimodalConfig.audioModel}" не поддерживает аудио вход. Выберите другую модель.`);
+      const customError = new Error(`Модель "${openRouterModel}" не поддерживает аудио вход. Выберите другую модель.`);
       (customError as any).code = 'AUDIO_NOT_SUPPORTED';
+      throw customError;
+    }
+    if (err.status === 429) {
+      const customError = new Error('Превышен лимит запросов к API. Подождите минуту и попробуйте снова.');
+      (customError as any).code = 'RATE_LIMIT';
+      throw customError;
+    }
+    if (err.status && err.status >= 500) {
+      const customError = new Error('Сервер AI временно недоступен. Попробуйте позже.');
+      (customError as any).code = 'SERVER_ERROR';
       throw customError;
     }
     throw error;
   }
+}
+
+/**
+ * Определить формат аудио для OpenRouter API
+ */
+function getAudioFormatForOpenRouter(mimeType: string): string {
+  if (mimeType.includes('ogg') || mimeType.includes('opus')) return 'ogg';
+  if (mimeType.includes('mp3') || mimeType.includes('mpeg')) return 'mp3';
+  if (mimeType.includes('wav')) return 'wav';
+  if (mimeType.includes('flac')) return 'flac';
+  if (mimeType.includes('webm')) return 'webm';
+  if (mimeType.includes('m4a') || mimeType.includes('mp4')) return 'mp4';
+  // Telegram отправляет OGG Opus
+  return 'ogg';
+}
+
+/**
+ * Определить MIME тип по расширению файла
+ */
+function getMimeTypeFromFilename(filename: string): string {
+  const ext = filename.split('.').pop()?.toLowerCase();
+  const mimeMap: Record<string, string> = {
+    'ogg': 'audio/ogg',
+    'mp3': 'audio/mpeg',
+    'wav': 'audio/wav',
+    'flac': 'audio/flac',
+    'm4a': 'audio/m4a',
+    'webm': 'audio/webm',
+    'mp4': 'audio/mp4',
+    'mpeg': 'audio/mpeg',
+    'mpga': 'audio/mpeg',
+  };
+  return mimeMap[ext || 'ogg'] || 'audio/ogg';
 }
 
 /**
@@ -400,11 +491,12 @@ export async function transcribeAudioGroq(
     throw new Error('GROQ_API_KEY не настроен. Добавьте ключ в переменные окружения.');
   }
 
-  aiLogger.info({ filename, size: audioBuffer.length }, 'Transcribing audio via Groq Whisper (FREE)');
+  const mimeType = getMimeTypeFromFilename(filename);
+  aiLogger.info({ filename, size: audioBuffer.length, mimeType }, 'Transcribing audio via Groq Whisper (FREE)');
 
   try {
-    // Создаём File-like объект
-    const file = new File([audioBuffer], filename, { type: 'audio/ogg' });
+    // Создаём File-like объект с правильным MIME типом
+    const file = new File([audioBuffer], filename, { type: mimeType });
 
     const response = await groq.audio.transcriptions.create({
       file,

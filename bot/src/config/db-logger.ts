@@ -91,7 +91,7 @@ export async function flushLogs(): Promise<void> {
 }
 
 /**
- * Создать лог из pino объекта
+ * Создать лог из pino объекта (экспорт для тестов)
  */
 export function createLogFromPino(
   pinoLog: Record<string, unknown>

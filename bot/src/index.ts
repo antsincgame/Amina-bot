@@ -3,7 +3,7 @@ import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { webhookCallback } from 'grammy';
 import { config } from './config/index.js';
-import { logger, serverLogger, httpLogger } from './config/logger.js';
+import { logger, serverLogger, httpLogger, appLogger } from './config/logger.js';
 import { createBot } from './telegram/bot.js';
 import { getSupabase } from './db/supabase.js';
 import { aiService } from './ai/openrouter.js';
@@ -129,8 +129,8 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
 
 const start = async (): Promise<void> => {
   try {
-    logger.info('🚀 Starting Amina Bot...');
-    logger.info({
+    appLogger.info('🚀 Starting Amina Bot...');
+    appLogger.info({
       env: config.isDev ? 'development' : 'production',
       port: config.server.port,
     }, 'Configuration loaded');
@@ -139,30 +139,30 @@ const start = async (): Promise<void> => {
     await setupRoutes(app);
 
     // Test database connection
-    logger.info('Testing database connection...');
+    appLogger.info('Testing database connection...');
     try {
       const supabase = getSupabase();
       const { error } = await supabase.from('settings').select('key').limit(1);
       if (error) {
-        logger.warn({ error: error.message }, '⚠️ Database connection issue - continuing anyway');
+        appLogger.warn({ error: error.message }, '⚠️ Database connection issue - continuing anyway');
       } else {
-        logger.info('✓ Database connection OK');
+        appLogger.info('✓ Database connection OK');
       }
     } catch (error) {
-      logger.warn({ error }, '⚠️ Database not available - continuing anyway');
+      appLogger.warn({ error }, '⚠️ Database not available - continuing anyway');
     }
 
     // Test OpenRouter connection
-    logger.info('Testing OpenRouter connection...');
+    appLogger.info('Testing OpenRouter connection...');
     const aiOk = await aiService.testConnection();
     if (!aiOk) {
-      logger.warn('⚠️ OpenRouter test failed - check API key');
+      appLogger.warn('⚠️ OpenRouter test failed - check API key');
     } else {
-      logger.info('✓ OpenRouter connection OK');
+      appLogger.info('✓ OpenRouter connection OK');
     }
 
     // Create bot
-    logger.info('Initializing Telegram bot...');
+    appLogger.info('Initializing Telegram bot...');
     bot = createBot();
 
     // Setup webhook if in production
@@ -171,7 +171,7 @@ const start = async (): Promise<void> => {
       await bot.api.setWebhook(`${config.telegram.webhook.url}/webhook/telegram`, {
         secret_token: config.telegram.webhook.secret,
       });
-      logger.info('🔗 Telegram webhook configured');
+      appLogger.info('🔗 Telegram webhook configured');
     }
 
     // Start server
@@ -185,14 +185,14 @@ const start = async (): Promise<void> => {
     if (!config.isProd || !config.telegram.webhook.url) {
       bot.start({
         onStart: (botInfo) => {
-          logger.info({ username: botInfo.username }, '🤖 Bot started (polling mode)');
+          appLogger.info({ username: botInfo.username }, '🤖 Bot started (polling mode)');
         },
       });
     }
 
-    logger.info('✅ Amina Bot is ready!');
+    appLogger.info('✅ Amina Bot is ready!');
   } catch (error) {
-    logger.fatal({ error }, 'Failed to start application');
+    appLogger.fatal({ error }, 'Failed to start application');
     process.exit(1);
   }
 };
@@ -202,17 +202,17 @@ const start = async (): Promise<void> => {
 // --------------------------------------------
 
 const shutdown = async (signal: string): Promise<void> => {
-  logger.info({ signal }, 'Shutdown signal received');
+  appLogger.info({ signal }, 'Shutdown signal received');
 
   if (bot) {
-    logger.info('Stopping bot...');
+    appLogger.info('Stopping bot...');
     await bot.stop();
   }
 
-  logger.info('Closing server...');
+  appLogger.info('Closing server...');
   await app.close();
 
-  logger.info('👋 Goodbye!');
+  appLogger.info('👋 Goodbye!');
   process.exit(0);
 };
 

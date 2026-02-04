@@ -15,7 +15,8 @@ const hooks = {
   ) {
     // Only intercept warn, error, fatal (level >= 30)
     if (level >= 30) {
-      // Schedule DB logging (non-blocking)
+      const loggerThis = this as unknown as { bindings?: () => Record<string, unknown> };
+      const bindings = typeof loggerThis?.bindings === 'function' ? loggerThis.bindings() ?? {} : {};
       setImmediate(() => {
         try {
           const logObj = typeof inputArgs[0] === 'object' ? inputArgs[0] : {};
@@ -26,6 +27,7 @@ const hooks = {
             level,
             msg: msg || '',
             time: Date.now(),
+            module: (logObj as { module?: string }).module ?? bindings.module ?? 'unknown',
           };
           
           const dbLog = createLogFromPino(pinoLog);
@@ -64,12 +66,13 @@ const pinoLogger = pino.pino({
 
 export const logger = pinoLogger;
 
-// Child loggers for different modules
+// Child loggers for different modules (module попадает в system_logs)
 export const telegramLogger = logger.child({ module: 'telegram' });
 export const aiLogger = logger.child({ module: 'ai' });
 export const dbLogger = logger.child({ module: 'db' });
 export const serverLogger = logger.child({ module: 'server' });
 export const httpLogger = logger.child({ module: 'http' });
+export const appLogger = logger.child({ module: 'app' });
 
 // Re-export DB logger functions for direct use
 export { logError, logWarning, logFatal, getLogs, getLogStats, flushLogs } from './db-logger.js';

@@ -440,8 +440,14 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         userMessage = `🔧 Audio модель не найдена на OpenRouter.\n\nОбратитесь к администратору для настройки модели в админке.`;
       } else if (errorCode === 'AUDIO_NOT_SUPPORTED') {
         userMessage = `🔧 Выбранная модель не поддерживает аудио.\n\nОбратитесь к администратору для смены модели.`;
-      } else if (errorCode === 'AUTH_ERROR') {
+      } else if (errorCode === 'AUTH_ERROR' || errorCode === 'GROQ_AUTH_ERROR') {
         userMessage = '🔑 Ошибка авторизации API. Обратитесь к администратору.';
+      } else if (errorCode === 'RATE_LIMIT') {
+        userMessage = '⏳ Слишком много запросов!\n\nПодожди минуту и попробуй снова.';
+      } else if (errorCode === 'SERVER_ERROR') {
+        userMessage = '🔧 Сервер AI временно недоступен.\n\nПопробуй через несколько минут.';
+      } else if (errorCode === 'FILE_TOO_LARGE') {
+        userMessage = '📁 Голосовое сообщение слишком длинное.\n\nПопробуй записать сообщение короче.';
       }
 
       await ctx.reply(userMessage);

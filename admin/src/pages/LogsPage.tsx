@@ -16,6 +16,8 @@ import {
   Download,
   FileJson,
   FileText,
+  Copy,
+  Check,
 } from 'lucide-react';
 
 // Types
@@ -95,6 +97,7 @@ const LogsPage = () => {
   const [levelFilter, setLevelFilter] = useState<string>('');
   const [moduleFilter, setModuleFilter] = useState<string>('');
   const [expandedLogs, setExpandedLogs] = useState<Set<string>>(new Set());
+  const [copyMessage, setCopyMessage] = useState('');
 
   // Calculate date range
   const getDateRange = () => {
@@ -255,6 +258,23 @@ const LogsPage = () => {
   // Filter logs by level for download
   const getLogsByLevel = (level: string) => logs?.filter(l => l.level === level) ?? [];
 
+  const copyAllLogs = async () => {
+    if (!logs || logs.length === 0) {
+      setCopyMessage('Нет логов для копирования');
+      setTimeout(() => setCopyMessage(''), 2000);
+      return;
+    }
+    try {
+      const text = JSON.stringify(logs, null, 2);
+      await navigator.clipboard.writeText(text);
+      setCopyMessage('Скопировано!');
+      setTimeout(() => setCopyMessage(''), 2000);
+    } catch {
+      setCopyMessage('Ошибка копирования');
+      setTimeout(() => setCopyMessage(''), 2000);
+    }
+  };
+
   return (
     <div className="p-6 lg:p-8 max-w-7xl mx-auto">
       {/* Header */}
@@ -265,13 +285,33 @@ const LogsPage = () => {
             Ошибки, предупреждения и системные события
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             onClick={() => refetchLogs()}
             className="btn-secondary flex items-center gap-2"
           >
             <RefreshCw className="w-4 h-4" />
             Обновить
+          </button>
+
+          {/* Copy all logs */}
+          <button
+            onClick={copyAllLogs}
+            disabled={!logs || logs.length === 0}
+            className="btn-secondary flex items-center gap-2"
+            title="Скопировать все логи в буфер обмена (JSON)"
+          >
+            {copyMessage ? (
+              <>
+                <Check className="w-4 h-4 text-green-600" />
+                {copyMessage}
+              </>
+            ) : (
+              <>
+                <Copy className="w-4 h-4" />
+                Копировать все логи
+              </>
+            )}
           </button>
           
           {/* Download dropdown */}
