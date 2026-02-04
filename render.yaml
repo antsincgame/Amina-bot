@@ -28,3 +28,33 @@ services:
       - key: OPENROUTER_API_KEY
         sync: false
     autoDeploy: true
+
+  # ===========================================
+  # Admin Panel - Static Site
+  # ===========================================
+  - type: web
+    name: amina-admin
+    runtime: static
+    rootDir: admin
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: X-XSS-Protection
+        value: "1; mode=block"
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_SUPABASE_URL
+        value: https://azdvlsznlvktxvmfswhq.supabase.co
+      - key: VITE_SUPABASE_ANON_KEY
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF6ZHZsc3pubHZrdHh2bWZzd2hxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAxNTQ5MjUsImV4cCI6MjA4NTczMDkyNX0.jRLo_4fwol9QUFRNrBAjzA_Qw0aOiB2
+    autoDeploy: true
