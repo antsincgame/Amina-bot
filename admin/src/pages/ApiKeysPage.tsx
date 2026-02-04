@@ -8,6 +8,7 @@ import { Save, Loader2, Key, Eye, EyeOff, CheckCircle, AlertCircle, Info, Refres
 
 // Schema
 const apiKeysSchema = z.object({
+  telegram_bot_token: z.string().optional(),
   openrouter_api_key: z.string().optional(),
   groq_api_key: z.string().optional(),
 });
@@ -16,6 +17,7 @@ type ApiKeysForm = z.infer<typeof apiKeysSchema>;
 
 const ApiKeysPage = () => {
   const queryClient = useQueryClient();
+  const [showTelegram, setShowTelegram] = useState(false);
   const [showOpenRouter, setShowOpenRouter] = useState(false);
   const [showGroq, setShowGroq] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
@@ -49,11 +51,13 @@ const ApiKeysPage = () => {
   } = useForm<ApiKeysForm>({
     resolver: zodResolver(apiKeysSchema),
     defaultValues: {
+      telegram_bot_token: '',
       openrouter_api_key: '',
       groq_api_key: '',
     },
   });
 
+  const telegramKey = watch('telegram_bot_token');
   const openRouterKey = watch('openrouter_api_key');
   const groqKey = watch('groq_api_key');
 
@@ -66,6 +70,7 @@ const ApiKeysPage = () => {
       );
 
       reset({
+        telegram_bot_token: map['telegram_bot_token'] || '',
         openrouter_api_key: map['openrouter_api_key'] || '',
         groq_api_key: map['groq_api_key'] || '',
       });
@@ -74,6 +79,7 @@ const ApiKeysPage = () => {
 
   const onSubmit = (data: ApiKeysForm) => {
     saveSettings({
+      telegram_bot_token: data.telegram_bot_token || '',
       openrouter_api_key: data.openrouter_api_key || '',
       groq_api_key: data.groq_api_key || '',
     });
@@ -105,21 +111,75 @@ const ApiKeysPage = () => {
         </p>
       </div>
 
+      {/* В Render только 2 переменные */}
+      <div className="mb-6 p-4 bg-amber-50 rounded-xl border border-amber-200">
+        <h3 className="font-semibold text-amber-900 mb-2">В Render задайте только 2 переменные</h3>
+        <p className="text-sm text-amber-800 mb-2">
+          Без них бот не подключится к базе данных. Остальное настраивается здесь.
+        </p>
+        <div className="space-y-1 text-sm font-mono text-amber-900 bg-white/50 p-3 rounded mb-2">
+          <div>SUPABASE_URL — URL вашего проекта Supabase</div>
+          <div>SUPABASE_SERVICE_KEY — ключ service_role из Supabase → Settings → API</div>
+        </div>
+        <p className="text-xs text-amber-700">
+          При первом запуске, если бот ещё не работал, задайте в Render также <code className="bg-white/70 px-1 rounded">TELEGRAM_BOT_TOKEN</code>, 
+          сохраните его здесь, затем можно удалить из Render — бот будет брать токен из админки.
+        </p>
+      </div>
+
       {/* Info */}
       <div className="mb-6 p-4 bg-blue-50 rounded-xl flex items-start gap-3">
         <Info className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
         <div className="text-sm text-blue-800">
           <p className="font-medium mb-1">Как это работает:</p>
           <ul className="space-y-1 text-blue-700">
-            <li>• Если ключ задан в Render — он имеет приоритет</li>
-            <li>• Если в Render пусто — бот берёт ключ отсюда</li>
-            <li>• Ключи хранятся в зашифрованной базе данных</li>
+            <li>• В Render обязательны только SUPABASE_URL и SUPABASE_SERVICE_KEY</li>
+            <li>• Все ключи ниже можно задать здесь — бот подхватит их при старте</li>
           </ul>
         </div>
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
         
+        {/* Telegram Bot Token */}
+        <div className="card">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2.5 bg-sky-100 rounded-xl">
+              <Key className="w-6 h-6 text-sky-600" />
+            </div>
+            <div className="flex-1">
+              <h2 className="text-lg font-semibold text-gray-900">Telegram Bot Token</h2>
+              <p className="text-sm text-gray-500">Обязателен для работы бота</p>
+            </div>
+            {telegramKey && (
+              <span className="px-2 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">
+                Задан
+              </span>
+            )}
+          </div>
+
+          <div className="relative">
+            <input
+              type={showTelegram ? 'text' : 'password'}
+              placeholder="123456:ABC..."
+              className="input bg-white text-gray-900 pr-12 font-mono text-sm"
+              style={{ colorScheme: 'light' }}
+              {...register('telegram_bot_token')}
+            />
+            <button
+              type="button"
+              onClick={() => setShowTelegram(!showTelegram)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+            >
+              {showTelegram ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+            </button>
+          </div>
+
+          <p className="mt-2 text-xs text-gray-500">
+            Получить токен: напишите <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">@BotFather</a> в Telegram → /newbot
+          </p>
+        </div>
+
         {/* OpenRouter API Key */}
         <div className="card">
           <div className="flex items-center gap-3 mb-4">
@@ -204,25 +264,21 @@ const ApiKeysPage = () => {
           </div>
         </div>
 
-        {/* What's required */}
-        <div className="card bg-gradient-to-br from-amber-50 to-orange-50">
-          <h3 className="font-semibold text-gray-900 mb-3">Что обязательно в Render?</h3>
+        {/* Что в Render */}
+        <div className="card bg-gradient-to-br from-green-50 to-emerald-50">
+          <h3 className="font-semibold text-gray-900 mb-3">В Render только 2 переменные</h3>
           <div className="space-y-2 text-sm">
             <div className="flex items-center gap-2">
-              <span className="text-red-500">●</span>
-              <span className="text-gray-700"><code className="bg-white px-1 rounded">TELEGRAM_BOT_TOKEN</code> — токен бота</span>
+              <span className="text-green-600">●</span>
+              <span className="text-gray-700"><code className="bg-white px-1 rounded">SUPABASE_URL</code></span>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-red-500">●</span>
-              <span className="text-gray-700"><code className="bg-white px-1 rounded">SUPABASE_URL</code> — URL базы данных</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-red-500">●</span>
-              <span className="text-gray-700"><code className="bg-white px-1 rounded">SUPABASE_SERVICE_KEY</code> — ключ базы данных</span>
+              <span className="text-green-600">●</span>
+              <span className="text-gray-700"><code className="bg-white px-1 rounded">SUPABASE_SERVICE_KEY</code></span>
             </div>
           </div>
           <p className="mt-3 text-xs text-gray-600">
-            Эти 3 переменные нельзя задать здесь — без них бот не запустится.
+            Остальное (Telegram, OpenRouter, Groq) настраивается на этой странице.
           </p>
         </div>
 

@@ -250,15 +250,19 @@ export async function analyzeImage(
     const err = error as { status?: number; message?: string };
     aiLogger.error({ error, model: config.visionModel }, 'Image analysis failed');
     
-    // Создаём понятную ошибку
     if (err.status === 404) {
-      const customError = new Error(`Vision модель "${config.visionModel}" не найдена на OpenRouter. Измените в настройках.`);
+      const customError = new Error(`Vision модель "${config.visionModel}" не найдена на OpenRouter. Задайте другую в админке → Голос и Фото.`);
       (customError as any).code = 'VISION_MODEL_NOT_FOUND';
       throw customError;
     }
     if (err.status === 401) {
       const customError = new Error('Неверный API ключ OpenRouter');
       (customError as any).code = 'AUTH_ERROR';
+      throw customError;
+    }
+    if (err.status === 503) {
+      const customError = new Error('Сервис анализа изображений временно недоступен. Попробуй отправить фото через минуту.');
+      (customError as any).code = 'VISION_SERVICE_UNAVAILABLE';
       throw customError;
     }
     throw error;
@@ -378,11 +382,15 @@ export async function transcribeAudio(
     }
   }
 
-  // Fallback на OpenRouter audio модели (не передаём groq/* в OpenRouter!)
+  // OpenRouter: никогда не отправлять groq/* — только модели OpenRouter
   const client = await getClient();
-  const openRouterModel = multimodalConfig.audioModel.startsWith('groq/')
-    ? multimodalConfig.audioFallbackModel
+  let openRouterModel = multimodalConfig.audioModel.startsWith('groq/')
+    ? (multimodalConfig.audioFallbackModel?.trim() || 'openai/gpt-audio-mini')
     : multimodalConfig.audioModel;
+  if (openRouterModel.startsWith('groq/')) {
+    openRouterModel = 'openai/gpt-audio-mini';
+    aiLogger.warn('groq/* не поддерживается OpenRouter, используем openai/gpt-audio-mini');
+  }
   
   aiLogger.info({ model: openRouterModel }, 'Using OpenRouter for audio transcription');
 
@@ -429,9 +437,8 @@ export async function transcribeAudio(
     const err = error as { status?: number; message?: string };
     aiLogger.error({ error, model: openRouterModel }, 'Audio transcription failed');
     
-    // Создаём понятную ошибку
     if (err.status === 404) {
-      const customError = new Error(`Audio модель "${openRouterModel}" не найдена на OpenRouter. Измените в настройках.`);
+      const customError = new Error(`Audio модель "${openRouterModel}" не найдена на OpenRouter. Задайте другую в админке → Голос и Фото.`);
       (customError as any).code = 'AUDIO_MODEL_NOT_FOUND';
       throw customError;
     }
@@ -440,14 +447,27 @@ export async function transcribeAudio(
       (customError as any).code = 'AUTH_ERROR';
       throw customError;
     }
-    if (err.status === 400 && err.message?.includes('input_audio')) {
-      const customError = new Error(`Модель "${openRouterModel}" не поддерживает аудио вход. Выберите другую модель.`);
-      (customError as any).code = 'AUDIO_NOT_SUPPORTED';
-      throw customError;
+    if (err.status === 400) {
+      const msg = err.message ?? '';
+      if (msg.includes('input_audio')) {
+        const customError = new Error(`Модель "${openRouterModel}" не поддерживает аудио. В админке выберите OpenRouter для аудио или настройте GROQ_API_KEY для Groq.`);
+        (customError as any).code = 'AUDIO_NOT_SUPPORTED';
+        throw customError;
+      }
+      if (msg.includes('not a valid model ID') || msg.includes('invalid model')) {
+        const customError = new Error('Выбранная аудио модель недоступна на OpenRouter. В админке → Голос и Фото выберите «OpenRouter» или настройте Groq ключ.');
+        (customError as any).code = 'AUDIO_MODEL_NOT_FOUND';
+        throw customError;
+      }
     }
     if (err.status === 429) {
-      const customError = new Error('Превышен лимит запросов к API. Подождите минуту и попробуйте снова.');
+      const customError = new Error('Превышен лимит запросов. Подождите минуту и попробуйте снова.');
       (customError as any).code = 'RATE_LIMIT';
+      throw customError;
+    }
+    if (err.status === 503) {
+      const customError = new Error('Сервис транскрипции временно недоступен. Попробуйте позже.');
+      (customError as any).code = 'SERVER_ERROR';
       throw customError;
     }
     if (err.status && err.status >= 500) {
@@ -600,23 +620,17 @@ export async function processImageWithLLM(
     userCaption || 'Опиши подробно что изображено на этой картинке.'
   );
 
-  // 2. Формируем сообщение для основной LLM
-  // ВАЖНО: Промпт скрыт от пользователя — LLM получает описание и отвечает естественно
-  const imageContext = userCaption
-    ? `[СИСТЕМНАЯ ИНФОРМАЦИЯ — НЕ ПОКАЗЫВАЙ ЭТО ПОЛЬЗОВАТЕЛЮ]
-Пользователь отправил изображение с вопросом/комментарием: "${userCaption}"
-Анализ изображения (от vision модели): ${analysis.description}
-[КОНЕЦ СИСТЕМНОЙ ИНФОРМАЦИИ]
+  // 2. Формируем контекст для основной LLM: техническое описание от Vision + вопрос/подпись пользователя
+  // Пользователь видит только финальный ответ LLM, не это сообщение
+  const descriptionBlock = `Описание изображения (что на картинке):\n${analysis.description}`;
+  const userBlock = userCaption
+    ? `Вопрос или комментарий пользователя: ${userCaption}`
+    : 'Пользователь не написал текст — опиши что на картинке.';
+  const instruction = 'Дай ответ пользователю: опиши изображение или ответь на его вопрос. Пиши от себя, не упоминай «описание», «vision», «анализ».';
 
-Ответь пользователю на его вопрос об изображении. Отвечай естественно, как будто ты сам видишь картинку. НЕ упоминай "vision модель", "анализ", "описание изображения" — просто отвечай на вопрос пользователя.`
-    : `[СИСТЕМНАЯ ИНФОРМАЦИЯ — НЕ ПОКАЗЫВАЙ ЭТО ПОЛЬЗОВАТЕЛЮ]
-Пользователь отправил изображение без комментария.
-Анализ изображения (от vision модели): ${analysis.description}
-[КОНЕЦ СИСТЕМНОЙ ИНФОРМАЦИИ]
+  const imageContext = `${descriptionBlock}\n\n${userBlock}\n\n${instruction}`;
 
-Опиши пользователю что изображено на картинке. Отвечай естественно, как будто ты сам видишь картинку. НЕ упоминай "vision модель", "анализ", "описание" — просто расскажи что на картинке.`;
-
-  // 3. Импортируем основной AI сервис и отправляем
+  // 3. Отправляем в основную LLM
   const { aiService } = await import('./openrouter.js');
   
   const messages = [

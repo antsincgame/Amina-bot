@@ -297,11 +297,11 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
           `Неверный API ключ OpenRouter.\n` +
           `Администратор должен проверить настройки в Render.`;
       } else if (errorCode === 'RATE_LIMIT' || errorMessage.includes('429') || errorMessage.includes('rate limit')) {
-        userMessage = `⏳ Слишком много запросов!\n\n` +
-          `Лимит OpenRouter превышен. Подожди минуту и попробуй снова.`;
+        userMessage = `⏳ Слишком много запросов!\n\nЛимит OpenRouter превышен. Подожди минуту и попробуй снова.`;
+      } else if (errorCode === 'PAYMENT_REQUIRED') {
+        userMessage = `💳 Пополни баланс на OpenRouter или выбери бесплатную модель в админке.`;
       } else if (errorCode === 'SERVER_ERROR' || errorMessage.includes('500') || errorMessage.includes('502')) {
-        userMessage = `🔧 Сервер AI временно недоступен.\n\n` +
-          `Попробуй через несколько минут.`;
+        userMessage = `🔧 Сервер AI временно недоступен.\n\nПопробуй через несколько минут.`;
       }
 
       await ctx.reply(userMessage);
@@ -593,7 +593,9 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
       let userMessage = '😔 Не удалось обработать изображение. Попробуй ещё раз или отправь текст.';
       
       if (errorCode === 'VISION_MODEL_NOT_FOUND') {
-        userMessage = `🔧 Vision модель не найдена на OpenRouter.\n\nОбратитесь к администратору для настройки модели в админке.`;
+        userMessage = `🔧 Vision модель не найдена на OpenRouter.\n\nВ админке → Голос и Фото выберите другую модель для изображений.`;
+      } else if (errorCode === 'VISION_SERVICE_UNAVAILABLE') {
+        userMessage = '⏳ Сервис анализа фото временно недоступен.\n\nПопробуй отправить фото через минуту.';
       } else if (errorCode === 'AUTH_ERROR') {
         userMessage = '🔑 Ошибка авторизации API. Обратитесь к администратору.';
       }

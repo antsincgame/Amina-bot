@@ -57,8 +57,11 @@ services:
         source: /*
         destination: /index.html
     envVars:
+      # Задайте в Render Dashboard → amina-admin → Environment
       - key: VITE_SUPABASE_URL
-        value: https://azdvlsznlvktxvmfswhq.supabase.co
+        sync: false
       - key: VITE_SUPABASE_ANON_KEY
-        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF6ZHZsc3pubHZrdHh2bWZzd2hxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAxNTQ5MjUsImV4cCI6MjA4NTczMDkyNX0.jRLo_4fwol9QUFRNrBAjzA_Qw0aOiB2
+        sync: false
+      - key: VITE_BOT_URL
+        sync: false
     autoDeploy: true

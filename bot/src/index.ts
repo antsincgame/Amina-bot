@@ -5,7 +5,7 @@ import { webhookCallback } from 'grammy';
 import { config } from './config/index.js';
 import { logger, serverLogger, httpLogger, appLogger } from './config/logger.js';
 import { createBot } from './telegram/bot.js';
-import { getSupabase } from './db/supabase.js';
+import { getSupabase, settingsRepo } from './db/supabase.js';
 import { aiService } from './ai/openrouter.js';
 import { registerApiRoutes } from './api/routes.js';
 
@@ -152,11 +152,30 @@ const start = async (): Promise<void> => {
       appLogger.warn({ error }, '⚠️ Database not available - continuing anyway');
     }
 
-    // Test OpenRouter connection
+    // Telegram token: env или из админки (БД)
+    if (!config.telegram.token) {
+      const settings = await settingsRepo.getMany(['telegram_bot_token']);
+      const tokenFromDb = settings['telegram_bot_token']?.trim();
+      if (tokenFromDb) {
+        config.setTelegramToken(tokenFromDb);
+        appLogger.info('✓ Telegram token loaded from admin (database)');
+      }
+    } else {
+      appLogger.info('✓ Telegram token from environment');
+    }
+
+    if (!config.telegram.token) {
+      appLogger.fatal(
+        'TELEGRAM_BOT_TOKEN не задан. Задайте его в Render (Environment) или в админке: API Ключи → Telegram Bot Token'
+      );
+      process.exit(1);
+    }
+
+    // Test OpenRouter connection (optional — ключ может быть в админке)
     appLogger.info('Testing OpenRouter connection...');
     const aiOk = await aiService.testConnection();
     if (!aiOk) {
-      appLogger.warn('⚠️ OpenRouter test failed - check API key');
+      appLogger.warn('⚠️ OpenRouter test failed — задайте OPENROUTER_API_KEY в Render или в админке (API Ключи)');
     } else {
       appLogger.info('✓ OpenRouter connection OK');
     }

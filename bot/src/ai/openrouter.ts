@@ -194,13 +194,21 @@ export const aiService = {
       
       if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
         const detailedError = new Error(
-          `RATE_LIMIT: Превышен лимит запросов к OpenRouter. Подождите немного.`
+          `RATE_LIMIT: Превышен лимит запросов к OpenRouter. Подождите минуту.`
         );
         (detailedError as any).code = 'RATE_LIMIT';
         throw detailedError;
       }
       
-      if (errorMessage.includes('500') || errorMessage.includes('502') || errorMessage.includes('503')) {
+      if (errorMessage.includes('402') || errorMessage.includes('Payment Required')) {
+        const detailedError = new Error(
+          `PAYMENT_REQUIRED: Пополните баланс на OpenRouter или выберите бесплатную модель в админке.`
+        );
+        (detailedError as any).code = 'PAYMENT_REQUIRED';
+        throw detailedError;
+      }
+      
+      if (errorMessage.includes('500') || errorMessage.includes('502') || errorMessage.includes('503') || errorMessage.includes('Provider returned error')) {
         const detailedError = new Error(
           `SERVER_ERROR: OpenRouter временно недоступен. Попробуйте позже.`
         );

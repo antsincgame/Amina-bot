@@ -9,18 +9,14 @@ dotenv.config();
 // --------------------------------------------
 
 const envSchema = z.object({
-  // Telegram — ОБЯЗАТЕЛЬНО в Render (без него бот не запустится)
-  TELEGRAM_BOT_TOKEN: z.string().min(1, 'TELEGRAM_BOT_TOKEN is required'),
-
-  // Supabase — ОБЯЗАТЕЛЬНО в Render (без него не прочитать настройки из админки)
+  // Supabase — ЕДИНСТВЕННЫЕ обязательные в Render (без них бот не подключится к БД)
   SUPABASE_URL: z.string().url('SUPABASE_URL must be a valid URL'),
   SUPABASE_SERVICE_KEY: z.string().min(1, 'SUPABASE_SERVICE_KEY is required'),
 
-  // OpenRouter — ОПЦИОНАЛЬНО в Render, можно задать в админке
+  // Всё остальное можно задать в админке (API Ключи)
+  TELEGRAM_BOT_TOKEN: z.string().optional(),
   OPENROUTER_API_KEY: z.string().optional(),
   OPENROUTER_MODEL: z.string().default('anthropic/claude-3-haiku'),
-
-  // Groq — ОПЦИОНАЛЬНО, можно задать в админке
   GROQ_API_KEY: z.string().optional(),
 
   // Server
@@ -56,6 +52,9 @@ const parseEnv = () => {
 
 const env = parseEnv();
 
+// Токен Telegram: env или БД (устанавливается при старте в index.ts)
+let resolvedTelegramToken: string = env.TELEGRAM_BOT_TOKEN || '';
+
 // --------------------------------------------
 // Static Config (from environment)
 // --------------------------------------------
@@ -73,13 +72,20 @@ export const config = {
     logLevel: env.LOG_LEVEL,
   },
 
-  // Telegram Bot — из Render
+  // Telegram Bot — token из env или админки
   telegram: {
-    token: env.TELEGRAM_BOT_TOKEN,
+    get token(): string {
+      return resolvedTelegramToken;
+    },
     webhook: {
       url: env.WEBHOOK_URL,
       secret: env.WEBHOOK_SECRET,
     },
+  },
+
+  /** Установить токен Telegram (при старте из БД) */
+  setTelegramToken(token: string): void {
+    resolvedTelegramToken = token;
   },
 
   // OpenRouter AI — может быть переопределён из админки
@@ -97,12 +103,12 @@ export const config = {
     baseUrl: 'https://api.groq.com/openai/v1',
   },
 
-  // Supabase Database — из Render
+  // Supabase Database — только эти 2 обязательны в Render
   db: {
     url: env.SUPABASE_URL,
     serviceKey: env.SUPABASE_SERVICE_KEY,
   },
-} as const;
+};
 
 export type Config = typeof config;
 
