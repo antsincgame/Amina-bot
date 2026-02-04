@@ -8,6 +8,7 @@ import {
   LogOut,
   Bot,
   AlertCircle,
+  Mic,
 } from 'lucide-react';
 
 const Layout = () => {
@@ -21,7 +22,8 @@ const Layout = () => {
 
   const navItems = [
     { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-    { to: '/settings', icon: Settings, label: 'Настройки' },
+    { to: '/settings', icon: Settings, label: 'Настройки AI' },
+    { to: '/multimodal', icon: Mic, label: 'Голос и Фото' },
     { to: '/prompts', icon: MessageSquare, label: 'Промпты' },
     { to: '/analytics', icon: BarChart3, label: 'Аналитика' },
     { to: '/logs', icon: AlertCircle, label: 'Логи' },

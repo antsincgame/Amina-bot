@@ -6,6 +6,7 @@ import { validateMessageContent, validateUserId } from '../utils/validation.js';
 import { handleAIError } from '../utils/error-handler.js';
 import { aiLogger, getLogs, getLogStats } from '../config/logger.js';
 import { rateLimitHook } from '../utils/rate-limiter.js';
+import { getAllVisionModels, getAllAudioModels } from '../ai/multimodal.js';
 import type { Message, Conversation, LogLevel } from '../../../shared/types/index.js';
 
 // --------------------------------------------
@@ -347,6 +348,46 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
           }
         }
       );
+
+      /**
+       * GET /api/models/vision
+       * Get available vision models
+       */
+      apiServer.get('/models/vision', async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+          const models = getAllVisionModels();
+          return reply.code(200).send({
+            success: true,
+            data: models,
+          });
+        } catch (error) {
+          aiLogger.error({ error }, 'Get vision models error');
+          return reply.code(500).send({
+            success: false,
+            error: 'Failed to fetch vision models',
+          });
+        }
+      });
+
+      /**
+       * GET /api/models/audio
+       * Get available audio models
+       */
+      apiServer.get('/models/audio', async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+          const models = getAllAudioModels();
+          return reply.code(200).send({
+            success: true,
+            data: models,
+          });
+        } catch (error) {
+          aiLogger.error({ error }, 'Get audio models error');
+          return reply.code(500).send({
+            success: false,
+            error: 'Failed to fetch audio models',
+          });
+        }
+      });
     },
     { prefix: '/api' }
   );

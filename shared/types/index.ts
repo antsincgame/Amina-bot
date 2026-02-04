@@ -43,6 +43,12 @@ export interface Message {
 export interface MessageMetadata {
   tokens_used?: number;
   model?: string;
+  // Multimodal metadata
+  type?: 'text' | 'voice' | 'photo' | 'document_image';
+  voice_duration?: number;
+  width?: number;
+  height?: number;
+  fileName?: string;
 }
 
 export interface ConversationMetadata {

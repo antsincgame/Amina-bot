@@ -2,6 +2,7 @@ import { Bot, Context, session, SessionFlavor } from 'grammy';
 import { config } from '../config/index.js';
 import { telegramLogger } from '../config/logger.js';
 import { aiService } from '../ai/openrouter.js';
+import { processVoiceWithLLM, processImageWithLLM } from '../ai/multimodal.js';
 import { conversationsRepo, analyticsRepo } from '../db/supabase.js';
 import { checkTelegramRateLimit } from '../utils/rate-limiter.js';
 import type { Message, AIMessage } from '../../../shared/types/index.js';
@@ -235,28 +236,405 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
     }
   });
 
-  // Voice messages - currently not supported
+  // Voice messages - transcribe and send to LLM
   bot.on('message:voice', async (ctx) => {
     const userId = ctx.from?.id.toString() ?? 'unknown';
+    const chatId = ctx.chat.id;
+    const duration = ctx.message.voice.duration;
     
-    telegramLogger.info({ userId, duration: ctx.message.voice.duration }, 'Voice message received');
+    telegramLogger.info({ userId, duration }, 'Voice message received');
+
+    // Check rate limit
+    const rateLimitResult = checkTelegramRateLimit(userId);
+    if (!rateLimitResult.allowed) {
+      await ctx.reply(rateLimitResult.message ?? '⏳ Слишком много сообщений.');
+      return;
+    }
 
     await analyticsRepo.log('message_received', 'telegram', {
       userId,
       type: 'voice',
-      duration: ctx.message.voice.duration,
+      duration,
     });
 
-    await ctx.reply(
-      '🎤 Голосовые сообщения временно недоступны.\n\nОтправьте текстовое сообщение.'
-    );
+    // Show typing indicator
+    await ctx.replyWithChatAction('typing');
+
+    try {
+      // Download voice file
+      const file = await ctx.getFile();
+      const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
+      
+      telegramLogger.debug({ fileUrl }, 'Downloading voice file');
+      
+      const response = await fetch(fileUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to download voice file: ${response.status}`);
+      }
+      
+      const audioBuffer = await response.arrayBuffer();
+      const audioBase64 = Buffer.from(audioBuffer).toString('base64');
+      
+      // Get or create conversation
+      if (!ctx.session.conversationId) {
+        const conversation = await conversationsRepo.getOrCreate(
+          userId,
+          'telegram',
+          { telegram_chat_id: chatId, telegram_user_id: ctx.from?.id }
+        );
+        ctx.session.conversationId = conversation.id;
+        ctx.session.messageHistory = conversation.messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+        }));
+      }
+
+      // Process voice: transcribe + LLM
+      const result = await processVoiceWithLLM(
+        audioBase64,
+        'audio/ogg',
+        ctx.session.messageHistory
+      );
+
+      // Update history
+      ctx.session.messageHistory.push(
+        { role: 'user', content: result.transcription },
+        { role: 'assistant', content: result.response.content }
+      );
+
+      // Trim history if too long
+      if (ctx.session.messageHistory.length > MAX_HISTORY_MESSAGES) {
+        ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
+      }
+
+      // Save to database
+      const userMsg: Message = {
+        role: 'user',
+        content: result.transcription,
+        timestamp: new Date().toISOString(),
+        metadata: { voice_duration: duration },
+      };
+      const assistantMsg: Message = {
+        role: 'assistant',
+        content: result.response.content,
+        timestamp: new Date().toISOString(),
+        metadata: {
+          tokens_used: result.response.tokens_used.total,
+          model: result.response.model,
+        },
+      };
+
+      await conversationsRepo.addMessage(ctx.session.conversationId, userMsg);
+      await conversationsRepo.addMessage(ctx.session.conversationId, assistantMsg);
+
+      // Log analytics
+      await analyticsRepo.log('ai_response', 'telegram', {
+        userId,
+        type: 'voice',
+        model: result.response.model,
+        tokens: result.response.tokens_used.total,
+        transcription_length: result.transcription.length,
+      });
+
+      // Send response with transcription preview
+      const transcriptionPreview = result.transcription.length > 100
+        ? result.transcription.slice(0, 100) + '...'
+        : result.transcription;
+      
+      await ctx.reply(`🎤 _"${transcriptionPreview}"_`, { parse_mode: 'Markdown' });
+      await sendLongMessage(ctx, result.response.content);
+
+      telegramLogger.info(
+        { userId, tokens: result.response.tokens_used.total },
+        'Voice response sent'
+      );
+    } catch (error) {
+      telegramLogger.error({ error, userId }, 'Failed to process voice message');
+      
+      await analyticsRepo.log('error', 'telegram', {
+        userId,
+        type: 'voice',
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+
+      await ctx.reply(
+        '😔 Не удалось обработать голосовое сообщение. Попробуй ещё раз или отправь текст.'
+      );
+    }
   });
 
-  // Stickers and other media
+  // Photo messages - analyze and send to LLM
+  bot.on('message:photo', async (ctx) => {
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const chatId = ctx.chat.id;
+    const caption = ctx.message.caption;
+    
+    telegramLogger.info({ userId, hasCaption: !!caption }, 'Photo message received');
+
+    // Check rate limit
+    const rateLimitResult = checkTelegramRateLimit(userId);
+    if (!rateLimitResult.allowed) {
+      await ctx.reply(rateLimitResult.message ?? '⏳ Слишком много сообщений.');
+      return;
+    }
+
+    await analyticsRepo.log('message_received', 'telegram', {
+      userId,
+      type: 'photo',
+      hasCaption: !!caption,
+    });
+
+    // Show typing indicator
+    await ctx.replyWithChatAction('typing');
+
+    try {
+      // Get largest photo
+      const photos = ctx.message.photo;
+      const largestPhoto = photos[photos.length - 1];
+      
+      if (!largestPhoto) {
+        throw new Error('No photo found in message');
+      }
+      
+      // Download photo
+      const file = await ctx.api.getFile(largestPhoto.file_id);
+      const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
+      
+      telegramLogger.debug({ fileUrl, width: largestPhoto.width, height: largestPhoto.height }, 'Downloading photo');
+      
+      const response = await fetch(fileUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to download photo: ${response.status}`);
+      }
+      
+      const imageBuffer = await response.arrayBuffer();
+      const imageBase64 = Buffer.from(imageBuffer).toString('base64');
+      
+      // Determine MIME type
+      const mimeType = file.file_path?.endsWith('.png') ? 'image/png' : 'image/jpeg';
+      
+      // Get or create conversation
+      if (!ctx.session.conversationId) {
+        const conversation = await conversationsRepo.getOrCreate(
+          userId,
+          'telegram',
+          { telegram_chat_id: chatId, telegram_user_id: ctx.from?.id }
+        );
+        ctx.session.conversationId = conversation.id;
+        ctx.session.messageHistory = conversation.messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+        }));
+      }
+
+      // Process image: analyze + LLM
+      const aiResponse = await processImageWithLLM(
+        imageBase64,
+        mimeType,
+        caption,
+        ctx.session.messageHistory
+      );
+
+      // Create user message content
+      const userContent = caption
+        ? `[Изображение с подписью: "${caption}"]`
+        : '[Изображение]';
+
+      // Update history
+      ctx.session.messageHistory.push(
+        { role: 'user', content: userContent },
+        { role: 'assistant', content: aiResponse.content }
+      );
+
+      // Trim history if too long
+      if (ctx.session.messageHistory.length > MAX_HISTORY_MESSAGES) {
+        ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
+      }
+
+      // Save to database
+      const userMsg: Message = {
+        role: 'user',
+        content: userContent,
+        timestamp: new Date().toISOString(),
+        metadata: { 
+          type: 'photo',
+          width: largestPhoto.width,
+          height: largestPhoto.height,
+        },
+      };
+      const assistantMsg: Message = {
+        role: 'assistant',
+        content: aiResponse.content,
+        timestamp: new Date().toISOString(),
+        metadata: {
+          tokens_used: aiResponse.tokens_used.total,
+          model: aiResponse.model,
+        },
+      };
+
+      await conversationsRepo.addMessage(ctx.session.conversationId, userMsg);
+      await conversationsRepo.addMessage(ctx.session.conversationId, assistantMsg);
+
+      // Log analytics
+      await analyticsRepo.log('ai_response', 'telegram', {
+        userId,
+        type: 'photo',
+        model: aiResponse.model,
+        tokens: aiResponse.tokens_used.total,
+      });
+
+      // Send response
+      await sendLongMessage(ctx, aiResponse.content);
+
+      telegramLogger.info(
+        { userId, tokens: aiResponse.tokens_used.total },
+        'Photo response sent'
+      );
+    } catch (error) {
+      telegramLogger.error({ error, userId }, 'Failed to process photo');
+      
+      await analyticsRepo.log('error', 'telegram', {
+        userId,
+        type: 'photo',
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+
+      await ctx.reply(
+        '😔 Не удалось обработать изображение. Попробуй ещё раз или отправь текст.'
+      );
+    }
+  });
+
+  // Document/file messages (images sent as files)
+  bot.on('message:document', async (ctx) => {
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const document = ctx.message.document;
+    const mimeType = document.mime_type ?? '';
+    
+    // Check if it's an image
+    if (!mimeType.startsWith('image/')) {
+      await ctx.reply('📄 Пока что я могу анализировать только изображения. Отправь фото или картинку.');
+      return;
+    }
+
+    telegramLogger.info({ userId, mimeType, fileName: document.file_name }, 'Document image received');
+
+    // Check rate limit
+    const rateLimitResult = checkTelegramRateLimit(userId);
+    if (!rateLimitResult.allowed) {
+      await ctx.reply(rateLimitResult.message ?? '⏳ Слишком много сообщений.');
+      return;
+    }
+
+    await analyticsRepo.log('message_received', 'telegram', {
+      userId,
+      type: 'document_image',
+      mimeType,
+    });
+
+    // Show typing indicator
+    await ctx.replyWithChatAction('typing');
+
+    try {
+      // Download document
+      const file = await ctx.getFile();
+      const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
+      
+      const response = await fetch(fileUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to download document: ${response.status}`);
+      }
+      
+      const imageBuffer = await response.arrayBuffer();
+      const imageBase64 = Buffer.from(imageBuffer).toString('base64');
+      const caption = ctx.message.caption;
+      const chatId = ctx.chat.id;
+      
+      // Get or create conversation
+      if (!ctx.session.conversationId) {
+        const conversation = await conversationsRepo.getOrCreate(
+          userId,
+          'telegram',
+          { telegram_chat_id: chatId, telegram_user_id: ctx.from?.id }
+        );
+        ctx.session.conversationId = conversation.id;
+        ctx.session.messageHistory = conversation.messages.map((m) => ({
+          role: m.role,
+          content: m.content,
+        }));
+      }
+
+      // Process image
+      const aiResponse = await processImageWithLLM(
+        imageBase64,
+        mimeType,
+        caption,
+        ctx.session.messageHistory
+      );
+
+      const userContent = caption
+        ? `[Изображение "${document.file_name}" с подписью: "${caption}"]`
+        : `[Изображение "${document.file_name}"]`;
+
+      // Update history
+      ctx.session.messageHistory.push(
+        { role: 'user', content: userContent },
+        { role: 'assistant', content: aiResponse.content }
+      );
+
+      if (ctx.session.messageHistory.length > MAX_HISTORY_MESSAGES) {
+        ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
+      }
+
+      // Save to database
+      const userMsg: Message = {
+        role: 'user',
+        content: userContent,
+        timestamp: new Date().toISOString(),
+        metadata: { type: 'document_image', fileName: document.file_name },
+      };
+      const assistantMsg: Message = {
+        role: 'assistant',
+        content: aiResponse.content,
+        timestamp: new Date().toISOString(),
+        metadata: {
+          tokens_used: aiResponse.tokens_used.total,
+          model: aiResponse.model,
+        },
+      };
+
+      await conversationsRepo.addMessage(ctx.session.conversationId, userMsg);
+      await conversationsRepo.addMessage(ctx.session.conversationId, assistantMsg);
+
+      await analyticsRepo.log('ai_response', 'telegram', {
+        userId,
+        type: 'document_image',
+        model: aiResponse.model,
+        tokens: aiResponse.tokens_used.total,
+      });
+
+      await sendLongMessage(ctx, aiResponse.content);
+
+      telegramLogger.info({ userId }, 'Document image response sent');
+    } catch (error) {
+      telegramLogger.error({ error, userId }, 'Failed to process document image');
+      
+      await analyticsRepo.log('error', 'telegram', {
+        userId,
+        type: 'document_image',
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+
+      await ctx.reply('😔 Не удалось обработать изображение. Попробуй ещё раз.');
+    }
+  });
+
+  // Stickers and other unsupported media
   bot.on('message', async (ctx) => {
     // Catch-all for unsupported message types
-    if (!ctx.message.text && !ctx.message.voice) {
-      await ctx.reply('🤔 Пока что я понимаю только текстовые сообщения.');
+    const msg = ctx.message;
+    if (!msg.text && !msg.voice && !msg.photo && !msg.document) {
+      await ctx.reply('🤔 Я понимаю текст, голосовые сообщения и изображения.');
     }
   });
 };

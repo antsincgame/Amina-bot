@@ -4,6 +4,7 @@ import Layout from './components/Layout';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import SettingsPage from './pages/SettingsPage';
+import MultimodalSettingsPage from './pages/MultimodalSettingsPage';
 import PromptsPage from './pages/PromptsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import LogsPage from './pages/LogsPage';
@@ -45,6 +46,7 @@ const App = () => {
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="multimodal" element={<MultimodalSettingsPage />} />
           <Route path="prompts" element={<PromptsPage />} />
           <Route path="analytics" element={<AnalyticsPage />} />
           <Route path="logs" element={<LogsPage />} />
