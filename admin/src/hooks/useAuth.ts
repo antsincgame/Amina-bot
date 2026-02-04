@@ -10,7 +10,7 @@ interface AuthState {
   error: string | null;
   
   // Actions
-  initialize: () => Promise<void>;
+  initialize: () => Promise<unknown>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   clearError: () => void;
@@ -37,13 +37,16 @@ export const useAuthStore = create<AuthState>()(
             isLoading: false,
           });
 
-          // Listen for auth changes
-          supabase.auth.onAuthStateChange((_event, session) => {
+          // Listen for auth changes (unsubscribe is automatic when page unloads)
+          const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
             set({
               user: session?.user ?? null,
               session,
             });
           });
+
+          // Store subscription for cleanup (if needed in future)
+          return subscription;
         } catch (error) {
           set({
             isLoading: false,

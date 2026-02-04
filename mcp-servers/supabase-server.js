@@ -29,19 +29,46 @@ function getSupabase() {
   return supabase;
 }
 
+// Whitelist of allowed tables (security)
+const ALLOWED_TABLES = [
+  'settings',
+  'prompts',
+  'conversations',
+  'analytics',
+];
+
+// Validate table name against whitelist
+function validateTable(table) {
+  if (!table || typeof table !== 'string') {
+    throw new Error('Invalid table name');
+  }
+  
+  const sanitized = table.toLowerCase().trim();
+  
+  if (!ALLOWED_TABLES.includes(sanitized)) {
+    throw new Error(
+      `Table "${table}" not allowed. Allowed tables: ${ALLOWED_TABLES.join(', ')}`
+    );
+  }
+  
+  return sanitized;
+}
+
+// Validate column names (prevent SQL injection)
+function validateColumns(columns) {
+  if (!columns || columns === '*') return '*';
+  
+  const columnPattern = /^[a-zA-Z0-9_,\s\*]+$/;
+  if (!columnPattern.test(columns)) {
+    throw new Error('Invalid column names. Use only alphanumeric, underscore, comma, and spaces');
+  }
+  
+  return columns;
+}
+
 // Tool definitions
 const tools = [
-  {
-    name: 'supabase_query',
-    description: 'Execute a raw SQL query',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        sql: { type: 'string', description: 'SQL query to execute' },
-      },
-      required: ['sql'],
-    },
-  },
+  // Raw SQL removed for security - use supabase_rpc for custom queries
   {
     name: 'supabase_select',
     description: 'Select data from a table with filters',
@@ -167,36 +194,11 @@ async function handleTool(name, args) {
   const sb = getSupabase();
 
   switch (name) {
-    case 'supabase_query': {
-      const { data, error } = await sb.rpc('', {}).select(args.sql);
-      // Use raw SQL via Postgres function or REST
-      // Simplified: use schema introspection instead
-      const result = await fetch(`${SUPABASE_URL}/rest/v1/rpc/`, {
-        method: 'POST',
-        headers: {
-          'apikey': SUPABASE_SERVICE_KEY,
-          'Authorization': `Bearer ${SUPABASE_SERVICE_KEY}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ query: args.sql }),
-      });
-      
-      // Actually, let's use the proper approach
-      const { data: queryData, error: queryError } = await sb
-        .from('_dummy_')
-        .select()
-        .limit(0);
-      
-      // For raw SQL, users should use Supabase Dashboard SQL Editor
-      // This MCP focuses on safe operations
-      return { 
-        message: 'For raw SQL, use supabase_select/insert/update/delete or Supabase Dashboard',
-        tip: 'Or create a PostgreSQL function and use supabase_rpc',
-      };
-    }
-
     case 'supabase_select': {
-      let query = sb.from(args.table).select(args.columns || '*');
+      const table = validateTable(args.table);
+      const columns = validateColumns(args.columns);
+      
+      let query = sb.from(table).select(columns || '*');
       
       if (args.filter) {
         for (const [key, value] of Object.entries(args.filter)) {
@@ -215,7 +217,8 @@ async function handleTool(name, args) {
     }
 
     case 'supabase_insert': {
-      let query = sb.from(args.table);
+      const table = validateTable(args.table);
+      let query = sb.from(table);
       
       if (args.upsert) {
         query = query.upsert(args.data, { onConflict: args.on_conflict });
@@ -229,7 +232,8 @@ async function handleTool(name, args) {
     }
 
     case 'supabase_update': {
-      let query = sb.from(args.table).update(args.data);
+      const table = validateTable(args.table);
+      let query = sb.from(table).update(args.data);
       
       for (const [key, value] of Object.entries(args.filter)) {
         query = query.eq(key, value);
@@ -241,7 +245,8 @@ async function handleTool(name, args) {
     }
 
     case 'supabase_delete': {
-      let query = sb.from(args.table).delete();
+      const table = validateTable(args.table);
+      let query = sb.from(table).delete();
       
       for (const [key, value] of Object.entries(args.filter)) {
         query = query.eq(key, value);

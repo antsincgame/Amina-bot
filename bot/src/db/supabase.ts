@@ -9,6 +9,15 @@ import type {
   AnalyticsEvent,
   AnalyticsEventType,
 } from '../../../shared/types/index.js';
+import {
+  validateUserId,
+  validateChannel,
+  validateEventType,
+  validateLimit,
+  checkArraySize,
+  MAX_CONVERSATION_MESSAGES,
+} from '../utils/validation.js';
+import { handleSupabaseError, isNotFoundError } from '../utils/error-handler.js';
 
 // --------------------------------------------
 // Supabase Client Singleton
@@ -42,7 +51,7 @@ export const settingsRepo = {
       .single();
 
     if (error) {
-      if (error.code === 'PGRST116') return null; // Not found
+      if (isNotFoundError(error)) return null;
       dbLogger.error({ error, key }, 'Failed to get setting');
       throw error;
     }
@@ -207,12 +216,15 @@ export const conversationsRepo = {
     channel: 'telegram' | 'voice',
     metadata: Conversation['metadata']
   ): Promise<Conversation> {
+    const validUserId = validateUserId(userId);
+    const validChannel = validateChannel(channel);
+
     // Try to find existing conversation
     const { data: existing } = await getSupabase()
       .from('conversations')
       .select('*')
-      .eq('user_id', userId)
-      .eq('channel', channel)
+      .eq('user_id', validUserId)
+      .eq('channel', validChannel)
       .order('updated_at', { ascending: false })
       .limit(1)
       .single();
@@ -225,8 +237,8 @@ export const conversationsRepo = {
     const { data, error } = await getSupabase()
       .from('conversations')
       .insert({
-        user_id: userId,
-        channel,
+        user_id: validUserId,
+        channel: validChannel,
         messages: [],
         metadata,
       })
@@ -234,7 +246,7 @@ export const conversationsRepo = {
       .single();
 
     if (error) {
-      dbLogger.error({ error, userId, channel }, 'Failed to create conversation');
+      dbLogger.error({ error, userId: validUserId, channel: validChannel }, 'Failed to create conversation');
       throw error;
     }
 
@@ -242,37 +254,92 @@ export const conversationsRepo = {
   },
 
   async addMessage(conversationId: string, message: Message): Promise<void> {
-    // Get current messages
-    const { data: conv, error: fetchError } = await getSupabase()
-      .from('conversations')
-      .select('messages')
-      .eq('id', conversationId)
-      .single();
+    // Validate message array size limit
+    checkArraySize([message], 1, 'Cannot add empty message');
 
-    if (fetchError) {
-      dbLogger.error({ error: fetchError, conversationId }, 'Failed to fetch conversation');
-      throw fetchError;
-    }
-
-    const currentMessages = (conv as { messages: Message[] } | null)?.messages ?? [];
-    const messages = [...currentMessages, message];
-
-    // Update with new message
-    const { error } = await getSupabase()
-      .from('conversations')
-      .update({
-        messages,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', conversationId);
+    // Use PostgreSQL jsonb_set for atomic append operation
+    // This prevents race conditions when multiple messages arrive simultaneously
+    const { error } = await getSupabase().rpc('append_conversation_message', {
+      conversation_id: conversationId,
+      new_message: message as unknown as Record<string, unknown>,
+    });
 
     if (error) {
-      dbLogger.error({ error, conversationId }, 'Failed to add message');
-      throw error;
+      // If RPC function doesn't exist, fall back to read-modify-write with retry
+      dbLogger.warn({ error }, 'RPC function not available, using fallback');
+      return await this.addMessageFallback(conversationId, message);
     }
+
+    dbLogger.debug({ conversationId }, 'Message added atomically');
+  },
+
+  /**
+   * Fallback method for addMessage (non-atomic, has race condition risk)
+   * @private
+   */
+  async addMessageFallback(conversationId: string, message: Message): Promise<void> {
+    const maxRetries = 3;
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        // Get current messages
+        const { data: conv, error: fetchError } = await getSupabase()
+          .from('conversations')
+          .select('messages')
+          .eq('id', conversationId)
+          .single();
+
+        if (fetchError) {
+          dbLogger.error({ error: fetchError, conversationId }, 'Failed to fetch conversation');
+          throw fetchError;
+        }
+
+        const currentMessages = (conv as { messages: Message[] } | null)?.messages ?? [];
+
+        // Check array size limit
+        checkArraySize(
+          currentMessages,
+          MAX_CONVERSATION_MESSAGES,
+          `Conversation has too many messages (max ${MAX_CONVERSATION_MESSAGES})`
+        );
+
+        const messages = [...currentMessages, message];
+
+        // Update with new message
+        const { error } = await getSupabase()
+          .from('conversations')
+          .update({
+            messages,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', conversationId);
+
+        if (error) {
+          throw error;
+        }
+
+        // Success
+        dbLogger.debug({ conversationId, attempt }, 'Message added (fallback)');
+        return;
+      } catch (error) {
+        lastError = error as Error;
+        dbLogger.warn({ error, attempt, conversationId }, 'Retry adding message');
+
+        if (attempt < maxRetries) {
+          // Exponential backoff
+          await new Promise((resolve) => setTimeout(resolve, 100 * Math.pow(2, attempt)));
+        }
+      }
+    }
+
+    dbLogger.error({ error: lastError, conversationId }, 'Failed to add message after retries');
+    throw lastError;
   },
 
   async getMessages(conversationId: string, limit = 20): Promise<Message[]> {
+    const validLimit = validateLimit(limit, 1, 1000);
+
     const { data, error } = await getSupabase()
       .from('conversations')
       .select('messages')
@@ -285,7 +352,7 @@ export const conversationsRepo = {
     }
 
     const messages = (data as { messages: Message[] } | null)?.messages ?? [];
-    return messages.slice(-limit);
+    return messages.slice(-validLimit);
   },
 
   async clearMessages(conversationId: string): Promise<void> {
@@ -315,18 +382,27 @@ export const analyticsRepo = {
     data: Record<string, unknown>,
     userId?: string
   ): Promise<void> {
-    const { error } = await getSupabase()
-      .from('analytics')
-      .insert({
-        event_type: eventType,
-        channel,
-        data,
-        user_id: userId,
-      });
+    try {
+      const validEventType = validateEventType(eventType);
+      const validChannel = validateChannel(channel);
+      const validUserId = userId ? validateUserId(userId) : undefined;
 
-    if (error) {
-      dbLogger.error({ error, eventType }, 'Failed to log analytics event');
-      // Don't throw - analytics shouldn't break the app
+      const { error } = await getSupabase()
+        .from('analytics')
+        .insert({
+          event_type: validEventType,
+          channel: validChannel,
+          data,
+          user_id: validUserId,
+        });
+
+      if (error) {
+        dbLogger.error({ error, eventType: validEventType }, 'Failed to log analytics event');
+        // Don't throw - analytics shouldn't break the app
+      }
+    } catch (error) {
+      // Validation or unexpected errors - log and continue
+      dbLogger.warn({ error, eventType }, 'Analytics validation failed');
     }
   },
 

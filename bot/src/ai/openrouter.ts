@@ -3,6 +3,8 @@ import { config } from '../config/index.js';
 import { aiLogger } from '../config/logger.js';
 import { settingsRepo, promptsRepo } from '../db/supabase.js';
 import type { AIRequest, AIResponse, AIMessage } from '../../../shared/types/index.js';
+import { validateChannel, validateMessageContent, MAX_MESSAGE_LENGTH } from '../utils/validation.js';
+import { handleAIError } from '../utils/error-handler.js';
 
 // --------------------------------------------
 // OpenRouter Client
@@ -15,6 +17,7 @@ const getClient = (): OpenAI => {
     openai = new OpenAI({
       apiKey: config.ai.apiKey,
       baseURL: config.ai.baseUrl,
+      timeout: 30000, // 30 second timeout
       defaultHeaders: {
         'HTTP-Referer': 'https://amina-bot.render.com',
         'X-Title': 'Amina AI Bot',
