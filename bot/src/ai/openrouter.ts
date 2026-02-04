@@ -7,20 +7,97 @@ import { validateChannel, validateMessageContent, MAX_MESSAGE_LENGTH } from '../
 import { handleAIError } from '../utils/error-handler.js';
 
 // --------------------------------------------
-// FREE_MODELS — 3 самых стабильных бесплатных модели
-// Уменьшено для экономии rate limit OpenRouter
+// Динамический поиск бесплатных моделей через OpenRouter API
 // --------------------------------------------
 
-const FREE_MODELS = [
-  'meta-llama/llama-3.2-3b-instruct:free',      // Llama 3.2 3B — самая стабильная
-  'mistralai/mistral-7b-instruct:free',         // Mistral 7B — проверенная
-  'google/gemma-2-9b-it:free',                  // Gemma 2 9B — Google backup
+// Статический fallback (если API недоступен)
+const STATIC_FREE_MODELS = [
+  'meta-llama/llama-3.2-3b-instruct:free',
+  'mistralai/mistral-7b-instruct:free',
+  'google/gemma-2-9b-it:free',
+  'meta-llama/llama-3.1-8b-instruct:free',
+  'qwen/qwen-2-7b-instruct:free',
+  'huggingfaceh4/zephyr-7b-beta:free',
+  'openchat/openchat-7b:free',
 ];
+
+// Кэш динамических бесплатных моделей
+let cachedFreeModels: string[] | null = null;
+let freeModelsCacheTime: number = 0;
+const FREE_MODELS_CACHE_TTL = 5 * 60 * 1000; // 5 минут
+
+/**
+ * Динамически получает список бесплатных моделей от OpenRouter
+ * Кэширует на 5 минут для оптимизации
+ */
+async function fetchFreeModels(): Promise<string[]> {
+  const now = Date.now();
+  
+  // Возвращаем кэш если свежий
+  if (cachedFreeModels && (now - freeModelsCacheTime) < FREE_MODELS_CACHE_TTL) {
+    return cachedFreeModels;
+  }
+  
+  try {
+    const keys = await getApiKeys();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 сек таймаут
+    
+    const response = await fetch('https://openrouter.ai/api/v1/models', {
+      headers: { 'Authorization': `Bearer ${keys.openrouter}` },
+      signal: controller.signal,
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      throw new Error(`OpenRouter API error: ${response.status}`);
+    }
+    
+    const data = await response.json() as {
+      data: Array<{
+        id: string;
+        pricing: { prompt: string; completion: string };
+        context_length?: number;
+      }>;
+    };
+    
+    // Фильтруем бесплатные модели (pricing = 0)
+    const freeModels = data.data
+      .filter(m => m.pricing.prompt === '0' && m.pricing.completion === '0')
+      .filter(m => (m.context_length || 0) >= 4096) // Минимум 4K контекст
+      .map(m => m.id)
+      .slice(0, 15); // Максимум 15 моделей для гонки
+    
+    if (freeModels.length > 0) {
+      cachedFreeModels = freeModels;
+      freeModelsCacheTime = now;
+      aiLogger.info({ count: freeModels.length }, '🆓 Fetched free models from OpenRouter');
+      return freeModels;
+    }
+    
+    throw new Error('No free models found');
+  } catch (error) {
+    aiLogger.warn({ error }, 'Failed to fetch free models, using static list');
+    return STATIC_FREE_MODELS;
+  }
+}
+
+/**
+ * Получить бесплатные модели (динамически или статически)
+ */
+async function getFreeModels(): Promise<string[]> {
+  try {
+    return await fetchFreeModels();
+  } catch {
+    return STATIC_FREE_MODELS;
+  }
+}
 
 // Таймаут для гонки моделей (чтобы не превысить 30 сек Render)
 const RACE_TIMEOUT_MS = 15000;
 
-// Ошибки при которых нужен параллельный fallback
+// Ошибки при которых нужен параллельный fallback (включая 402!)
 const RACE_ERROR_PATTERNS = [
   'Provider returned error',
   'Empty response',
@@ -29,6 +106,8 @@ const RACE_ERROR_PATTERNS = [
   '502',
   '500',
   '400',
+  '402',  // ← ДОБАВЛЕНО: Payment Required тоже запускает гонку бесплатных
+  'Payment Required',
   'temporarily unavailable',
   'overloaded',
 ];
@@ -228,15 +307,10 @@ export const aiService = {
         throw detailedError;
       }
       
-      if (errorMessage.includes('402') || errorMessage.includes('Payment Required')) {
-        const detailedError = new Error(
-          `PAYMENT_REQUIRED: Пополните баланс на OpenRouter или выберите бесплатную модель.`
-        );
-        (detailedError as any).code = 'PAYMENT_REQUIRED';
-        throw detailedError;
-      }
+      // 402 (Payment Required) ТЕПЕРЬ запускает гонку бесплатных моделей!
+      // Раньше это была критическая ошибка, но бесплатные модели могут помочь
 
-      // Проверяем, нужна ли гонка моделей
+      // Проверяем, нужна ли гонка моделей (включая 402!)
       const needsRace = RACE_ERROR_PATTERNS.some(pattern => 
         errorMessage.toLowerCase().includes(pattern.toLowerCase())
       );
@@ -252,12 +326,17 @@ export const aiService = {
         }
         throw primaryError;
       }
+      
+      aiLogger.info({ originalError: errorMessage }, '🔄 Will try free models race');
     }
 
-    // === ШАГ 2: Гонка 3 бесплатных моделей с таймаутом ===
+    // === ШАГ 2: Динамическая гонка бесплатных моделей ===
+    // Получаем актуальный список бесплатных моделей от OpenRouter API
+    const freeModels = await getFreeModels();
+    
     aiLogger.info(
-      { modelsCount: FREE_MODELS.length, timeoutMs: RACE_TIMEOUT_MS },
-      '🏁 Starting model race — first to respond wins'
+      { modelsCount: freeModels.length, timeoutMs: RACE_TIMEOUT_MS, models: freeModels.slice(0, 5) },
+      '🏁 Starting dynamic free models race'
     );
 
     // Таймаут-промис для ограничения гонки
@@ -267,8 +346,9 @@ export const aiService = {
       }, RACE_TIMEOUT_MS);
     });
 
-    // Запускаем модели параллельно
-    const racePromises = FREE_MODELS.map(async (model) => {
+    // Запускаем модели параллельно (максимум первые 7 для экономии rate limit)
+    const modelsToTry = freeModels.slice(0, 7);
+    const racePromises = modelsToTry.map(async (model) => {
       try {
         const result = await tryModel(model);
         aiLogger.debug({ model }, 'Model responded in race');
@@ -321,15 +401,15 @@ export const aiService = {
 
       // Все модели упали
       aiLogger.error(
-        { modelsCount: FREE_MODELS.length },
-        '💀 All models failed in race'
+        { modelsCount: modelsToTry.length, triedModels: modelsToTry },
+        '💀 All free models failed in race'
       );
 
       const detailedError = new Error(
-        `ALL_MODELS_FAILED: Все ${FREE_MODELS.length} бесплатных моделей недоступны. Попробуйте позже.`
+        `ALL_MODELS_FAILED: Все ${modelsToTry.length} бесплатных моделей недоступны. Попробуйте позже.`
       );
       (detailedError as any).code = 'ALL_MODELS_FAILED';
-      (detailedError as any).triedModels = FREE_MODELS;
+      (detailedError as any).triedModels = modelsToTry;
       throw detailedError;
     }
   },
@@ -445,10 +525,11 @@ export const aiService = {
 // ============================================
 
 /**
- * Get list of race models for admin panel (10 free models)
+ * Get list of race models for admin panel (динамический или статический)
  */
-export function getFallbackModels(): Array<{ id: string; name: string; description: string }> {
-  return FREE_MODELS.map((id) => ({
+export async function getFallbackModels(): Promise<Array<{ id: string; name: string; description: string }>> {
+  const models = await getFreeModels();
+  return models.map((id) => ({
     id,
     name: id.split('/').pop()?.replace(':free', '') || id,
     description: `Бесплатная модель: ${id}`,
@@ -463,12 +544,28 @@ export async function getFallbackStatus(): Promise<{
   lastSwitchReason: string | null;
   lastSwitchTime: string | null;
   raceModelsCount: number;
+  cachedModels: string[];
+  cacheAge: number;
 }> {
   const currentModel = await settingsRepo.get('openrouter_model');
+  const models = await getFreeModels();
+  const cacheAge = cachedFreeModels ? Math.round((Date.now() - freeModelsCacheTime) / 1000) : -1;
+  
   return {
     currentModel: currentModel || 'meta-llama/llama-3.2-3b-instruct:free',
     lastSwitchReason: lastFallbackSwitch.reason,
     lastSwitchTime: lastFallbackSwitch.time?.toISOString() || null,
-    raceModelsCount: FREE_MODELS.length,
+    raceModelsCount: models.length,
+    cachedModels: models,
+    cacheAge, // секунды с последнего обновления кэша (-1 если нет кэша)
   };
+}
+
+/**
+ * Принудительно обновить кэш бесплатных моделей
+ */
+export async function refreshFreeModelsCache(): Promise<string[]> {
+  cachedFreeModels = null;
+  freeModelsCacheTime = 0;
+  return await fetchFreeModels();
 }

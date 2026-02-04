@@ -805,7 +805,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
       apiServer.get('/models/fallback', async (request: FastifyRequest, reply: FastifyReply) => {
         try {
           const { getFallbackModels, getFallbackStatus } = await import('../ai/openrouter.js');
-          const fallbackModels = getFallbackModels();
+          const fallbackModels = await getFallbackModels();
           const status = await getFallbackStatus();
           
           return reply.code(200).send({
@@ -816,6 +816,8 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
               currentModel: status.currentModel,
               lastSwitchReason: status.lastSwitchReason,
               lastSwitchTime: status.lastSwitchTime,
+              cachedModels: status.cachedModels,
+              cacheAge: status.cacheAge,
             },
           });
         } catch (error) {
@@ -823,6 +825,34 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
           return reply.code(500).send({
             success: false,
             error: 'Failed to get fallback models info',
+          });
+        }
+      });
+
+      /**
+       * POST /api/models/fallback/refresh
+       * Force refresh free models cache from OpenRouter
+       */
+      apiServer.post('/models/fallback/refresh', async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+          const { refreshFreeModelsCache } = await import('../ai/openrouter.js');
+          const models = await refreshFreeModelsCache();
+          
+          aiLogger.info({ count: models.length }, 'Free models cache refreshed');
+          
+          return reply.code(200).send({
+            success: true,
+            data: {
+              modelsCount: models.length,
+              models: models,
+              message: 'Free models cache refreshed from OpenRouter API',
+            },
+          });
+        } catch (error) {
+          aiLogger.error({ error }, 'Failed to refresh free models cache');
+          return reply.code(500).send({
+            success: false,
+            error: 'Failed to refresh free models cache',
           });
         }
       });
