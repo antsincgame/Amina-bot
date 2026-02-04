@@ -124,6 +124,8 @@ interface MultimodalConfig {
   audioModel: string;
   audioFallbackModel: string;
   maxTokens: number;
+  visionPrompt: string;
+  visionMaxTokens: number;
 }
 
 // Дефолтные модели
@@ -133,6 +135,10 @@ const DEFAULT_AUDIO_MODEL = 'groq/whisper-large-v3';
 // Дефолт fallback при Groq без ключа (настраивается в админке)
 const DEFAULT_AUDIO_FALLBACK_MODEL = 'openai/gpt-audio-mini';
 
+// Дефолтный промпт для описания изображений
+const DEFAULT_VISION_PROMPT = 'Опиши подробно что изображено на этой картинке. Обрати внимание на детали, цвета, объекты и их расположение.';
+const DEFAULT_VISION_MAX_TOKENS = 1024;
+
 const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
   const settings = await settingsRepo.getMany([
     'vision_model',
@@ -141,6 +147,8 @@ const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
     'audio_model_override',
     'audio_fallback_model',
     'max_tokens',
+    'vision_prompt',
+    'vision_max_tokens',
   ]);
 
   // Vision model priority: override > setting > default
@@ -173,12 +181,20 @@ const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
   const audioFallbackModel =
     settings['audio_fallback_model']?.trim() || DEFAULT_AUDIO_FALLBACK_MODEL;
 
+  // Vision prompt и max_tokens из админки
+  const visionPrompt = settings['vision_prompt']?.trim() || DEFAULT_VISION_PROMPT;
+  const visionMaxTokens = settings['vision_max_tokens'] 
+    ? Number(settings['vision_max_tokens']) 
+    : DEFAULT_VISION_MAX_TOKENS;
+
   aiLogger.debug({
     visionModel,
     visionSource,
     audioModel,
     audioSource,
     audioFallbackModel,
+    visionPrompt: visionPrompt.substring(0, 50) + '...',
+    visionMaxTokens,
   }, 'Multimodal config loaded');
 
   return {
@@ -186,6 +202,8 @@ const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
     audioModel,
     audioFallbackModel,
     maxTokens: settings['max_tokens'] ? Number(settings['max_tokens']) : 2048,
+    visionPrompt,
+    visionMaxTokens,
   };
 };
 
@@ -204,9 +222,14 @@ export async function analyzeImage(
   const config = await getMultimodalConfig();
   const client = await getClient();
 
-  const prompt = userPrompt || 'Опиши что ты видишь на этом изображении. Будь кратким и информативным.';
+  // Используем промпт из админки или переданный пользователем (caption от фото)
+  const prompt = userPrompt || config.visionPrompt;
 
-  aiLogger.info({ model: config.visionModel }, 'Analyzing image');
+  aiLogger.info({ 
+    model: config.visionModel, 
+    maxTokens: config.visionMaxTokens,
+    hasCustomPrompt: !!userPrompt,
+  }, 'Analyzing image');
 
   try {
     const response = await client.chat.completions.create({
@@ -228,7 +251,7 @@ export async function analyzeImage(
           ],
         },
       ],
-      max_tokens: config.maxTokens,
+      max_tokens: config.visionMaxTokens, // Используем настройку из админки
     });
 
     const content = response.choices[0]?.message?.content;
