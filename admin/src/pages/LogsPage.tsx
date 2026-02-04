@@ -13,6 +13,9 @@ import {
   Clock,
   Server,
   User,
+  Download,
+  FileJson,
+  FileText,
 } from 'lucide-react';
 
 // Types
@@ -170,6 +173,88 @@ const LogsPage = () => {
   // Get unique modules from logs
   const modules = [...new Set(logs?.map((l) => l.module) ?? [])];
 
+  // Download logs as JSON
+  const downloadJSON = (data: SystemLog[], filename: string) => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // Download logs as CSV
+  const downloadCSV = (data: SystemLog[], filename: string) => {
+    const headers = ['timestamp', 'level', 'module', 'message', 'user_id', 'request_id', 'data', 'error_stack'];
+    const csvRows = [
+      headers.join(','),
+      ...data.map(log => [
+        `"${log.timestamp}"`,
+        `"${log.level}"`,
+        `"${log.module}"`,
+        `"${log.message.replace(/"/g, '""')}"`,
+        `"${log.user_id || ''}"`,
+        `"${log.request_id || ''}"`,
+        `"${log.data ? JSON.stringify(log.data).replace(/"/g, '""') : ''}"`,
+        `"${log.error_stack?.replace(/"/g, '""') || ''}"`,
+      ].join(','))
+    ];
+    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // Download logs as TXT (human-readable)
+  const downloadTXT = (data: SystemLog[], filename: string) => {
+    const lines = data.map(log => {
+      const parts = [
+        `[${new Date(log.timestamp).toLocaleString('ru-RU')}]`,
+        `[${log.level.toUpperCase()}]`,
+        `[${log.module}]`,
+        log.message,
+      ];
+      if (log.user_id) parts.push(`| User: ${log.user_id}`);
+      if (log.data && Object.keys(log.data).length > 0) {
+        parts.push(`\n  Data: ${JSON.stringify(log.data)}`);
+      }
+      if (log.error_stack) {
+        parts.push(`\n  Stack:\n    ${log.error_stack.split('\n').join('\n    ')}`);
+      }
+      return parts.join(' ');
+    });
+    const blob = new Blob([lines.join('\n\n')], { type: 'text/plain;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // Get filename with current filters
+  const getFilename = (ext: string) => {
+    const parts = ['amina-logs'];
+    if (levelFilter) parts.push(levelFilter);
+    if (moduleFilter) parts.push(moduleFilter);
+    parts.push(dateRange);
+    parts.push(new Date().toISOString().slice(0, 10));
+    return `${parts.join('-')}.${ext}`;
+  };
+
+  // Filter logs by level for download
+  const getLogsByLevel = (level: string) => logs?.filter(l => l.level === level) ?? [];
+
   return (
     <div className="p-6 lg:p-8 max-w-7xl mx-auto">
       {/* Header */}
@@ -180,36 +265,110 @@ const LogsPage = () => {
             Ошибки, предупреждения и системные события
           </p>
         </div>
-        <button
-          onClick={() => refetchLogs()}
-          className="btn-secondary flex items-center gap-2"
-        >
-          <RefreshCw className="w-4 h-4" />
-          Обновить
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => refetchLogs()}
+            className="btn-secondary flex items-center gap-2"
+          >
+            <RefreshCw className="w-4 h-4" />
+            Обновить
+          </button>
+          
+          {/* Download dropdown */}
+          {logs && logs.length > 0 && (
+            <div className="relative group">
+              <button className="btn-primary flex items-center gap-2">
+                <Download className="w-4 h-4" />
+                Скачать
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              <div className="absolute right-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
+                <div className="p-2 border-b border-gray-100">
+                  <p className="text-xs font-medium text-gray-500 px-2">Все логи ({logs.length})</p>
+                </div>
+                <button
+                  onClick={() => downloadJSON(logs, getFilename('json'))}
+                  className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                >
+                  <FileJson className="w-4 h-4 text-blue-500" />
+                  JSON
+                </button>
+                <button
+                  onClick={() => downloadCSV(logs, getFilename('csv'))}
+                  className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                >
+                  <FileText className="w-4 h-4 text-green-500" />
+                  CSV
+                </button>
+                <button
+                  onClick={() => downloadTXT(logs, getFilename('txt'))}
+                  className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                >
+                  <FileText className="w-4 h-4 text-gray-500" />
+                  TXT
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Stats Cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
         {Object.entries(LEVEL_CONFIG).map(([level, config]) => {
           const count = stats?.byLevel[level] ?? 0;
+          const levelLogs = getLogsByLevel(level);
           const Icon = config.icon;
           return (
             <div
               key={level}
-              className={`card p-4 cursor-pointer transition-all ${
+              className={`card p-4 transition-all ${
                 levelFilter === level ? 'ring-2 ring-primary-500' : ''
               }`}
-              onClick={() => setLevelFilter(levelFilter === level ? '' : level)}
             >
-              <div className="flex items-center gap-3">
-                <div className={`p-2 rounded-lg ${config.bg}`}>
-                  <Icon className={`w-5 h-5 ${config.color}`} />
+              <div className="flex items-center justify-between">
+                <div 
+                  className="flex items-center gap-3 cursor-pointer flex-1"
+                  onClick={() => setLevelFilter(levelFilter === level ? '' : level)}
+                >
+                  <div className={`p-2 rounded-lg ${config.bg}`}>
+                    <Icon className={`w-5 h-5 ${config.color}`} />
+                  </div>
+                  <div>
+                    <p className="text-2xl font-bold text-gray-900">{count}</p>
+                    <p className="text-sm text-gray-500">{config.label}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-2xl font-bold text-gray-900">{count}</p>
-                  <p className="text-sm text-gray-500">{config.label}</p>
-                </div>
+                {levelLogs.length > 0 && (
+                  <div className="relative group">
+                    <button 
+                      className="p-1.5 rounded hover:bg-gray-100 transition-colors"
+                      title={`Скачать ${config.label} логи`}
+                    >
+                      <Download className="w-4 h-4 text-gray-400" />
+                    </button>
+                    <div className="absolute right-0 mt-1 w-32 bg-white rounded-lg shadow-lg border border-gray-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
+                      <button
+                        onClick={() => downloadJSON(levelLogs, `amina-${level}-${dateRange}.json`)}
+                        className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
+                      >
+                        JSON
+                      </button>
+                      <button
+                        onClick={() => downloadCSV(levelLogs, `amina-${level}-${dateRange}.csv`)}
+                        className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
+                      >
+                        CSV
+                      </button>
+                      <button
+                        onClick={() => downloadTXT(levelLogs, `amina-${level}-${dateRange}.txt`)}
+                        className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
+                      >
+                        TXT
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           );
@@ -427,25 +586,65 @@ const LogsPage = () => {
       {/* Module Stats */}
       {stats && Object.keys(stats.byModule).length > 0 && (
         <div className="card mt-6 p-4">
-          <h3 className="font-semibold text-gray-900 mb-3">Логи по модулям</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold text-gray-900">Логи по модулям</h3>
+          </div>
           <div className="flex flex-wrap gap-2">
             {Object.entries(stats.byModule)
               .sort((a, b) => b[1] - a[1])
-              .map(([module, count]) => (
-                <button
-                  key={module}
-                  onClick={() =>
-                    setModuleFilter(moduleFilter === module ? '' : module)
-                  }
-                  className={`px-3 py-1.5 text-sm rounded-full transition-colors ${
-                    moduleFilter === module
-                      ? 'bg-primary-500 text-white'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                  }`}
-                >
-                  {module}: {count}
-                </button>
-              ))}
+              .map(([module, count]) => {
+                const moduleLogs = logs?.filter(l => l.module === module) ?? [];
+                return (
+                  <div key={module} className="relative group inline-flex">
+                    <button
+                      onClick={() =>
+                        setModuleFilter(moduleFilter === module ? '' : module)
+                      }
+                      className={`px-3 py-1.5 text-sm rounded-l-full transition-colors ${
+                        moduleFilter === module
+                          ? 'bg-primary-500 text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      }`}
+                    >
+                      {module}: {count}
+                    </button>
+                    {moduleLogs.length > 0 && (
+                      <div className="relative">
+                        <button
+                          className={`px-2 py-1.5 text-sm rounded-r-full border-l transition-colors ${
+                            moduleFilter === module
+                              ? 'bg-primary-600 text-white border-primary-400'
+                              : 'bg-gray-100 text-gray-500 hover:bg-gray-200 border-gray-200'
+                          }`}
+                          title={`Скачать логи ${module}`}
+                        >
+                          <Download className="w-3 h-3" />
+                        </button>
+                        <div className="absolute right-0 mt-1 w-32 bg-white rounded-lg shadow-lg border border-gray-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
+                          <button
+                            onClick={() => downloadJSON(moduleLogs, `amina-${module}-${dateRange}.json`)}
+                            className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
+                          >
+                            JSON
+                          </button>
+                          <button
+                            onClick={() => downloadCSV(moduleLogs, `amina-${module}-${dateRange}.csv`)}
+                            className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
+                          >
+                            CSV
+                          </button>
+                          <button
+                            onClick={() => downloadTXT(moduleLogs, `amina-${module}-${dateRange}.txt`)}
+                            className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
+                          >
+                            TXT
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
           </div>
         </div>
       )}
