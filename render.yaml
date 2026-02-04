@@ -43,7 +43,6 @@ services:
   - type: web
     name: amina-admin
     runtime: static
-    plan: free  # Static sites are free!
     rootDir: admin
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
