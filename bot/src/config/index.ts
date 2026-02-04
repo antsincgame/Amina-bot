@@ -9,19 +9,19 @@ dotenv.config();
 // --------------------------------------------
 
 const envSchema = z.object({
-  // Telegram
+  // Telegram — ОБЯЗАТЕЛЬНО в Render (без него бот не запустится)
   TELEGRAM_BOT_TOKEN: z.string().min(1, 'TELEGRAM_BOT_TOKEN is required'),
 
-  // OpenRouter
-  OPENROUTER_API_KEY: z.string().min(1, 'OPENROUTER_API_KEY is required'),
-  OPENROUTER_MODEL: z.string().default('anthropic/claude-3-haiku'),
-
-  // Groq (for free Whisper transcription)
-  GROQ_API_KEY: z.string().optional(),
-
-  // Supabase
+  // Supabase — ОБЯЗАТЕЛЬНО в Render (без него не прочитать настройки из админки)
   SUPABASE_URL: z.string().url('SUPABASE_URL must be a valid URL'),
   SUPABASE_SERVICE_KEY: z.string().min(1, 'SUPABASE_SERVICE_KEY is required'),
+
+  // OpenRouter — ОПЦИОНАЛЬНО в Render, можно задать в админке
+  OPENROUTER_API_KEY: z.string().optional(),
+  OPENROUTER_MODEL: z.string().default('anthropic/claude-3-haiku'),
+
+  // Groq — ОПЦИОНАЛЬНО, можно задать в админке
+  GROQ_API_KEY: z.string().optional(),
 
   // Server
   PORT: z.string().default('3000').transform(Number),
@@ -56,6 +56,10 @@ const parseEnv = () => {
 
 const env = parseEnv();
 
+// --------------------------------------------
+// Static Config (from environment)
+// --------------------------------------------
+
 export const config = {
   // Environment
   isDev: env.NODE_ENV === 'development',
@@ -69,7 +73,7 @@ export const config = {
     logLevel: env.LOG_LEVEL,
   },
 
-  // Telegram Bot
+  // Telegram Bot — из Render
   telegram: {
     token: env.TELEGRAM_BOT_TOKEN,
     webhook: {
@@ -78,22 +82,22 @@ export const config = {
     },
   },
 
-  // OpenRouter AI
+  // OpenRouter AI — может быть переопределён из админки
   ai: {
-    apiKey: env.OPENROUTER_API_KEY,
+    apiKey: env.OPENROUTER_API_KEY || '', // Может быть пустым, загрузится из БД
     model: env.OPENROUTER_MODEL || 'openrouter/free',
     baseUrl: 'https://openrouter.ai/api/v1',
     maxTokens: 2048,
     temperature: 0.7,
   },
 
-  // Groq (free Whisper transcription)
+  // Groq — может быть переопределён из админки
   groq: {
-    apiKey: env.GROQ_API_KEY,
+    apiKey: env.GROQ_API_KEY || '', // Может быть пустым, загрузится из БД
     baseUrl: 'https://api.groq.com/openai/v1',
   },
 
-  // Supabase Database
+  // Supabase Database — из Render
   db: {
     url: env.SUPABASE_URL,
     serviceKey: env.SUPABASE_SERVICE_KEY,
@@ -101,3 +105,69 @@ export const config = {
 } as const;
 
 export type Config = typeof config;
+
+// --------------------------------------------
+// Dynamic API Keys (from database with env fallback)
+// --------------------------------------------
+
+// Кэш для API ключей из БД
+let cachedApiKeys: {
+  openrouter: string;
+  groq: string;
+  loadedAt: number;
+} | null = null;
+
+const API_KEYS_CACHE_TTL = 60 * 1000; // 1 минута
+
+/**
+ * Получить API ключи (приоритет: env → БД)
+ * Используется для динамической загрузки ключей из админки
+ */
+export async function getApiKeys(): Promise<{ openrouter: string; groq: string }> {
+  // Если в env уже заданы ключи — используем их
+  if (config.ai.apiKey && config.groq.apiKey) {
+    return {
+      openrouter: config.ai.apiKey,
+      groq: config.groq.apiKey,
+    };
+  }
+
+  // Проверяем кэш
+  const now = Date.now();
+  if (cachedApiKeys && now - cachedApiKeys.loadedAt < API_KEYS_CACHE_TTL) {
+    return {
+      openrouter: cachedApiKeys.openrouter || config.ai.apiKey,
+      groq: cachedApiKeys.groq || config.groq.apiKey,
+    };
+  }
+
+  // Загружаем из БД (ленивый импорт чтобы избежать циклических зависимостей)
+  try {
+    const { settingsRepo } = await import('../db/supabase.js');
+    const keys = await settingsRepo.getMany(['openrouter_api_key', 'groq_api_key']);
+    
+    cachedApiKeys = {
+      openrouter: keys['openrouter_api_key'] || '',
+      groq: keys['groq_api_key'] || '',
+      loadedAt: now,
+    };
+
+    return {
+      openrouter: cachedApiKeys.openrouter || config.ai.apiKey,
+      groq: cachedApiKeys.groq || config.groq.apiKey,
+    };
+  } catch {
+    // Если БД недоступна — используем env
+    return {
+      openrouter: config.ai.apiKey,
+      groq: config.groq.apiKey,
+    };
+  }
+}
+
+/**
+ * Сбросить кэш API ключей (вызывать после обновления в админке)
+ */
+export function clearApiKeysCache(): void {
+  cachedApiKeys = null;
+}

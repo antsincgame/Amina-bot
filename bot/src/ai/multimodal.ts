@@ -58,43 +58,59 @@ export const AUDIO_MODELS = {
 };
 
 // --------------------------------------------
-// OpenRouter Client
+// OpenRouter Client (dynamic API key)
 // --------------------------------------------
 
-let openai: OpenAI | null = null;
+import { getApiKeys } from '../config/index.js';
 
-const getClient = (): OpenAI => {
-  if (!openai) {
+let openai: OpenAI | null = null;
+let currentOpenRouterKey: string = '';
+
+const getClient = async (): Promise<OpenAI> => {
+  const keys = await getApiKeys();
+  const apiKey = keys.openrouter;
+
+  if (!apiKey) {
+    throw new Error('OPENROUTER_API_KEY не задан. Укажите в Render или в админке.');
+  }
+
+  if (!openai || currentOpenRouterKey !== apiKey) {
     openai = new OpenAI({
-      apiKey: config.ai.apiKey,
+      apiKey: apiKey,
       baseURL: config.ai.baseUrl,
-      timeout: 60000, // 60 second timeout for multimodal
+      timeout: 60000,
       defaultHeaders: {
         'HTTP-Referer': 'https://amina-bot.render.com',
         'X-Title': 'Amina AI Bot',
       },
     });
+    currentOpenRouterKey = apiKey;
   }
   return openai;
 };
 
 // --------------------------------------------
-// Groq Client (for free Whisper transcription)
+// Groq Client (dynamic API key)
 // --------------------------------------------
 
 let groqClient: OpenAI | null = null;
+let currentGroqKey: string = '';
 
-const getGroqClient = (): OpenAI | null => {
-  if (!config.groq.apiKey) {
+const getGroqClient = async (): Promise<OpenAI | null> => {
+  const keys = await getApiKeys();
+  const apiKey = keys.groq;
+
+  if (!apiKey) {
     return null;
   }
   
-  if (!groqClient) {
+  if (!groqClient || currentGroqKey !== apiKey) {
     groqClient = new OpenAI({
-      apiKey: config.groq.apiKey,
+      apiKey: apiKey,
       baseURL: config.groq.baseUrl,
       timeout: 60000,
     });
+    currentGroqKey = apiKey;
   }
   return groqClient;
 };
@@ -186,7 +202,7 @@ export async function analyzeImage(
   userPrompt?: string
 ): Promise<VisionAnalysisResult> {
   const config = await getMultimodalConfig();
-  const client = getClient();
+  const client = await getClient();
 
   const prompt = userPrompt || 'Опиши что ты видишь на этом изображении. Будь кратким и информативным.';
 
@@ -257,7 +273,7 @@ export async function analyzeImageUrl(
   userPrompt?: string
 ): Promise<VisionAnalysisResult> {
   const config = await getMultimodalConfig();
-  const client = getClient();
+  const client = await getClient();
 
   const prompt = userPrompt || 'Опиши что ты видишь на этом изображении. Будь кратким и информативным.';
 
@@ -334,7 +350,7 @@ export async function transcribeAudio(
 
   // Если выбрана Groq модель — пробуем бесплатный Groq Whisper
   if (multimodalConfig.audioModel.startsWith('groq/')) {
-    const groq = getGroqClient();
+    const groq = await getGroqClient();
     
     // Проверка 1: есть ли ключ?
     if (!groq) {
@@ -363,7 +379,7 @@ export async function transcribeAudio(
   }
 
   // Fallback на OpenRouter audio модели (не передаём groq/* в OpenRouter!)
-  const client = getClient();
+  const client = await getClient();
   const openRouterModel = multimodalConfig.audioModel.startsWith('groq/')
     ? multimodalConfig.audioFallbackModel
     : multimodalConfig.audioModel;
@@ -485,10 +501,10 @@ export async function transcribeAudioGroq(
   audioBuffer: Buffer,
   filename: string = 'audio.ogg'
 ): Promise<AudioTranscriptionResult> {
-  const groq = getGroqClient();
+  const groq = await getGroqClient();
   
   if (!groq) {
-    throw new Error('GROQ_API_KEY не настроен. Добавьте ключ в переменные окружения.');
+    throw new Error('GROQ_API_KEY не настроен. Задайте его в Render или в админке.');
   }
 
   const mimeType = getMimeTypeFromFilename(filename);
@@ -538,7 +554,7 @@ export async function transcribeAudioWhisper(
   audioBuffer: Buffer,
   filename: string = 'audio.ogg'
 ): Promise<AudioTranscriptionResult> {
-  const client = getClient();
+  const client = await getClient();
 
   aiLogger.info({ filename }, 'Transcribing audio via OpenAI Whisper (paid)');
 

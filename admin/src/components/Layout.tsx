@@ -10,6 +10,7 @@ import {
   AlertCircle,
   Mic,
   Users,
+  Key,
 } from 'lucide-react';
 
 const Layout = () => {
@@ -24,6 +25,7 @@ const Layout = () => {
   const navItems = [
     { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
     { to: '/users', icon: Users, label: 'Пользователи' },
+    { to: '/api-keys', icon: Key, label: 'API Ключи' },
     { to: '/settings', icon: Settings, label: 'Настройки AI' },
     { to: '/multimodal', icon: Mic, label: 'Голос и Фото' },
     { to: '/prompts', icon: MessageSquare, label: 'Промпты' },

@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import { config } from '../config/index.js';
+import { config, getApiKeys } from '../config/index.js';
 import { aiLogger } from '../config/logger.js';
 import { settingsRepo, promptsRepo } from '../db/supabase.js';
 import type { AIRequest, AIResponse, AIMessage } from '../../../shared/types/index.js';
@@ -7,23 +7,37 @@ import { validateChannel, validateMessageContent, MAX_MESSAGE_LENGTH } from '../
 import { handleAIError } from '../utils/error-handler.js';
 
 // --------------------------------------------
-// OpenRouter Client
+// OpenRouter Client (dynamic API key)
 // --------------------------------------------
 
 let openai: OpenAI | null = null;
+let currentApiKey: string = '';
 
-const getClient = (): OpenAI => {
-  if (!openai) {
+/**
+ * Получить OpenRouter клиент с актуальным API ключом
+ * Ключ берётся: env → БД (админка)
+ */
+const getClient = async (): Promise<OpenAI> => {
+  const keys = await getApiKeys();
+  const apiKey = keys.openrouter;
+
+  if (!apiKey) {
+    throw new Error('OPENROUTER_API_KEY не задан. Укажите его в Render или в админке.');
+  }
+
+  // Пересоздаём клиент если ключ изменился
+  if (!openai || currentApiKey !== apiKey) {
     openai = new OpenAI({
-      apiKey: config.ai.apiKey,
+      apiKey: apiKey,
       baseURL: config.ai.baseUrl,
-      timeout: 30000, // 30 second timeout
+      timeout: 30000,
       defaultHeaders: {
         'HTTP-Referer': 'https://amina-bot.render.com',
         'X-Title': 'Amina AI Bot',
       },
     });
-    aiLogger.info('OpenRouter client initialized');
+    currentApiKey = apiKey;
+    aiLogger.info('OpenRouter client initialized/updated');
   }
   return openai;
 };
@@ -106,7 +120,7 @@ export const aiService = {
     userMemoryContext?: string
   ): Promise<AIResponse> {
     const aiConfig = await getAIConfig(channel);
-    const client = getClient();
+    const client = await getClient();
 
     // Build system prompt with memory context
     let systemPrompt = aiConfig.systemPrompt;
@@ -206,7 +220,7 @@ export const aiService = {
     channel: 'telegram' | 'voice' = 'telegram'
   ): AsyncGenerator<string, AIResponse> {
     const aiConfig = await getAIConfig(channel);
-    const client = getClient();
+    const client = await getClient();
 
     const fullMessages: AIMessage[] = [
       { role: 'system', content: aiConfig.systemPrompt },
@@ -272,9 +286,10 @@ export const aiService = {
    */
   async getModels(): Promise<{ id: string; name: string }[]> {
     try {
+      const keys = await getApiKeys();
       const response = await fetch('https://openrouter.ai/api/v1/models', {
         headers: {
-          Authorization: `Bearer ${config.ai.apiKey}`,
+          Authorization: `Bearer ${keys.openrouter}`,
         },
       });
 
