@@ -48,15 +48,43 @@ export interface WebSearchResult {
 
 const PERPLEXITY_API_URL = 'https://api.perplexity.ai/chat/completions';
 
-// Самая дешёвая модель Perplexity для поиска
-const CHEAPEST_MODEL = 'llama-3.1-sonar-small-128k-online';
+// Модели Perplexity с ценами ($/1M токенов) — обновлять при изменении цен
+interface PerplexityModel {
+  id: string;
+  name: string;
+  inputPrice: number;  // $ per 1M tokens
+  outputPrice: number; // $ per 1M tokens
+  online: boolean;     // Имеет доступ в интернет
+}
 
-// Модели Perplexity для поиска
-const PERPLEXITY_MODELS = {
-  'sonar': 'llama-3.1-sonar-small-128k-online',        // Самая дешёвая
-  'sonar-medium': 'llama-3.1-sonar-large-128k-online',
-  'sonar-huge': 'llama-3.1-sonar-huge-128k-online',
-} as const;
+const PERPLEXITY_MODELS: PerplexityModel[] = [
+  // Online модели (с доступом в интернет) — сортированы по цене
+  { id: 'llama-3.1-sonar-small-128k-online', name: 'Sonar Small', inputPrice: 0.20, outputPrice: 0.20, online: true },
+  { id: 'llama-3.1-sonar-large-128k-online', name: 'Sonar Large', inputPrice: 1.00, outputPrice: 1.00, online: true },
+  { id: 'llama-3.1-sonar-huge-128k-online', name: 'Sonar Huge', inputPrice: 5.00, outputPrice: 5.00, online: true },
+];
+
+/**
+ * Получить самую дешёвую online-модель
+ */
+function getCheapestOnlineModel(): string {
+  const onlineModels = PERPLEXITY_MODELS.filter(m => m.online);
+  
+  // Сортируем по общей цене (input + output)
+  onlineModels.sort((a, b) => (a.inputPrice + a.outputPrice) - (b.inputPrice + b.outputPrice));
+  
+  const cheapest = onlineModels[0];
+  telegramLogger.debug({ model: cheapest.id, price: cheapest.inputPrice }, 'Selected cheapest model');
+  
+  return cheapest.id;
+}
+
+/**
+ * Получить информацию о модели по ID
+ */
+function getModelInfo(modelId: string): PerplexityModel | undefined {
+  return PERPLEXITY_MODELS.find(m => m.id === modelId);
+}
 
 // --------------------------------------------
 // API Key Management
@@ -162,12 +190,19 @@ export async function webSearch(
 
   const maxTokens = options.maxTokens || 512; // Короткие ответы для экономии
   
+  // Динамически выбираем самую дешёвую модель
+  const selectedModel = getCheapestOnlineModel();
+  const modelInfo = getModelInfo(selectedModel);
+  
   // Системный промпт для краткого поиска фактов
   const systemPrompt = `Найди актуальную информацию по запросу и дай краткий фактический ответ.
 Отвечай только фактами, без вступлений. Если информация недоступна - скажи кратко.
 Язык ответа: русский.`;
 
-  telegramLogger.debug({ query }, 'Performing silent web search');
+  telegramLogger.debug(
+    { query, model: selectedModel, pricePerMToken: modelInfo?.inputPrice }, 
+    'Performing web search with cheapest model'
+  );
 
   try {
     const response = await fetch(PERPLEXITY_API_URL, {
@@ -177,7 +212,7 @@ export async function webSearch(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: CHEAPEST_MODEL, // Всегда самая дешёвая модель
+        model: selectedModel, // Динамически выбранная самая дешёвая модель
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: query },
@@ -209,7 +244,17 @@ export async function webSearch(
     const content = data.choices[0]?.message?.content || '';
     const citations = data.citations || [];
 
-    telegramLogger.debug({ tokens: data.usage.total_tokens }, 'Silent web search completed');
+    // Рассчитываем примерную стоимость
+    const costEstimate = modelInfo 
+      ? (data.usage.prompt_tokens * modelInfo.inputPrice / 1_000_000) + 
+        (data.usage.completion_tokens * modelInfo.outputPrice / 1_000_000)
+      : 0;
+
+    telegramLogger.debug({ 
+      tokens: data.usage.total_tokens, 
+      model: selectedModel,
+      costUSD: costEstimate.toFixed(6),
+    }, 'Web search completed');
 
     return {
       answer: content,
@@ -330,4 +375,50 @@ export async function isWebSearchEnabled(): Promise<boolean> {
 export function clearPerplexityCache(): void {
   cachedPerplexityKey = null;
   cacheLoadedAt = 0;
+}
+
+/**
+ * Получить информацию о текущей модели поиска (для админки)
+ */
+export function getSearchModelInfo(): { 
+  model: string; 
+  name: string; 
+  priceInput: number; 
+  priceOutput: number;
+  estimatedCostPer100Searches: number;
+} {
+  const model = getCheapestOnlineModel();
+  const info = getModelInfo(model);
+  
+  if (!info) {
+    return {
+      model,
+      name: 'Unknown',
+      priceInput: 0,
+      priceOutput: 0,
+      estimatedCostPer100Searches: 0,
+    };
+  }
+  
+  // Примерно 500 токенов на поиск (250 input + 250 output)
+  const avgTokensPerSearch = 500;
+  const costPerSearch = (avgTokensPerSearch / 2 * info.inputPrice / 1_000_000) + 
+                        (avgTokensPerSearch / 2 * info.outputPrice / 1_000_000);
+  
+  return {
+    model: info.id,
+    name: info.name,
+    priceInput: info.inputPrice,
+    priceOutput: info.outputPrice,
+    estimatedCostPer100Searches: costPerSearch * 100,
+  };
+}
+
+/**
+ * Получить список всех доступных моделей
+ */
+export function getAvailableModels(): PerplexityModel[] {
+  return [...PERPLEXITY_MODELS].sort((a, b) => 
+    (a.inputPrice + a.outputPrice) - (b.inputPrice + b.outputPrice)
+  );
 }

@@ -7,6 +7,7 @@ import { handleAIError } from '../utils/error-handler.js';
 import { aiLogger, getLogs, getLogStats } from '../config/logger.js';
 import { rateLimitHook } from '../utils/rate-limiter.js';
 import { getAllVisionModels, getAllAudioModels } from '../ai/multimodal.js';
+import { getSearchModelInfo, getAvailableModels, isWebSearchEnabled } from '../ai/websearch.js';
 import { userProfileRepo, userMemoryRepo, userLogsRepo } from '../memory/user-memory.js';
 import { config } from '../config/index.js';
 import type { Message, Conversation, LogLevel } from '../../../shared/types/index.js';
@@ -789,6 +790,44 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
           return reply.code(500).send({
             success: false,
             error: 'Failed to fetch audio models from OpenRouter',
+          });
+        }
+      });
+
+      // ============================================
+      // Web Search (Perplexity) Endpoints
+      // ============================================
+
+      /**
+       * GET /api/websearch/info
+       * Get current web search model info and pricing
+       */
+      apiServer.get('/websearch/info', async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+          const modelInfo = getSearchModelInfo();
+          const enabled = await isWebSearchEnabled();
+          const allModels = getAvailableModels();
+
+          return reply.code(200).send({
+            success: true,
+            data: {
+              enabled,
+              currentModel: modelInfo,
+              availableModels: allModels.map(m => ({
+                id: m.id,
+                name: m.name,
+                priceInput: m.inputPrice,
+                priceOutput: m.outputPrice,
+                hasInternet: m.online,
+              })),
+              note: 'Автоматически используется самая дешёвая online-модель',
+            },
+          });
+        } catch (error) {
+          aiLogger.error({ error }, 'Get websearch info error');
+          return reply.code(500).send({
+            success: false,
+            error: 'Failed to get websearch info',
           });
         }
       });
