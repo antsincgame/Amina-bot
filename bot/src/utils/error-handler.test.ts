@@ -1,0 +1,275 @@
+/**
+ * Tests for error handling utilities
+ */
+
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import {
+  NotFoundError,
+  ValidationError,
+  DatabaseError,
+  AIError,
+  isNotFoundError,
+  handleSupabaseError,
+  safeStringify,
+} from './error-handler.js';
+
+// --------------------------------------------
+// Custom Error Classes Tests
+// --------------------------------------------
+
+describe('NotFoundError', () => {
+  it('should create error with correct name and message', () => {
+    const error = new NotFoundError('User not found');
+    expect(error.name).toBe('NotFoundError');
+    expect(error.message).toBe('User not found');
+    expect(error instanceof Error).toBe(true);
+    expect(error instanceof NotFoundError).toBe(true);
+  });
+
+  it('should have correct prototype chain', () => {
+    const error = new NotFoundError('Test');
+    expect(Object.getPrototypeOf(error)).toBe(NotFoundError.prototype);
+  });
+});
+
+describe('ValidationError', () => {
+  it('should create error with correct name and message', () => {
+    const error = new ValidationError('Invalid input');
+    expect(error.name).toBe('ValidationError');
+    expect(error.message).toBe('Invalid input');
+    expect(error instanceof Error).toBe(true);
+    expect(error instanceof ValidationError).toBe(true);
+  });
+});
+
+describe('DatabaseError', () => {
+  it('should create error with correct name and message', () => {
+    const error = new DatabaseError('Connection failed');
+    expect(error.name).toBe('DatabaseError');
+    expect(error.message).toBe('Connection failed');
+    expect(error instanceof Error).toBe(true);
+    expect(error instanceof DatabaseError).toBe(true);
+  });
+});
+
+describe('AIError', () => {
+  it('should create error with correct name and message', () => {
+    const error = new AIError('API rate limited');
+    expect(error.name).toBe('AIError');
+    expect(error.message).toBe('API rate limited');
+    expect(error instanceof Error).toBe(true);
+    expect(error instanceof AIError).toBe(true);
+  });
+});
+
+// --------------------------------------------
+// isNotFoundError Tests
+// --------------------------------------------
+
+describe('isNotFoundError', () => {
+  it('should return false for NotFoundError (checks Supabase code)', () => {
+    // isNotFoundError checks for Supabase PGRST116 code, not NotFoundError class
+    const error = new NotFoundError('Not found');
+    expect(isNotFoundError(error)).toBe(false);
+  });
+
+  it('should return true for Supabase PGRST116 error', () => {
+    const supabaseError = { code: 'PGRST116', message: 'Row not found' };
+    expect(isNotFoundError(supabaseError)).toBe(true);
+  });
+
+  it('should return false for other errors', () => {
+    expect(isNotFoundError(new Error('Generic error'))).toBe(false);
+    expect(isNotFoundError(new ValidationError('Invalid'))).toBe(false);
+    expect(isNotFoundError(new DatabaseError('DB error'))).toBe(false);
+    expect(isNotFoundError({ code: 'OTHER', message: 'Other error' })).toBe(false);
+  });
+
+  it('should return false for null/undefined', () => {
+    expect(isNotFoundError(null)).toBe(false);
+    expect(isNotFoundError(undefined)).toBe(false);
+  });
+
+  it('should return false for non-error objects', () => {
+    expect(isNotFoundError('string')).toBe(false);
+    expect(isNotFoundError(123)).toBe(false);
+    expect(isNotFoundError({})).toBe(false);
+  });
+});
+
+// --------------------------------------------
+// handleSupabaseError Tests
+// --------------------------------------------
+
+describe('handleSupabaseError', () => {
+  it('should return data when no error', () => {
+    const data = { id: 1, name: 'Test' };
+    const result = handleSupabaseError(data, null, { operation: 'get' });
+    expect(result).toEqual(data);
+  });
+
+  it('should throw DatabaseError when error exists', () => {
+    const error = { code: '42P01', message: 'Table not found' };
+    expect(() =>
+      handleSupabaseError(null, error as any, { operation: 'insert' })
+    ).toThrow(DatabaseError);
+  });
+
+  it('should throw NotFoundError for PGRST116', () => {
+    const error = { code: 'PGRST116', message: 'Row not found' };
+    expect(() =>
+      handleSupabaseError(null, error as any, { operation: 'get' })
+    ).toThrow(NotFoundError);
+  });
+
+  it('should throw NotFoundError when data is null without error', () => {
+    // When data is null and no error, it's a "not found" case
+    expect(() =>
+      handleSupabaseError(null, null, { operation: 'get' })
+    ).toThrow(NotFoundError);
+  });
+
+  it('should include context in error message', () => {
+    const error = { code: 'TEST', message: 'Test error' };
+    try {
+      handleSupabaseError(null, error as any, { operation: 'update', id: '123' });
+    } catch (e) {
+      expect((e as Error).message).toContain('update');
+    }
+  });
+});
+
+// --------------------------------------------
+// safeStringify Tests
+// --------------------------------------------
+
+describe('safeStringify', () => {
+  it('should stringify simple objects', () => {
+    const obj = { name: 'Test', value: 123 };
+    const result = safeStringify(obj);
+    expect(JSON.parse(result)).toEqual(obj);
+  });
+
+  it('should stringify arrays', () => {
+    const arr = [1, 2, 3, 'test'];
+    const result = safeStringify(arr);
+    expect(JSON.parse(result)).toEqual(arr);
+  });
+
+  it('should stringify primitives', () => {
+    expect(safeStringify('string')).toBe('"string"');
+    expect(safeStringify(123)).toBe('123');
+    expect(safeStringify(true)).toBe('true');
+    expect(safeStringify(null)).toBe('null');
+  });
+
+  it('should handle circular references', () => {
+    const obj: any = { name: 'Test' };
+    obj.self = obj; // Circular reference
+    
+    const result = safeStringify(obj);
+    expect(result).toContain('[Circular]');
+  });
+
+  it('should handle nested circular references', () => {
+    const obj: any = { a: { b: {} } };
+    obj.a.b.c = obj.a; // Nested circular
+    
+    const result = safeStringify(obj);
+    expect(result).toContain('[Circular]');
+  });
+
+  it('should handle undefined values', () => {
+    const obj = { a: undefined, b: 'test' };
+    const result = safeStringify(obj);
+    // undefined is omitted in JSON
+    expect(JSON.parse(result)).toEqual({ b: 'test' });
+  });
+
+  it('should handle functions', () => {
+    const obj = { fn: () => {}, name: 'test' };
+    const result = safeStringify(obj);
+    // Functions are omitted in JSON
+    expect(JSON.parse(result)).toEqual({ name: 'test' });
+  });
+
+  it('should handle Date objects', () => {
+    const date = new Date('2024-01-01T00:00:00Z');
+    const obj = { date };
+    const result = safeStringify(obj);
+    expect(result).toContain('2024-01-01');
+  });
+
+  it('should handle Error objects', () => {
+    const error = new Error('Test error');
+    const result = safeStringify(error);
+    // Error objects are stringified as empty objects by default
+    expect(result).toBeDefined();
+  });
+
+  it('should handle deeply nested objects', () => {
+    const deep = { a: { b: { c: { d: { e: 'deep' } } } } };
+    const result = safeStringify(deep);
+    expect(JSON.parse(result)).toEqual(deep);
+  });
+
+  it('should handle large arrays', () => {
+    const large = Array.from({ length: 1000 }, (_, i) => i);
+    const result = safeStringify(large);
+    expect(JSON.parse(result)).toEqual(large);
+  });
+
+  it('should handle special characters', () => {
+    const obj = { text: 'Hello\nWorld\t"Quoted"' };
+    const result = safeStringify(obj);
+    expect(JSON.parse(result)).toEqual(obj);
+  });
+
+  it('should handle unicode', () => {
+    const obj = { emoji: '🎉', japanese: '日本語' };
+    const result = safeStringify(obj);
+    expect(JSON.parse(result)).toEqual(obj);
+  });
+});
+
+// --------------------------------------------
+// Error Inheritance Tests
+// --------------------------------------------
+
+describe('Error Inheritance', () => {
+  it('all custom errors should be instances of Error', () => {
+    expect(new NotFoundError('') instanceof Error).toBe(true);
+    expect(new ValidationError('') instanceof Error).toBe(true);
+    expect(new DatabaseError('') instanceof Error).toBe(true);
+    expect(new AIError('') instanceof Error).toBe(true);
+  });
+
+  it('custom errors should have stack traces', () => {
+    const error = new NotFoundError('Test');
+    expect(error.stack).toBeDefined();
+    expect(error.stack).toContain('NotFoundError');
+  });
+
+  it('custom errors should be catchable', () => {
+    const throwNotFound = () => {
+      throw new NotFoundError('Not found');
+    };
+
+    expect(throwNotFound).toThrow(NotFoundError);
+    expect(throwNotFound).toThrow(Error);
+  });
+
+  it('custom errors should be distinguishable', () => {
+    const errors = [
+      new NotFoundError('1'),
+      new ValidationError('2'),
+      new DatabaseError('3'),
+      new AIError('4'),
+    ];
+
+    expect(errors.filter(e => e instanceof NotFoundError)).toHaveLength(1);
+    expect(errors.filter(e => e instanceof ValidationError)).toHaveLength(1);
+    expect(errors.filter(e => e instanceof DatabaseError)).toHaveLength(1);
+    expect(errors.filter(e => e instanceof AIError)).toHaveLength(1);
+  });
+});

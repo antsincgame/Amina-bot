@@ -4,8 +4,9 @@ import { aiService } from '../ai/openrouter.js';
 import { conversationsRepo, settingsRepo } from '../db/supabase.js';
 import { validateMessageContent, validateUserId } from '../utils/validation.js';
 import { handleAIError } from '../utils/error-handler.js';
-import { aiLogger } from '../config/logger.js';
-import type { Message, Conversation } from '../../../shared/types/index.js';
+import { aiLogger, getLogs, getLogStats } from '../config/logger.js';
+import { rateLimitHook } from '../utils/rate-limiter.js';
+import type { Message, Conversation, LogLevel } from '../../../shared/types/index.js';
 
 // --------------------------------------------
 // Request Schemas
@@ -42,6 +43,9 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
   // Prefix all routes with /api
   server.register(
     async (apiServer: FastifyInstance) => {
+      // Apply rate limiting to all API routes
+      apiServer.addHook('preHandler', rateLimitHook('api'));
+
       /**
        * POST /api/chat
        * Send a message and get AI response with conversation context
@@ -259,6 +263,90 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
           });
         }
       });
+
+      /**
+       * GET /api/logs
+       * Get system logs (errors, warnings)
+       */
+      apiServer.get(
+        '/logs',
+        async (
+          request: FastifyRequest<{
+            Querystring: {
+              level?: LogLevel;
+              module?: string;
+              from?: string;
+              to?: string;
+              limit?: string;
+            };
+          }>,
+          reply: FastifyReply
+        ) => {
+          try {
+            const { level, module, from, to, limit } = request.query;
+
+            const logs = await getLogs({
+              level: level as LogLevel | undefined,
+              module,
+              from: from ? new Date(from) : undefined,
+              to: to ? new Date(to) : undefined,
+              limit: limit ? parseInt(limit, 10) : 100,
+            });
+
+            return reply.code(200).send({
+              success: true,
+              data: logs,
+              count: logs.length,
+            });
+          } catch (error) {
+            aiLogger.error({ error }, 'Get logs error');
+            return reply.code(500).send({
+              success: false,
+              error: 'Failed to fetch logs',
+            });
+          }
+        }
+      );
+
+      /**
+       * GET /api/logs/stats
+       * Get log statistics
+       */
+      apiServer.get(
+        '/logs/stats',
+        async (
+          request: FastifyRequest<{
+            Querystring: {
+              from?: string;
+              to?: string;
+            };
+          }>,
+          reply: FastifyReply
+        ) => {
+          try {
+            const { from, to } = request.query;
+            
+            const now = new Date();
+            const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+            const stats = await getLogStats(
+              from ? new Date(from) : weekAgo,
+              to ? new Date(to) : now
+            );
+
+            return reply.code(200).send({
+              success: true,
+              data: stats,
+            });
+          } catch (error) {
+            aiLogger.error({ error }, 'Get log stats error');
+            return reply.code(500).send({
+              success: false,
+              error: 'Failed to fetch log stats',
+            });
+          }
+        }
+      );
     },
     { prefix: '/api' }
   );

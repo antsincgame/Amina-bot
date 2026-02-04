@@ -6,6 +6,7 @@ import DashboardPage from './pages/DashboardPage';
 import SettingsPage from './pages/SettingsPage';
 import PromptsPage from './pages/PromptsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
+import LogsPage from './pages/LogsPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 // Protected Route wrapper
@@ -46,6 +47,7 @@ const App = () => {
           <Route path="settings" element={<SettingsPage />} />
           <Route path="prompts" element={<PromptsPage />} />
           <Route path="analytics" element={<AnalyticsPage />} />
+          <Route path="logs" element={<LogsPage />} />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

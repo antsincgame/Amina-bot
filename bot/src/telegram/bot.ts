@@ -3,6 +3,7 @@ import { config } from '../config/index.js';
 import { telegramLogger } from '../config/logger.js';
 import { aiService } from '../ai/openrouter.js';
 import { conversationsRepo, analyticsRepo } from '../db/supabase.js';
+import { checkTelegramRateLimit } from '../utils/rate-limiter.js';
 import type { Message, AIMessage } from '../../../shared/types/index.js';
 
 // --------------------------------------------
@@ -133,6 +134,14 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
     const userMessage = ctx.message.text;
 
     telegramLogger.debug({ userId, chatId, messageLength: userMessage.length }, 'Text message received');
+
+    // Check rate limit
+    const rateLimitResult = checkTelegramRateLimit(userId);
+    if (!rateLimitResult.allowed) {
+      telegramLogger.warn({ userId }, 'Rate limit exceeded for Telegram user');
+      await ctx.reply(rateLimitResult.message ?? '⏳ Слишком много сообщений. Подожди немного.');
+      return;
+    }
 
     // Log analytics
     await analyticsRepo.log('message_received', 'telegram', {

@@ -69,8 +69,30 @@ export type AnalyticsEventType =
   | 'call_ended'
   | 'ai_response'
   | 'error'
+  | 'warning'
   | 'settings_updated'
-  | 'prompt_updated';
+  | 'prompt_updated'
+  | 'rate_limit_exceeded'
+  | 'api_request'
+  | 'system_log';
+
+// --------------------------------------------
+// System Logs Types
+// --------------------------------------------
+
+export interface SystemLog {
+  id: string;
+  level: 'debug' | 'info' | 'warn' | 'error' | 'fatal';
+  module: string;
+  message: string;
+  data?: Record<string, unknown>;
+  error_stack?: string;
+  user_id?: string;
+  request_id?: string;
+  timestamp: string;
+}
+
+export type LogLevel = SystemLog['level'];
 
 // --------------------------------------------
 // AI Types

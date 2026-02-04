@@ -7,6 +7,7 @@ import {
   BarChart3,
   LogOut,
   Bot,
+  AlertCircle,
 } from 'lucide-react';
 
 const Layout = () => {
@@ -23,6 +24,7 @@ const Layout = () => {
     { to: '/settings', icon: Settings, label: 'Настройки' },
     { to: '/prompts', icon: MessageSquare, label: 'Промпты' },
     { to: '/analytics', icon: BarChart3, label: 'Аналитика' },
+    { to: '/logs', icon: AlertCircle, label: 'Логи' },
   ];
 
   return (
