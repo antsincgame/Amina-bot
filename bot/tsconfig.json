@@ -6,9 +6,6 @@
     "lib": ["ES2022"],
     "outDir": "./dist",
     "rootDir": "./src",
-  "paths": {
-    "shared/*": ["../shared/*"]
-  },
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -23,10 +20,10 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": false,
+    "baseUrl": ".",
     "paths": {
-      "@/*": ["./src/*"]
-    },
-    "baseUrl": "."
+      "shared/*": ["../shared/*"]
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "**/*.test.ts"]

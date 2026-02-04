@@ -5,7 +5,7 @@ import * as dotenv from 'dotenv';
 dotenv.config();
 
 // --------------------------------------------
-// Environment Schema Validation
+// Environment Schema Validation (Simple Version)
 // --------------------------------------------
 
 const envSchema = z.object({
@@ -40,7 +40,7 @@ const parseEnv = () => {
 };
 
 // --------------------------------------------
-// Configuration Object
+// Configuration Object (Simple Version)
 // --------------------------------------------
 
 const env = parseEnv();
@@ -54,16 +54,13 @@ export const config = {
   // Server
   server: {
     port: env.PORT,
+    host: env.HOST,
     logLevel: env.LOG_LEVEL,
   },
 
   // Telegram Bot
   telegram: {
     token: env.TELEGRAM_BOT_TOKEN,
-    webhook: {
-      url: env.WEBHOOK_URL,
-      secret: env.WEBHOOK_SECRET,
-    },
   },
 
   // OpenRouter AI
@@ -73,27 +70,6 @@ export const config = {
     baseUrl: 'https://openrouter.ai/api/v1',
     maxTokens: 2048,
     temperature: 0.7,
-  },
-
-  // Supabase Database
-  db: {
-    url: env.SUPABASE_URL,
-    serviceKey: env.SUPABASE_SERVICE_KEY,
-  },
-
-  // Voice Models (self-hosted, for Telegram voice messages)
-  voice: {
-    stt: {
-      modelPath: env.VOSK_MODEL_PATH,
-      sampleRate: 16000,
-      language: 'ru',
-    },
-    tts: {
-      modelPath: env.SILERO_MODEL_PATH,
-      speaker: 'xenia',
-      sampleRate: 48000,
-      language: 'ru',
-    },
   },
 } as const;
 

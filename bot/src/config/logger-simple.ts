@@ -1,8 +1,8 @@
 import pino from 'pino';
-import { config } from './index.js';
+import { config } from './index-simple.js';
 
 // --------------------------------------------
-// Logger Configuration
+// Logger Configuration (Simple Version)
 // --------------------------------------------
 
 export const logger = pino({

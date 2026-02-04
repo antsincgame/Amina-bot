@@ -1,215 +1,108 @@
-# Amina AI Bot
+# Amina Bot - Simple Telegram AI Bot
 
-Telegram бот с AI ассистентом и поддержкой голосовых сообщений.
+**Простой чат-бот с AI (OpenRouter) для Telegram**
 
-## Архитектура
+## 🚀 Функции (v1.0 - Минимальная версия)
 
-```
-┌─────────────────┐
-│   Telegram      │
-│   Bot API       │
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────────────────────────────┐
-│           Bot Backend (Render)          │
-│  - Node.js + TypeScript                 │
-│  - grammy (Telegram)                    │
-│  - OpenRouter API (AI)                  │
-│  - Vosk STT + Silero TTS (voice msgs)   │
-└────────────────────┬────────────────────┘
-                     │
-                     ▼
-┌─────────────────────────────────────────┐
-│              Supabase                   │
-│  - PostgreSQL                           │
-│  - Auth                                 │
-│  - Realtime                             │
-└────────────────────┬────────────────────┘
-                     │
-                     ▲
-┌────────────────────┴────────────────────┐
-│         Admin Panel (Render)            │
-│  - React + TypeScript + Vite            │
-│  - Tailwind CSS                         │
-│  - Supabase Auth                        │
-└─────────────────────────────────────────┘
-```
+- ✅ Текстовый чат с AI через OpenRouter
+- ✅ Поддержка контекста диалога (до 20 сообщений)
+- ✅ Health check API для мониторинга
+- ✅ Graceful shutdown
 
-## Технологии
+## 🛠️ Технологии
 
-| Компонент | Технология |
-|-----------|------------|
-| Bot runtime | Node.js 20 + TypeScript |
-| Telegram | grammy |
-| HTTP сервер | Fastify |
-| Admin frontend | React 18 + Vite |
-| UI | Tailwind CSS |
-| Forms | React Hook Form + Zod |
-| State | React Query + Zustand |
-| Auth | Supabase Auth |
-| Database | Supabase (PostgreSQL) |
-| AI | OpenRouter API |
-| STT | Vosk (self-hosted) |
-| TTS | Silero (self-hosted) |
+- **Bot**: grammy (Telegram Bot Framework)
+- **AI**: OpenRouter API (любые модели)
+- **Server**: Fastify
+- **Language**: TypeScript
+- **Runtime**: Node.js 20+
+- **Deployment**: Render
 
-## Быстрый старт
-
-### 1. Подготовка аккаунтов
-
-1. **Telegram Bot** - создать бота через [@BotFather](https://t.me/botfather)
-2. **OpenRouter** - получить API ключ на [openrouter.ai](https://openrouter.ai)
-3. **Supabase** - создать проект на [supabase.com](https://supabase.com)
-4. **Render** - [render.com](https://render.com) для хостинга
-
-### 2. Настройка базы данных
-
-Выполнить SQL миграцию в Supabase SQL Editor:
+## 📦 Установка
 
 ```bash
-# Скопировать содержимое файла
-cat supabase/migrations/001_initial_schema.sql
-```
+# 1. Клонировать репозиторий
+git clone https://github.com/antsincgame/Amina-bot.git
+cd Amina-bot/bot
 
-### 3. Запуск бота (локально)
-
-```bash
-cd bot
+# 2. Установить зависимости
 npm install
 
-# Скопировать и заполнить .env
+# 3. Настроить .env
 cp .env.example .env
+# Добавить TELEGRAM_BOT_TOKEN и OPENROUTER_API_KEY
 
-# Запустить в dev режиме
+# 4. Запустить
 npm run dev
 ```
 
-### 4. Запуск админки (локально)
+## 🔧 Конфигурация
+
+Переменные окружения:
+
+```env
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+OPENROUTER_API_KEY=your_openrouter_api_key
+OPENROUTER_MODEL=anthropic/claude-3-haiku
+PORT=3000
+HOST=0.0.0.0
+NODE_ENV=production
+LOG_LEVEL=info
+```
+
+## 🎯 API Endpoints
+
+- `GET /health` - Health check
+- `GET /api/status` - Service status (bot, OpenRouter)
+
+## 📝 Команды бота
+
+- `/start` - Начать диалог
+- `/help` - Показать справку
+- `/clear` - Очистить историю диалога
+
+## 🚀 Деплой на Render
 
 ```bash
-cd admin
-npm install
+# 1. Push в GitHub
+git add .
+git commit -m "Deploy simple bot"
+git push origin main
 
-# Скопировать и заполнить .env
-cp .env.example .env
-
-# Запустить
-npm run dev
+# 2. Создать Web Service на Render из GitHub
+# 3. Добавить Environment Variables:
+#    - TELEGRAM_BOT_TOKEN
+#    - OPENROUTER_API_KEY
 ```
 
-Админка будет доступна на http://localhost:3001
-
-## Деплой на Render
-
-### Вариант 1: Blueprint (рекомендуется)
-
-1. Перейти на [render.com/new](https://render.com/new)
-2. Выбрать **Blueprint**
-3. Подключить GitHub репозиторий
-4. Render автоматически создаст оба сервиса из `render.yaml`
-5. Добавить Environment Variables в Dashboard
-
-### Вариант 2: Вручную
-
-**Bot (Web Service):**
-- Runtime: Node
-- Root Directory: `bot`
-- Build: `npm ci && npm run build`
-- Start: `npm start`
-
-**Admin (Static Site):**
-- Root Directory: `admin`
-- Build: `npm ci && npm run build`
-- Publish: `dist`
-
-### Environment Variables
-
-**Bot:**
-- `TELEGRAM_BOT_TOKEN`
-- `OPENROUTER_API_KEY`
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_KEY`
-- `WEBHOOK_URL` = URL бота на Render
-
-**Admin:**
-- `VITE_SUPABASE_URL`
-- `VITE_SUPABASE_ANON_KEY`
-
-## Голосовые сообщения
-
-Бот поддерживает голосовые сообщения в Telegram:
-1. Пользователь отправляет голосовое сообщение
-2. Vosk STT конвертирует речь в текст
-3. AI генерирует ответ
-4. (опционально) Silero TTS озвучивает ответ
-
-### Vosk STT
-
-Скачать модель:
-```bash
-cd bot/models
-wget https://alphacephei.com/vosk/models/vosk-model-small-ru-0.22.zip
-unzip vosk-model-small-ru-0.22.zip
-```
-
-### Silero TTS
-
-Модель загружается автоматически при первом использовании через PyTorch.
-
-Требуется Python 3.8+ с установленными пакетами:
-```bash
-pip install torch torchaudio
-```
-
-## Структура проекта
+## 📊 Архитектура
 
 ```
-Amina/
-├── bot/                    # Backend на Render
-│   ├── src/
-│   │   ├── telegram/       # Telegram обработчики
-│   │   ├── voice/          # Голосовой модуль
-│   │   │   ├── stt/        # Vosk STT
-│   │   │   ├── tts/        # Silero TTS
-│   │   │   └── audio/      # Конвертеры
-│   │   ├── ai/             # OpenRouter
-│   │   ├── db/             # Supabase
-│   │   └── config/         # Конфигурация
-│   └── package.json
-│
-├── admin/                  # Админка на Render (Static Site)
-│   ├── src/
-│   │   ├── pages/          # Страницы
-│   │   ├── components/     # Компоненты
-│   │   ├── hooks/          # React хуки
-│   │   └── api/            # API клиент
-│   └── package.json
-│
-├── shared/                 # Общие типы
-│   └── types/
-│
-└── supabase/
-    └── migrations/         # SQL миграции
+bot/
+├── src/
+│   ├── index-simple.ts          # Main entry (без БД)
+│   ├── config/
+│   │   ├── index-simple.ts      # Configuration
+│   │   └── logger-simple.ts     # Logging
+│   ├── ai/
+│   │   └── openrouter-simple.ts # AI client (только OpenRouter)
+│   └── telegram/
+│       └── bot-simple.ts        # Bot handlers (только текст)
+├── package.json
+└── .env.example
 ```
 
-## API Endpoints (Bot)
+## 📈 Roadmap
 
-| Endpoint | Метод | Описание |
-|----------|-------|----------|
-| `/health` | GET | Health check |
-| `/ready` | GET | Readiness check |
-| `/webhook/telegram` | POST | Telegram webhook |
-| `/api/stats` | GET | Статистика (7 дней) |
-| `/api/status` | GET | Статус сервисов |
+- [ ] Admin Panel (React + Render Static Site)
+- [ ] Supabase Database (history, analytics)
+- [ ] Voice messages support
+- [ ] Multi-language support
 
-## Тестирование
-
-```bash
-cd bot
-npm test              # Запустить тесты
-npm run test:coverage # С покрытием
-```
-
-## Лицензия
+## 📄 License
 
 MIT
+
+## 🤝 Contributing
+
+PRs welcome!

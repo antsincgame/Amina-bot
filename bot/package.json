@@ -1,17 +1,18 @@
 {
   "name": "amina-bot",
   "version": "1.0.0",
-  "description": "Telegram AI Bot with Voice Support (Zadarma + Vosk + Silero)",
+  "description": "Simple Telegram AI Bot with OpenRouter",
   "type": "module",
-  "main": "dist/index.js",
+  "main": "dist-simple/index-simple.js",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js",
+    "dev": "tsx watch src/index-simple.ts",
+    "build": "tsc src/index-simple.ts src/config/index-simple.ts src/config/logger-simple.ts src/ai/openrouter-simple.ts src/telegram/bot-simple.ts --outDir dist-simple --skipLibCheck --module NodeNext --target ES2022",
+    "start": "node --loader tsx src/index-simple.ts",
+    "start:prod": "tsx src/index-simple.ts",
     "test": "vitest",
     "test:coverage": "vitest --coverage",
     "lint": "eslint src --ext .ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit --skipLibCheck src/index-simple.ts"
   },
   "dependencies": {
     "grammy": "^1.21.1",
