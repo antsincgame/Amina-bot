@@ -78,7 +78,7 @@ export const config = {
   // OpenRouter AI
   ai: {
     apiKey: env.OPENROUTER_API_KEY,
-    model: env.OPENROUTER_MODEL,
+    model: env.OPENROUTER_MODEL || 'openrouter/free',
     baseUrl: 'https://openrouter.ai/api/v1',
     maxTokens: 2048,
     temperature: 0.7,

@@ -51,7 +51,7 @@ const getAIConfig = async (channel: 'telegram' | 'voice'): Promise<AIConfig> => 
   const prompt = await promptsRepo.getActive(channel);
 
   return {
-    model: settings['openrouter_model'] ?? config.ai.model,
+    model: settings['openrouter_model'] ?? config.ai.model ?? 'openrouter/free',
     systemPrompt: prompt?.content ?? getDefaultSystemPrompt(),
     maxTokens: settings['max_tokens'] ? Number(settings['max_tokens']) : config.ai.maxTokens,
     temperature: settings['temperature'] ? Number(settings['temperature']) : config.ai.temperature,

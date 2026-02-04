@@ -14,18 +14,29 @@ const settingsSchema = z.object({
 
 type SettingsForm = z.infer<typeof settingsSchema>;
 
-// Popular OpenRouter models
+// Popular OpenRouter models (free and paid)
 const MODELS = [
-  { id: 'anthropic/claude-3-haiku', name: 'Claude 3 Haiku (быстрый, дешёвый)' },
-  { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet (сбалансированный)' },
-  { id: 'anthropic/claude-3-opus', name: 'Claude 3 Opus (мощный, дорогой)' },
-  { id: 'openai/gpt-4-turbo', name: 'GPT-4 Turbo' },
-  { id: 'openai/gpt-4o', name: 'GPT-4o' },
-  { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini (дешёвый)' },
-  { id: 'google/gemini-pro', name: 'Gemini Pro' },
-  { id: 'google/gemini-flash-1.5', name: 'Gemini Flash 1.5 (быстрый)' },
-  { id: 'mistralai/mistral-large', name: 'Mistral Large' },
-  { id: 'meta-llama/llama-3-70b-instruct', name: 'Llama 3 70B' },
+  // Free models (OpenRouter)
+  { id: 'openrouter/free', name: '🆓 Free Models Router (auto-select)', free: true },
+  { id: 'stepfun/step-3.5-flash:free', name: '🆓 StepFun Step 3.5 Flash', free: true },
+  { id: 'arcee-ai/trinity-large-preview:free', name: '🆓 Arcee Trinity Large', free: true },
+  { id: 'upstage/solar-pro-3:free', name: '🆓 Upstage Solar Pro 3', free: true },
+  { id: 'liquid/lfm-2.5-1.2b-thinking:free', name: '🆓 LiquidAI LFM2.5 Thinking', free: true },
+  { id: 'liquid/lfm-2.5-1.2b-instruct:free', name: '🆓 LiquidAI LFM2.5 Instruct', free: true },
+  { id: 'allenai/molmo-2-8b:free', name: '🆓 AllenAI Molmo2 8B', free: true },
+  
+  // Premium models (paid)
+  { id: 'anthropic/claude-3-haiku', name: 'Claude 3 Haiku (быстрый, дешёвый)', free: false },
+  { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet (сбалансированный)', free: false },
+  { id: 'anthropic/claude-3-opus', name: 'Claude 3 Opus (мощный, дорогой)', free: false },
+  { id: 'openai/gpt-4-turbo', name: 'GPT-4 Turbo', free: false },
+  { id: 'openai/gpt-4o', name: 'GPT-4o', free: false },
+  { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini (дешёвый)', free: false },
+  { id: 'google/gemini-pro', name: 'Gemini Pro', free: false },
+  { id: 'google/gemini-flash-1.5', name: 'Gemini Flash 1.5 (быстрый)', free: false },
+  { id: 'mistralai/mistral-large', name: 'Mistral Large', free: false },
+  { id: 'meta-llama/llama-3-70b-instruct', name: 'Llama 3 70B', free: false },
+  { id: 'qwen/qwen3-coder-next', name: 'Qwen3 Coder Next (код)', free: false },
 ];
 
 const SettingsPage = () => {
@@ -51,7 +62,7 @@ const SettingsPage = () => {
   } = useForm<SettingsForm>({
     resolver: zodResolver(settingsSchema),
     defaultValues: {
-      openrouter_model: 'anthropic/claude-3-haiku',
+      openrouter_model: 'openrouter/free', // Default to free router
       max_tokens: 2048,
       temperature: 0.7,
     },
@@ -66,7 +77,7 @@ const SettingsPage = () => {
       );
 
       reset({
-        openrouter_model: settingsMap['openrouter_model'] ?? 'anthropic/claude-3-haiku',
+        openrouter_model: settingsMap['openrouter_model'] ?? 'openrouter/free',
         max_tokens: Number(settingsMap['max_tokens']) || 2048,
         temperature: Number(settingsMap['temperature']) || 0.7,
       });
@@ -122,11 +133,20 @@ const SettingsPage = () => {
                 className="input"
                 {...register('openrouter_model')}
               >
-                {MODELS.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {model.name}
-                  </option>
-                ))}
+                <optgroup label="🆓 Бесплатные модели">
+                  {MODELS.filter(m => m.free).map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.name}
+                    </option>
+                  ))}
+                </optgroup>
+                <optgroup label="💎 Премиум модели">
+                  {MODELS.filter(m => !m.free).map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.name}
+                    </option>
+                  ))}
+                </optgroup>
               </select>
               {errors.openrouter_model && (
                 <p className="mt-1 text-sm text-red-600">
@@ -134,7 +154,9 @@ const SettingsPage = () => {
                 </p>
               )}
               <p className="mt-1 text-xs text-gray-500">
-                Цены и лимиты: <a href="https://openrouter.ai/models" target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline">openrouter.ai/models</a>
+                🆓 Бесплатные модели не требуют оплаты. Премиум модели более мощные.
+                <br />
+                Цены: <a href="https://openrouter.ai/models" target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline">openrouter.ai/models</a>
               </p>
             </div>
 
