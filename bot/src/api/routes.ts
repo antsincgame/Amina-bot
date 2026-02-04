@@ -818,6 +818,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
                 name: m.name,
                 priceInput: m.inputPrice,
                 priceOutput: m.outputPrice,
+                requestFee: m.requestFee,
                 hasInternet: m.online,
               })),
               note: 'Автоматически используется самая дешёвая online-модель',

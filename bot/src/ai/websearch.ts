@@ -48,33 +48,47 @@ export interface WebSearchResult {
 
 const PERPLEXITY_API_URL = 'https://api.perplexity.ai/chat/completions';
 
-// Модели Perplexity с ценами ($/1M токенов) — обновлять при изменении цен
+// Модели Perplexity с ценами ($/1M токенов) — обновлено февраль 2026
+// Источник: https://docs.perplexity.ai/docs/getting-started/pricing
 interface PerplexityModel {
   id: string;
   name: string;
   inputPrice: number;  // $ per 1M tokens
   outputPrice: number; // $ per 1M tokens
+  requestFee: number;  // $ per 1K requests (low context)
   online: boolean;     // Имеет доступ в интернет
 }
 
 const PERPLEXITY_MODELS: PerplexityModel[] = [
-  // Online модели (с доступом в интернет) — сортированы по цене
-  { id: 'llama-3.1-sonar-small-128k-online', name: 'Sonar Small', inputPrice: 0.20, outputPrice: 0.20, online: true },
-  { id: 'llama-3.1-sonar-large-128k-online', name: 'Sonar Large', inputPrice: 1.00, outputPrice: 1.00, online: true },
-  { id: 'llama-3.1-sonar-huge-128k-online', name: 'Sonar Huge', inputPrice: 5.00, outputPrice: 5.00, online: true },
+  // Новые названия моделей (февраль 2026)
+  // Sonar — самая дешёвая, быстрая, для простых запросов
+  { id: 'sonar', name: 'Sonar', inputPrice: 1.00, outputPrice: 1.00, requestFee: 5.00, online: true },
+  // Sonar Pro — для сложных запросов, больше цитат
+  { id: 'sonar-pro', name: 'Sonar Pro', inputPrice: 3.00, outputPrice: 15.00, requestFee: 6.00, online: true },
+  // Sonar Reasoning Pro — с рассуждением
+  { id: 'sonar-reasoning-pro', name: 'Sonar Reasoning Pro', inputPrice: 2.00, outputPrice: 8.00, requestFee: 6.00, online: true },
 ];
 
 /**
  * Получить самую дешёвую online-модель
+ * Учитывает и стоимость токенов, и request fee
  */
 function getCheapestOnlineModel(): string {
   const onlineModels = PERPLEXITY_MODELS.filter(m => m.online);
   
-  // Сортируем по общей цене (input + output)
-  onlineModels.sort((a, b) => (a.inputPrice + a.outputPrice) - (b.inputPrice + b.outputPrice));
+  // Примерно 500 токенов на запрос (250 input + 250 output)
+  // Считаем общую стоимость: tokens + request_fee/1000
+  const estimateCost = (m: PerplexityModel) => {
+    const tokenCost = (250 * m.inputPrice / 1_000_000) + (250 * m.outputPrice / 1_000_000);
+    const requestCost = m.requestFee / 1000; // за 1 запрос
+    return tokenCost + requestCost;
+  };
+  
+  onlineModels.sort((a, b) => estimateCost(a) - estimateCost(b));
   
   const cheapest = onlineModels[0];
-  telegramLogger.debug({ model: cheapest.id, price: cheapest.inputPrice }, 'Selected cheapest model');
+  const cost = estimateCost(cheapest);
+  telegramLogger.debug({ model: cheapest.id, costPerRequest: cost.toFixed(6) }, 'Selected cheapest model');
   
   return cheapest.id;
 }
@@ -244,16 +258,20 @@ export async function webSearch(
     const content = data.choices[0]?.message?.content || '';
     const citations = data.citations || [];
 
-    // Рассчитываем примерную стоимость
-    const costEstimate = modelInfo 
+    // Рассчитываем примерную стоимость (токены + request fee)
+    const tokenCost = modelInfo 
       ? (data.usage.prompt_tokens * modelInfo.inputPrice / 1_000_000) + 
         (data.usage.completion_tokens * modelInfo.outputPrice / 1_000_000)
       : 0;
+    const requestCost = modelInfo ? modelInfo.requestFee / 1000 : 0;
+    const totalCost = tokenCost + requestCost;
 
     telegramLogger.debug({ 
       tokens: data.usage.total_tokens, 
       model: selectedModel,
-      costUSD: costEstimate.toFixed(6),
+      tokenCostUSD: tokenCost.toFixed(6),
+      requestFeeUSD: requestCost.toFixed(6),
+      totalCostUSD: totalCost.toFixed(6),
     }, 'Web search completed');
 
     return {
@@ -385,6 +403,7 @@ export function getSearchModelInfo(): {
   name: string; 
   priceInput: number; 
   priceOutput: number;
+  requestFee: number;
   estimatedCostPer100Searches: number;
 } {
   const model = getCheapestOnlineModel();
@@ -396,29 +415,34 @@ export function getSearchModelInfo(): {
       name: 'Unknown',
       priceInput: 0,
       priceOutput: 0,
+      requestFee: 0,
       estimatedCostPer100Searches: 0,
     };
   }
   
   // Примерно 500 токенов на поиск (250 input + 250 output)
-  const avgTokensPerSearch = 500;
-  const costPerSearch = (avgTokensPerSearch / 2 * info.inputPrice / 1_000_000) + 
-                        (avgTokensPerSearch / 2 * info.outputPrice / 1_000_000);
+  const tokenCostPerSearch = (250 * info.inputPrice / 1_000_000) + (250 * info.outputPrice / 1_000_000);
+  const requestCostPerSearch = info.requestFee / 1000;
+  const totalCostPerSearch = tokenCostPerSearch + requestCostPerSearch;
   
   return {
     model: info.id,
     name: info.name,
     priceInput: info.inputPrice,
     priceOutput: info.outputPrice,
-    estimatedCostPer100Searches: costPerSearch * 100,
+    requestFee: info.requestFee,
+    estimatedCostPer100Searches: totalCostPerSearch * 100,
   };
 }
 
 /**
- * Получить список всех доступных моделей
+ * Получить список всех доступных моделей (сортировка по стоимости)
  */
 export function getAvailableModels(): PerplexityModel[] {
-  return [...PERPLEXITY_MODELS].sort((a, b) => 
-    (a.inputPrice + a.outputPrice) - (b.inputPrice + b.outputPrice)
-  );
+  const estimateCost = (m: PerplexityModel) => {
+    const tokenCost = (250 * m.inputPrice / 1_000_000) + (250 * m.outputPrice / 1_000_000);
+    return tokenCost + m.requestFee / 1000;
+  };
+  
+  return [...PERPLEXITY_MODELS].sort((a, b) => estimateCost(a) - estimateCost(b));
 }
