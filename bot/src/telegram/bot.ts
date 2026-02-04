@@ -267,34 +267,9 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
       const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
       
       const response = await fetch(fileUrl);
-      if (!response.ok) {
-        throw new Error(`Failed to download voice: ${response.status}`);
-      }
-      
-      const audioBuffer = Buffer.from(await response.arrayBuffer());
-      telegramLogger.debug({ size: audioBuffer.length }, 'Voice file downloaded');
-
-      // Process voice message
-      const { processVoiceMessage } = await import('../voice/handler.js');
-      const result = await processVoiceMessage(audioBuffer, 'ogg', ctx.session.messageHistory, {
-        generateAudio: false, // For now, just text response
-      });
-
-      // Update conversation history
-      ctx.session.messageHistory.push(
-        { role: 'user', content: result.transcription.text },
-        { role: 'assistant', content: result.aiResponse }
-      );
-
-      // Trim history
-      if (ctx.session.messageHistory.length > MAX_HISTORY_MESSAGES) {
-        ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
-      }
-
-      // Send response
+      // Voice messages not supported yet
       await ctx.reply(
-        `🎤 *Распознано:* ${result.transcription.text}\n\n${result.aiResponse}`,
-        { parse_mode: 'Markdown' }
+        '🎤 Голосовые сообщения временно недоступны.\n\nОтправьте текстовое сообщение.'
       );
 
       // Log analytics

@@ -10,6 +10,9 @@ import type {
   AnalyticsEventType,
 } from '../../../shared/types/index.js';
 
+// Use type-only imports for shared types
+type { Database } from '../../../shared/types/index.js';
+
 // --------------------------------------------
 // Database Types for Supabase
 // --------------------------------------------

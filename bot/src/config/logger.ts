@@ -1,11 +1,11 @@
-import pino from 'pino';
+import { default as pinoInstance } from 'pino';
 import { config } from './index.js';
 
 // --------------------------------------------
 // Logger Configuration
 // --------------------------------------------
 
-export const logger = pino({
+export const logger = pinoInstance({
   level: config.server.logLevel,
   transport: config.isDev
     ? {
