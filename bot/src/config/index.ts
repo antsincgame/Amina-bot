@@ -16,11 +16,19 @@ const envSchema = z.object({
   OPENROUTER_API_KEY: z.string().min(1, 'OPENROUTER_API_KEY is required'),
   OPENROUTER_MODEL: z.string().default('anthropic/claude-3-haiku'),
 
+  // Supabase
+  SUPABASE_URL: z.string().url('SUPABASE_URL must be a valid URL'),
+  SUPABASE_SERVICE_KEY: z.string().min(1, 'SUPABASE_SERVICE_KEY is required'),
+
   // Server
   PORT: z.string().default('3000').transform(Number),
   HOST: z.string().default('0.0.0.0'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
+
+  // Webhook (optional)
+  WEBHOOK_URL: z.string().url().optional(),
+  WEBHOOK_SECRET: z.string().optional(),
 });
 
 // --------------------------------------------
@@ -54,6 +62,7 @@ export const config = {
   // Server
   server: {
     port: env.PORT,
+    host: env.HOST,
     logLevel: env.LOG_LEVEL,
   },
 
@@ -79,21 +88,6 @@ export const config = {
   db: {
     url: env.SUPABASE_URL,
     serviceKey: env.SUPABASE_SERVICE_KEY,
-  },
-
-  // Voice Models (self-hosted, for Telegram voice messages)
-  voice: {
-    stt: {
-      modelPath: env.VOSK_MODEL_PATH,
-      sampleRate: 16000,
-      language: 'ru',
-    },
-    tts: {
-      modelPath: env.SILERO_MODEL_PATH,
-      speaker: 'xenia',
-      sampleRate: 48000,
-      language: 'ru',
-    },
   },
 } as const;
 

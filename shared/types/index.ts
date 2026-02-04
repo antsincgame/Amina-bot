@@ -43,15 +43,11 @@ export interface Message {
 export interface MessageMetadata {
   tokens_used?: number;
   model?: string;
-  voice_duration_ms?: number;
-  audio_file_id?: string;
 }
 
 export interface ConversationMetadata {
   telegram_chat_id?: number;
   telegram_user_id?: number;
-  phone_number?: string;
-  call_id?: string;
   language?: string;
 }
 
@@ -114,42 +110,6 @@ export interface OpenRouterModel {
 }
 
 // --------------------------------------------
-// Voice Types
-// --------------------------------------------
-
-export interface VoiceConfig {
-  stt: STTConfig;
-  tts: TTSConfig;
-}
-
-export interface STTConfig {
-  model_path: string;
-  language: string;
-  sample_rate: number;
-}
-
-export interface TTSConfig {
-  model_path: string;
-  speaker: string;
-  sample_rate: number;
-  language: string;
-}
-
-export interface TranscriptionResult {
-  text: string;
-  confidence: number;
-  language: string;
-  duration_ms: number;
-}
-
-export interface SynthesisResult {
-  audio: Buffer;
-  duration_ms: number;
-  sample_rate: number;
-  format: 'wav' | 'ogg' | 'mp3';
-}
-
-// --------------------------------------------
 // API Types
 // --------------------------------------------
 
@@ -201,8 +161,6 @@ export interface SettingsUpdate {
   openrouter_api_key?: string;
   openrouter_model?: string;
   system_prompt?: string;
-  voice_enabled?: boolean;
-  voice_speaker?: string;
   max_tokens?: number;
   temperature?: number;
 }

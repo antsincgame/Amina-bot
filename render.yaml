@@ -1,6 +1,6 @@
 services:
   # ===========================================
-  # Telegram Bot - Simple Version (No DB)
+  # Telegram Bot - Web Service
   # ===========================================
   - type: web
     name: amina-bot
@@ -26,6 +26,10 @@ services:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: OPENROUTER_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
         sync: false
     autoDeploy: true
 

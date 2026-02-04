@@ -11,45 +11,14 @@ import type {
 } from '../../../shared/types/index.js';
 
 // --------------------------------------------
-// Database Types for Supabase
-// --------------------------------------------
-
-interface Database {
-  public: {
-    Tables: {
-      settings: {
-        Row: Settings;
-        Insert: Omit<Settings, 'id'>;
-        Update: Partial<Omit<Settings, 'id'>>;
-      };
-      prompts: {
-        Row: Prompt;
-        Insert: Omit<Prompt, 'id' | 'created_at' | 'updated_at'>;
-        Update: Partial<Omit<Prompt, 'id' | 'created_at'>>;
-      };
-      conversations: {
-        Row: Conversation;
-        Insert: Omit<Conversation, 'id' | 'created_at' | 'updated_at'>;
-        Update: Partial<Omit<Conversation, 'id' | 'created_at'>>;
-      };
-      analytics: {
-        Row: AnalyticsEvent;
-        Insert: Omit<AnalyticsEvent, 'id' | 'timestamp'>;
-        Update: never;
-      };
-    };
-  };
-}
-
-// --------------------------------------------
 // Supabase Client Singleton
 // --------------------------------------------
 
-let supabase: SupabaseClient<Database> | null = null;
+let supabase: SupabaseClient | null = null;
 
-export const getSupabase = (): SupabaseClient<Database> => {
+export const getSupabase = (): SupabaseClient => {
   if (!supabase) {
-    supabase = createClient<Database>(config.db.url, config.db.serviceKey, {
+    supabase = createClient(config.db.url, config.db.serviceKey, {
       auth: {
         autoRefreshToken: false,
         persistSession: false,
@@ -78,7 +47,7 @@ export const settingsRepo = {
       throw error;
     }
 
-    return data?.value ?? null;
+    return (data as { value: string } | null)?.value ?? null;
   },
 
   async set(key: string, value: string): Promise<void> {
@@ -106,7 +75,7 @@ export const settingsRepo = {
       throw error;
     }
 
-    return data ?? [];
+    return (data as Settings[]) ?? [];
   },
 
   async getMany(keys: string[]): Promise<Record<string, string>> {
@@ -120,7 +89,7 @@ export const settingsRepo = {
       throw error;
     }
 
-    return (data ?? []).reduce(
+    return ((data as { key: string; value: string }[]) ?? []).reduce(
       (acc, { key, value }) => ({ ...acc, [key]: value }),
       {} as Record<string, string>
     );
@@ -148,7 +117,7 @@ export const promptsRepo = {
       throw error;
     }
 
-    return data;
+    return data as Prompt | null;
   },
 
   async getAll(): Promise<Prompt[]> {
@@ -162,7 +131,7 @@ export const promptsRepo = {
       throw error;
     }
 
-    return data ?? [];
+    return (data as Prompt[]) ?? [];
   },
 
   async create(prompt: Omit<Prompt, 'id' | 'created_at' | 'updated_at'>): Promise<Prompt> {
@@ -177,7 +146,7 @@ export const promptsRepo = {
       throw error;
     }
 
-    return data;
+    return data as Prompt;
   },
 
   async update(id: string, updates: Partial<Omit<Prompt, 'id' | 'created_at'>>): Promise<Prompt> {
@@ -193,7 +162,7 @@ export const promptsRepo = {
       throw error;
     }
 
-    return data;
+    return data as Prompt;
   },
 
   async delete(id: string): Promise<void> {
@@ -249,7 +218,7 @@ export const conversationsRepo = {
       .single();
 
     if (existing) {
-      return existing;
+      return existing as Conversation;
     }
 
     // Create new conversation
@@ -269,7 +238,7 @@ export const conversationsRepo = {
       throw error;
     }
 
-    return data;
+    return data as Conversation;
   },
 
   async addMessage(conversationId: string, message: Message): Promise<void> {
@@ -285,7 +254,8 @@ export const conversationsRepo = {
       throw fetchError;
     }
 
-    const messages = [...(conv?.messages ?? []), message];
+    const currentMessages = (conv as { messages: Message[] } | null)?.messages ?? [];
+    const messages = [...currentMessages, message];
 
     // Update with new message
     const { error } = await getSupabase()
@@ -314,7 +284,7 @@ export const conversationsRepo = {
       throw error;
     }
 
-    const messages = data?.messages ?? [];
+    const messages = (data as { messages: Message[] } | null)?.messages ?? [];
     return messages.slice(-limit);
   },
 
@@ -377,7 +347,7 @@ export const analyticsRepo = {
       throw error;
     }
 
-    const events = data ?? [];
+    const events = (data as AnalyticsEvent[]) ?? [];
     const uniqueUsers = new Set(events.map((e) => e.user_id).filter(Boolean));
 
     // Group tokens by day

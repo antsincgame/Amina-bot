@@ -5,9 +5,6 @@ import { aiService } from '../ai/openrouter.js';
 import { conversationsRepo, analyticsRepo } from '../db/supabase.js';
 import type { Message, AIMessage } from '../../../shared/types/index.js';
 
-// Note: Voice processing requires Vosk model to be installed
-// Voice messages will fallback to text-only response if STT unavailable
-
 // --------------------------------------------
 // Session Types
 // --------------------------------------------
@@ -81,8 +78,7 @@ const setupCommands = (bot: Bot<BotContext>): void => {
 
 Команды:
 /help — показать справку
-/clear — очистить историю диалога
-/voice — информация о голосовых сообщениях`
+/clear — очистить историю диалога`
     );
   });
 
@@ -101,7 +97,6 @@ const setupCommands = (bot: Bot<BotContext>): void => {
 **Команды:**
 /start — начать сначала
 /clear — очистить историю диалога
-/voice — о голосовых сообщениях
 
 **Совет:** Чем конкретнее вопрос, тем лучше ответ!`,
       { parse_mode: 'Markdown' }
@@ -113,27 +108,16 @@ const setupCommands = (bot: Bot<BotContext>): void => {
     ctx.session.messageHistory = [];
     
     if (ctx.session.conversationId) {
-      await conversationsRepo.clearMessages(ctx.session.conversationId);
+      try {
+        await conversationsRepo.clearMessages(ctx.session.conversationId);
+      } catch (error) {
+        telegramLogger.error({ error }, 'Failed to clear messages in DB');
+      }
     }
     
     telegramLogger.info({ userId: ctx.from?.id }, 'Conversation cleared');
     
     await ctx.reply('🧹 История диалога очищена. Начнём сначала!');
-  });
-
-  // /voice - Voice info
-  bot.command('voice', async (ctx) => {
-    await ctx.reply(
-      `🎤 **Голосовые сообщения**
-
-Отправь мне голосовое сообщение, и я:
-1. Распознаю твою речь
-2. Отвечу текстом
-3. Озвучу ответ (опционально)
-
-Поддерживаемые языки: 🇷🇺 Русский, 🇬🇧 English`,
-      { parse_mode: 'Markdown' }
-    );
   });
 };
 
@@ -242,65 +226,28 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
     }
   });
 
-  // Voice messages
+  // Voice messages - currently not supported
   bot.on('message:voice', async (ctx) => {
     const userId = ctx.from?.id.toString() ?? 'unknown';
-    const chatId = ctx.chat.id;
-    const voice = ctx.message.voice;
     
-    telegramLogger.info({ userId, duration: voice.duration, fileId: voice.file_id }, 'Voice message received');
+    telegramLogger.info({ userId, duration: ctx.message.voice.duration }, 'Voice message received');
 
-    // Log analytics
     await analyticsRepo.log('message_received', 'telegram', {
       userId,
-      chatId,
       type: 'voice',
-      duration: voice.duration,
+      duration: ctx.message.voice.duration,
     });
 
-    // Show processing indicator
-    await ctx.replyWithChatAction('typing');
-
-    try {
-      // Download voice file
-      const file = await ctx.api.getFile(voice.file_id);
-      const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
-      
-      const response = await fetch(fileUrl);
-      // Voice messages not supported yet
-      await ctx.reply(
-        '🎤 Голосовые сообщения временно недоступны.\n\nОтправьте текстовое сообщение.'
-      );
-
-      // Log analytics
-      await analyticsRepo.log('ai_response', 'telegram', {
-        userId,
-        type: 'voice',
-        transcriptionLength: result.transcription.text.length,
-      });
-
-      telegramLogger.info({ userId, transcription: result.transcription.text.substring(0, 50) }, 'Voice processed');
-    } catch (error) {
-      telegramLogger.error({ error, userId }, 'Failed to process voice message');
-      
-      await analyticsRepo.log('error', 'telegram', {
-        userId,
-        type: 'voice',
-        error: error instanceof Error ? error.message : 'Unknown error',
-      });
-
-      // Fallback message
-      await ctx.reply(
-        '🎤 Не удалось обработать голосовое сообщение.\n\nПопробуй ещё раз или напиши текстом.'
-      );
-    }
+    await ctx.reply(
+      '🎤 Голосовые сообщения временно недоступны.\n\nОтправьте текстовое сообщение.'
+    );
   });
 
   // Stickers and other media
   bot.on('message', async (ctx) => {
     // Catch-all for unsupported message types
     if (!ctx.message.text && !ctx.message.voice) {
-      await ctx.reply('🤔 Пока что я понимаю только текстовые и голосовые сообщения.');
+      await ctx.reply('🤔 Пока что я понимаю только текстовые сообщения.');
     }
   });
 };

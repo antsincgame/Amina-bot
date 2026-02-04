@@ -1,108 +1,193 @@
-# Amina Bot - Simple Telegram AI Bot
+# Amina Bot
 
-**Простой чат-бот с AI (OpenRouter) для Telegram**
+Telegram AI-бот с поддержкой OpenRouter и Supabase.
 
-## 🚀 Функции (v1.0 - Минимальная версия)
+## 🚀 Возможности
 
-- ✅ Текстовый чат с AI через OpenRouter
-- ✅ Поддержка контекста диалога (до 20 сообщений)
-- ✅ Health check API для мониторинга
-- ✅ Graceful shutdown
+- 💬 Чат с AI через OpenRouter (любые модели)
+- 📊 Сохранение истории диалогов в Supabase
+- 📈 Аналитика использования
+- ⚙️ Админ-панель для настройки
+- 🔄 Контекст диалога (до 20 сообщений)
+
+## 🏗️ Архитектура
+
+```
+┌─────────────────────────────────────────────────────┐
+│                    Telegram                          │
+│                   @AIAMINABOT                        │
+└──────────────────────┬──────────────────────────────┘
+                       │
+                       v
+┌─────────────────────────────────────────────────────┐
+│              Bot Backend (Render)                    │
+│              Node.js + tsx                           │
+│  - grammy (Telegram Bot)                            │
+│  - OpenRouter API (AI)                              │
+│  - Supabase (Database)                              │
+│  - Fastify (HTTP Server)                            │
+└──────────────────────┬──────────────────────────────┘
+                       │
+                       v
+┌─────────────────────────────────────────────────────┐
+│             Supabase Database                        │
+│  - settings (настройки)                             │
+│  - prompts (системные промпты)                      │
+│  - conversations (диалоги)                          │
+│  - analytics (аналитика)                            │
+└─────────────────────────────────────────────────────┘
+                       ^
+                       │
+┌──────────────────────┴──────────────────────────────┐
+│            Admin Panel (Render Static)               │
+│            React + Vite + Tailwind                   │
+│  - Dashboard                                        │
+│  - Settings                                         │
+│  - Prompts                                          │
+│  - Analytics                                        │
+└─────────────────────────────────────────────────────┘
+```
+
+## 📦 Структура проекта
+
+```
+amina-bot/
+├── bot/                    # Telegram бот (Node.js)
+│   ├── src/
+│   │   ├── index.ts       # Точка входа
+│   │   ├── config/        # Конфигурация
+│   │   ├── telegram/      # Telegram handlers
+│   │   ├── ai/            # OpenRouter интеграция
+│   │   └── db/            # Supabase репозитории
+│   └── package.json
+├── admin/                  # Админ-панель (React)
+│   ├── src/
+│   │   ├── pages/         # Страницы
+│   │   ├── components/    # Компоненты
+│   │   ├── hooks/         # React hooks
+│   │   └── api/           # Supabase клиент
+│   └── package.json
+├── shared/                 # Общие типы TypeScript
+│   └── types/index.ts
+├── supabase/              # Миграции БД
+│   └── migrations/
+├── render.yaml            # Render Blueprint
+└── README.md
+```
 
 ## 🛠️ Технологии
 
-- **Bot**: grammy (Telegram Bot Framework)
-- **AI**: OpenRouter API (любые модели)
-- **Server**: Fastify
-- **Language**: TypeScript
-- **Runtime**: Node.js 20+
-- **Deployment**: Render
+**Backend:**
+- Node.js 20+
+- TypeScript
+- grammy (Telegram Bot Framework)
+- Fastify (HTTP Server)
+- OpenRouter API (AI)
+- Supabase (PostgreSQL)
+- pino (Logging)
 
-## 📦 Установка
+**Frontend:**
+- React 18
+- Vite
+- Tailwind CSS
+- React Query
+- Zustand
+- React Hook Form + Zod
+
+**Deployment:**
+- Render (Bot + Admin)
+- Supabase (Database)
+
+## 🚀 Быстрый старт
+
+### 1. Клонирование
 
 ```bash
-# 1. Клонировать репозиторий
 git clone https://github.com/antsincgame/Amina-bot.git
-cd Amina-bot/bot
+cd Amina-bot
+```
 
-# 2. Установить зависимости
-npm install
+### 2. Настройка бота
 
-# 3. Настроить .env
+```bash
+cd bot
 cp .env.example .env
-# Добавить TELEGRAM_BOT_TOKEN и OPENROUTER_API_KEY
-
-# 4. Запустить
+# Заполните переменные в .env
+npm install
 npm run dev
 ```
 
-## 🔧 Конфигурация
-
-Переменные окружения:
-
-```env
-TELEGRAM_BOT_TOKEN=your_telegram_bot_token
-OPENROUTER_API_KEY=your_openrouter_api_key
-OPENROUTER_MODEL=anthropic/claude-3-haiku
-PORT=3000
-HOST=0.0.0.0
-NODE_ENV=production
-LOG_LEVEL=info
-```
-
-## 🎯 API Endpoints
-
-- `GET /health` - Health check
-- `GET /api/status` - Service status (bot, OpenRouter)
-
-## 📝 Команды бота
-
-- `/start` - Начать диалог
-- `/help` - Показать справку
-- `/clear` - Очистить историю диалога
-
-## 🚀 Деплой на Render
+### 3. Настройка админки
 
 ```bash
-# 1. Push в GitHub
-git add .
-git commit -m "Deploy simple bot"
-git push origin main
-
-# 2. Создать Web Service на Render из GitHub
-# 3. Добавить Environment Variables:
-#    - TELEGRAM_BOT_TOKEN
-#    - OPENROUTER_API_KEY
+cd admin
+cp .env.example .env
+# Заполните переменные в .env
+npm install
+npm run dev
 ```
 
-## 📊 Архитектура
+## 🔧 Переменные окружения
 
-```
-bot/
-├── src/
-│   ├── index-simple.ts          # Main entry (без БД)
-│   ├── config/
-│   │   ├── index-simple.ts      # Configuration
-│   │   └── logger-simple.ts     # Logging
-│   ├── ai/
-│   │   └── openrouter-simple.ts # AI client (только OpenRouter)
-│   └── telegram/
-│       └── bot-simple.ts        # Bot handlers (только текст)
-├── package.json
-└── .env.example
+### Bot (.env)
+
+```env
+TELEGRAM_BOT_TOKEN=your_token
+OPENROUTER_API_KEY=your_key
+OPENROUTER_MODEL=anthropic/claude-3-haiku
+SUPABASE_URL=https://xxx.supabase.co
+SUPABASE_SERVICE_KEY=your_service_key
+PORT=3000
+NODE_ENV=development
 ```
 
-## 📈 Roadmap
+### Admin (.env)
 
-- [ ] Admin Panel (React + Render Static Site)
-- [ ] Supabase Database (history, analytics)
-- [ ] Voice messages support
-- [ ] Multi-language support
+```env
+VITE_SUPABASE_URL=https://xxx.supabase.co
+VITE_SUPABASE_ANON_KEY=your_anon_key
+```
 
-## 📄 License
+## 📡 API Endpoints
+
+| Endpoint | Описание |
+|----------|----------|
+| `GET /health` | Health check |
+| `GET /ready` | Readiness check (DB + AI) |
+| `GET /api/status` | Статус сервисов |
+| `GET /api/stats` | Статистика за 7 дней |
+
+## 🤖 Команды бота
+
+| Команда | Описание |
+|---------|----------|
+| `/start` | Начать диалог |
+| `/help` | Справка |
+| `/clear` | Очистить историю |
+
+## 🚀 Деплой
+
+### Render Blueprint
+
+1. Форкните репозиторий
+2. Создайте Blueprint на Render
+3. Подключите репозиторий
+4. Добавьте секреты:
+   - `TELEGRAM_BOT_TOKEN`
+   - `OPENROUTER_API_KEY`
+   - `SUPABASE_URL`
+   - `SUPABASE_SERVICE_KEY`
+
+### URLs
+
+- **Bot:** https://amina-bot.onrender.com
+- **Admin:** https://amina-admin.onrender.com
+- **Telegram:** https://t.me/AIAMINABOT
+
+## 📄 Лицензия
 
 MIT
 
-## 🤝 Contributing
+## 👤 Автор
 
-PRs welcome!
+Created with ❤️

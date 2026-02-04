@@ -1,11 +1,11 @@
-import pino from 'pino';
+import * as pino from 'pino';
 import { config } from './index.js';
 
 // --------------------------------------------
 // Logger Configuration
 // --------------------------------------------
 
-export const logger = pino({
+const pinoLogger = pino.pino({
   level: config.server.logLevel,
   transport: config.isDev
     ? {
@@ -26,7 +26,11 @@ export const logger = pino({
   },
 });
 
+export const logger = pinoLogger;
+
 // Child loggers for different modules
 export const telegramLogger = logger.child({ module: 'telegram' });
 export const aiLogger = logger.child({ module: 'ai' });
+export const dbLogger = logger.child({ module: 'db' });
 export const serverLogger = logger.child({ module: 'server' });
+export const httpLogger = logger.child({ module: 'http' });

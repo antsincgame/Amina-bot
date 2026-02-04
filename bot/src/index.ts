@@ -1,8 +1,9 @@
+import type { FastifyInstance } from 'fastify';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { webhookCallback } from 'grammy';
 import { config } from './config/index.js';
-import { logger, httpLogger } from './config/logger.js';
+import { logger, serverLogger, httpLogger } from './config/logger.js';
 import { createBot } from './telegram/bot.js';
 import { getSupabase } from './db/supabase.js';
 import { aiService } from './ai/openrouter.js';
@@ -11,22 +12,24 @@ import { aiService } from './ai/openrouter.js';
 // Application Entry Point
 // --------------------------------------------
 
-const main = async (): Promise<void> => {
-  logger.info('🚀 Starting Amina Bot...');
+const app = Fastify({
+  logger: false, // We use pino separately
+  trustProxy: true,
+});
 
-  // Initialize Fastify server
-  const server = Fastify({
-    logger: false, // We use pino separately
-  });
+// Bot instance
+let bot: ReturnType<typeof createBot> | null = null;
 
-  // Register plugins
+// --------------------------------------------
+// Setup Server Routes
+// --------------------------------------------
+
+const setupRoutes = async (server: FastifyInstance): Promise<void> => {
+  // Register CORS
   await server.register(cors, {
     origin: true,
     credentials: true,
   });
-
-  // Create Telegram bot
-  const bot = createBot();
 
   // Health check endpoint
   server.get('/health', async () => {
@@ -45,7 +48,6 @@ const main = async (): Promise<void> => {
     };
 
     try {
-      // Check Supabase connection
       const supabase = getSupabase();
       const { error } = await supabase.from('settings').select('key').limit(1);
       checks['database'] = !error;
@@ -54,7 +56,6 @@ const main = async (): Promise<void> => {
     }
 
     try {
-      // Check AI connection
       checks['ai'] = await aiService.testConnection();
     } catch {
       checks['ai'] = false;
@@ -69,13 +70,28 @@ const main = async (): Promise<void> => {
     };
   });
 
-  // Webhook endpoint for Telegram (production)
-  if (config.isProd && config.telegram.webhook.url) {
-    server.post('/webhook/telegram', webhookCallback(bot, 'fastify'));
-    logger.info('Telegram webhook configured');
-  }
+  // API endpoint for service status (used by admin dashboard)
+  server.get('/api/status', async () => {
+    const checks: Record<string, { ready: boolean; engine: string }> = {
+      telegram: { ready: true, engine: 'grammy' },
+      ai: { ready: false, engine: 'OpenRouter' },
+      database: { ready: false, engine: 'Supabase' },
+    };
 
-  // API routes for admin panel
+    try {
+      checks['ai'] = { ready: await aiService.testConnection(), engine: 'OpenRouter' };
+    } catch { /* ignore */ }
+
+    try {
+      const supabase = getSupabase();
+      const { error } = await supabase.from('settings').select('key').limit(1);
+      checks['database'] = { ready: !error, engine: 'Supabase' };
+    } catch { /* ignore */ }
+
+    return { checks, timestamp: new Date().toISOString() };
+  });
+
+  // API routes for admin panel - stats
   server.get('/api/stats', async () => {
     try {
       const { analyticsRepo } = await import('./db/supabase.js');
@@ -101,76 +117,103 @@ const main = async (): Promise<void> => {
       };
     }
   });
+};
 
-  // API endpoint for service status (used by admin dashboard)
-  server.get('/api/status', async () => {
-    const checks: Record<string, { ready: boolean; engine: string }> = {
-      telegram: { ready: true, engine: 'grammy' },
-      ai: { ready: false, engine: 'OpenRouter' },
-      database: { ready: false, engine: 'Supabase' },
-    };
+// --------------------------------------------
+// Start Application
+// --------------------------------------------
 
-    try {
-      checks['ai'] = { ready: await aiService.testConnection(), engine: 'OpenRouter' };
-    } catch { /* ignore */ }
+const start = async (): Promise<void> => {
+  try {
+    logger.info('🚀 Starting Amina Bot...');
+    logger.info({
+      env: config.isDev ? 'development' : 'production',
+      port: config.server.port,
+    }, 'Configuration loaded');
 
+    // Setup routes
+    await setupRoutes(app);
+
+    // Test database connection
+    logger.info('Testing database connection...');
     try {
       const supabase = getSupabase();
       const { error } = await supabase.from('settings').select('key').limit(1);
-      checks['database'] = { ready: !error, engine: 'Supabase' };
-    } catch { /* ignore */ }
+      if (error) {
+        logger.warn({ error: error.message }, '⚠️ Database connection issue - continuing anyway');
+      } else {
+        logger.info('✓ Database connection OK');
+      }
+    } catch (error) {
+      logger.warn({ error }, '⚠️ Database not available - continuing anyway');
+    }
 
-    return { checks, timestamp: new Date().toISOString() };
-  });
+    // Test OpenRouter connection
+    logger.info('Testing OpenRouter connection...');
+    const aiOk = await aiService.testConnection();
+    if (!aiOk) {
+      logger.warn('⚠️ OpenRouter test failed - check API key');
+    } else {
+      logger.info('✓ OpenRouter connection OK');
+    }
 
-  // Start server
-  try {
-    const address = await server.listen({
-      port: config.server.port,
-      host: '0.0.0.0',
-    });
+    // Create bot
+    logger.info('Initializing Telegram bot...');
+    bot = createBot();
 
-    logger.info(`📡 HTTP server listening on ${address}`);
-
-    // Start bot
+    // Setup webhook if in production
     if (config.isProd && config.telegram.webhook.url) {
-      // Production: Set webhook
+      app.post('/webhook/telegram', webhookCallback(bot, 'fastify'));
       await bot.api.setWebhook(`${config.telegram.webhook.url}/webhook/telegram`, {
         secret_token: config.telegram.webhook.secret,
       });
-      logger.info('🔗 Telegram webhook set');
-    } else {
-      // Development: Use long polling
+      logger.info('🔗 Telegram webhook configured');
+    }
+
+    // Start server
+    const address = await app.listen({
+      port: config.server.port,
+      host: config.server.host,
+    });
+    serverLogger.info({ address }, '📡 HTTP server listening');
+
+    // Start bot polling (development) or webhook is already set (production)
+    if (!config.isProd || !config.telegram.webhook.url) {
       bot.start({
         onStart: (botInfo) => {
-          logger.info(`🤖 Bot @${botInfo.username} started (polling mode)`);
+          logger.info({ username: botInfo.username }, '🤖 Bot started (polling mode)');
         },
       });
     }
 
     logger.info('✅ Amina Bot is ready!');
   } catch (error) {
-    logger.fatal({ error }, 'Failed to start server');
+    logger.fatal({ error }, 'Failed to start application');
     process.exit(1);
   }
-
-  // Graceful shutdown
-  const shutdown = async (signal: string): Promise<void> => {
-    logger.info({ signal }, 'Shutting down...');
-    
-    bot.stop();
-    await server.close();
-    
-    logger.info('👋 Goodbye!');
-    process.exit(0);
-  };
-
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('SIGINT', () => shutdown('SIGINT'));
 };
 
+// --------------------------------------------
+// Graceful Shutdown
+// --------------------------------------------
+
+const shutdown = async (signal: string): Promise<void> => {
+  logger.info({ signal }, 'Shutdown signal received');
+
+  if (bot) {
+    logger.info('Stopping bot...');
+    await bot.stop();
+  }
+
+  logger.info('Closing server...');
+  await app.close();
+
+  logger.info('👋 Goodbye!');
+  process.exit(0);
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
 // Run
-main().catch((error) => {
-  console.error('Fatal error:', error);
-  process.exit(1);
-});
+start();
