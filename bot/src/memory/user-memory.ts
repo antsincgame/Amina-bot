@@ -70,55 +70,110 @@ export interface TelegramUserInfo {
 // User Profile Repository
 // --------------------------------------------
 
+// Flag to track if tables exist (avoid repeated error logs)
+let tablesExist: boolean | null = null;
+
+async function checkTablesExist(): Promise<boolean> {
+  if (tablesExist !== null) return tablesExist;
+  
+  try {
+    const supabase = getSupabase();
+    const { error } = await supabase
+      .from('user_profiles')
+      .select('id')
+      .limit(1);
+    
+    tablesExist = !error || error.code !== '42P01'; // 42P01 = table does not exist
+    if (!tablesExist) {
+      dbLogger.warn('User memory tables not found. Run migration 004_user_memory.sql');
+    }
+    return tablesExist;
+  } catch {
+    tablesExist = false;
+    return false;
+  }
+}
+
+// Default empty profile for graceful degradation
+function createEmptyProfile(userId: string, telegramInfo?: TelegramUserInfo): UserProfile {
+  return {
+    id: 'temp-' + userId,
+    user_id: userId,
+    username: telegramInfo?.username,
+    first_name: telegramInfo?.first_name,
+    last_name: telegramInfo?.last_name,
+    language_code: telegramInfo?.language_code || 'ru',
+    total_messages: 0,
+    total_voice_messages: 0,
+    total_images: 0,
+    total_tokens_used: 0,
+    first_seen_at: new Date().toISOString(),
+    last_seen_at: new Date().toISOString(),
+    preferences: {},
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+}
+
 export const userProfileRepo = {
   /**
    * Получить или создать профиль пользователя
    */
   async getOrCreate(userId: string, telegramInfo?: TelegramUserInfo): Promise<UserProfile> {
+    // Graceful degradation if tables don't exist
+    if (!(await checkTablesExist())) {
+      return createEmptyProfile(userId, telegramInfo);
+    }
+    
     const supabase = getSupabase();
     
-    // Сначала пробуем получить
-    const { data: existing } = await supabase
-      .from('user_profiles')
-      .select('*')
-      .eq('user_id', userId)
-      .single();
-    
-    if (existing) {
-      // Обновляем last_seen_at
-      await supabase
+    try {
+      // Сначала пробуем получить
+      const { data: existing } = await supabase
         .from('user_profiles')
-        .update({ 
-          last_seen_at: new Date().toISOString(),
-          username: telegramInfo?.username || existing.username,
-          first_name: telegramInfo?.first_name || existing.first_name,
-          last_name: telegramInfo?.last_name || existing.last_name,
-        })
-        .eq('user_id', userId);
+        .select('*')
+        .eq('user_id', userId)
+        .single();
       
-      return existing as UserProfile;
+      if (existing) {
+        // Обновляем last_seen_at
+        await supabase
+          .from('user_profiles')
+          .update({ 
+            last_seen_at: new Date().toISOString(),
+            username: telegramInfo?.username || existing.username,
+            first_name: telegramInfo?.first_name || existing.first_name,
+            last_name: telegramInfo?.last_name || existing.last_name,
+          })
+          .eq('user_id', userId);
+        
+        return existing as UserProfile;
+      }
+      
+      // Создаём новый профиль
+      const { data: newProfile, error } = await supabase
+        .from('user_profiles')
+        .insert({
+          user_id: userId,
+          username: telegramInfo?.username,
+          first_name: telegramInfo?.first_name,
+          last_name: telegramInfo?.last_name,
+          language_code: telegramInfo?.language_code || 'ru',
+        })
+        .select()
+        .single();
+      
+      if (error) {
+        dbLogger.error({ error, userId }, 'Failed to create user profile');
+        return createEmptyProfile(userId, telegramInfo);
+      }
+      
+      dbLogger.info({ userId }, 'New user profile created');
+      return newProfile as UserProfile;
+    } catch (error) {
+      dbLogger.error({ error, userId }, 'Error in getOrCreate profile');
+      return createEmptyProfile(userId, telegramInfo);
     }
-    
-    // Создаём новый профиль
-    const { data: newProfile, error } = await supabase
-      .from('user_profiles')
-      .insert({
-        user_id: userId,
-        username: telegramInfo?.username,
-        first_name: telegramInfo?.first_name,
-        last_name: telegramInfo?.last_name,
-        language_code: telegramInfo?.language_code || 'ru',
-      })
-      .select()
-      .single();
-    
-    if (error) {
-      dbLogger.error({ error, userId }, 'Failed to create user profile');
-      throw error;
-    }
-    
-    dbLogger.info({ userId }, 'New user profile created');
-    return newProfile as UserProfile;
   },
 
   /**
@@ -130,21 +185,29 @@ export const userProfileRepo = {
     tokensUsed: number = 0,
     telegramInfo?: TelegramUserInfo
   ): Promise<void> {
+    // Skip if tables don't exist
+    if (!(await checkTablesExist())) return;
+    
     const supabase = getSupabase();
     
-    // Используем RPC функцию для атомарного обновления
-    const { error } = await supabase.rpc('update_user_profile_on_message', {
-      p_user_id: userId,
-      p_username: telegramInfo?.username,
-      p_first_name: telegramInfo?.first_name,
-      p_last_name: telegramInfo?.last_name,
-      p_language_code: telegramInfo?.language_code,
-      p_message_type: messageType,
-      p_tokens_used: tokensUsed,
-    });
-    
-    if (error) {
-      dbLogger.error({ error, userId }, 'Failed to update user profile');
+    try {
+      // Используем RPC функцию для атомарного обновления
+      const { error } = await supabase.rpc('update_user_profile_on_message', {
+        p_user_id: userId,
+        p_username: telegramInfo?.username,
+        p_first_name: telegramInfo?.first_name,
+        p_last_name: telegramInfo?.last_name,
+        p_language_code: telegramInfo?.language_code,
+        p_message_type: messageType,
+        p_tokens_used: tokensUsed,
+      });
+      
+      if (error) {
+        // RPC might not exist, just log and continue
+        dbLogger.warn({ error, userId }, 'Failed to update user profile (RPC may not exist)');
+      }
+    } catch (error) {
+      dbLogger.warn({ error, userId }, 'Error updating user profile');
     }
   },
 
@@ -224,54 +287,69 @@ export const userMemoryRepo = {
       isPinned?: boolean;
       expiresAt?: Date;
     } = {}
-  ): Promise<UserMemory> {
+  ): Promise<UserMemory | null> {
+    // Skip if tables don't exist
+    if (!(await checkTablesExist())) return null;
+    
     const supabase = getSupabase();
     
-    const { data, error } = await supabase
-      .from('user_memory')
-      .insert({
-        user_id: userId,
-        memory_type: memoryType,
-        content,
-        source: options.source || 'message',
-        confidence: options.confidence ?? 1.0,
-        is_pinned: options.isPinned ?? false,
-        expires_at: options.expiresAt?.toISOString(),
-      })
-      .select()
-      .single();
-    
-    if (error) {
-      dbLogger.error({ error, userId }, 'Failed to add user memory');
-      throw error;
+    try {
+      const { data, error } = await supabase
+        .from('user_memory')
+        .insert({
+          user_id: userId,
+          memory_type: memoryType,
+          content,
+          source: options.source || 'message',
+          confidence: options.confidence ?? 1.0,
+          is_pinned: options.isPinned ?? false,
+          expires_at: options.expiresAt?.toISOString(),
+        })
+        .select()
+        .single();
+      
+      if (error) {
+        dbLogger.warn({ error, userId }, 'Failed to add user memory');
+        return null;
+      }
+      
+      dbLogger.info({ userId, memoryType }, 'User memory added');
+      return data as UserMemory;
+    } catch (error) {
+      dbLogger.warn({ error, userId }, 'Error adding user memory');
+      return null;
     }
-    
-    dbLogger.info({ userId, memoryType }, 'User memory added');
-    return data as UserMemory;
   },
 
   /**
    * Получить всю активную память пользователя
    */
   async getAll(userId: string, limit: number = 50): Promise<UserMemory[]> {
+    // Skip if tables don't exist
+    if (!(await checkTablesExist())) return [];
+    
     const supabase = getSupabase();
     
-    const { data, error } = await supabase
-      .from('user_memory')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('is_active', true)
-      .or('expires_at.is.null,expires_at.gt.now()')
-      .order('is_pinned', { ascending: false })
-      .order('created_at', { ascending: false })
-      .limit(limit);
-    
-    if (error) {
-      dbLogger.error({ error, userId }, 'Failed to get user memory');
+    try {
+      const { data, error } = await supabase
+        .from('user_memory')
+        .select('*')
+        .eq('user_id', userId)
+        .eq('is_active', true)
+        .or('expires_at.is.null,expires_at.gt.now()')
+        .order('is_pinned', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(limit);
+      
+      if (error) {
+        dbLogger.warn({ error, userId }, 'Failed to get user memory');
+        return [];
+      }
+      
+      return (data ?? []) as UserMemory[];
+    } catch {
       return [];
     }
-    
-    return (data ?? []) as UserMemory[];
   },
 
   /**
@@ -416,23 +494,30 @@ export const userLogsRepo = {
       responseTimeMs?: number;
     }
   ): Promise<void> {
+    // Skip if tables don't exist
+    if (!(await checkTablesExist())) return;
+    
     const supabase = getSupabase();
     
-    const { error } = await supabase
-      .from('user_logs')
-      .insert({
-        user_id: userId,
-        event_type: eventType,
-        content,
-        metadata,
-        model: aiMetrics?.model,
-        tokens_prompt: aiMetrics?.tokensPrompt,
-        tokens_completion: aiMetrics?.tokensCompletion,
-        response_time_ms: aiMetrics?.responseTimeMs,
-      });
-    
-    if (error) {
-      dbLogger.error({ error, userId, eventType }, 'Failed to add user log');
+    try {
+      const { error } = await supabase
+        .from('user_logs')
+        .insert({
+          user_id: userId,
+          event_type: eventType,
+          content,
+          metadata,
+          model: aiMetrics?.model,
+          tokens_prompt: aiMetrics?.tokensPrompt,
+          tokens_completion: aiMetrics?.tokensCompletion,
+          response_time_ms: aiMetrics?.responseTimeMs,
+        });
+      
+      if (error) {
+        dbLogger.warn({ error, userId, eventType }, 'Failed to add user log');
+      }
+    } catch {
+      // Silently fail - logging should not break the bot
     }
   },
 
@@ -448,35 +533,42 @@ export const userLogsRepo = {
       limit?: number;
     } = {}
   ): Promise<UserLog[]> {
+    // Skip if tables don't exist
+    if (!(await checkTablesExist())) return [];
+    
     const supabase = getSupabase();
     
-    let query = supabase
-      .from('user_logs')
-      .select('*')
-      .eq('user_id', userId)
-      .order('timestamp', { ascending: false });
+    try {
+      let query = supabase
+        .from('user_logs')
+        .select('*')
+        .eq('user_id', userId)
+        .order('timestamp', { ascending: false });
     
-    if (options.eventType) {
-      query = query.eq('event_type', options.eventType);
-    }
-    if (options.from) {
-      query = query.gte('timestamp', options.from.toISOString());
-    }
-    if (options.to) {
-      query = query.lte('timestamp', options.to.toISOString());
-    }
-    if (options.limit) {
-      query = query.limit(options.limit);
-    }
-    
-    const { data, error } = await query;
-    
-    if (error) {
-      dbLogger.error({ error, userId }, 'Failed to get user logs');
+      if (options.eventType) {
+        query = query.eq('event_type', options.eventType);
+      }
+      if (options.from) {
+        query = query.gte('timestamp', options.from.toISOString());
+      }
+      if (options.to) {
+        query = query.lte('timestamp', options.to.toISOString());
+      }
+      if (options.limit) {
+        query = query.limit(options.limit);
+      }
+      
+      const { data, error } = await query;
+      
+      if (error) {
+        dbLogger.warn({ error, userId }, 'Failed to get user logs');
+        return [];
+      }
+      
+      return (data ?? []) as UserLog[];
+    } catch {
       return [];
     }
-    
-    return (data ?? []) as UserLog[];
   },
 
   /**

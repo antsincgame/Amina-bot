@@ -1,6 +1,6 @@
 # MCP Серверы для Amina
 
-MCP (Model Context Protocol) серверы для интеграции Cursor с Render, Supabase и Voximplant.
+MCP (Model Context Protocol) серверы для интеграции Cursor с Render, Supabase, Voximplant и Perplexity (поиск в интернете).
 
 ## Установка
 
@@ -24,6 +24,9 @@ export SUPABASE_SERVICE_KEY="eyJhbGciOiJIUzI1NiIsInR..."
 # Voximplant
 export VOXIMPLANT_ACCOUNT_ID="123456"
 export VOXIMPLANT_API_KEY="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# Perplexity (поиск в интернете, модель sonar — самая дешёвая)
+export PERPLEXITY_API_KEY="pplx-xxxxxxxxxxxx"
 ```
 
 ### Где найти ключи
@@ -33,6 +36,7 @@ export VOXIMPLANT_API_KEY="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 | **Render** | Dashboard → Account Settings → API Keys |
 | **Supabase** | Project Settings → API → service_role key |
 | **Voximplant** | Control Panel → Settings → API Keys |
+| **Perplexity** | https://www.perplexity.ai/settings/api |
 
 ## Подключение в Cursor
 
@@ -75,6 +79,14 @@ Environment:
   VOXIMPLANT_API_KEY=ваш_ключ
 ```
 
+**Perplexity:**
+```
+Name: perplexity
+Command: node
+Args: /полный/путь/к/mcp-servers/perplexity-server.js
+Environment: PERPLEXITY_API_KEY=pplx-ваш_ключ
+```
+
 ## Проверка работы
 
 После подключения серверов, в Cursor появятся новые инструменты. Попробуйте:
@@ -90,6 +102,11 @@ Environment:
 ```
 Покажи баланс аккаунта Voximplant
 ```
+
+```
+Найди в интернете: последние новости про ИИ за сегодня
+```
+(инструмент Perplexity)
 
 ## Доступные инструменты
 
@@ -127,6 +144,9 @@ Environment:
 - `voximplant_update_scenario` — обновить сценарий
 - `voximplant_get_call_records` — записи звонков
 
+### Perplexity (1 инструмент)
+- `perplexity_search` — ответ на вопрос с поиском в интернете (модель sonar, самая дешёвая)
+
 ## Отладка
 
 Запустите сервер вручную для проверки:
@@ -143,7 +163,8 @@ RENDER_API_KEY=xxx node render-server.js
 mcp-servers/
 ├── package.json
 ├── README.md
-├── render-server.js      # Render MCP Server
-├── supabase-server.js    # Supabase MCP Server
-└── voximplant-server.js  # Voximplant MCP Server
+├── render-server.js       # Render MCP Server
+├── supabase-server.js     # Supabase MCP Server
+├── voximplant-server.js   # Voximplant MCP Server
+└── perplexity-server.js  # Perplexity MCP Server (поиск в интернете)
 ```

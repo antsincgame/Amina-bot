@@ -162,18 +162,18 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
       return;
     }
 
-    // Log analytics
-    await analyticsRepo.log('message_received', 'telegram', {
+    // Log analytics (don't await - fire and forget)
+    analyticsRepo.log('message_received', 'telegram', {
       userId,
       chatId,
       messageLength: userMessage.length,
-    });
+    }).catch(() => {});
 
-    // Log user message
-    await userLogsRepo.add(userId, 'message', userMessage, {
+    // Log user message (don't await - fire and forget)
+    userLogsRepo.add(userId, 'message', userMessage, {
       chatId,
       messageLength: userMessage.length,
-    });
+    }).catch(() => {});
 
     // Show typing indicator
     await ctx.replyWithChatAction('typing');
@@ -193,8 +193,13 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         }));
       }
 
-      // Build memory context for personalized responses
-      const memoryContext = await memoryContextBuilder.buildContext(userId, telegramInfo);
+      // Build memory context for personalized responses (graceful degradation)
+      let memoryContext = '';
+      try {
+        memoryContext = await memoryContextBuilder.buildContext(userId, telegramInfo);
+      } catch (memError) {
+        telegramLogger.warn({ error: memError, userId }, 'Failed to build memory context, continuing without');
+      }
 
       // Add user message to history
       ctx.session.messageHistory.push({
@@ -216,12 +221,12 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         content: response.content,
       });
 
-      // Update user profile stats
-      await userProfileRepo.updateOnMessage(userId, 'message', response.tokens_used.total, telegramInfo);
+      // Update user profile stats (fire and forget)
+      userProfileRepo.updateOnMessage(userId, 'message', response.tokens_used.total, telegramInfo).catch(() => {});
 
-      // Log AI response
+      // Log AI response (fire and forget)
       const responseTime = Date.now() - startTime;
-      await userLogsRepo.add(userId, 'ai_response', response.content, {
+      userLogsRepo.add(userId, 'ai_response', response.content, {
         chatId,
         responseLength: response.content.length,
       }, {
@@ -229,7 +234,7 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         tokensPrompt: response.tokens_used.prompt,
         tokensCompletion: response.tokens_used.completion,
         responseTimeMs: responseTime,
-      });
+      }).catch(() => {});
 
       // Extract facts from conversation (async, don't wait)
       memoryExtractor.extractFacts(userId, userMessage, response.content).catch(() => {});

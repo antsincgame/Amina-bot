@@ -6,7 +6,8 @@
   "scripts": {
     "render": "node render-server.js",
     "supabase": "node supabase-server.js",
-    "voximplant": "node voximplant-server.js"
+    "voximplant": "node voximplant-server.js",
+    "perplexity": "node perplexity-server.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
