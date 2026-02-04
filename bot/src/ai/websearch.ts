@@ -242,6 +242,10 @@ export async function webSearch(
     'Performing web search'
   );
 
+  // Таймаут для поиска (15 секунд)
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
+
   try {
     const response = await fetch(PERPLEXITY_API_URL, {
       method: 'POST',
@@ -249,6 +253,7 @@ export async function webSearch(
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
+      signal: controller.signal,
       body: JSON.stringify({
         model: selectedModel, // Динамически выбранная самая дешёвая модель
         messages: [
@@ -260,6 +265,8 @@ export async function webSearch(
         return_citations: true,
       }),
     });
+
+    clearTimeout(timeoutId);
 
     if (!response.ok) {
       const errorText = await response.text();
@@ -279,19 +286,22 @@ export async function webSearch(
     }
 
     const data: PerplexityResponse = await response.json();
-    const content = data.choices[0]?.message?.content || '';
+    const content = data.choices?.[0]?.message?.content || '';
     const citations = data.citations || [];
+
+    // Защита от отсутствия usage
+    const usage = data.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
     // Рассчитываем примерную стоимость (токены + request fee)
     const tokenCost = modelInfo 
-      ? (data.usage.prompt_tokens * modelInfo.inputPrice / 1_000_000) + 
-        (data.usage.completion_tokens * modelInfo.outputPrice / 1_000_000)
+      ? (usage.prompt_tokens * modelInfo.inputPrice / 1_000_000) + 
+        (usage.completion_tokens * modelInfo.outputPrice / 1_000_000)
       : 0;
     const requestCost = modelInfo ? modelInfo.requestFee / 1000 : 0;
     const totalCost = tokenCost + requestCost;
 
     telegramLogger.debug({ 
-      tokens: data.usage.total_tokens, 
+      tokens: usage.total_tokens, 
       model: selectedModel,
       tokenCostUSD: tokenCost.toFixed(6),
       requestFeeUSD: requestCost.toFixed(6),
@@ -303,12 +313,20 @@ export async function webSearch(
       citations,
       model: data.model,
       tokens_used: {
-        prompt: data.usage.prompt_tokens,
-        completion: data.usage.completion_tokens,
-        total: data.usage.total_tokens,
+        prompt: usage.prompt_tokens,
+        completion: usage.completion_tokens,
+        total: usage.total_tokens,
       },
     };
   } catch (error) {
+    clearTimeout(timeoutId);
+    
+    // Обработка таймаута
+    if ((error as any).name === 'AbortError') {
+      telegramLogger.warn({ query }, 'Web search timeout (15s)');
+      throw Object.assign(new Error('Web search timeout'), { code: 'PERPLEXITY_TIMEOUT' });
+    }
+    
     if ((error as any).code) throw error;
     telegramLogger.warn({ error }, 'Silent web search failed');
     throw Object.assign(new Error('Web search failed'), { code: 'PERPLEXITY_ERROR' });

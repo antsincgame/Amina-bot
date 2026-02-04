@@ -139,6 +139,32 @@ const DEFAULT_AUDIO_FALLBACK_MODEL = 'openai/gpt-audio-mini';
 const DEFAULT_VISION_PROMPT = 'Опиши подробно что изображено на этой картинке. Обрати внимание на детали, цвета, объекты и их расположение.';
 const DEFAULT_VISION_MAX_TOKENS = 1024;
 
+// Список валидных vision моделей (поддерживают изображения)
+const VALID_VISION_MODELS = [
+  'allenai/molmo-2-8b:free',
+  'openai/gpt-4o',
+  'openai/gpt-4o-mini',
+  'anthropic/claude-3.5-sonnet',
+  'anthropic/claude-3-haiku',
+  'google/gemini-pro-vision',
+  'google/gemini-1.5-pro',
+  'google/gemini-1.5-flash',
+  'meta-llama/llama-3.2-11b-vision-instruct',
+  'meta-llama/llama-3.2-90b-vision-instruct',
+  'qwen/qwen-2-vl-7b-instruct',
+];
+
+/**
+ * Проверяет, является ли модель валидной vision моделью
+ */
+const isValidVisionModel = (model: string): boolean => {
+  // Точное совпадение
+  if (VALID_VISION_MODELS.includes(model)) return true;
+  // Проверка по паттернам (vision, 4o, molmo, gemini)
+  const visionPatterns = ['vision', 'molmo', 'gpt-4o', 'gemini', 'claude-3'];
+  return visionPatterns.some(pattern => model.toLowerCase().includes(pattern));
+};
+
 const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
   const settings = await settingsRepo.getMany([
     'vision_model',
@@ -152,16 +178,33 @@ const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
   ]);
 
   // Vision model priority: override > setting > default
+  // С ВАЛИДАЦИЕЙ: если модель не поддерживает изображения — используем дефолт
   let visionModel = DEFAULT_VISION_MODEL;
   let visionSource = 'default';
   
   if (settings['vision_model']?.trim()) {
-    visionModel = settings['vision_model'].trim();
-    visionSource = 'database';
+    const candidate = settings['vision_model'].trim();
+    if (isValidVisionModel(candidate)) {
+      visionModel = candidate;
+      visionSource = 'database';
+    } else {
+      aiLogger.warn(
+        { invalidModel: candidate, usingDefault: DEFAULT_VISION_MODEL },
+        'Invalid vision model in settings (not a vision model), using default'
+      );
+    }
   }
   if (settings['vision_model_override']?.trim()) {
-    visionModel = settings['vision_model_override'].trim();
-    visionSource = 'override';
+    const candidate = settings['vision_model_override'].trim();
+    if (isValidVisionModel(candidate)) {
+      visionModel = candidate;
+      visionSource = 'override';
+    } else {
+      aiLogger.warn(
+        { invalidModel: candidate },
+        'Invalid vision model override (not a vision model), ignoring'
+      );
+    }
   }
 
   // Audio model priority: override > setting > default
