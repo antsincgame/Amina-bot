@@ -7,23 +7,25 @@ import { validateChannel, validateMessageContent, MAX_MESSAGE_LENGTH } from '../
 import { handleAIError } from '../utils/error-handler.js';
 
 // --------------------------------------------
-// Fallback Models — автоматическая смена при ошибках
-// Только 2 самых стабильных модели для экономии rate limit
+// FREE_MODELS — 10 бесплатных моделей для параллельного запроса
+// При ошибке основной модели запускаем гонку — кто первый ответит
 // --------------------------------------------
 
-const FALLBACK_MODELS = [
-  'meta-llama/llama-3.2-3b-instruct:free',      // Llama 3.2 — самая стабильная
-  'mistralai/mistral-7b-instruct:free',         // Mistral 7B — проверенная классика
+const FREE_MODELS = [
+  'meta-llama/llama-3.2-3b-instruct:free',      // Llama 3.2 3B
+  'meta-llama/llama-3.1-8b-instruct:free',      // Llama 3.1 8B
+  'meta-llama/llama-3.2-1b-instruct:free',      // Llama 3.2 1B — быстрая
+  'mistralai/mistral-7b-instruct:free',         // Mistral 7B
+  'google/gemma-2-9b-it:free',                  // Gemma 2 9B
+  'qwen/qwen-2-7b-instruct:free',               // Qwen 2 7B
+  'huggingfaceh4/zephyr-7b-beta:free',          // Zephyr 7B
+  'openchat/openchat-7b:free',                  // OpenChat 7B
+  'nousresearch/nous-capybara-7b:free',         // Nous Capybara 7B
+  'microsoft/phi-3-mini-128k-instruct:free',    // Phi-3 Mini
 ];
 
-// Задержка между fallback попытками (мс) для экономии rate limit
-const FALLBACK_DELAY_MS = 3000;
-
-// Утилита для задержки
-const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
-
-// Ошибки при которых нужно переключаться на fallback модель
-const FALLBACK_ERROR_PATTERNS = [
+// Ошибки при которых нужен параллельный fallback
+const RACE_ERROR_PATTERNS = [
   'Provider returned error',
   'Empty response',
   'No endpoints found',
@@ -155,7 +157,7 @@ const getDefaultSystemPrompt = (): string => {
 export const aiService = {
   /**
    * Generate AI response for messages
-   * С автоматическим fallback на другие модели при ошибках
+   * При ошибке основной модели — запускаем гонку 10 бесплатных моделей параллельно
    */
   async chat(
     messages: AIMessage[],
@@ -177,151 +179,141 @@ export const aiService = {
       ...messages,
     ];
 
-    // Список моделей для попытки: основная + fallback модели
-    const modelsToTry = [aiConfig.model];
-    
-    // Добавляем fallback модели, исключая текущую если она уже в списке
-    for (const fallback of FALLBACK_MODELS) {
-      if (!modelsToTry.includes(fallback)) {
-        modelsToTry.push(fallback);
-      }
-    }
+    // Хелпер для запроса к одной модели
+    const tryModel = async (model: string): Promise<AIResponse & { usedModel: string }> => {
+      const response = await client.chat.completions.create({
+        model,
+        messages: fullMessages,
+        max_tokens: aiConfig.maxTokens,
+        temperature: aiConfig.temperature,
+      });
 
-    let lastError: Error | null = null;
-
-    // Пробуем модели по очереди
-    for (let i = 0; i < modelsToTry.length; i++) {
-      const currentModel = modelsToTry[i];
-      const isRetry = i > 0;
-
-      if (isRetry) {
-        // Задержка перед fallback для экономии rate limit
-        aiLogger.info(
-          { delayMs: FALLBACK_DELAY_MS, nextModel: currentModel },
-          'Waiting before fallback attempt'
-        );
-        await sleep(FALLBACK_DELAY_MS);
-        
-        aiLogger.warn(
-          { failedModel: modelsToTry[i - 1], tryingModel: currentModel, attempt: i + 1 },
-          'Switching to fallback model'
-        );
-      } else {
-        aiLogger.debug(
-          { model: currentModel, messageCount: messages.length },
-          'Sending chat request'
-        );
+      const choice = response.choices[0];
+      if (!choice?.message?.content) {
+        throw new Error('Empty response from AI');
       }
 
-      try {
-        const response = await client.chat.completions.create({
-          model: currentModel,
-          messages: fullMessages,
-          max_tokens: aiConfig.maxTokens,
-          temperature: aiConfig.temperature,
-        });
+      return {
+        content: choice.message.content,
+        model: response.model,
+        tokens_used: {
+          prompt: response.usage?.prompt_tokens ?? 0,
+          completion: response.usage?.completion_tokens ?? 0,
+          total: response.usage?.total_tokens ?? 0,
+        },
+        finish_reason: choice.finish_reason ?? 'unknown',
+        usedModel: model,
+      };
+    };
 
-        const choice = response.choices[0];
-        if (!choice?.message?.content) {
-          throw new Error('Empty response from AI');
-        }
+    // === ШАГ 1: Пробуем основную модель ===
+    aiLogger.debug(
+      { model: aiConfig.model, messageCount: messages.length },
+      'Trying primary model'
+    );
 
-        const result: AIResponse = {
-          content: choice.message.content,
-          model: response.model,
-          tokens_used: {
-            prompt: response.usage?.prompt_tokens ?? 0,
-            completion: response.usage?.completion_tokens ?? 0,
-            total: response.usage?.total_tokens ?? 0,
-          },
-          finish_reason: choice.finish_reason ?? 'unknown',
-        };
+    try {
+      const result = await tryModel(aiConfig.model);
+      aiLogger.info(
+        { model: result.model, tokens: result.tokens_used.total },
+        'Primary model response received'
+      );
+      return result;
+    } catch (primaryError) {
+      const errorMessage = primaryError instanceof Error ? primaryError.message : String(primaryError);
+      aiLogger.warn({ error: errorMessage, model: aiConfig.model }, 'Primary model failed');
 
-        // Если это был fallback — автоматически обновляем модель в настройках
-        if (isRetry) {
-          aiLogger.info(
-            { newModel: currentModel, previousModel: aiConfig.model },
-            'Auto-switched to working model, saving to settings'
+      // Проверяем критические ошибки — для них НЕ делаем fallback
+      if (errorMessage.includes('401') || errorMessage.includes('Unauthorized')) {
+        const detailedError = new Error(
+          `AUTH_ERROR: Неверный API ключ OpenRouter. Проверьте OPENROUTER_API_KEY.`
+        );
+        (detailedError as any).code = 'AUTH_ERROR';
+        throw detailedError;
+      }
+      
+      if (errorMessage.includes('402') || errorMessage.includes('Payment Required')) {
+        const detailedError = new Error(
+          `PAYMENT_REQUIRED: Пополните баланс на OpenRouter или выберите бесплатную модель.`
+        );
+        (detailedError as any).code = 'PAYMENT_REQUIRED';
+        throw detailedError;
+      }
+
+      // Проверяем, нужна ли гонка моделей
+      const needsRace = RACE_ERROR_PATTERNS.some(pattern => 
+        errorMessage.toLowerCase().includes(pattern.toLowerCase())
+      );
+
+      if (!needsRace) {
+        // Rate limit — не поможет гонка, просто ждать
+        if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
+          const detailedError = new Error(
+            `RATE_LIMIT: Превышен лимит запросов. Подождите минуту.`
           );
-          
-          // Трекаем переключение
-          lastFallbackSwitch = {
-            reason: `Model ${aiConfig.model} failed, switched to ${currentModel}`,
-            time: new Date(),
-            fromModel: aiConfig.model,
-            toModel: currentModel,
-          };
-          
-          // Сохраняем рабочую модель в БД (асинхронно, не ждём)
-          settingsRepo.set('openrouter_model', currentModel).catch((err) => {
-            aiLogger.warn({ error: err }, 'Failed to save auto-switched model');
-          });
+          (detailedError as any).code = 'RATE_LIMIT';
+          throw detailedError;
         }
-
-        aiLogger.info(
-          { model: result.model, tokens: result.tokens_used.total, wasRetry: isRetry },
-          'AI response received'
-        );
-
-        return result;
-
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        lastError = error instanceof Error ? error : new Error(String(error));
-        
-        aiLogger.error({ error: errorMessage, model: currentModel }, 'AI request failed');
-        
-        // Проверяем, нужен ли fallback
-        const needsFallback = FALLBACK_ERROR_PATTERNS.some(pattern => 
-          errorMessage.toLowerCase().includes(pattern.toLowerCase())
-        );
-
-        // Если это не fallback-ошибка, пробрасываем специфичные ошибки
-        if (!needsFallback) {
-          if (errorMessage.includes('401') || errorMessage.includes('Unauthorized')) {
-            const detailedError = new Error(
-              `AUTH_ERROR: Неверный API ключ OpenRouter. Проверьте OPENROUTER_API_KEY.`
-            );
-            (detailedError as any).code = 'AUTH_ERROR';
-            throw detailedError;
-          }
-          
-          if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
-            const detailedError = new Error(
-              `RATE_LIMIT: Превышен лимит запросов. Подождите минуту.`
-            );
-            (detailedError as any).code = 'RATE_LIMIT';
-            throw detailedError;
-          }
-          
-          if (errorMessage.includes('402') || errorMessage.includes('Payment Required')) {
-            const detailedError = new Error(
-              `PAYMENT_REQUIRED: Пополните баланс на OpenRouter или выберите бесплатную модель.`
-            );
-            (detailedError as any).code = 'PAYMENT_REQUIRED';
-            throw detailedError;
-          }
-        }
-
-        // Если есть ещё модели для попытки — продолжаем цикл
-        if (i < modelsToTry.length - 1) {
-          continue;
-        }
+        throw primaryError;
       }
     }
 
-    // Все модели failed
-    aiLogger.error(
-      { triedModels: modelsToTry },
-      'All models failed, no fallback available'
+    // === ШАГ 2: Гонка 10 бесплатных моделей ===
+    aiLogger.info(
+      { modelsCount: FREE_MODELS.length },
+      '🏁 Starting model race — first to respond wins'
     );
-    
-    const detailedError = new Error(
-      `ALL_MODELS_FAILED: Все AI модели временно недоступны. Попробуйте позже.`
-    );
-    (detailedError as any).code = 'ALL_MODELS_FAILED';
-    (detailedError as any).triedModels = modelsToTry;
-    throw detailedError;
+
+    // Запускаем все модели параллельно
+    const racePromises = FREE_MODELS.map(async (model) => {
+      try {
+        const result = await tryModel(model);
+        aiLogger.debug({ model }, 'Model responded in race');
+        return result;
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        aiLogger.debug({ model, error: msg }, 'Model failed in race');
+        throw error; // Promise.any игнорирует отклонённые
+      }
+    });
+
+    try {
+      // Promise.any — возвращает первый успешный результат
+      const winner = await Promise.any(racePromises);
+      
+      aiLogger.info(
+        { winner: winner.usedModel, tokens: winner.tokens_used.total },
+        '🏆 Race winner! Saving as new default model'
+      );
+
+      // Трекаем переключение
+      lastFallbackSwitch = {
+        reason: `Race winner: ${winner.usedModel} (primary ${aiConfig.model} failed)`,
+        time: new Date(),
+        fromModel: aiConfig.model,
+        toModel: winner.usedModel,
+      };
+
+      // Сохраняем победителя как новую основную модель
+      settingsRepo.set('openrouter_model', winner.usedModel).catch((err) => {
+        aiLogger.warn({ error: err }, 'Failed to save race winner model');
+      });
+
+      return winner;
+    } catch (aggregateError) {
+      // Все 10 моделей упали
+      aiLogger.error(
+        { modelsCount: FREE_MODELS.length },
+        '💀 All models failed in race'
+      );
+
+      const detailedError = new Error(
+        `ALL_MODELS_FAILED: Все 10 бесплатных моделей недоступны. Попробуйте позже или пополните баланс OpenRouter.`
+      );
+      (detailedError as any).code = 'ALL_MODELS_FAILED';
+      (detailedError as any).triedModels = FREE_MODELS;
+      throw detailedError;
+    }
   },
 
   /**
@@ -435,10 +427,10 @@ export const aiService = {
 // ============================================
 
 /**
- * Get list of fallback models for admin panel
+ * Get list of race models for admin panel (10 free models)
  */
 export function getFallbackModels(): Array<{ id: string; name: string; description: string }> {
-  return FALLBACK_MODELS.map((id) => ({
+  return FREE_MODELS.map((id) => ({
     id,
     name: id.split('/').pop()?.replace(':free', '') || id,
     description: `Бесплатная модель: ${id}`,
@@ -446,17 +438,19 @@ export function getFallbackModels(): Array<{ id: string; name: string; descripti
 }
 
 /**
- * Get current fallback status
+ * Get current fallback/race status
  */
 export async function getFallbackStatus(): Promise<{
   currentModel: string;
   lastSwitchReason: string | null;
   lastSwitchTime: string | null;
+  raceModelsCount: number;
 }> {
   const currentModel = await settingsRepo.get('openrouter_model');
   return {
     currentModel: currentModel || 'meta-llama/llama-3.2-3b-instruct:free',
     lastSwitchReason: lastFallbackSwitch.reason,
     lastSwitchTime: lastFallbackSwitch.time?.toISOString() || null,
+    raceModelsCount: FREE_MODELS.length,
   };
 }
