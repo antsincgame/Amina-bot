@@ -1,10 +1,10 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { settingsApi } from '../api/supabase';
-import { Save, Loader2, RefreshCw, Info } from 'lucide-react';
+import { Save, Loader2, RefreshCw, Info, Edit3, List } from 'lucide-react';
 
 const settingsSchema = z.object({
   openrouter_model: z.string().min(1, 'Выберите модель'),
@@ -41,6 +41,7 @@ const MODELS = [
 
 const SettingsPage = () => {
   const queryClient = useQueryClient();
+  const [useCustomModel, setUseCustomModel] = useState(false);
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings'],
@@ -76,8 +77,14 @@ const SettingsPage = () => {
         {} as Record<string, string>
       );
 
+      const modelValue = settingsMap['openrouter_model'] ?? 'openrouter/free';
+      
+      // Check if model is in predefined list
+      const isCustom = !MODELS.some(m => m.id === modelValue);
+      setUseCustomModel(isCustom);
+
       reset({
-        openrouter_model: settingsMap['openrouter_model'] ?? 'openrouter/free',
+        openrouter_model: modelValue,
         max_tokens: Number(settingsMap['max_tokens']) || 2048,
         temperature: Number(settingsMap['temperature']) || 0.7,
       });
@@ -123,41 +130,103 @@ const SettingsPage = () => {
           <h3 className="font-semibold text-lg mb-4">Параметры OpenRouter</h3>
           
           <div className="space-y-4">
-            {/* Model */}
+            {/* Model Selection Toggle */}
+            <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+              <span className="text-sm font-medium text-gray-700">
+                {useCustomModel ? '✏️ Ручной ввод ID модели' : '📋 Выбор из списка'}
+              </span>
+              <button
+                type="button"
+                onClick={() => setUseCustomModel(!useCustomModel)}
+                className="flex items-center gap-2 px-3 py-1.5 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                {useCustomModel ? (
+                  <>
+                    <List className="w-4 h-4" />
+                    Список моделей
+                  </>
+                ) : (
+                  <>
+                    <Edit3 className="w-4 h-4" />
+                    Ввести вручную
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* Model Selection or Input */}
             <div>
               <label htmlFor="openrouter_model" className="label">
                 Модель AI
               </label>
-              <select
-                id="openrouter_model"
-                className="input"
-                {...register('openrouter_model')}
-              >
-                <optgroup label="🆓 Бесплатные модели">
-                  {MODELS.filter(m => m.free).map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.name}
-                    </option>
-                  ))}
-                </optgroup>
-                <optgroup label="💎 Премиум модели">
-                  {MODELS.filter(m => !m.free).map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.name}
-                    </option>
-                  ))}
-                </optgroup>
-              </select>
+              
+              {useCustomModel ? (
+                // Custom model input
+                <div className="space-y-2">
+                  <input
+                    id="openrouter_model"
+                    type="text"
+                    className="input font-mono text-sm"
+                    placeholder="provider/model-name (например: anthropic/claude-3-opus)"
+                    {...register('openrouter_model')}
+                  />
+                  <p className="text-xs text-gray-500">
+                    💡 Найди модели: <a 
+                      href="https://openrouter.ai/models" 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="text-primary-600 hover:underline font-medium"
+                    >
+                      openrouter.ai/models
+                    </a>
+                  </p>
+                </div>
+              ) : (
+                // Select from list
+                <select
+                  id="openrouter_model"
+                  className="input bg-white text-gray-900"
+                  style={{
+                    colorScheme: 'light'
+                  }}
+                  {...register('openrouter_model')}
+                >
+                  <optgroup label="🆓 Бесплатные модели" className="bg-white text-gray-900">
+                    {MODELS.filter(m => m.free).map((model) => (
+                      <option 
+                        key={model.id} 
+                        value={model.id}
+                        className="bg-white text-gray-900 py-2"
+                      >
+                        {model.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                  <optgroup label="💎 Премиум модели" className="bg-white text-gray-900">
+                    {MODELS.filter(m => !m.free).map((model) => (
+                      <option 
+                        key={model.id} 
+                        value={model.id}
+                        className="bg-white text-gray-900 py-2"
+                      >
+                        {model.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                </select>
+              )}
+              
               {errors.openrouter_model && (
                 <p className="mt-1 text-sm text-red-600">
                   {errors.openrouter_model.message}
                 </p>
               )}
-              <p className="mt-1 text-xs text-gray-500">
-                🆓 Бесплатные модели не требуют оплаты. Премиум модели более мощные.
-                <br />
-                Цены: <a href="https://openrouter.ai/models" target="_blank" rel="noopener noreferrer" className="text-primary-600 hover:underline">openrouter.ai/models</a>
-              </p>
+              
+              {!useCustomModel && (
+                <p className="mt-2 text-xs text-gray-500">
+                  🆓 Бесплатные модели не требуют оплаты. Премиум модели более мощные.
+                </p>
+              )}
             </div>
 
             {/* Max Tokens & Temperature */}
