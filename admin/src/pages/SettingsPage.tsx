@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { settingsApi } from '../api/supabase';
-import { Save, Loader2, RefreshCw, Info, Edit3, List } from 'lucide-react';
+import { Save, Loader2, RefreshCw, Info } from 'lucide-react';
 
 const settingsSchema = z.object({
   openrouter_model: z.string().min(1, 'Выберите модель'),
@@ -14,34 +14,52 @@ const settingsSchema = z.object({
 
 type SettingsForm = z.infer<typeof settingsSchema>;
 
-// Popular OpenRouter models (free and paid)
-const MODELS = [
-  // Free models (OpenRouter)
-  { id: 'openrouter/free', name: '🆓 Free Models Router (auto-select)', free: true },
-  { id: 'stepfun/step-3.5-flash:free', name: '🆓 StepFun Step 3.5 Flash', free: true },
-  { id: 'arcee-ai/trinity-large-preview:free', name: '🆓 Arcee Trinity Large', free: true },
-  { id: 'upstage/solar-pro-3:free', name: '🆓 Upstage Solar Pro 3', free: true },
-  { id: 'liquid/lfm-2.5-1.2b-thinking:free', name: '🆓 LiquidAI LFM2.5 Thinking', free: true },
-  { id: 'liquid/lfm-2.5-1.2b-instruct:free', name: '🆓 LiquidAI LFM2.5 Instruct', free: true },
-  { id: 'allenai/molmo-2-8b:free', name: '🆓 AllenAI Molmo2 8B', free: true },
-  
-  // Premium models (paid)
-  { id: 'anthropic/claude-3-haiku', name: 'Claude 3 Haiku (быстрый, дешёвый)', free: false },
-  { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet (сбалансированный)', free: false },
-  { id: 'anthropic/claude-3-opus', name: 'Claude 3 Opus (мощный, дорогой)', free: false },
-  { id: 'openai/gpt-4-turbo', name: 'GPT-4 Turbo', free: false },
-  { id: 'openai/gpt-4o', name: 'GPT-4o', free: false },
-  { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini (дешёвый)', free: false },
-  { id: 'google/gemini-pro', name: 'Gemini Pro', free: false },
-  { id: 'google/gemini-flash-1.5', name: 'Gemini Flash 1.5 (быстрый)', free: false },
-  { id: 'mistralai/mistral-large', name: 'Mistral Large', free: false },
-  { id: 'meta-llama/llama-3-70b-instruct', name: 'Llama 3 70B', free: false },
-  { id: 'qwen/qwen3-coder-next', name: 'Qwen3 Coder Next (код)', free: false },
+// All FREE OpenRouter models (pricing.prompt = "0" and pricing.completion = "0")
+const FREE_MODELS = [
+  { id: 'openrouter/free', name: 'Free Models Router (авто-выбор)' },
+  { id: 'stepfun/step-3.5-flash:free', name: 'StepFun: Step 3.5 Flash' },
+  { id: 'arcee-ai/trinity-large-preview:free', name: 'Arcee AI: Trinity Large Preview' },
+  { id: 'upstage/solar-pro-3:free', name: 'Upstage: Solar Pro 3' },
+  { id: 'liquid/lfm-2.5-1.2b-thinking:free', name: 'LiquidAI: LFM2.5-1.2B-Thinking' },
+  { id: 'liquid/lfm-2.5-1.2b-instruct:free', name: 'LiquidAI: LFM2.5-1.2B-Instruct' },
+  { id: 'allenai/molmo-2-8b:free', name: 'AllenAI: Molmo2 8B' },
+  { id: 'nvidia/nemotron-3-nano-30b-a3b:free', name: 'NVIDIA: Nemotron 3 Nano 30B A3B' },
+  { id: 'arcee-ai/trinity-mini:free', name: 'Arcee AI: Trinity Mini' },
+  { id: 'tngtech/tng-r1t-chimera:free', name: 'TNG: R1T Chimera' },
+  { id: 'qwen/qwen3.5-72b-instruct:free', name: 'Qwen: Qwen3.5 72B Instruct' },
+  { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Meta: Llama 3.3 70B Instruct' },
+  { id: 'meta-llama/llama-3.2-90b-vision-instruct:free', name: 'Meta: Llama 3.2 90B Vision Instruct' },
+  { id: 'meta-llama/llama-3.2-11b-vision-instruct:free', name: 'Meta: Llama 3.2 11B Vision Instruct' },
+  { id: 'meta-llama/llama-3.2-3b-instruct:free', name: 'Meta: Llama 3.2 3B Instruct' },
+  { id: 'meta-llama/llama-3.2-1b-instruct:free', name: 'Meta: Llama 3.2 1B Instruct' },
+  { id: 'google/gemini-flash-1.5:free', name: 'Google: Gemini Flash 1.5' },
+  { id: 'google/gemini-flash-1.5-8b:free', name: 'Google: Gemini Flash 1.5 8B' },
+  { id: 'google/gemini-pro-1.5:free', name: 'Google: Gemini Pro 1.5' },
+  { id: 'mistralai/mistral-7b-instruct:free', name: 'Mistral: Mistral 7B Instruct' },
+  { id: 'nousresearch/hermes-3-llama-3.1-405b:free', name: 'Nous Research: Hermes 3 Llama 3.1 405B' },
+  { id: 'microsoft/phi-4:free', name: 'Microsoft: Phi-4' },
+  { id: 'openai/gpt-4o-mini:free', name: 'OpenAI: GPT-4o Mini' },
 ];
+
+// Popular PREMIUM models
+const PREMIUM_MODELS = [
+  { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet' },
+  { id: 'anthropic/claude-3-opus', name: 'Claude 3 Opus' },
+  { id: 'anthropic/claude-3-haiku', name: 'Claude 3 Haiku' },
+  { id: 'openai/gpt-4o', name: 'GPT-4o' },
+  { id: 'openai/gpt-4-turbo', name: 'GPT-4 Turbo' },
+  { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini' },
+  { id: 'google/gemini-pro', name: 'Gemini Pro' },
+  { id: 'google/gemini-flash-1.5', name: 'Gemini Flash 1.5' },
+  { id: 'mistralai/mistral-large', name: 'Mistral Large' },
+  { id: 'meta-llama/llama-3-70b-instruct', name: 'Llama 3 70B' },
+];
+
+const CUSTOM_MODEL_VALUE = '__custom__';
 
 const SettingsPage = () => {
   const queryClient = useQueryClient();
-  const [useCustomModel, setUseCustomModel] = useState(false);
+  const [customModelInput, setCustomModelInput] = useState('');
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings'],
@@ -59,15 +77,18 @@ const SettingsPage = () => {
     register,
     handleSubmit,
     reset,
+    watch,
     formState: { errors, isDirty },
   } = useForm<SettingsForm>({
     resolver: zodResolver(settingsSchema),
     defaultValues: {
-      openrouter_model: 'openrouter/free', // Default to free router
+      openrouter_model: 'openrouter/free',
       max_tokens: 2048,
       temperature: 0.7,
     },
   });
+
+  const selectedModel = watch('openrouter_model');
 
   // Load settings into form
   useEffect(() => {
@@ -79,21 +100,37 @@ const SettingsPage = () => {
 
       const modelValue = settingsMap['openrouter_model'] ?? 'openrouter/free';
       
-      // Check if model is in predefined list
-      const isCustom = !MODELS.some(m => m.id === modelValue);
-      setUseCustomModel(isCustom);
-
-      reset({
-        openrouter_model: modelValue,
-        max_tokens: Number(settingsMap['max_tokens']) || 2048,
-        temperature: Number(settingsMap['temperature']) || 0.7,
-      });
+      // Check if model is in predefined lists
+      const allPredefinedModels = [...FREE_MODELS, ...PREMIUM_MODELS];
+      const isKnownModel = allPredefinedModels.some(m => m.id === modelValue);
+      
+      if (!isKnownModel) {
+        // Custom model - set select to __custom__ and store model in separate input
+        setCustomModelInput(modelValue);
+        reset({
+          openrouter_model: CUSTOM_MODEL_VALUE,
+          max_tokens: Number(settingsMap['max_tokens']) || 2048,
+          temperature: Number(settingsMap['temperature']) || 0.7,
+        });
+      } else {
+        // Known model - just set it
+        reset({
+          openrouter_model: modelValue,
+          max_tokens: Number(settingsMap['max_tokens']) || 2048,
+          temperature: Number(settingsMap['temperature']) || 0.7,
+        });
+      }
     }
   }, [settings, reset]);
 
   const onSubmit = (data: SettingsForm) => {
+    // If custom model is selected, use the custom input value
+    const actualModel = data.openrouter_model === CUSTOM_MODEL_VALUE 
+      ? customModelInput 
+      : data.openrouter_model;
+
     saveSettings({
-      openrouter_model: data.openrouter_model,
+      openrouter_model: actualModel,
       max_tokens: String(data.max_tokens),
       temperature: String(data.temperature),
     });
@@ -130,91 +167,51 @@ const SettingsPage = () => {
           <h3 className="font-semibold text-lg mb-4">Параметры OpenRouter</h3>
           
           <div className="space-y-4">
-            {/* Model Selection Toggle */}
-            <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-              <span className="text-sm font-medium text-gray-700">
-                {useCustomModel ? '✏️ Ручной ввод ID модели' : '📋 Выбор из списка'}
-              </span>
-              <button
-                type="button"
-                onClick={() => setUseCustomModel(!useCustomModel)}
-                className="flex items-center gap-2 px-3 py-1.5 text-sm bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-              >
-                {useCustomModel ? (
-                  <>
-                    <List className="w-4 h-4" />
-                    Список моделей
-                  </>
-                ) : (
-                  <>
-                    <Edit3 className="w-4 h-4" />
-                    Ввести вручную
-                  </>
-                )}
-              </button>
-            </div>
-
-            {/* Model Selection or Input */}
+            {/* Model Selection */}
             <div>
               <label htmlFor="openrouter_model" className="label">
                 Модель AI
               </label>
               
-              {useCustomModel ? (
-                // Custom model input
-                <div className="space-y-2">
-                  <input
-                    id="openrouter_model"
-                    type="text"
-                    className="input font-mono text-sm"
-                    placeholder="provider/model-name (например: anthropic/claude-3-opus)"
-                    {...register('openrouter_model')}
-                  />
-                  <p className="text-xs text-gray-500">
-                    💡 Найди модели: <a 
-                      href="https://openrouter.ai/models" 
-                      target="_blank" 
-                      rel="noopener noreferrer" 
-                      className="text-primary-600 hover:underline font-medium"
+              <select
+                id="openrouter_model"
+                className="input bg-white text-gray-900"
+                style={{ colorScheme: 'light' }}
+                {...register('openrouter_model')}
+              >
+                <optgroup label="🆓 Бесплатные модели (23 шт)" className="bg-white text-gray-900">
+                  {FREE_MODELS.map((model) => (
+                    <option 
+                      key={model.id} 
+                      value={model.id}
+                      className="bg-white text-gray-900 py-1"
                     >
-                      openrouter.ai/models
-                    </a>
-                  </p>
-                </div>
-              ) : (
-                // Select from list
-                <select
-                  id="openrouter_model"
-                  className="input bg-white text-gray-900"
-                  style={{
-                    colorScheme: 'light'
-                  }}
-                  {...register('openrouter_model')}
-                >
-                  <optgroup label="🆓 Бесплатные модели" className="bg-white text-gray-900">
-                    {MODELS.filter(m => m.free).map((model) => (
-                      <option 
-                        key={model.id} 
-                        value={model.id}
-                        className="bg-white text-gray-900 py-2"
-                      >
-                        {model.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                  <optgroup label="💎 Премиум модели" className="bg-white text-gray-900">
-                    {MODELS.filter(m => !m.free).map((model) => (
-                      <option 
-                        key={model.id} 
-                        value={model.id}
-                        className="bg-white text-gray-900 py-2"
-                      >
-                        {model.name}
-                      </option>
-                    ))}
-                  </optgroup>
-                </select>
-              )}
+                      {model.name}
+                    </option>
+                  ))}
+                </optgroup>
+                
+                <optgroup label="💎 Премиум модели" className="bg-white text-gray-900">
+                  {PREMIUM_MODELS.map((model) => (
+                    <option 
+                      key={model.id} 
+                      value={model.id}
+                      className="bg-white text-gray-900 py-1"
+                    >
+                      {model.name}
+                    </option>
+                  ))}
+                </optgroup>
+                
+                <optgroup label="⚙️ Другое" className="bg-white text-gray-900">
+                  <option 
+                    value={CUSTOM_MODEL_VALUE}
+                    className="bg-white text-gray-900 py-1 font-medium"
+                  >
+                    ✏️ Другая модель (ввести вручную)
+                  </option>
+                </optgroup>
+              </select>
               
               {errors.openrouter_model && (
                 <p className="mt-1 text-sm text-red-600">
@@ -222,12 +219,40 @@ const SettingsPage = () => {
                 </p>
               )}
               
-              {!useCustomModel && (
-                <p className="mt-2 text-xs text-gray-500">
-                  🆓 Бесплатные модели не требуют оплаты. Премиум модели более мощные.
-                </p>
-              )}
+              <p className="mt-2 text-xs text-gray-500">
+                🆓 Бесплатные модели не требуют оплаты. Премиум модели мощнее, но платные.
+              </p>
             </div>
+
+            {/* Custom Model Input (shown when "Other" is selected) */}
+            {selectedModel === CUSTOM_MODEL_VALUE && (
+              <div className="border-l-4 border-primary-500 pl-4 py-2 bg-gray-50 rounded-r">
+                <label htmlFor="custom_model" className="label text-sm">
+                  ID Модели
+                </label>
+                <input
+                  id="custom_model"
+                  type="text"
+                  className="input bg-white text-gray-900 font-mono text-sm"
+                  style={{ colorScheme: 'light' }}
+                  placeholder="provider/model-name (например: deepseek/deepseek-chat)"
+                  value={customModelInput}
+                  onChange={(e) => setCustomModelInput(e.target.value)}
+                />
+                <p className="mt-2 text-xs text-gray-600">
+                  💡 Найди модели на{' '}
+                  <a 
+                    href="https://openrouter.ai/models" 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    className="text-primary-600 hover:underline font-medium"
+                  >
+                    openrouter.ai/models
+                  </a>
+                  {' '}и скопируй ID модели.
+                </p>
+              </div>
+            )}
 
             {/* Max Tokens & Temperature */}
             <div className="grid grid-cols-2 gap-4">
@@ -238,7 +263,8 @@ const SettingsPage = () => {
                 <input
                   id="max_tokens"
                   type="number"
-                  className="input"
+                  className="input bg-white text-gray-900"
+                  style={{ colorScheme: 'light' }}
                   min={100}
                   max={16000}
                   {...register('max_tokens')}
@@ -259,7 +285,8 @@ const SettingsPage = () => {
                 <input
                   id="temperature"
                   type="number"
-                  className="input"
+                  className="input bg-white text-gray-900"
+                  style={{ colorScheme: 'light' }}
                   min={0}
                   max={2}
                   step={0.1}
