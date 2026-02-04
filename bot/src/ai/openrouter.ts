@@ -8,17 +8,19 @@ import { handleAIError } from '../utils/error-handler.js';
 
 // --------------------------------------------
 // Fallback Models — автоматическая смена при ошибках
-// Отсортированы по качеству (лучшие первые)
+// Только 2 самых стабильных модели для экономии rate limit
 // --------------------------------------------
 
 const FALLBACK_MODELS = [
-  'meta-llama/llama-3.2-3b-instruct:free',      // Llama 3.2 — быстрая и стабильная
-  'meta-llama/llama-3.1-8b-instruct:free',      // Llama 3.1 8B — хорошее качество
-  'mistralai/mistral-7b-instruct:free',         // Mistral 7B — классика
-  'google/gemma-2-9b-it:free',                  // Gemma 2 — Google
-  'qwen/qwen-2-7b-instruct:free',               // Qwen 2 — Alibaba
-  'huggingfaceh4/zephyr-7b-beta:free',          // Zephyr — HuggingFace
+  'meta-llama/llama-3.2-3b-instruct:free',      // Llama 3.2 — самая стабильная
+  'mistralai/mistral-7b-instruct:free',         // Mistral 7B — проверенная классика
 ];
+
+// Задержка между fallback попытками (мс) для экономии rate limit
+const FALLBACK_DELAY_MS = 3000;
+
+// Утилита для задержки
+const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
 
 // Ошибки при которых нужно переключаться на fallback модель
 const FALLBACK_ERROR_PATTERNS = [
@@ -193,6 +195,13 @@ export const aiService = {
       const isRetry = i > 0;
 
       if (isRetry) {
+        // Задержка перед fallback для экономии rate limit
+        aiLogger.info(
+          { delayMs: FALLBACK_DELAY_MS, nextModel: currentModel },
+          'Waiting before fallback attempt'
+        );
+        await sleep(FALLBACK_DELAY_MS);
+        
         aiLogger.warn(
           { failedModel: modelsToTry[i - 1], tryingModel: currentModel, attempt: i + 1 },
           'Switching to fallback model'
