@@ -408,12 +408,7 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         transcription_length: result.transcription.length,
       });
 
-      // Send response with transcription preview
-      const transcriptionPreview = result.transcription.length > 100
-        ? result.transcription.slice(0, 100) + '...'
-        : result.transcription;
-      
-      await ctx.reply(`🎤 _"${transcriptionPreview}"_`, { parse_mode: 'Markdown' });
+      // Отправляем только финальный ответ (без промежуточной транскрипции)
       await sendLongMessage(ctx, result.response.content);
 
       telegramLogger.info(
