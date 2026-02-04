@@ -423,15 +423,28 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
     } catch (error) {
       telegramLogger.error({ error, userId }, 'Failed to process voice message');
       
+      const errorCode = (error as any)?.code;
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      
       await analyticsRepo.log('error', 'telegram', {
         userId,
         type: 'voice',
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: errorMessage,
+        errorCode,
       });
 
-      await ctx.reply(
-        '😔 Не удалось обработать голосовое сообщение. Попробуй ещё раз или отправь текст.'
-      );
+      // Детальные сообщения об ошибках
+      let userMessage = '😔 Не удалось обработать голосовое сообщение. Попробуй ещё раз или отправь текст.';
+      
+      if (errorCode === 'AUDIO_MODEL_NOT_FOUND') {
+        userMessage = `🔧 Audio модель не найдена на OpenRouter.\n\nОбратитесь к администратору для настройки модели в админке.`;
+      } else if (errorCode === 'AUDIO_NOT_SUPPORTED') {
+        userMessage = `🔧 Выбранная модель не поддерживает аудио.\n\nОбратитесь к администратору для смены модели.`;
+      } else if (errorCode === 'AUTH_ERROR') {
+        userMessage = '🔑 Ошибка авторизации API. Обратитесь к администратору.';
+      }
+
+      await ctx.reply(userMessage);
     }
   });
 
@@ -565,15 +578,26 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
     } catch (error) {
       telegramLogger.error({ error, userId }, 'Failed to process photo');
       
+      const errorCode = (error as any)?.code;
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      
       await analyticsRepo.log('error', 'telegram', {
         userId,
         type: 'photo',
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: errorMessage,
+        errorCode,
       });
 
-      await ctx.reply(
-        '😔 Не удалось обработать изображение. Попробуй ещё раз или отправь текст.'
-      );
+      // Детальные сообщения об ошибках
+      let userMessage = '😔 Не удалось обработать изображение. Попробуй ещё раз или отправь текст.';
+      
+      if (errorCode === 'VISION_MODEL_NOT_FOUND') {
+        userMessage = `🔧 Vision модель не найдена на OpenRouter.\n\nОбратитесь к администратору для настройки модели в админке.`;
+      } else if (errorCode === 'AUTH_ERROR') {
+        userMessage = '🔑 Ошибка авторизации API. Обратитесь к администратору.';
+      }
+
+      await ctx.reply(userMessage);
     }
   });
 

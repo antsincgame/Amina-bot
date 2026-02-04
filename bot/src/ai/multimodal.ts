@@ -31,34 +31,30 @@ export interface AudioTranscriptionResult {
 // --------------------------------------------
 
 // Vision модели (поддерживают анализ изображений)
+// ВАЖНО: Проверены на OpenRouter 2026-02-04
 export const VISION_MODELS = {
   free: [
-    { id: 'google/gemini-2.0-flash-exp:free', name: 'Gemini 2.0 Flash (free)', description: 'Быстрая бесплатная модель с vision' },
-    { id: 'google/gemini-2.5-flash-preview:free', name: 'Gemini 2.5 Flash Preview (free)', description: 'Новейшая бесплатная модель' },
-    { id: 'meta-llama/llama-3.2-11b-vision-instruct:free', name: 'Llama 3.2 11B Vision (free)', description: 'Meta vision модель' },
-    { id: 'qwen/qwen2.5-vl-72b-instruct:free', name: 'Qwen 2.5 VL 72B (free)', description: 'Мощная китайская vision модель' },
-    { id: 'mistralai/pixtral-12b:free', name: 'Pixtral 12B (free)', description: 'Mistral vision модель' },
+    { id: 'allenai/molmo-2-8b:free', name: 'Molmo2 8B (free)', description: 'AllenAI vision модель, поддерживает фото и видео' },
   ],
   premium: [
     { id: 'openai/gpt-4o', name: 'GPT-4o', description: 'OpenAI мультимодальная модель' },
     { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', description: 'Быстрая OpenAI vision модель' },
     { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', description: 'Anthropic vision модель' },
-    { id: 'google/gemini-pro-vision', name: 'Gemini Pro Vision', description: 'Google Pro vision' },
-    { id: 'google/gemini-2.0-flash-thinking-exp', name: 'Gemini 2.0 Flash Thinking', description: 'Gemini с reasoning' },
   ],
 };
 
 // Audio модели (поддерживают аудио вход)
+// ВАЖНО: Бесплатных audio моделей на OpenRouter нет!
+// Используем самую дешёвую платную как fallback
 export const AUDIO_MODELS = {
   free: [
-    { id: 'google/gemini-2.0-flash-exp:free', name: 'Gemini 2.0 Flash (free)', description: 'Поддерживает аудио вход' },
-    { id: 'google/gemini-2.5-flash-preview:free', name: 'Gemini 2.5 Flash Preview (free)', description: 'Новейшая с аудио' },
+    // Нет бесплатных audio моделей на OpenRouter
+    // Используем дешёвую платную как "условно бесплатную"
+    { id: 'openai/gpt-audio-mini', name: 'GPT Audio Mini (дешёвая)', description: '$0.60/M токенов - самая дешёвая audio модель' },
   ],
   premium: [
     { id: 'openai/gpt-audio', name: 'GPT Audio', description: 'OpenAI специализированная аудио модель' },
     { id: 'openai/gpt-audio-mini', name: 'GPT Audio Mini', description: 'Быстрая аудио модель' },
-    { id: 'openai/gpt-4o-audio-preview', name: 'GPT-4o Audio Preview', description: 'GPT-4o с аудио' },
-    { id: 'google/gemini-2.0-flash-thinking-exp', name: 'Gemini 2.0 Flash Thinking', description: 'Gemini с аудио и reasoning' },
   ],
 };
 
@@ -93,6 +89,10 @@ interface MultimodalConfig {
   maxTokens: number;
 }
 
+// Дефолтные модели (проверены на OpenRouter)
+const DEFAULT_VISION_MODEL = 'allenai/molmo-2-8b:free';
+const DEFAULT_AUDIO_MODEL = 'openai/gpt-audio-mini';
+
 const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
   const settings = await settingsRepo.getMany([
     'vision_model',
@@ -102,17 +102,38 @@ const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
     'max_tokens',
   ]);
 
-  // Vision model priority
-  let visionModel = settings['vision_model'] ?? 'google/gemini-2.0-flash-exp:free';
+  // Vision model priority: override > setting > default
+  let visionModel = DEFAULT_VISION_MODEL;
+  let visionSource = 'default';
+  
+  if (settings['vision_model']?.trim()) {
+    visionModel = settings['vision_model'].trim();
+    visionSource = 'database';
+  }
   if (settings['vision_model_override']?.trim()) {
     visionModel = settings['vision_model_override'].trim();
+    visionSource = 'override';
   }
 
-  // Audio model priority
-  let audioModel = settings['audio_model'] ?? 'google/gemini-2.0-flash-exp:free';
+  // Audio model priority: override > setting > default
+  let audioModel = DEFAULT_AUDIO_MODEL;
+  let audioSource = 'default';
+  
+  if (settings['audio_model']?.trim()) {
+    audioModel = settings['audio_model'].trim();
+    audioSource = 'database';
+  }
   if (settings['audio_model_override']?.trim()) {
     audioModel = settings['audio_model_override'].trim();
+    audioSource = 'override';
   }
+
+  aiLogger.debug({
+    visionModel,
+    visionSource,
+    audioModel,
+    audioSource,
+  }, 'Multimodal config loaded');
 
   return {
     visionModel,
@@ -178,8 +199,21 @@ export async function analyzeImage(
       model: response.model,
       tokens_used: response.usage?.total_tokens ?? 0,
     };
-  } catch (error) {
-    aiLogger.error({ error }, 'Image analysis failed');
+  } catch (error: unknown) {
+    const err = error as { status?: number; message?: string };
+    aiLogger.error({ error, model: config.visionModel }, 'Image analysis failed');
+    
+    // Создаём понятную ошибку
+    if (err.status === 404) {
+      const customError = new Error(`Vision модель "${config.visionModel}" не найдена на OpenRouter. Измените в настройках.`);
+      (customError as any).code = 'VISION_MODEL_NOT_FOUND';
+      throw customError;
+    }
+    if (err.status === 401) {
+      const customError = new Error('Неверный API ключ OpenRouter');
+      (customError as any).code = 'AUTH_ERROR';
+      throw customError;
+    }
     throw error;
   }
 }
@@ -292,8 +326,26 @@ export async function transcribeAudio(
       text: content.trim(),
       model: response.model,
     };
-  } catch (error) {
-    aiLogger.error({ error }, 'Audio transcription failed');
+  } catch (error: unknown) {
+    const err = error as { status?: number; message?: string };
+    aiLogger.error({ error, model: config.audioModel }, 'Audio transcription failed');
+    
+    // Создаём понятную ошибку
+    if (err.status === 404) {
+      const customError = new Error(`Audio модель "${config.audioModel}" не найдена на OpenRouter. Измените в настройках.`);
+      (customError as any).code = 'AUDIO_MODEL_NOT_FOUND';
+      throw customError;
+    }
+    if (err.status === 401) {
+      const customError = new Error('Неверный API ключ OpenRouter');
+      (customError as any).code = 'AUTH_ERROR';
+      throw customError;
+    }
+    if (err.status === 400 && err.message?.includes('input_audio')) {
+      const customError = new Error(`Модель "${config.audioModel}" не поддерживает аудио вход. Выберите другую модель.`);
+      (customError as any).code = 'AUDIO_NOT_SUPPORTED';
+      throw customError;
+    }
     throw error;
   }
 }

@@ -8,6 +8,7 @@ import { aiLogger, getLogs, getLogStats } from '../config/logger.js';
 import { rateLimitHook } from '../utils/rate-limiter.js';
 import { getAllVisionModels, getAllAudioModels } from '../ai/multimodal.js';
 import { userProfileRepo, userMemoryRepo, userLogsRepo } from '../memory/user-memory.js';
+import { config } from '../config/index.js';
 import type { Message, Conversation, LogLevel } from '../../../shared/types/index.js';
 
 // --------------------------------------------
@@ -630,7 +631,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
 
       /**
        * GET /api/models/vision
-       * Get available vision models
+       * Get available vision models (static list)
        */
       apiServer.get('/models/vision', async (request: FastifyRequest, reply: FastifyReply) => {
         try {
@@ -650,7 +651,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
 
       /**
        * GET /api/models/audio
-       * Get available audio models
+       * Get available audio models (static list)
        */
       apiServer.get('/models/audio', async (request: FastifyRequest, reply: FastifyReply) => {
         try {
@@ -664,6 +665,130 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
           return reply.code(500).send({
             success: false,
             error: 'Failed to fetch audio models',
+          });
+        }
+      });
+
+      /**
+       * GET /api/models/openrouter/vision
+       * Fetch actual vision models from OpenRouter API
+       */
+      apiServer.get('/models/openrouter/vision', async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+          const response = await fetch('https://openrouter.ai/api/v1/models', {
+            headers: {
+              'Authorization': `Bearer ${config.ai.apiKey}`,
+            },
+          });
+
+          if (!response.ok) {
+            throw new Error(`OpenRouter API error: ${response.status}`);
+          }
+
+          const data = await response.json() as { data: Array<{
+            id: string;
+            name: string;
+            description?: string;
+            pricing: { prompt: string; completion: string };
+            architecture?: { input_modalities?: string[] };
+          }> };
+
+          // Filter models that support image input
+          const visionModels = data.data.filter(model => 
+            model.architecture?.input_modalities?.includes('image')
+          );
+
+          const free = visionModels
+            .filter(m => m.pricing.prompt === '0' && m.pricing.completion === '0')
+            .map(m => ({
+              id: m.id,
+              name: m.name,
+              description: m.description || 'Vision модель',
+            }));
+
+          const premium = visionModels
+            .filter(m => m.pricing.prompt !== '0' || m.pricing.completion !== '0')
+            .slice(0, 10)
+            .map(m => ({
+              id: m.id,
+              name: m.name,
+              description: m.description || 'Vision модель (платная)',
+            }));
+
+          aiLogger.info({ freeCount: free.length, premiumCount: premium.length }, 'Fetched vision models from OpenRouter');
+
+          return reply.code(200).send({
+            success: true,
+            data: { free, premium },
+            source: 'openrouter',
+          });
+        } catch (error) {
+          aiLogger.error({ error }, 'Fetch OpenRouter vision models error');
+          return reply.code(500).send({
+            success: false,
+            error: 'Failed to fetch vision models from OpenRouter',
+          });
+        }
+      });
+
+      /**
+       * GET /api/models/openrouter/audio
+       * Fetch actual audio models from OpenRouter API
+       */
+      apiServer.get('/models/openrouter/audio', async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+          const response = await fetch('https://openrouter.ai/api/v1/models', {
+            headers: {
+              'Authorization': `Bearer ${config.ai.apiKey}`,
+            },
+          });
+
+          if (!response.ok) {
+            throw new Error(`OpenRouter API error: ${response.status}`);
+          }
+
+          const data = await response.json() as { data: Array<{
+            id: string;
+            name: string;
+            description?: string;
+            pricing: { prompt: string; completion: string };
+            architecture?: { input_modalities?: string[] };
+          }> };
+
+          // Filter models that support audio input
+          const audioModels = data.data.filter(model => 
+            model.architecture?.input_modalities?.includes('audio')
+          );
+
+          const free = audioModels
+            .filter(m => m.pricing.prompt === '0' && m.pricing.completion === '0')
+            .map(m => ({
+              id: m.id,
+              name: m.name,
+              description: m.description || 'Audio модель',
+            }));
+
+          const premium = audioModels
+            .filter(m => m.pricing.prompt !== '0' || m.pricing.completion !== '0')
+            .slice(0, 10)
+            .map(m => ({
+              id: m.id,
+              name: m.name,
+              description: m.description || 'Audio модель (платная)',
+            }));
+
+          aiLogger.info({ freeCount: free.length, premiumCount: premium.length }, 'Fetched audio models from OpenRouter');
+
+          return reply.code(200).send({
+            success: true,
+            data: { free, premium },
+            source: 'openrouter',
+          });
+        } catch (error) {
+          aiLogger.error({ error }, 'Fetch OpenRouter audio models error');
+          return reply.code(500).send({
+            success: false,
+            error: 'Failed to fetch audio models from OpenRouter',
           });
         }
       });

@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { settingsApi } from '../api/supabase';
-import { Save, Loader2, RefreshCw, Info, Eye, Mic, Image, Volume2 } from 'lucide-react';
+import { Save, Loader2, RefreshCw, Info, Eye, Mic, Image, Volume2, Download, CheckCircle, AlertCircle } from 'lucide-react';
 
 // API URL
 const BOT_URL = import.meta.env.VITE_BOT_URL || 'https://amina-bot.onrender.com';
@@ -33,32 +33,27 @@ type MultimodalForm = z.infer<typeof multimodalSchema>;
 
 const CUSTOM_MODEL_VALUE = '__custom__';
 
-// Default models (fallback if API fails)
+// Default models (проверены на OpenRouter 2026-02-04)
 const DEFAULT_VISION_MODELS: ModelsResponse = {
   free: [
-    { id: 'google/gemini-2.0-flash-exp:free', name: 'Gemini 2.0 Flash (free)', description: 'Быстрая бесплатная модель с vision' },
-    { id: 'google/gemini-2.5-flash-preview:free', name: 'Gemini 2.5 Flash Preview (free)', description: 'Новейшая бесплатная модель' },
-    { id: 'meta-llama/llama-3.2-11b-vision-instruct:free', name: 'Llama 3.2 11B Vision (free)', description: 'Meta vision модель' },
-    { id: 'qwen/qwen2.5-vl-72b-instruct:free', name: 'Qwen 2.5 VL 72B (free)', description: 'Мощная китайская vision модель' },
-    { id: 'mistralai/pixtral-12b:free', name: 'Pixtral 12B (free)', description: 'Mistral vision модель' },
+    { id: 'allenai/molmo-2-8b:free', name: 'Molmo2 8B (free)', description: 'AllenAI vision модель, поддерживает фото и видео' },
   ],
   premium: [
     { id: 'openai/gpt-4o', name: 'GPT-4o', description: 'OpenAI мультимодальная модель' },
     { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', description: 'Быстрая OpenAI vision модель' },
     { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', description: 'Anthropic vision модель' },
-    { id: 'google/gemini-pro-vision', name: 'Gemini Pro Vision', description: 'Google Pro vision' },
   ],
 };
 
+// ВАЖНО: Бесплатных audio моделей на OpenRouter нет!
 const DEFAULT_AUDIO_MODELS: ModelsResponse = {
   free: [
-    { id: 'google/gemini-2.0-flash-exp:free', name: 'Gemini 2.0 Flash (free)', description: 'Поддерживает аудио вход' },
-    { id: 'google/gemini-2.5-flash-preview:free', name: 'Gemini 2.5 Flash Preview (free)', description: 'Новейшая с аудио' },
+    // Нет бесплатных - используем дешёвую платную
+    { id: 'openai/gpt-audio-mini', name: 'GPT Audio Mini (дешёвая)', description: '$0.60/M токенов - самая дешёвая audio модель' },
   ],
   premium: [
     { id: 'openai/gpt-audio', name: 'GPT Audio', description: 'OpenAI специализированная аудио модель' },
     { id: 'openai/gpt-audio-mini', name: 'GPT Audio Mini', description: 'Быстрая аудио модель' },
-    { id: 'openai/gpt-4o-audio-preview', name: 'GPT-4o Audio Preview', description: 'GPT-4o с аудио' },
   ],
 };
 
@@ -68,6 +63,12 @@ const MultimodalSettingsPage = () => {
   const [audioModels, setAudioModels] = useState<ModelsResponse>(DEFAULT_AUDIO_MODELS);
   const [customVisionInput, setCustomVisionInput] = useState('');
   const [customAudioInput, setCustomAudioInput] = useState('');
+  
+  // Refresh states
+  const [isRefreshingVision, setIsRefreshingVision] = useState(false);
+  const [isRefreshingAudio, setIsRefreshingAudio] = useState(false);
+  const [visionRefreshMessage, setVisionRefreshMessage] = useState('');
+  const [audioRefreshMessage, setAudioRefreshMessage] = useState('');
 
   // Fetch settings
   const { data: settings, isLoading: settingsLoading } = useQuery({
@@ -111,6 +112,58 @@ const MultimodalSettingsPage = () => {
       setAudioModels(audioModelsData);
     }
   }, [audioModelsData]);
+
+  // Refresh vision models from OpenRouter
+  const refreshVisionModels = async () => {
+    setIsRefreshingVision(true);
+    setVisionRefreshMessage('');
+    try {
+      const response = await fetch(`${BOT_URL}/api/models/openrouter/vision`);
+      if (!response.ok) throw new Error('Failed to fetch');
+      const data = await response.json();
+      
+      if (data.success && data.data) {
+        setVisionModels(data.data);
+        const total = data.data.free.length + data.data.premium.length;
+        setVisionRefreshMessage(`✅ Загружено ${total} vision моделей (${data.data.free.length} бесплатных)`);
+      } else {
+        throw new Error('Invalid response');
+      }
+    } catch {
+      setVisionRefreshMessage('❌ Ошибка загрузки моделей');
+    } finally {
+      setIsRefreshingVision(false);
+      setTimeout(() => setVisionRefreshMessage(''), 5000);
+    }
+  };
+
+  // Refresh audio models from OpenRouter
+  const refreshAudioModels = async () => {
+    setIsRefreshingAudio(true);
+    setAudioRefreshMessage('');
+    try {
+      const response = await fetch(`${BOT_URL}/api/models/openrouter/audio`);
+      if (!response.ok) throw new Error('Failed to fetch');
+      const data = await response.json();
+      
+      if (data.success && data.data) {
+        setAudioModels(data.data);
+        const total = data.data.free.length + data.data.premium.length;
+        if (total === 0) {
+          setAudioRefreshMessage('⚠️ Бесплатных audio моделей не найдено. Используйте платные.');
+        } else {
+          setAudioRefreshMessage(`✅ Загружено ${total} audio моделей (${data.data.free.length} бесплатных)`);
+        }
+      } else {
+        throw new Error('Invalid response');
+      }
+    } catch {
+      setAudioRefreshMessage('❌ Ошибка загрузки моделей');
+    } finally {
+      setIsRefreshingAudio(false);
+      setTimeout(() => setAudioRefreshMessage(''), 5000);
+    }
+  };
 
   // Save mutation
   const { mutate: saveSettings, isPending: isSaving } = useMutation({
@@ -231,22 +284,59 @@ const MultimodalSettingsPage = () => {
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
         {/* Vision Models */}
         <div className="card">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 bg-purple-100 rounded-lg">
-              <Eye className="w-5 h-5 text-purple-600" />
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-purple-100 rounded-lg">
+                <Eye className="w-5 h-5 text-purple-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-lg">Vision Модель</h3>
+                <p className="text-sm text-gray-500">Для анализа изображений и фото</p>
+              </div>
             </div>
-            <div>
-              <h3 className="font-semibold text-lg">Vision Модель</h3>
-              <p className="text-sm text-gray-500">Для анализа изображений и фото</p>
-            </div>
+            <button
+              type="button"
+              onClick={refreshVisionModels}
+              disabled={isRefreshingVision}
+              className="btn-secondary text-sm flex items-center gap-2"
+            >
+              {isRefreshingVision ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Загрузка...
+                </>
+              ) : (
+                <>
+                  <Download className="w-4 h-4" />
+                  Обновить модели
+                </>
+              )}
+            </button>
           </div>
+
+          {visionRefreshMessage && (
+            <div className={`mb-4 p-3 rounded-lg flex items-center gap-2 text-sm ${
+              visionRefreshMessage.startsWith('✅') 
+                ? 'bg-green-100 text-green-700' 
+                : visionRefreshMessage.startsWith('⚠️')
+                ? 'bg-yellow-100 text-yellow-700'
+                : 'bg-red-100 text-red-700'
+            }`}>
+              {visionRefreshMessage.startsWith('✅') ? (
+                <CheckCircle className="w-4 h-4" />
+              ) : (
+                <AlertCircle className="w-4 h-4" />
+              )}
+              {visionRefreshMessage.replace(/^[✅❌⚠️]\s*/, '')}
+            </div>
+          )}
 
           <div className="space-y-4">
             {/* Vision Model Select */}
             <div>
               <label htmlFor="vision_model" className="label">
                 <Image className="w-4 h-4 inline mr-1" />
-                Модель для изображений
+                Модель для изображений ({visionModels.free.length + visionModels.premium.length} доступно)
               </label>
               <select
                 id="vision_model"
@@ -318,22 +408,59 @@ const MultimodalSettingsPage = () => {
 
         {/* Audio Models */}
         <div className="card">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 bg-blue-100 rounded-lg">
-              <Mic className="w-5 h-5 text-blue-600" />
+          <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-blue-100 rounded-lg">
+                <Mic className="w-5 h-5 text-blue-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-lg">Audio Модель</h3>
+                <p className="text-sm text-gray-500">Для транскрипции голосовых сообщений</p>
+              </div>
             </div>
-            <div>
-              <h3 className="font-semibold text-lg">Audio Модель</h3>
-              <p className="text-sm text-gray-500">Для транскрипции голосовых сообщений</p>
-            </div>
+            <button
+              type="button"
+              onClick={refreshAudioModels}
+              disabled={isRefreshingAudio}
+              className="btn-secondary text-sm flex items-center gap-2"
+            >
+              {isRefreshingAudio ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Загрузка...
+                </>
+              ) : (
+                <>
+                  <Download className="w-4 h-4" />
+                  Обновить модели
+                </>
+              )}
+            </button>
           </div>
+
+          {audioRefreshMessage && (
+            <div className={`mb-4 p-3 rounded-lg flex items-center gap-2 text-sm ${
+              audioRefreshMessage.startsWith('✅') 
+                ? 'bg-green-100 text-green-700' 
+                : audioRefreshMessage.startsWith('⚠️')
+                ? 'bg-yellow-100 text-yellow-700'
+                : 'bg-red-100 text-red-700'
+            }`}>
+              {audioRefreshMessage.startsWith('✅') ? (
+                <CheckCircle className="w-4 h-4" />
+              ) : (
+                <AlertCircle className="w-4 h-4" />
+              )}
+              {audioRefreshMessage.replace(/^[✅❌⚠️]\s*/, '')}
+            </div>
+          )}
 
           <div className="space-y-4">
             {/* Audio Model Select */}
             <div>
               <label htmlFor="audio_model" className="label">
                 <Volume2 className="w-4 h-4 inline mr-1" />
-                Модель для аудио
+                Модель для аудио ({audioModels.free.length + audioModels.premium.length} доступно)
               </label>
               <select
                 id="audio_model"
