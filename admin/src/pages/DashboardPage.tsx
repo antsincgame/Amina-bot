@@ -186,10 +186,6 @@ const DashboardPage = () => {
               {...getStatusInfo('ai')}
             />
             <StatusItem
-              label="Voximplant"
-              {...getStatusInfo('voximplant')}
-            />
-            <StatusItem
               label="База данных"
               {...getStatusInfo('database')}
             />

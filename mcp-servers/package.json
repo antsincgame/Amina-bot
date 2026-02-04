@@ -1,0 +1,15 @@
+{
+  "name": "amina-mcp-servers",
+  "version": "1.0.0",
+  "description": "MCP servers for Render, Supabase, and Voximplant",
+  "type": "module",
+  "scripts": {
+    "render": "node render-server.js",
+    "supabase": "node supabase-server.js",
+    "voximplant": "node voximplant-server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@supabase/supabase-js": "^2.39.0"
+  }
+}

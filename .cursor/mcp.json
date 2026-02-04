@@ -1,0 +1,27 @@
+{
+  "mcpServers": {
+    "render": {
+      "command": "node",
+      "args": ["mcp-servers/render-server.js"],
+      "env": {
+        "RENDER_API_KEY": "${RENDER_API_KEY}"
+      }
+    },
+    "supabase": {
+      "command": "node",
+      "args": ["mcp-servers/supabase-server.js"],
+      "env": {
+        "SUPABASE_URL": "${SUPABASE_URL}",
+        "SUPABASE_SERVICE_KEY": "${SUPABASE_SERVICE_KEY}"
+      }
+    },
+    "voximplant": {
+      "command": "node",
+      "args": ["mcp-servers/voximplant-server.js"],
+      "env": {
+        "VOXIMPLANT_ACCOUNT_ID": "${VOXIMPLANT_ACCOUNT_ID}",
+        "VOXIMPLANT_API_KEY": "${VOXIMPLANT_API_KEY}"
+      }
+    }
+  }
+}

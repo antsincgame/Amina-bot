@@ -3,7 +3,6 @@ import { aiService } from '../ai/openrouter.js';
 import { transcribeAudio, initVosk, isVoskReady } from './stt/vosk.js';
 import { synthesizeSpeech, initSilero, isSileroReady } from './tts/silero.js';
 import { convertToWav } from './audio/converter.js';
-import { isVoximplantEnabled } from './voximplant.js';
 import type { TranscriptionResult, SynthesisResult } from '../../../shared/types/index.js';
 
 // --------------------------------------------
@@ -122,50 +121,12 @@ export const processVoiceMessage = async (
 };
 
 // --------------------------------------------
-// Process for Telephone Call (Zadarma)
-// --------------------------------------------
-
-export const processCallAudio = async (
-  audioChunks: Buffer[],
-  callId: string,
-  conversationHistory: { role: 'user' | 'assistant'; content: string }[] = []
-): Promise<{
-  text: string;
-  response: string;
-  responseAudio: Buffer;
-}> => {
-  voiceLogger.info({ callId, chunks: audioChunks.length }, 'Processing call audio');
-
-  // Combine audio chunks
-  const combinedAudio = Buffer.concat(audioChunks);
-
-  // Process voice
-  const result = await processVoiceMessage(
-    combinedAudio,
-    'wav',
-    conversationHistory,
-    { generateAudio: true }
-  );
-
-  if (!result.synthesis) {
-    throw new Error('TTS not available for call response');
-  }
-
-  return {
-    text: result.transcription.text,
-    response: result.aiResponse,
-    responseAudio: result.synthesis.audio,
-  };
-};
-
-// --------------------------------------------
 // Health Check
 // --------------------------------------------
 
 export const getVoiceServicesStatus = (): {
   stt: { ready: boolean; engine: string };
   tts: { ready: boolean; engine: string };
-  telephony: { ready: boolean; engine: string };
 } => {
   return {
     stt: {
@@ -175,10 +136,6 @@ export const getVoiceServicesStatus = (): {
     tts: {
       ready: isSileroReady(),
       engine: 'Silero',
-    },
-    telephony: {
-      ready: isVoximplantEnabled(),
-      engine: 'Voximplant',
     },
   };
 };

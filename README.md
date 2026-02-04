@@ -1,22 +1,22 @@
 # Amina AI Bot
 
-Telegram бот с AI ассистентом и голосовой телефонией.
+Telegram бот с AI ассистентом и поддержкой голосовых сообщений.
 
 ## Архитектура
 
 ```
-┌─────────────────┐     ┌─────────────────┐
-│   Telegram      │     │   Voximplant    │
-│   Bot API       │     │   Voice/WebRTC  │
-└────────┬────────┘     └────────┬────────┘
-         │                       │
-         ▼                       ▼
+┌─────────────────┐
+│   Telegram      │
+│   Bot API       │
+└────────┬────────┘
+         │
+         ▼
 ┌─────────────────────────────────────────┐
 │           Bot Backend (Render)          │
 │  - Node.js + TypeScript                 │
 │  - grammy (Telegram)                    │
 │  - OpenRouter API (AI)                  │
-│  - Vosk STT + Silero TTS (self-hosted)  │
+│  - Vosk STT + Silero TTS (voice msgs)   │
 └────────────────────┬────────────────────┘
                      │
                      ▼
@@ -52,7 +52,6 @@ Telegram бот с AI ассистентом и голосовой телефо�
 | AI | OpenRouter API |
 | STT | Vosk (self-hosted) |
 | TTS | Silero (self-hosted) |
-| Telephony | Voximplant (работает в Беларуси) |
 
 ## Быстрый старт
 
@@ -61,8 +60,7 @@ Telegram бот с AI ассистентом и голосовой телефо�
 1. **Telegram Bot** - создать бота через [@BotFather](https://t.me/botfather)
 2. **OpenRouter** - получить API ключ на [openrouter.ai](https://openrouter.ai)
 3. **Supabase** - создать проект на [supabase.com](https://supabase.com)
-4. **Voximplant** (для звонков) - [voximplant.com](https://voximplant.com)
-5. **Render** - [render.com](https://render.com) для хостинга
+4. **Render** - [render.com](https://render.com) для хостинга
 
 ### 2. Настройка базы данных
 
@@ -101,7 +99,7 @@ npm run dev
 
 Админка будет доступна на http://localhost:3001
 
-## Деплой на Render (всё в одном месте)
+## Деплой на Render
 
 ### Вариант 1: Blueprint (рекомендуется)
 
@@ -131,15 +129,19 @@ npm run dev
 - `OPENROUTER_API_KEY`
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_KEY`
-- `VOXIMPLANT_ACCOUNT_ID` (опционально)
-- `VOXIMPLANT_API_KEY` (опционально)
 - `WEBHOOK_URL` = URL бота на Render
 
 **Admin:**
 - `VITE_SUPABASE_URL`
 - `VITE_SUPABASE_ANON_KEY`
 
-## Голосовые модели
+## Голосовые сообщения
+
+Бот поддерживает голосовые сообщения в Telegram:
+1. Пользователь отправляет голосовое сообщение
+2. Vosk STT конвертирует речь в текст
+3. AI генерирует ответ
+4. (опционально) Silero TTS озвучивает ответ
 
 ### Vosk STT
 
@@ -197,7 +199,6 @@ Amina/
 | `/health` | GET | Health check |
 | `/ready` | GET | Readiness check |
 | `/webhook/telegram` | POST | Telegram webhook |
-| `/webhook/voximplant` | POST | Voximplant webhook |
 | `/api/stats` | GET | Статистика (7 дней) |
 | `/api/status` | GET | Статус сервисов |
 

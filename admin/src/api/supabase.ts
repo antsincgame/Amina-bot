@@ -227,7 +227,6 @@ export const statusApi = {
         database: { ready: true, engine: 'Supabase' },
         telegram: { ready: false, engine: 'Unknown' },
         ai: { ready: false, engine: 'Unknown' },
-        voximplant: { ready: false, engine: 'Unknown' },
       },
       timestamp: new Date().toISOString(),
     };

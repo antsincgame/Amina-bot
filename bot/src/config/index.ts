@@ -20,12 +20,6 @@ const envSchema = z.object({
   SUPABASE_URL: z.string().url('SUPABASE_URL must be a valid URL'),
   SUPABASE_SERVICE_KEY: z.string().min(1, 'SUPABASE_SERVICE_KEY is required'),
 
-  // Voximplant
-  VOXIMPLANT_ACCOUNT_ID: z.string().optional(),
-  VOXIMPLANT_API_KEY: z.string().optional(),
-  VOXIMPLANT_APP_ID: z.string().optional(),
-  VOXIMPLANT_APP_NAME: z.string().optional(),
-
   // Voice Models
   VOSK_MODEL_PATH: z.string().default('./models/vosk-model-small-ru-0.22'),
   SILERO_MODEL_PATH: z.string().default('./models/silero_tts'),
@@ -98,16 +92,7 @@ export const config = {
     serviceKey: env.SUPABASE_SERVICE_KEY,
   },
 
-  // Voximplant Voice
-  voximplant: {
-    accountId: process.env['VOXIMPLANT_ACCOUNT_ID'] ?? '',
-    apiKey: process.env['VOXIMPLANT_API_KEY'] ?? '',
-    appId: process.env['VOXIMPLANT_APP_ID'] ?? '',
-    appName: process.env['VOXIMPLANT_APP_NAME'] ?? 'amina-bot',
-    enabled: Boolean(process.env['VOXIMPLANT_ACCOUNT_ID'] && process.env['VOXIMPLANT_API_KEY']),
-  },
-
-  // Voice Models (self-hosted)
+  // Voice Models (self-hosted, for Telegram voice messages)
   voice: {
     stt: {
       modelPath: env.VOSK_MODEL_PATH,

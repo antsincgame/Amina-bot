@@ -31,12 +31,6 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
-      - key: VOXIMPLANT_ACCOUNT_ID
-        sync: false
-      - key: VOXIMPLANT_API_KEY
-        sync: false
-      - key: VOXIMPLANT_APP_ID
-        sync: false
       - key: WEBHOOK_URL
         sync: false
       - key: WEBHOOK_SECRET

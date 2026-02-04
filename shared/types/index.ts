@@ -150,41 +150,6 @@ export interface SynthesisResult {
 }
 
 // --------------------------------------------
-// Voximplant Types
-// --------------------------------------------
-
-export interface VoximplantWebhookEvent {
-  event: VoximplantEventType;
-  call_session_id: string;
-  caller_id?: string;
-  destination?: string;
-  start_time?: string;
-  duration?: number;
-  recording_url?: string;
-  transcription?: string;
-  custom_data?: Record<string, unknown>;
-}
-
-export type VoximplantEventType =
-  | 'call.started'
-  | 'call.connected'
-  | 'call.ended'
-  | 'call.transcription'
-  | 'call.recording';
-
-export interface VoximplantCallState {
-  call_id: string;
-  status: 'ringing' | 'connected' | 'ended';
-  direction: 'inbound' | 'outbound';
-  caller_id: string;
-  called_number: string;
-  started_at: string;
-  answered_at?: string;
-  ended_at?: string;
-  duration_ms?: number;
-}
-
-// --------------------------------------------
 // API Types
 // --------------------------------------------
 

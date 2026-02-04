@@ -75,20 +75,6 @@ const main = async (): Promise<void> => {
     logger.info('Telegram webhook configured');
   }
 
-  // Voximplant webhook endpoint
-  server.post('/webhook/voximplant', async (request, reply) => {
-    httpLogger.info({ body: request.body }, 'Voximplant webhook received');
-    
-    try {
-      const { handleVoximplantWebhook } = await import('./voice/voximplant.js');
-      const result = await handleVoximplantWebhook(request.body as Parameters<typeof handleVoximplantWebhook>[0]);
-      return reply.send(result);
-    } catch (error) {
-      httpLogger.error({ error }, 'Voximplant webhook error');
-      return reply.status(500).send({ error: 'Internal error' });
-    }
-  });
-
   // API routes for admin panel
   server.get('/api/stats', async () => {
     try {
@@ -122,7 +108,6 @@ const main = async (): Promise<void> => {
       telegram: { ready: true, engine: 'grammy' },
       ai: { ready: false, engine: 'OpenRouter' },
       database: { ready: false, engine: 'Supabase' },
-      voximplant: { ready: false, engine: 'Voximplant' },
     };
 
     try {
@@ -133,11 +118,6 @@ const main = async (): Promise<void> => {
       const supabase = getSupabase();
       const { error } = await supabase.from('settings').select('key').limit(1);
       checks['database'] = { ready: !error, engine: 'Supabase' };
-    } catch { /* ignore */ }
-
-    try {
-      const { isVoximplantEnabled } = await import('./voice/voximplant.js');
-      checks['voximplant'] = { ready: isVoximplantEnabled(), engine: 'Voximplant' };
     } catch { /* ignore */ }
 
     return { checks, timestamp: new Date().toISOString() };
