@@ -6,9 +6,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { settingsApi } from '../api/supabase';
 import { Save, Loader2, RefreshCw, Info, Eye, Mic, CheckCircle, AlertCircle } from 'lucide-react';
 
-// API URL
-const BOT_URL = import.meta.env.VITE_BOT_URL || 'https://amina-bot.onrender.com';
-
 // Schema — максимально простой
 const settingsSchema = z.object({
   audio_mode: z.enum(['groq', 'openrouter']),

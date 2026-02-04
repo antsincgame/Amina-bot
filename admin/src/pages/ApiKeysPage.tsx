@@ -136,11 +136,6 @@ const ApiKeysPage = () => {
   // Получить информацию о выбранной модели
   const selectedModelInfo = PERPLEXITY_MODELS.find(m => m.id === perplexityModel) || PERPLEXITY_MODELS[0];
 
-  // Маскировать ключ для отображения
-  const maskKey = (key: string | undefined): string => {
-    if (!key || key.length < 10) return '••••••••';
-    return key.substring(0, 6) + '••••••••' + key.substring(key.length - 4);
-  };
 
   if (isLoading) {
     return (
