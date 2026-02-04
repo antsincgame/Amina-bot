@@ -7,6 +7,46 @@ import { validateChannel, validateMessageContent, MAX_MESSAGE_LENGTH } from '../
 import { handleAIError } from '../utils/error-handler.js';
 
 // --------------------------------------------
+// Fallback Models — автоматическая смена при ошибках
+// Отсортированы по качеству (лучшие первые)
+// --------------------------------------------
+
+const FALLBACK_MODELS = [
+  'meta-llama/llama-3.2-3b-instruct:free',      // Llama 3.2 — быстрая и стабильная
+  'meta-llama/llama-3.1-8b-instruct:free',      // Llama 3.1 8B — хорошее качество
+  'mistralai/mistral-7b-instruct:free',         // Mistral 7B — классика
+  'google/gemma-2-9b-it:free',                  // Gemma 2 — Google
+  'qwen/qwen-2-7b-instruct:free',               // Qwen 2 — Alibaba
+  'huggingfaceh4/zephyr-7b-beta:free',          // Zephyr — HuggingFace
+];
+
+// Ошибки при которых нужно переключаться на fallback модель
+const FALLBACK_ERROR_PATTERNS = [
+  'Provider returned error',
+  'Empty response',
+  'No endpoints found',
+  '503',
+  '502',
+  '500',
+  '400',
+  'temporarily unavailable',
+  'overloaded',
+];
+
+// Трекер последнего переключения
+let lastFallbackSwitch: {
+  reason: string | null;
+  time: Date | null;
+  fromModel: string | null;
+  toModel: string | null;
+} = {
+  reason: null,
+  time: null,
+  fromModel: null,
+  toModel: null,
+};
+
+// --------------------------------------------
 // OpenRouter Client (dynamic API key)
 // --------------------------------------------
 
@@ -113,6 +153,7 @@ const getDefaultSystemPrompt = (): string => {
 export const aiService = {
   /**
    * Generate AI response for messages
+   * С автоматическим fallback на другие модели при ошибках
    */
   async chat(
     messages: AIMessage[],
@@ -134,90 +175,144 @@ export const aiService = {
       ...messages,
     ];
 
-    aiLogger.debug(
-      { model: aiConfig.model, messageCount: messages.length },
-      'Sending chat request'
-    );
-
-    try {
-      const response = await client.chat.completions.create({
-        model: aiConfig.model,
-        messages: fullMessages,
-        max_tokens: aiConfig.maxTokens,
-        temperature: aiConfig.temperature,
-      });
-
-      const choice = response.choices[0];
-      if (!choice?.message?.content) {
-        throw new Error('Empty response from AI');
+    // Список моделей для попытки: основная + fallback модели
+    const modelsToTry = [aiConfig.model];
+    
+    // Добавляем fallback модели, исключая текущую если она уже в списке
+    for (const fallback of FALLBACK_MODELS) {
+      if (!modelsToTry.includes(fallback)) {
+        modelsToTry.push(fallback);
       }
-
-      const result: AIResponse = {
-        content: choice.message.content,
-        model: response.model,
-        tokens_used: {
-          prompt: response.usage?.prompt_tokens ?? 0,
-          completion: response.usage?.completion_tokens ?? 0,
-          total: response.usage?.total_tokens ?? 0,
-        },
-        finish_reason: choice.finish_reason ?? 'unknown',
-      };
-
-      aiLogger.info(
-        { model: result.model, tokens: result.tokens_used.total },
-        'AI response received'
-      );
-
-      return result;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      aiLogger.error({ error, model: aiConfig.model }, 'AI request failed');
-      
-      // Create detailed error for user
-      if (errorMessage.includes('No endpoints found') || errorMessage.includes('404')) {
-        const detailedError = new Error(
-          `MODEL_NOT_FOUND: Модель "${aiConfig.model}" не найдена на OpenRouter. ` +
-          `Измените модель в админке: https://amina-admin.onrender.com/settings`
-        );
-        (detailedError as any).code = 'MODEL_NOT_FOUND';
-        (detailedError as any).model = aiConfig.model;
-        throw detailedError;
-      }
-      
-      if (errorMessage.includes('401') || errorMessage.includes('Unauthorized')) {
-        const detailedError = new Error(
-          `AUTH_ERROR: Неверный API ключ OpenRouter. Проверьте OPENROUTER_API_KEY в Render.`
-        );
-        (detailedError as any).code = 'AUTH_ERROR';
-        throw detailedError;
-      }
-      
-      if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
-        const detailedError = new Error(
-          `RATE_LIMIT: Превышен лимит запросов к OpenRouter. Подождите минуту.`
-        );
-        (detailedError as any).code = 'RATE_LIMIT';
-        throw detailedError;
-      }
-      
-      if (errorMessage.includes('402') || errorMessage.includes('Payment Required')) {
-        const detailedError = new Error(
-          `PAYMENT_REQUIRED: Пополните баланс на OpenRouter или выберите бесплатную модель в админке.`
-        );
-        (detailedError as any).code = 'PAYMENT_REQUIRED';
-        throw detailedError;
-      }
-      
-      if (errorMessage.includes('500') || errorMessage.includes('502') || errorMessage.includes('503') || errorMessage.includes('Provider returned error')) {
-        const detailedError = new Error(
-          `SERVER_ERROR: OpenRouter временно недоступен. Попробуйте позже.`
-        );
-        (detailedError as any).code = 'SERVER_ERROR';
-        throw detailedError;
-      }
-      
-      throw error;
     }
+
+    let lastError: Error | null = null;
+
+    // Пробуем модели по очереди
+    for (let i = 0; i < modelsToTry.length; i++) {
+      const currentModel = modelsToTry[i];
+      const isRetry = i > 0;
+
+      if (isRetry) {
+        aiLogger.warn(
+          { failedModel: modelsToTry[i - 1], tryingModel: currentModel, attempt: i + 1 },
+          'Switching to fallback model'
+        );
+      } else {
+        aiLogger.debug(
+          { model: currentModel, messageCount: messages.length },
+          'Sending chat request'
+        );
+      }
+
+      try {
+        const response = await client.chat.completions.create({
+          model: currentModel,
+          messages: fullMessages,
+          max_tokens: aiConfig.maxTokens,
+          temperature: aiConfig.temperature,
+        });
+
+        const choice = response.choices[0];
+        if (!choice?.message?.content) {
+          throw new Error('Empty response from AI');
+        }
+
+        const result: AIResponse = {
+          content: choice.message.content,
+          model: response.model,
+          tokens_used: {
+            prompt: response.usage?.prompt_tokens ?? 0,
+            completion: response.usage?.completion_tokens ?? 0,
+            total: response.usage?.total_tokens ?? 0,
+          },
+          finish_reason: choice.finish_reason ?? 'unknown',
+        };
+
+        // Если это был fallback — автоматически обновляем модель в настройках
+        if (isRetry) {
+          aiLogger.info(
+            { newModel: currentModel, previousModel: aiConfig.model },
+            'Auto-switched to working model, saving to settings'
+          );
+          
+          // Трекаем переключение
+          lastFallbackSwitch = {
+            reason: `Model ${aiConfig.model} failed, switched to ${currentModel}`,
+            time: new Date(),
+            fromModel: aiConfig.model,
+            toModel: currentModel,
+          };
+          
+          // Сохраняем рабочую модель в БД (асинхронно, не ждём)
+          settingsRepo.set('openrouter_model', currentModel).catch((err) => {
+            aiLogger.warn({ error: err }, 'Failed to save auto-switched model');
+          });
+        }
+
+        aiLogger.info(
+          { model: result.model, tokens: result.tokens_used.total, wasRetry: isRetry },
+          'AI response received'
+        );
+
+        return result;
+
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        lastError = error instanceof Error ? error : new Error(String(error));
+        
+        aiLogger.error({ error: errorMessage, model: currentModel }, 'AI request failed');
+        
+        // Проверяем, нужен ли fallback
+        const needsFallback = FALLBACK_ERROR_PATTERNS.some(pattern => 
+          errorMessage.toLowerCase().includes(pattern.toLowerCase())
+        );
+
+        // Если это не fallback-ошибка, пробрасываем специфичные ошибки
+        if (!needsFallback) {
+          if (errorMessage.includes('401') || errorMessage.includes('Unauthorized')) {
+            const detailedError = new Error(
+              `AUTH_ERROR: Неверный API ключ OpenRouter. Проверьте OPENROUTER_API_KEY.`
+            );
+            (detailedError as any).code = 'AUTH_ERROR';
+            throw detailedError;
+          }
+          
+          if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
+            const detailedError = new Error(
+              `RATE_LIMIT: Превышен лимит запросов. Подождите минуту.`
+            );
+            (detailedError as any).code = 'RATE_LIMIT';
+            throw detailedError;
+          }
+          
+          if (errorMessage.includes('402') || errorMessage.includes('Payment Required')) {
+            const detailedError = new Error(
+              `PAYMENT_REQUIRED: Пополните баланс на OpenRouter или выберите бесплатную модель.`
+            );
+            (detailedError as any).code = 'PAYMENT_REQUIRED';
+            throw detailedError;
+          }
+        }
+
+        // Если есть ещё модели для попытки — продолжаем цикл
+        if (i < modelsToTry.length - 1) {
+          continue;
+        }
+      }
+    }
+
+    // Все модели failed
+    aiLogger.error(
+      { triedModels: modelsToTry },
+      'All models failed, no fallback available'
+    );
+    
+    const detailedError = new Error(
+      `ALL_MODELS_FAILED: Все AI модели временно недоступны. Попробуйте позже.`
+    );
+    (detailedError as any).code = 'ALL_MODELS_FAILED';
+    (detailedError as any).triedModels = modelsToTry;
+    throw detailedError;
   },
 
   /**
@@ -325,3 +420,34 @@ export const aiService = {
     }
   },
 };
+
+// ============================================
+// Exported Fallback Helper Functions
+// ============================================
+
+/**
+ * Get list of fallback models for admin panel
+ */
+export function getFallbackModels(): Array<{ id: string; name: string; description: string }> {
+  return FALLBACK_MODELS.map((id) => ({
+    id,
+    name: id.split('/').pop()?.replace(':free', '') || id,
+    description: `Бесплатная модель: ${id}`,
+  }));
+}
+
+/**
+ * Get current fallback status
+ */
+export async function getFallbackStatus(): Promise<{
+  currentModel: string;
+  lastSwitchReason: string | null;
+  lastSwitchTime: string | null;
+}> {
+  const currentModel = await settingsRepo.get('openrouter_model');
+  return {
+    currentModel: currentModel || 'meta-llama/llama-3.2-3b-instruct:free',
+    lastSwitchReason: lastFallbackSwitch.reason,
+    lastSwitchTime: lastFallbackSwitch.time?.toISOString() || null,
+  };
+}

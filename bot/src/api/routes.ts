@@ -795,6 +795,39 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
       });
 
       // ============================================
+      // Fallback Models (Auto-switch) Endpoints
+      // ============================================
+
+      /**
+       * GET /api/models/fallback
+       * Get fallback models configuration for auto-switching
+       */
+      apiServer.get('/models/fallback', async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+          const { getFallbackModels, getFallbackStatus } = await import('../ai/openrouter.js');
+          const fallbackModels = getFallbackModels();
+          const status = await getFallbackStatus();
+          
+          return reply.code(200).send({
+            success: true,
+            data: {
+              enabled: true, // Auto-fallback всегда включён
+              models: fallbackModels,
+              currentModel: status.currentModel,
+              lastSwitchReason: status.lastSwitchReason,
+              lastSwitchTime: status.lastSwitchTime,
+            },
+          });
+        } catch (error) {
+          aiLogger.error({ error }, 'Fallback models info error');
+          return reply.code(500).send({
+            success: false,
+            error: 'Failed to get fallback models info',
+          });
+        }
+      });
+
+      // ============================================
       // Web Search (Perplexity) Endpoints
       // ============================================
 
