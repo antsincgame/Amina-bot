@@ -5,6 +5,9 @@ import { aiService } from '../ai/openrouter.js';
 import { conversationsRepo, analyticsRepo } from '../db/supabase.js';
 import type { Message, AIMessage } from '../../../shared/types/index.js';
 
+// Note: Voice processing requires Vosk model to be installed
+// Voice messages will fallback to text-only response if STT unavailable
+
 // --------------------------------------------
 // Session Types
 // --------------------------------------------
@@ -242,12 +245,80 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
   // Voice messages
   bot.on('message:voice', async (ctx) => {
     const userId = ctx.from?.id.toString() ?? 'unknown';
+    const chatId = ctx.chat.id;
+    const voice = ctx.message.voice;
     
-    telegramLogger.info({ userId, duration: ctx.message.voice.duration }, 'Voice message received');
+    telegramLogger.info({ userId, duration: voice.duration, fileId: voice.file_id }, 'Voice message received');
 
-    await ctx.reply(
-      '🎤 Голосовые сообщения скоро будут поддерживаться!\n\nПока что напиши текстом.'
-    );
+    // Log analytics
+    await analyticsRepo.log('message_received', 'telegram', {
+      userId,
+      chatId,
+      type: 'voice',
+      duration: voice.duration,
+    });
+
+    // Show processing indicator
+    await ctx.replyWithChatAction('typing');
+
+    try {
+      // Download voice file
+      const file = await ctx.api.getFile(voice.file_id);
+      const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
+      
+      const response = await fetch(fileUrl);
+      if (!response.ok) {
+        throw new Error(`Failed to download voice: ${response.status}`);
+      }
+      
+      const audioBuffer = Buffer.from(await response.arrayBuffer());
+      telegramLogger.debug({ size: audioBuffer.length }, 'Voice file downloaded');
+
+      // Process voice message
+      const { processVoiceMessage } = await import('../voice/handler.js');
+      const result = await processVoiceMessage(audioBuffer, 'ogg', ctx.session.messageHistory, {
+        generateAudio: false, // For now, just text response
+      });
+
+      // Update conversation history
+      ctx.session.messageHistory.push(
+        { role: 'user', content: result.transcription.text },
+        { role: 'assistant', content: result.aiResponse }
+      );
+
+      // Trim history
+      if (ctx.session.messageHistory.length > MAX_HISTORY_MESSAGES) {
+        ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
+      }
+
+      // Send response
+      await ctx.reply(
+        `🎤 *Распознано:* ${result.transcription.text}\n\n${result.aiResponse}`,
+        { parse_mode: 'Markdown' }
+      );
+
+      // Log analytics
+      await analyticsRepo.log('ai_response', 'telegram', {
+        userId,
+        type: 'voice',
+        transcriptionLength: result.transcription.text.length,
+      });
+
+      telegramLogger.info({ userId, transcription: result.transcription.text.substring(0, 50) }, 'Voice processed');
+    } catch (error) {
+      telegramLogger.error({ error, userId }, 'Failed to process voice message');
+      
+      await analyticsRepo.log('error', 'telegram', {
+        userId,
+        type: 'voice',
+        error: error instanceof Error ? error.message : 'Unknown error',
+      });
+
+      // Fallback message
+      await ctx.reply(
+        '🎤 Не удалось обработать голосовое сообщение.\n\nПопробуй ещё раз или напиши текстом.'
+      );
+    }
   });
 
   // Stickers and other media

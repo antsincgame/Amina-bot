@@ -364,10 +364,11 @@ export const analyticsRepo = {
     totalMessages: number;
     totalCalls: number;
     uniqueUsers: number;
+    tokensByDay: { date: string; tokens: number }[];
   }> {
     const { data, error } = await getSupabase()
       .from('analytics')
-      .select('event_type, user_id')
+      .select('event_type, user_id, data, timestamp')
       .gte('timestamp', fromDate.toISOString())
       .lte('timestamp', toDate.toISOString());
 
@@ -379,6 +380,23 @@ export const analyticsRepo = {
     const events = data ?? [];
     const uniqueUsers = new Set(events.map((e) => e.user_id).filter(Boolean));
 
+    // Group tokens by day
+    const tokensByDay = events
+      .filter((e) => e.event_type === 'ai_response')
+      .reduce((acc, e) => {
+        const date = new Date(e.timestamp).toISOString().split('T')[0];
+        const eventData = e.data as { tokens?: number } | null;
+        const tokens = eventData?.tokens ?? 0;
+        if (!date) return acc;
+        const existing = acc.find((d) => d.date === date);
+        if (existing) {
+          existing.tokens += tokens;
+        } else {
+          acc.push({ date, tokens });
+        }
+        return acc;
+      }, [] as { date: string; tokens: number }[]);
+
     return {
       totalMessages: events.filter(
         (e) => e.event_type === 'message_sent' || e.event_type === 'message_received'
@@ -387,6 +405,7 @@ export const analyticsRepo = {
         (e) => e.event_type === 'call_started'
       ).length,
       uniqueUsers: uniqueUsers.size,
+      tokensByDay: tokensByDay.sort((a, b) => a.date.localeCompare(b.date)),
     };
   },
 };

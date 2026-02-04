@@ -175,7 +175,7 @@ Amina/
 │   │   └── config/         # Конфигурация
 │   └── package.json
 │
-├── admin/                  # Админка на Netlify
+├── admin/                  # Админка на Render (Static Site)
 │   ├── src/
 │   │   ├── pages/          # Страницы
 │   │   ├── components/     # Компоненты
@@ -198,7 +198,8 @@ Amina/
 | `/ready` | GET | Readiness check |
 | `/webhook/telegram` | POST | Telegram webhook |
 | `/webhook/voximplant` | POST | Voximplant webhook |
-| `/api/stats` | GET | Статистика |
+| `/api/stats` | GET | Статистика (7 дней) |
+| `/api/status` | GET | Статус сервисов |
 
 ## Тестирование
 

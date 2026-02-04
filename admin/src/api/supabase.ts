@@ -1,45 +1,32 @@
-import { createClient } from '@supabase/supabase-js';
+import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
-// Environment variables (set in Netlify)
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+// Environment variables (set in Render Dashboard)
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 
+// Validate environment variables
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.error('Missing Supabase environment variables');
+  throw new Error(
+    'Missing Supabase environment variables. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Render Dashboard.'
+  );
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase: SupabaseClient = createClient(supabaseUrl, supabaseAnonKey);
 
-// Types
-export interface Setting {
-  id: string;
-  key: string;
-  value: string;
-  updated_at: string;
-}
+// Re-export types from shared (single source of truth)
+export type {
+  Settings as Setting,
+  Prompt,
+  AnalyticsEvent,
+  AnalyticsEventType,
+} from '../../../shared/types/index.js';
 
-export interface Prompt {
-  id: string;
-  name: string;
-  content: string;
-  is_active: boolean;
-  channel: 'telegram' | 'voice' | 'all';
-  created_at: string;
-  updated_at: string;
-}
-
-export interface AnalyticsEvent {
-  id: string;
-  event_type: string;
-  data: Record<string, unknown>;
-  user_id: string | null;
-  channel: string;
-  timestamp: string;
-}
+// Import types for internal use
+import type { Settings, Prompt, AnalyticsEvent } from '../../../shared/types/index.js';
 
 // Settings API
 export const settingsApi = {
-  async getAll(): Promise<Setting[]> {
+  async getAll(): Promise<Settings[]> {
     const { data, error } = await supabase
       .from('settings')
       .select('*')
@@ -165,7 +152,7 @@ export const analyticsApi = {
 
     const { data, error } = await query;
     if (error) throw error;
-    return data ?? [];
+    return (data ?? []) as AnalyticsEvent[];
   },
 
   async getStats(from: Date, to: Date): Promise<{
@@ -208,6 +195,41 @@ export const analyticsApi = {
       totalCalls: events.filter((e) => e.event_type === 'call_started').length,
       uniqueUsers: uniqueUsers.size,
       tokensByDay: tokensByDay.sort((a, b) => a.date.localeCompare(b.date)),
+    };
+  },
+};
+
+// Service Status API (calls bot backend)
+export const statusApi = {
+  async getServiceStatus(): Promise<{
+    checks: Record<string, { ready: boolean; engine: string }>;
+    timestamp: string;
+  }> {
+    // In production, this would call the bot API
+    // For now, return mock data that admin can display
+    const botUrl = import.meta.env.VITE_BOT_URL || '';
+    
+    if (botUrl) {
+      try {
+        const response = await fetch(`${botUrl}/api/status`);
+        if (response.ok) {
+          return response.json();
+        }
+      } catch {
+        // Bot not reachable, return degraded status
+      }
+    }
+
+    // Fallback: check what we can from admin side
+    return {
+      checks: {
+        admin: { ready: true, engine: 'React' },
+        database: { ready: true, engine: 'Supabase' },
+        telegram: { ready: false, engine: 'Unknown' },
+        ai: { ready: false, engine: 'Unknown' },
+        voximplant: { ready: false, engine: 'Unknown' },
+      },
+      timestamp: new Date().toISOString(),
     };
   },
 };

@@ -91,12 +91,56 @@ const main = async (): Promise<void> => {
 
   // API routes for admin panel
   server.get('/api/stats', async () => {
-    // TODO: Implement stats endpoint
-    return {
-      totalMessages: 0,
-      totalCalls: 0,
-      totalUsers: 0,
+    try {
+      const { analyticsRepo } = await import('./db/supabase.js');
+      const now = new Date();
+      const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      
+      const stats = await analyticsRepo.getStats(weekAgo, now);
+      return {
+        totalMessages: stats.totalMessages,
+        totalCalls: stats.totalCalls,
+        totalUsers: stats.uniqueUsers,
+        tokensByDay: stats.tokensByDay,
+        period: '7d',
+      };
+    } catch (error) {
+      httpLogger.error({ error }, 'Failed to get stats');
+      return {
+        totalMessages: 0,
+        totalCalls: 0,
+        totalUsers: 0,
+        tokensByDay: [],
+        period: '7d',
+      };
+    }
+  });
+
+  // API endpoint for service status (used by admin dashboard)
+  server.get('/api/status', async () => {
+    const checks: Record<string, { ready: boolean; engine: string }> = {
+      telegram: { ready: true, engine: 'grammy' },
+      ai: { ready: false, engine: 'OpenRouter' },
+      database: { ready: false, engine: 'Supabase' },
+      voximplant: { ready: false, engine: 'Voximplant' },
     };
+
+    try {
+      checks['ai'] = { ready: await aiService.testConnection(), engine: 'OpenRouter' };
+    } catch { /* ignore */ }
+
+    try {
+      const supabase = getSupabase();
+      const { error } = await supabase.from('settings').select('key').limit(1);
+      checks['database'] = { ready: !error, engine: 'Supabase' };
+    } catch { /* ignore */ }
+
+    try {
+      const { isVoximplantEnabled } = await import('./voice/voximplant.js');
+      checks['voximplant'] = { ready: isVoximplantEnabled(), engine: 'Voximplant' };
+    } catch { /* ignore */ }
+
+    return { checks, timestamp: new Date().toISOString() };
   });
 
   // Start server
