@@ -16,31 +16,25 @@ const settingsSchema = z.object({
 
 type SettingsForm = z.infer<typeof settingsSchema>;
 
-// All FREE OpenRouter models (pricing.prompt = "0" and pricing.completion = "0")
+// All FREE OpenRouter models (verified 2026-02-04)
+// Use "Обновить модели" button to get latest list from API
 const FREE_MODELS = [
-  { id: 'openrouter/free', name: 'Free Models Router (авто-выбор)' },
-  { id: 'stepfun/step-3.5-flash:free', name: 'StepFun: Step 3.5 Flash' },
-  { id: 'arcee-ai/trinity-large-preview:free', name: 'Arcee AI: Trinity Large Preview' },
-  { id: 'upstage/solar-pro-3:free', name: 'Upstage: Solar Pro 3' },
-  { id: 'liquid/lfm-2.5-1.2b-thinking:free', name: 'LiquidAI: LFM2.5-1.2B-Thinking' },
-  { id: 'liquid/lfm-2.5-1.2b-instruct:free', name: 'LiquidAI: LFM2.5-1.2B-Instruct' },
-  { id: 'allenai/molmo-2-8b:free', name: 'AllenAI: Molmo2 8B' },
-  { id: 'nvidia/nemotron-3-nano-30b-a3b:free', name: 'NVIDIA: Nemotron 3 Nano 30B A3B' },
-  { id: 'arcee-ai/trinity-mini:free', name: 'Arcee AI: Trinity Mini' },
-  { id: 'tngtech/tng-r1t-chimera:free', name: 'TNG: R1T Chimera' },
-  { id: 'qwen/qwen3.5-72b-instruct:free', name: 'Qwen: Qwen3.5 72B Instruct' },
-  { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Meta: Llama 3.3 70B Instruct' },
-  { id: 'meta-llama/llama-3.2-90b-vision-instruct:free', name: 'Meta: Llama 3.2 90B Vision Instruct' },
-  { id: 'meta-llama/llama-3.2-11b-vision-instruct:free', name: 'Meta: Llama 3.2 11B Vision Instruct' },
-  { id: 'meta-llama/llama-3.2-3b-instruct:free', name: 'Meta: Llama 3.2 3B Instruct' },
-  { id: 'meta-llama/llama-3.2-1b-instruct:free', name: 'Meta: Llama 3.2 1B Instruct' },
-  { id: 'google/gemini-flash-1.5:free', name: 'Google: Gemini Flash 1.5' },
-  { id: 'google/gemini-flash-1.5-8b:free', name: 'Google: Gemini Flash 1.5 8B' },
-  { id: 'google/gemini-pro-1.5:free', name: 'Google: Gemini Pro 1.5' },
-  { id: 'mistralai/mistral-7b-instruct:free', name: 'Mistral: Mistral 7B Instruct' },
-  { id: 'nousresearch/hermes-3-llama-3.1-405b:free', name: 'Nous Research: Hermes 3 Llama 3.1 405B' },
-  { id: 'microsoft/phi-4:free', name: 'Microsoft: Phi-4' },
-  { id: 'openai/gpt-4o-mini:free', name: 'OpenAI: GPT-4o Mini' },
+  { id: 'openrouter/free', name: '🔄 Free Router (авто-выбор лучшей)' },
+  { id: 'meta-llama/llama-3.3-70b-instruct:free', name: '🦙 Meta: Llama 3.3 70B Instruct' },
+  { id: 'meta-llama/llama-3.2-3b-instruct:free', name: '🦙 Meta: Llama 3.2 3B Instruct' },
+  { id: 'deepseek/deepseek-r1-0528:free', name: '🔮 DeepSeek: R1 0528' },
+  { id: 'qwen/qwen3-coder:free', name: '💻 Qwen: Qwen3 Coder' },
+  { id: 'mistralai/mistral-small-3.1-24b-instruct:free', name: '🌀 Mistral: Small 3.1 24B' },
+  { id: 'google/gemma-3-27b-it:free', name: '💎 Google: Gemma 3 27B' },
+  { id: 'google/gemma-3-12b-it:free', name: '💎 Google: Gemma 3 12B' },
+  { id: 'google/gemma-3-4b-it:free', name: '💎 Google: Gemma 3 4B' },
+  { id: 'nvidia/nemotron-nano-12b-v2-vl:free', name: '🟢 NVIDIA: Nemotron Nano 12B VL' },
+  { id: 'nvidia/nemotron-nano-9b-v2:free', name: '🟢 NVIDIA: Nemotron Nano 9B' },
+  { id: 'stepfun/step-3.5-flash:free', name: '⚡ StepFun: Step 3.5 Flash' },
+  { id: 'arcee-ai/trinity-large-preview:free', name: '🔺 Arcee AI: Trinity Large' },
+  { id: 'arcee-ai/trinity-mini:free', name: '🔺 Arcee AI: Trinity Mini' },
+  { id: 'tngtech/deepseek-r1t-chimera:free', name: '🐉 TNG: DeepSeek R1T Chimera' },
+  { id: 'cognitivecomputations/dolphin-mistral-24b-venice-edition:free', name: '🐬 Dolphin Mistral 24B' },
 ];
 
 // Popular PREMIUM models
@@ -65,6 +59,7 @@ const SettingsPage = () => {
   const [freeModels, setFreeModels] = useState(FREE_MODELS);
   const [premiumModels, setPremiumModels] = useState(PREMIUM_MODELS);
   const [isRefreshingModels, setIsRefreshingModels] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState('');
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings'],
@@ -109,12 +104,11 @@ const SettingsPage = () => {
       
       setFreeModels(free);
       setPremiumModels(premium);
-      
-      // Show success message (you can add toast notification here)
-      console.log(`Загружено ${free.length} бесплатных и ${premium.length} премиум моделей`);
-    } catch (error) {
-      console.error('Failed to refresh models:', error);
-      // Show error message (you can add toast notification here)
+      setRefreshMessage(`✅ Загружено ${free.length} бесплатных и ${premium.length} премиум моделей`);
+      setTimeout(() => setRefreshMessage(''), 3000);
+    } catch {
+      setRefreshMessage('❌ Ошибка загрузки моделей');
+      setTimeout(() => setRefreshMessage(''), 3000);
     } finally {
       setIsRefreshingModels(false);
     }
@@ -232,6 +226,12 @@ const SettingsPage = () => {
                   )}
                 </button>
               </div>
+              
+              {refreshMessage && (
+                <div className={`text-sm p-2 rounded ${refreshMessage.startsWith('✅') ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                  {refreshMessage}
+                </div>
+              )}
               
               <select
                 id="openrouter_model"

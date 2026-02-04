@@ -273,16 +273,38 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         'Response sent'
       );
     } catch (error) {
-      telegramLogger.error({ error, userId }, 'Failed to process message');
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const errorCode = (error as any)?.code;
+      
+      telegramLogger.error({ error, userId, errorCode }, 'Failed to process message');
       
       await analyticsRepo.log('error', 'telegram', {
         userId,
-        error: error instanceof Error ? error.message : 'Unknown error',
+        error: errorMessage,
+        errorCode,
       });
 
-      await ctx.reply(
-        '😔 Извини, произошла ошибка. Попробуй ещё раз или напиши /clear для сброса диалога.'
-      );
+      // Подробные сообщения об ошибках для пользователя
+      let userMessage = '😔 Извини, произошла ошибка. Попробуй ещё раз или напиши /clear для сброса диалога.';
+      
+      if (errorCode === 'MODEL_NOT_FOUND' || errorMessage.includes('MODEL_NOT_FOUND')) {
+        userMessage = `❌ Модель AI не найдена!\n\n` +
+          `Текущая модель не существует на OpenRouter.\n` +
+          `Администратор должен изменить модель в настройках:\n` +
+          `https://amina-admin.onrender.com/settings`;
+      } else if (errorCode === 'AUTH_ERROR' || errorMessage.includes('AUTH_ERROR')) {
+        userMessage = `🔑 Ошибка авторизации AI!\n\n` +
+          `Неверный API ключ OpenRouter.\n` +
+          `Администратор должен проверить настройки в Render.`;
+      } else if (errorCode === 'RATE_LIMIT' || errorMessage.includes('429') || errorMessage.includes('rate limit')) {
+        userMessage = `⏳ Слишком много запросов!\n\n` +
+          `Лимит OpenRouter превышен. Подожди минуту и попробуй снова.`;
+      } else if (errorCode === 'SERVER_ERROR' || errorMessage.includes('500') || errorMessage.includes('502')) {
+        userMessage = `🔧 Сервер AI временно недоступен.\n\n` +
+          `Попробуй через несколько минут.`;
+      }
+
+      await ctx.reply(userMessage);
     }
   });
 

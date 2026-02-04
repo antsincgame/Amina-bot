@@ -244,28 +244,23 @@ export const statusApi = {
     checks: Record<string, { ready: boolean; engine: string }>;
     timestamp: string;
   }> {
-    // In production, this would call the bot API
-    // For now, return mock data that admin can display
-    const botUrl = import.meta.env.VITE_BOT_URL || '';
-    
-    if (botUrl) {
-      try {
-        const response = await fetch(`${botUrl}/api/status`);
-        if (response.ok) {
-          return response.json();
-        }
-      } catch {
-        // Bot not reachable, return degraded status
+    // Call bot API for real status
+    try {
+      const response = await fetch(`${BOT_URL}/api/status`);
+      if (response.ok) {
+        return response.json();
       }
+    } catch {
+      // Bot not reachable
     }
 
-    // Fallback: check what we can from admin side
+    // Fallback when bot is unavailable
     return {
       checks: {
         admin: { ready: true, engine: 'React' },
         database: { ready: true, engine: 'Supabase' },
-        telegram: { ready: false, engine: 'Unknown' },
-        ai: { ready: false, engine: 'Unknown' },
+        telegram: { ready: false, engine: 'Bot unavailable' },
+        ai: { ready: false, engine: 'Bot unavailable' },
       },
       timestamp: new Date().toISOString(),
     };

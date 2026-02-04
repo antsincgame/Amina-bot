@@ -53,10 +53,24 @@ const getAIConfig = async (channel: 'telegram' | 'voice'): Promise<AIConfig> => 
 
   // Priority: custom_model_override > openrouter_model > config default
   let model = settings['openrouter_model'] ?? config.ai.model ?? 'openrouter/free';
+  let modelSource = 'database';
+  
+  if (!settings['openrouter_model']) {
+    modelSource = settings['openrouter_model'] ? 'database' : (config.ai.model ? 'env_config' : 'default_fallback');
+  }
+  
   if (settings['custom_model_override'] && settings['custom_model_override'].trim()) {
     model = settings['custom_model_override'].trim();
-    aiLogger.info({ model }, 'Using custom_model_override');
+    modelSource = 'custom_override';
+    aiLogger.info({ model, source: modelSource }, 'Using custom_model_override');
   }
+
+  aiLogger.debug({ 
+    model, 
+    source: modelSource,
+    dbModel: settings['openrouter_model'],
+    envModel: config.ai.model,
+  }, 'AI config loaded');
 
   return {
     model,
@@ -142,7 +156,44 @@ export const aiService = {
 
       return result;
     } catch (error) {
-      aiLogger.error({ error }, 'AI request failed');
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      aiLogger.error({ error, model: aiConfig.model }, 'AI request failed');
+      
+      // Create detailed error for user
+      if (errorMessage.includes('No endpoints found') || errorMessage.includes('404')) {
+        const detailedError = new Error(
+          `MODEL_NOT_FOUND: Модель "${aiConfig.model}" не найдена на OpenRouter. ` +
+          `Измените модель в админке: https://amina-admin.onrender.com/settings`
+        );
+        (detailedError as any).code = 'MODEL_NOT_FOUND';
+        (detailedError as any).model = aiConfig.model;
+        throw detailedError;
+      }
+      
+      if (errorMessage.includes('401') || errorMessage.includes('Unauthorized')) {
+        const detailedError = new Error(
+          `AUTH_ERROR: Неверный API ключ OpenRouter. Проверьте OPENROUTER_API_KEY в Render.`
+        );
+        (detailedError as any).code = 'AUTH_ERROR';
+        throw detailedError;
+      }
+      
+      if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
+        const detailedError = new Error(
+          `RATE_LIMIT: Превышен лимит запросов к OpenRouter. Подождите немного.`
+        );
+        (detailedError as any).code = 'RATE_LIMIT';
+        throw detailedError;
+      }
+      
+      if (errorMessage.includes('500') || errorMessage.includes('502') || errorMessage.includes('503')) {
+        const detailedError = new Error(
+          `SERVER_ERROR: OpenRouter временно недоступен. Попробуйте позже.`
+        );
+        (detailedError as any).code = 'SERVER_ERROR';
+        throw detailedError;
+      }
+      
       throw error;
     }
   },
