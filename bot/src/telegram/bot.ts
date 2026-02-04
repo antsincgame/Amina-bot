@@ -3,6 +3,7 @@ import { config } from '../config/index.js';
 import { telegramLogger } from '../config/logger.js';
 import { aiService } from '../ai/openrouter.js';
 import { processVoiceWithLLM, processImageWithLLM } from '../ai/multimodal.js';
+import { needsWebSearch, searchAndFormat, isWebSearchEnabled } from '../ai/websearch.js';
 import { conversationsRepo, analyticsRepo } from '../db/supabase.js';
 import { checkTelegramRateLimit } from '../utils/rate-limiter.js';
 import { 
@@ -88,6 +89,7 @@ const setupCommands = (bot: Bot<BotContext>): void => {
 
 Команды:
 /help — показать справку
+/search <запрос> — поиск в интернете
 /clear — очистить историю диалога`
     );
   });
@@ -103,12 +105,15 @@ const setupCommands = (bot: Bot<BotContext>): void => {
 • Переводить
 • Объяснять сложные темы
 • Поддерживать диалог с контекстом
+• 🌐 Искать информацию в интернете
 
 **Команды:**
 /start — начать сначала
+/search <запрос> — поиск в интернете
 /clear — очистить историю диалога
 
-**Совет:** Чем конкретнее вопрос, тем лучше ответ!`,
+**Совет:** Чем конкретнее вопрос, тем лучше ответ!
+Для поиска актуальной информации используй /search`,
       { parse_mode: 'Markdown' }
     );
   });
@@ -128,6 +133,45 @@ const setupCommands = (bot: Bot<BotContext>): void => {
     telegramLogger.info({ userId: ctx.from?.id }, 'Conversation cleared');
     
     await ctx.reply('🧹 История диалога очищена. Начнём сначала!');
+  });
+
+  // /search - Web search
+  bot.command('search', async (ctx) => {
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const query = ctx.message?.text?.replace(/^\/search\s*/i, '').trim();
+    
+    if (!query) {
+      await ctx.reply('🔍 Использование: /search <запрос>\n\nПример: /search погода в Москве');
+      return;
+    }
+
+    telegramLogger.info({ userId, query }, 'Explicit web search requested');
+
+    await ctx.replyWithChatAction('typing');
+
+    try {
+      const result = await searchAndFormat(query);
+      await sendLongMessage(ctx, `🌐 **Результаты поиска:**\n\n${result}`);
+      
+      telegramLogger.info({ userId }, 'Web search response sent');
+    } catch (error) {
+      const errorCode = (error as any)?.code;
+      telegramLogger.error({ error, errorCode, userId }, 'Web search command failed');
+      
+      let errorMessage = '😔 Не удалось выполнить поиск. Попробуй позже.';
+      
+      if (errorCode === 'PERPLEXITY_NOT_CONFIGURED') {
+        errorMessage = '⚙️ Веб-поиск не настроен.\n\nАдминистратор должен добавить Perplexity API ключ в настройках.';
+      } else if (errorCode === 'PERPLEXITY_AUTH_ERROR') {
+        errorMessage = '🔑 Неверный API ключ Perplexity.';
+      } else if (errorCode === 'PERPLEXITY_RATE_LIMIT') {
+        errorMessage = '⏳ Слишком много запросов. Подожди минуту.';
+      } else if (errorCode === 'PERPLEXITY_PAYMENT_REQUIRED') {
+        errorMessage = '💳 Пополни баланс Perplexity для продолжения поиска.';
+      }
+
+      await ctx.reply(errorMessage);
+    }
   });
 };
 
@@ -201,6 +245,27 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         telegramLogger.warn({ error: memError, userId }, 'Failed to build memory context, continuing without');
       }
 
+      // Check if web search is needed
+      let webSearchContext = '';
+      const webSearchEnabled = await isWebSearchEnabled();
+      
+      if (webSearchEnabled && needsWebSearch(userMessage)) {
+        telegramLogger.info({ userId }, 'Web search triggered');
+        try {
+          await ctx.replyWithChatAction('typing');
+          const searchResult = await searchAndFormat(userMessage);
+          webSearchContext = `\n\n[ИНФОРМАЦИЯ ИЗ ИНТЕРНЕТА]\n${searchResult}\n[/ИНФОРМАЦИЯ ИЗ ИНТЕРНЕТА]\n\nИспользуй эту информацию для ответа пользователю. Не упоминай что это "информация из интернета" - просто отвечай естественно, включая найденные факты.`;
+          telegramLogger.info({ userId }, 'Web search completed');
+        } catch (searchError) {
+          const errorCode = (searchError as any)?.code;
+          telegramLogger.warn({ error: searchError, errorCode, userId }, 'Web search failed, continuing without');
+          // Не блокируем основной ответ если поиск не удался
+          if (errorCode === 'PERPLEXITY_NOT_CONFIGURED') {
+            // Молча продолжаем без поиска
+          }
+        }
+      }
+
       // Add user message to history
       ctx.session.messageHistory.push({
         role: 'user',
@@ -212,8 +277,9 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
       }
 
-      // Get AI response with memory context
-      const response = await aiService.chat(ctx.session.messageHistory, 'telegram', memoryContext);
+      // Get AI response with memory context and web search results
+      const fullContext = memoryContext + webSearchContext;
+      const response = await aiService.chat(ctx.session.messageHistory, 'telegram', fullContext);
 
       // Add assistant response to history
       ctx.session.messageHistory.push({

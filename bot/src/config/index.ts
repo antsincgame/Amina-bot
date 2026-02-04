@@ -18,6 +18,7 @@ const envSchema = z.object({
   OPENROUTER_API_KEY: z.string().optional(),
   OPENROUTER_MODEL: z.string().default('anthropic/claude-3-haiku'),
   GROQ_API_KEY: z.string().optional(),
+  PERPLEXITY_API_KEY: z.string().optional(), // Для веб-поиска
 
   // Server
   PORT: z.string().default('3000').transform(Number),
@@ -101,6 +102,12 @@ export const config = {
   groq: {
     apiKey: env.GROQ_API_KEY || '', // Может быть пустым, загрузится из БД
     baseUrl: 'https://api.groq.com/openai/v1',
+  },
+
+  // Perplexity — для веб-поиска (доступ в интернет)
+  perplexity: {
+    apiKey: env.PERPLEXITY_API_KEY || '', // Может быть пустым, загрузится из БД
+    baseUrl: 'https://api.perplexity.ai',
   },
 
   // Supabase Database — только эти 2 обязательны в Render

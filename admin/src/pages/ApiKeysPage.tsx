@@ -4,13 +4,15 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { settingsApi } from '../api/supabase';
-import { Save, Loader2, Key, Eye, EyeOff, CheckCircle, AlertCircle, Info, RefreshCw } from 'lucide-react';
+import { Save, Loader2, Key, Eye, EyeOff, CheckCircle, AlertCircle, Info, RefreshCw, Globe } from 'lucide-react';
 
 // Schema
 const apiKeysSchema = z.object({
   telegram_bot_token: z.string().optional(),
   openrouter_api_key: z.string().optional(),
   groq_api_key: z.string().optional(),
+  perplexity_api_key: z.string().optional(),
+  web_search_enabled: z.string().optional(),
 });
 
 type ApiKeysForm = z.infer<typeof apiKeysSchema>;
@@ -20,6 +22,7 @@ const ApiKeysPage = () => {
   const [showTelegram, setShowTelegram] = useState(false);
   const [showOpenRouter, setShowOpenRouter] = useState(false);
   const [showGroq, setShowGroq] = useState(false);
+  const [showPerplexity, setShowPerplexity] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
 
   // Fetch settings
@@ -47,6 +50,7 @@ const ApiKeysPage = () => {
     handleSubmit,
     reset,
     watch,
+    setValue,
     formState: { isDirty },
   } = useForm<ApiKeysForm>({
     resolver: zodResolver(apiKeysSchema),
@@ -54,12 +58,16 @@ const ApiKeysPage = () => {
       telegram_bot_token: '',
       openrouter_api_key: '',
       groq_api_key: '',
+      perplexity_api_key: '',
+      web_search_enabled: 'false',
     },
   });
 
   const telegramKey = watch('telegram_bot_token');
   const openRouterKey = watch('openrouter_api_key');
   const groqKey = watch('groq_api_key');
+  const perplexityKey = watch('perplexity_api_key');
+  const webSearchEnabled = watch('web_search_enabled');
 
   // Load settings
   useEffect(() => {
@@ -73,6 +81,8 @@ const ApiKeysPage = () => {
         telegram_bot_token: map['telegram_bot_token'] || '',
         openrouter_api_key: map['openrouter_api_key'] || '',
         groq_api_key: map['groq_api_key'] || '',
+        perplexity_api_key: map['perplexity_api_key'] || '',
+        web_search_enabled: map['web_search_enabled'] || 'false',
       });
     }
   }, [settings, reset]);
@@ -82,6 +92,8 @@ const ApiKeysPage = () => {
       telegram_bot_token: data.telegram_bot_token || '',
       openrouter_api_key: data.openrouter_api_key || '',
       groq_api_key: data.groq_api_key || '',
+      perplexity_api_key: data.perplexity_api_key || '',
+      web_search_enabled: data.web_search_enabled || 'false',
     });
   };
 
@@ -264,6 +276,72 @@ const ApiKeysPage = () => {
           </div>
         </div>
 
+        {/* Perplexity API Key */}
+        <div className="card border-2 border-indigo-200 bg-gradient-to-br from-indigo-50 to-purple-50">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2.5 bg-indigo-100 rounded-xl">
+              <Globe className="w-6 h-6 text-indigo-600" />
+            </div>
+            <div className="flex-1">
+              <h2 className="text-lg font-semibold text-gray-900">Perplexity API Key</h2>
+              <p className="text-sm text-gray-500">Доступ в интернет для поиска информации</p>
+            </div>
+            {perplexityKey && (
+              <span className="px-2 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">
+                Задан
+              </span>
+            )}
+          </div>
+
+          <div className="relative">
+            <input
+              type={showPerplexity ? 'text' : 'password'}
+              placeholder="pplx-..."
+              className="input bg-white text-gray-900 pr-12 font-mono text-sm"
+              style={{ colorScheme: 'light' }}
+              {...register('perplexity_api_key')}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPerplexity(!showPerplexity)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+            >
+              {showPerplexity ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+            </button>
+          </div>
+
+          <p className="mt-2 text-xs text-gray-500">
+            Получить ключ: <a href="https://www.perplexity.ai/settings/api" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">perplexity.ai/settings/api</a>
+          </p>
+
+          {/* Web Search Toggle */}
+          <div className="mt-4 p-4 bg-white rounded-lg border border-indigo-100">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-medium text-gray-900">Автоматический веб-поиск</h3>
+                <p className="text-sm text-gray-500">Бот сам будет искать в интернете при необходимости</p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={webSearchEnabled === 'true'}
+                  onChange={(e) => setValue('web_search_enabled', e.target.checked ? 'true' : 'false', { shouldDirty: true })}
+                  className="sr-only peer"
+                />
+                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+              </label>
+            </div>
+          </div>
+
+          <div className="mt-3 p-3 bg-indigo-100 rounded-lg">
+            <p className="text-sm text-indigo-800">
+              <span className="font-medium">🌐 Веб-поиск</span> — бот сможет искать актуальную информацию: новости, погоду, курсы валют и т.д.
+              <br />
+              <span className="text-xs">Команда /search доступна всегда, авто-поиск — при включении переключателя.</span>
+            </p>
+          </div>
+        </div>
+
         {/* Что в Render */}
         <div className="card bg-gradient-to-br from-green-50 to-emerald-50">
           <h3 className="font-semibold text-gray-900 mb-3">В Render только 2 переменные</h3>
@@ -278,7 +356,7 @@ const ApiKeysPage = () => {
             </div>
           </div>
           <p className="mt-3 text-xs text-gray-600">
-            Остальное (Telegram, OpenRouter, Groq) настраивается на этой странице.
+            Остальное (Telegram, OpenRouter, Groq, Perplexity) настраивается на этой странице.
           </p>
         </div>
 
