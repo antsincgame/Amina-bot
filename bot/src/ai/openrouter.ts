@@ -88,14 +88,21 @@ export const aiService = {
    */
   async chat(
     messages: AIMessage[],
-    channel: 'telegram' | 'voice' = 'telegram'
+    channel: 'telegram' | 'voice' = 'telegram',
+    userMemoryContext?: string
   ): Promise<AIResponse> {
     const aiConfig = await getAIConfig(channel);
     const client = getClient();
 
+    // Build system prompt with memory context
+    let systemPrompt = aiConfig.systemPrompt;
+    if (userMemoryContext) {
+      systemPrompt = `${userMemoryContext}\n\n${aiConfig.systemPrompt}`;
+    }
+
     // Add system prompt
     const fullMessages: AIMessage[] = [
-      { role: 'system', content: aiConfig.systemPrompt },
+      { role: 'system', content: systemPrompt },
       ...messages,
     ];
 

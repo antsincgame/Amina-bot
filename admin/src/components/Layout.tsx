@@ -9,6 +9,7 @@ import {
   Bot,
   AlertCircle,
   Mic,
+  Users,
 } from 'lucide-react';
 
 const Layout = () => {
@@ -22,6 +23,7 @@ const Layout = () => {
 
   const navItems = [
     { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+    { to: '/users', icon: Users, label: 'Пользователи' },
     { to: '/settings', icon: Settings, label: 'Настройки AI' },
     { to: '/multimodal', icon: Mic, label: 'Голос и Фото' },
     { to: '/prompts', icon: MessageSquare, label: 'Промпты' },

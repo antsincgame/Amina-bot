@@ -8,6 +8,7 @@ import MultimodalSettingsPage from './pages/MultimodalSettingsPage';
 import PromptsPage from './pages/PromptsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import LogsPage from './pages/LogsPage';
+import UsersPage from './pages/UsersPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 // Protected Route wrapper
@@ -45,6 +46,7 @@ const App = () => {
         >
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="dashboard" element={<DashboardPage />} />
+          <Route path="users" element={<UsersPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="multimodal" element={<MultimodalSettingsPage />} />
           <Route path="prompts" element={<PromptsPage />} />

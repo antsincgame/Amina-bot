@@ -5,6 +5,14 @@ import { aiService } from '../ai/openrouter.js';
 import { processVoiceWithLLM, processImageWithLLM } from '../ai/multimodal.js';
 import { conversationsRepo, analyticsRepo } from '../db/supabase.js';
 import { checkTelegramRateLimit } from '../utils/rate-limiter.js';
+import { 
+  userProfileRepo, 
+  userMemoryRepo, 
+  userLogsRepo, 
+  memoryExtractor,
+  memoryContextBuilder,
+  type TelegramUserInfo 
+} from '../memory/user-memory.js';
 import type { Message, AIMessage } from '../../../shared/types/index.js';
 
 // --------------------------------------------
@@ -133,6 +141,16 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
     const userId = ctx.from?.id.toString() ?? 'unknown';
     const chatId = ctx.chat.id;
     const userMessage = ctx.message.text;
+    const startTime = Date.now();
+
+    // Telegram user info for profile
+    const telegramInfo: TelegramUserInfo = {
+      id: ctx.from?.id ?? 0,
+      username: ctx.from?.username,
+      first_name: ctx.from?.first_name,
+      last_name: ctx.from?.last_name,
+      language_code: ctx.from?.language_code,
+    };
 
     telegramLogger.debug({ userId, chatId, messageLength: userMessage.length }, 'Text message received');
 
@@ -147,6 +165,12 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
     // Log analytics
     await analyticsRepo.log('message_received', 'telegram', {
       userId,
+      chatId,
+      messageLength: userMessage.length,
+    });
+
+    // Log user message
+    await userLogsRepo.add(userId, 'message', userMessage, {
       chatId,
       messageLength: userMessage.length,
     });
@@ -169,6 +193,9 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         }));
       }
 
+      // Build memory context for personalized responses
+      const memoryContext = await memoryContextBuilder.buildContext(userId, telegramInfo);
+
       // Add user message to history
       ctx.session.messageHistory.push({
         role: 'user',
@@ -180,14 +207,32 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
       }
 
-      // Get AI response
-      const response = await aiService.chat(ctx.session.messageHistory, 'telegram');
+      // Get AI response with memory context
+      const response = await aiService.chat(ctx.session.messageHistory, 'telegram', memoryContext);
 
       // Add assistant response to history
       ctx.session.messageHistory.push({
         role: 'assistant',
         content: response.content,
       });
+
+      // Update user profile stats
+      await userProfileRepo.updateOnMessage(userId, 'message', response.tokens_used.total, telegramInfo);
+
+      // Log AI response
+      const responseTime = Date.now() - startTime;
+      await userLogsRepo.add(userId, 'ai_response', response.content, {
+        chatId,
+        responseLength: response.content.length,
+      }, {
+        model: response.model,
+        tokensPrompt: response.tokens_used.prompt,
+        tokensCompletion: response.tokens_used.completion,
+        responseTimeMs: responseTime,
+      });
+
+      // Extract facts from conversation (async, don't wait)
+      memoryExtractor.extractFacts(userId, userMessage, response.content).catch(() => {});
 
       // Save to database
       const userMsg: Message = {
