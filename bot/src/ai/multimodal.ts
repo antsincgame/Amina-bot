@@ -43,14 +43,13 @@ export const VISION_MODELS = {
   ],
 };
 
-// Audio модели (поддерживают аудио вход)
-// ВАЖНО: Бесплатных audio моделей на OpenRouter нет!
-// Используем самую дешёвую платную как fallback
+// Audio модели для транскрипции
 export const AUDIO_MODELS = {
   free: [
-    // Нет бесплатных audio моделей на OpenRouter
-    // Используем дешёвую платную как "условно бесплатную"
-    { id: 'openai/gpt-audio-mini', name: 'GPT Audio Mini (дешёвая)', description: '$0.60/M токенов - самая дешёвая audio модель' },
+    // Groq Whisper - БЕСПЛАТНО!
+    { id: 'groq/whisper-large-v3', name: 'Groq Whisper Large V3 (FREE)', description: 'Бесплатная транскрипция через Groq' },
+    { id: 'groq/whisper-large-v3-turbo', name: 'Groq Whisper Turbo (FREE)', description: 'Быстрая бесплатная транскрипция' },
+    { id: 'groq/distil-whisper-large-v3-en', name: 'Groq Distil Whisper (FREE)', description: 'Облегчённая версия для английского' },
   ],
   premium: [
     { id: 'openai/gpt-audio', name: 'GPT Audio', description: 'OpenAI специализированная аудио модель' },
@@ -80,6 +79,27 @@ const getClient = (): OpenAI => {
 };
 
 // --------------------------------------------
+// Groq Client (for free Whisper transcription)
+// --------------------------------------------
+
+let groqClient: OpenAI | null = null;
+
+const getGroqClient = (): OpenAI | null => {
+  if (!config.groq.apiKey) {
+    return null;
+  }
+  
+  if (!groqClient) {
+    groqClient = new OpenAI({
+      apiKey: config.groq.apiKey,
+      baseURL: config.groq.baseUrl,
+      timeout: 60000,
+    });
+  }
+  return groqClient;
+};
+
+// --------------------------------------------
 // Configuration from Database
 // --------------------------------------------
 
@@ -89,9 +109,10 @@ interface MultimodalConfig {
   maxTokens: number;
 }
 
-// Дефолтные модели (проверены на OpenRouter)
+// Дефолтные модели
 const DEFAULT_VISION_MODEL = 'allenai/molmo-2-8b:free';
-const DEFAULT_AUDIO_MODEL = 'openai/gpt-audio-mini';
+// Используем Groq Whisper по умолчанию (бесплатно!)
+const DEFAULT_AUDIO_MODEL = 'groq/whisper-large-v3';
 
 const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
   const settings = await settingsRepo.getMany([
@@ -277,20 +298,34 @@ export async function analyzeImageUrl(
 
 /**
  * Транскрибировать аудио в текст
+ * Приоритет: Groq Whisper (бесплатно) → OpenRouter Audio → OpenAI Whisper
  */
 export async function transcribeAudio(
   audioBase64: string,
   mimeType: string = 'audio/ogg'
 ): Promise<AudioTranscriptionResult> {
-  const config = await getMultimodalConfig();
-  const client = getClient();
+  const multimodalConfig = await getMultimodalConfig();
+  const audioBuffer = Buffer.from(audioBase64, 'base64');
 
-  aiLogger.info({ model: config.audioModel }, 'Transcribing audio');
+  aiLogger.info({ model: multimodalConfig.audioModel, size: audioBuffer.length }, 'Transcribing audio');
+
+  // Если выбрана Groq модель — используем бесплатный Groq Whisper
+  if (multimodalConfig.audioModel.startsWith('groq/')) {
+    const groq = getGroqClient();
+    if (groq) {
+      return transcribeAudioGroq(audioBuffer, 'voice.ogg');
+    } else {
+      aiLogger.warn('Groq model selected but GROQ_API_KEY not set, falling back to OpenRouter');
+    }
+  }
+
+  // Fallback на OpenRouter audio модели
+  const client = getClient();
 
   try {
     // OpenRouter использует chat completions API для аудио
     const response = await client.chat.completions.create({
-      model: config.audioModel,
+      model: multimodalConfig.audioModel,
       messages: [
         {
           role: 'user',
@@ -309,7 +344,7 @@ export async function transcribeAudio(
           ],
         },
       ],
-      max_tokens: config.maxTokens,
+      max_tokens: multimodalConfig.maxTokens,
     });
 
     const content = response.choices[0]?.message?.content;
@@ -328,11 +363,11 @@ export async function transcribeAudio(
     };
   } catch (error: unknown) {
     const err = error as { status?: number; message?: string };
-    aiLogger.error({ error, model: config.audioModel }, 'Audio transcription failed');
+    aiLogger.error({ error, model: multimodalConfig.audioModel }, 'Audio transcription failed');
     
     // Создаём понятную ошибку
     if (err.status === 404) {
-      const customError = new Error(`Audio модель "${config.audioModel}" не найдена на OpenRouter. Измените в настройках.`);
+      const customError = new Error(`Audio модель "${multimodalConfig.audioModel}" не найдена на OpenRouter. Измените в настройках.`);
       (customError as any).code = 'AUDIO_MODEL_NOT_FOUND';
       throw customError;
     }
@@ -342,7 +377,7 @@ export async function transcribeAudio(
       throw customError;
     }
     if (err.status === 400 && err.message?.includes('input_audio')) {
-      const customError = new Error(`Модель "${config.audioModel}" не поддерживает аудио вход. Выберите другую модель.`);
+      const customError = new Error(`Модель "${multimodalConfig.audioModel}" не поддерживает аудио вход. Выберите другую модель.`);
       (customError as any).code = 'AUDIO_NOT_SUPPORTED';
       throw customError;
     }
@@ -351,8 +386,61 @@ export async function transcribeAudio(
 }
 
 /**
- * Альтернативный метод транскрипции через Whisper API
- * (если модель не поддерживает input_audio)
+ * Транскрипция через Groq Whisper (БЕСПЛАТНО!)
+ * Поддерживает: mp3, mp4, wav, flac, mpeg, mpga, m4a, ogg, webm
+ * Лимит: 25MB
+ */
+export async function transcribeAudioGroq(
+  audioBuffer: Buffer,
+  filename: string = 'audio.ogg'
+): Promise<AudioTranscriptionResult> {
+  const groq = getGroqClient();
+  
+  if (!groq) {
+    throw new Error('GROQ_API_KEY не настроен. Добавьте ключ в переменные окружения.');
+  }
+
+  aiLogger.info({ filename, size: audioBuffer.length }, 'Transcribing audio via Groq Whisper (FREE)');
+
+  try {
+    // Создаём File-like объект
+    const file = new File([audioBuffer], filename, { type: 'audio/ogg' });
+
+    const response = await groq.audio.transcriptions.create({
+      file,
+      model: 'whisper-large-v3',
+      language: 'ru',
+    });
+
+    // response - объект с text
+    const text = response.text;
+
+    aiLogger.info({ textLength: text.length }, 'Groq Whisper transcription complete (FREE)');
+
+    return {
+      text: text.trim(),
+      model: 'groq/whisper-large-v3',
+    };
+  } catch (error: unknown) {
+    const err = error as { status?: number; message?: string };
+    aiLogger.error({ error }, 'Groq Whisper transcription failed');
+    
+    if (err.status === 401) {
+      const customError = new Error('Неверный GROQ_API_KEY');
+      (customError as any).code = 'GROQ_AUTH_ERROR';
+      throw customError;
+    }
+    if (err.status === 413) {
+      const customError = new Error('Файл слишком большой (максимум 25MB)');
+      (customError as any).code = 'FILE_TOO_LARGE';
+      throw customError;
+    }
+    throw error;
+  }
+}
+
+/**
+ * Альтернативный метод транскрипции через OpenAI Whisper API (платно)
  */
 export async function transcribeAudioWhisper(
   audioBuffer: Buffer,
@@ -360,7 +448,7 @@ export async function transcribeAudioWhisper(
 ): Promise<AudioTranscriptionResult> {
   const client = getClient();
 
-  aiLogger.info({ filename }, 'Transcribing audio via Whisper');
+  aiLogger.info({ filename }, 'Transcribing audio via OpenAI Whisper (paid)');
 
   try {
     // Создаём File-like объект
@@ -372,14 +460,14 @@ export async function transcribeAudioWhisper(
       language: 'ru',
     });
 
-    aiLogger.info({ textLength: response.text.length }, 'Whisper transcription complete');
+    aiLogger.info({ textLength: response.text.length }, 'OpenAI Whisper transcription complete');
 
     return {
       text: response.text,
-      model: 'whisper-1',
+      model: 'openai/whisper-1',
     };
   } catch (error) {
-    aiLogger.error({ error }, 'Whisper transcription failed');
+    aiLogger.error({ error }, 'OpenAI Whisper transcription failed');
     throw error;
   }
 }

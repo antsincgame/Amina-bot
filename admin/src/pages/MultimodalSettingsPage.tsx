@@ -45,11 +45,13 @@ const DEFAULT_VISION_MODELS: ModelsResponse = {
   ],
 };
 
-// ВАЖНО: Бесплатных audio моделей на OpenRouter нет!
+// Audio модели - Groq Whisper БЕСПЛАТНО!
 const DEFAULT_AUDIO_MODELS: ModelsResponse = {
   free: [
-    // Нет бесплатных - используем дешёвую платную
-    { id: 'openai/gpt-audio-mini', name: 'GPT Audio Mini (дешёвая)', description: '$0.60/M токенов - самая дешёвая audio модель' },
+    // Groq Whisper - БЕСПЛАТНО!
+    { id: 'groq/whisper-large-v3', name: 'Groq Whisper Large V3 (FREE)', description: 'Бесплатная транскрипция через Groq' },
+    { id: 'groq/whisper-large-v3-turbo', name: 'Groq Whisper Turbo (FREE)', description: 'Быстрая бесплатная транскрипция' },
+    { id: 'groq/distil-whisper-large-v3-en', name: 'Groq Distil Whisper (FREE)', description: 'Облегчённая версия для английского' },
   ],
   premium: [
     { id: 'openai/gpt-audio', name: 'GPT Audio', description: 'OpenAI специализированная аудио модель' },

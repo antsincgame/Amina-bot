@@ -16,6 +16,9 @@ const envSchema = z.object({
   OPENROUTER_API_KEY: z.string().min(1, 'OPENROUTER_API_KEY is required'),
   OPENROUTER_MODEL: z.string().default('anthropic/claude-3-haiku'),
 
+  // Groq (for free Whisper transcription)
+  GROQ_API_KEY: z.string().optional(),
+
   // Supabase
   SUPABASE_URL: z.string().url('SUPABASE_URL must be a valid URL'),
   SUPABASE_SERVICE_KEY: z.string().min(1, 'SUPABASE_SERVICE_KEY is required'),
@@ -82,6 +85,12 @@ export const config = {
     baseUrl: 'https://openrouter.ai/api/v1',
     maxTokens: 2048,
     temperature: 0.7,
+  },
+
+  // Groq (free Whisper transcription)
+  groq: {
+    apiKey: env.GROQ_API_KEY,
+    baseUrl: 'https://api.groq.com/openai/v1',
   },
 
   // Supabase Database
