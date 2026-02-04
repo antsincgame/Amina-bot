@@ -9,7 +9,7 @@ services:
     plan: starter
     rootDir: bot
     buildCommand: npm ci
-    startCommand: npm run start:prod
+    startCommand: npm start
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV

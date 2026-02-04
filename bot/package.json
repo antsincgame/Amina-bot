@@ -6,9 +6,7 @@
   "main": "dist-simple/index-simple.js",
   "scripts": {
     "dev": "tsx watch src/index-simple.ts",
-    "build": "tsc src/index-simple.ts src/config/index-simple.ts src/config/logger-simple.ts src/ai/openrouter-simple.ts src/telegram/bot-simple.ts --outDir dist-simple --skipLibCheck --module NodeNext --target ES2022",
-    "start": "node --loader tsx src/index-simple.ts",
-    "start:prod": "tsx src/index-simple.ts",
+    "start": "tsx src/index-simple.ts",
     "test": "vitest",
     "test:coverage": "vitest --coverage",
     "lint": "eslint src --ext .ts",
