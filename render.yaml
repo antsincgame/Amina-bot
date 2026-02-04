@@ -21,7 +21,7 @@ services:
       - key: LOG_LEVEL
         value: info
       - key: OPENROUTER_MODEL
-        value: anthropic/claude-3-haiku
+        value: openrouter/free
       # Secrets - set in Render Dashboard
       - key: TELEGRAM_BOT_TOKEN
         sync: false
