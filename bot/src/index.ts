@@ -16,6 +16,11 @@ import { registerApiRoutes } from './api/routes.js';
 const app = Fastify({
   logger: false, // We use pino separately
   trustProxy: true,
+  // Таймауты для Render Starter plan (30 сек лимит)
+  requestTimeout: 28000,        // 28 секунд (меньше лимита Render)
+  connectionTimeout: 5000,      // 5 секунд на установку соединения
+  keepAliveTimeout: 30000,      // 30 секунд keep-alive
+  bodyLimit: 10485760,          // 10MB лимит тела запроса
 });
 
 // Bot instance

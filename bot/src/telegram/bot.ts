@@ -361,6 +361,10 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         userMessage = `⏳ Слишком много запросов!\n\nЛимит OpenRouter превышен. Подожди минуту и попробуй снова.`;
       } else if (errorCode === 'PAYMENT_REQUIRED') {
         userMessage = `💳 Пополни баланс на OpenRouter или выбери бесплатную модель в админке.`;
+      } else if (errorCode === 'ALL_MODELS_FAILED' || errorMessage.includes('ALL_MODELS_FAILED')) {
+        userMessage = `🔄 Все бесплатные модели AI заняты.\n\nПопробуй через 30 секунд или напиши /start для сброса.`;
+      } else if (errorCode === 'RACE_TIMEOUT' || errorMessage.includes('RACE_TIMEOUT')) {
+        userMessage = `⏰ AI отвечает слишком долго.\n\nПопробуй ещё раз — может повезёт быстрее!`;
       } else if (errorCode === 'SERVER_ERROR' || errorMessage.includes('500') || errorMessage.includes('502')) {
         userMessage = `🔧 Сервер AI временно недоступен.\n\nПопробуй через несколько минут.`;
       }
@@ -500,6 +504,10 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         userMessage = '🔑 Ошибка авторизации API. Обратитесь к администратору.';
       } else if (errorCode === 'RATE_LIMIT') {
         userMessage = '⏳ Слишком много запросов!\n\nПодожди минуту и попробуй снова.';
+      } else if (errorCode === 'ALL_MODELS_FAILED') {
+        userMessage = '🔄 Все бесплатные модели AI заняты.\n\nПопробуй через 30 секунд.';
+      } else if (errorCode === 'RACE_TIMEOUT') {
+        userMessage = '⏰ AI отвечает слишком долго.\n\nПопробуй ещё раз!';
       } else if (errorCode === 'SERVER_ERROR') {
         userMessage = '🔧 Сервер AI временно недоступен.\n\nПопробуй через несколько минут.';
       } else if (errorCode === 'FILE_TOO_LARGE') {
@@ -659,6 +667,12 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         userMessage = '⏳ Сервис анализа фото временно недоступен.\n\nПопробуй отправить фото через минуту.';
       } else if (errorCode === 'AUTH_ERROR') {
         userMessage = '🔑 Ошибка авторизации API. Обратитесь к администратору.';
+      } else if (errorCode === 'ALL_MODELS_FAILED') {
+        userMessage = '🔄 Все бесплатные модели AI заняты.\n\nПопробуй через 30 секунд.';
+      } else if (errorCode === 'RACE_TIMEOUT') {
+        userMessage = '⏰ AI отвечает слишком долго.\n\nПопробуй ещё раз!';
+      } else if (errorCode === 'RATE_LIMIT') {
+        userMessage = '⏳ Слишком много запросов!\n\nПодожди минуту.';
       }
 
       await ctx.reply(userMessage);

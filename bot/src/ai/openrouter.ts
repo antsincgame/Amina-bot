@@ -7,22 +7,18 @@ import { validateChannel, validateMessageContent, MAX_MESSAGE_LENGTH } from '../
 import { handleAIError } from '../utils/error-handler.js';
 
 // --------------------------------------------
-// FREE_MODELS — 10 бесплатных моделей для параллельного запроса
-// При ошибке основной модели запускаем гонку — кто первый ответит
+// FREE_MODELS — 3 самых стабильных бесплатных модели
+// Уменьшено для экономии rate limit OpenRouter
 // --------------------------------------------
 
 const FREE_MODELS = [
-  'meta-llama/llama-3.2-3b-instruct:free',      // Llama 3.2 3B
-  'meta-llama/llama-3.1-8b-instruct:free',      // Llama 3.1 8B
-  'meta-llama/llama-3.2-1b-instruct:free',      // Llama 3.2 1B — быстрая
-  'mistralai/mistral-7b-instruct:free',         // Mistral 7B
-  'google/gemma-2-9b-it:free',                  // Gemma 2 9B
-  'qwen/qwen-2-7b-instruct:free',               // Qwen 2 7B
-  'huggingfaceh4/zephyr-7b-beta:free',          // Zephyr 7B
-  'openchat/openchat-7b:free',                  // OpenChat 7B
-  'nousresearch/nous-capybara-7b:free',         // Nous Capybara 7B
-  'microsoft/phi-3-mini-128k-instruct:free',    // Phi-3 Mini
+  'meta-llama/llama-3.2-3b-instruct:free',      // Llama 3.2 3B — самая стабильная
+  'mistralai/mistral-7b-instruct:free',         // Mistral 7B — проверенная
+  'google/gemma-2-9b-it:free',                  // Gemma 2 9B — Google backup
 ];
+
+// Таймаут для гонки моделей (чтобы не превысить 30 сек Render)
+const RACE_TIMEOUT_MS = 15000;
 
 // Ошибки при которых нужен параллельный fallback
 const RACE_ERROR_PATTERNS = [
@@ -258,13 +254,20 @@ export const aiService = {
       }
     }
 
-    // === ШАГ 2: Гонка 10 бесплатных моделей ===
+    // === ШАГ 2: Гонка 3 бесплатных моделей с таймаутом ===
     aiLogger.info(
-      { modelsCount: FREE_MODELS.length },
+      { modelsCount: FREE_MODELS.length, timeoutMs: RACE_TIMEOUT_MS },
       '🏁 Starting model race — first to respond wins'
     );
 
-    // Запускаем все модели параллельно
+    // Таймаут-промис для ограничения гонки
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error('RACE_TIMEOUT: Превышено время ожидания ответа от моделей'));
+      }, RACE_TIMEOUT_MS);
+    });
+
+    // Запускаем модели параллельно
     const racePromises = FREE_MODELS.map(async (model) => {
       try {
         const result = await tryModel(model);
@@ -278,8 +281,11 @@ export const aiService = {
     });
 
     try {
-      // Promise.any — возвращает первый успешный результат
-      const winner = await Promise.any(racePromises);
+      // Promise.any с таймаутом — возвращает первый успешный результат или таймаут
+      const winner = await Promise.race([
+        Promise.any(racePromises),
+        timeoutPromise,
+      ]);
       
       aiLogger.info(
         { winner: winner.usedModel, tokens: winner.tokens_used.total },
@@ -300,15 +306,27 @@ export const aiService = {
       });
 
       return winner;
-    } catch (aggregateError) {
-      // Все 10 моделей упали
+    } catch (raceError) {
+      const errorMsg = raceError instanceof Error ? raceError.message : String(raceError);
+      
+      // Проверяем таймаут
+      if (errorMsg.includes('RACE_TIMEOUT')) {
+        aiLogger.error({ timeoutMs: RACE_TIMEOUT_MS }, '⏰ Race timeout — all models too slow');
+        const detailedError = new Error(
+          `RACE_TIMEOUT: Все модели отвечают слишком долго. Попробуйте позже.`
+        );
+        (detailedError as any).code = 'RACE_TIMEOUT';
+        throw detailedError;
+      }
+
+      // Все модели упали
       aiLogger.error(
         { modelsCount: FREE_MODELS.length },
         '💀 All models failed in race'
       );
 
       const detailedError = new Error(
-        `ALL_MODELS_FAILED: Все 10 бесплатных моделей недоступны. Попробуйте позже или пополните баланс OpenRouter.`
+        `ALL_MODELS_FAILED: Все ${FREE_MODELS.length} бесплатных моделей недоступны. Попробуйте позже.`
       );
       (detailedError as any).code = 'ALL_MODELS_FAILED';
       (detailedError as any).triedModels = FREE_MODELS;
