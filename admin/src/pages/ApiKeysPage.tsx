@@ -4,7 +4,23 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { settingsApi } from '../api/supabase';
-import { Save, Loader2, Key, Eye, EyeOff, CheckCircle, AlertCircle, Info, RefreshCw, Globe } from 'lucide-react';
+import { 
+  Save, 
+  Loader2, 
+  Key, 
+  Eye, 
+  EyeOff, 
+  CheckCircle, 
+  AlertCircle, 
+  RefreshCw, 
+  Globe,
+  Sparkles,
+  Bot,
+  Mic,
+  Zap,
+  Shield,
+  ExternalLink,
+} from 'lucide-react';
 
 // Schema
 const apiKeysSchema = z.object({
@@ -16,12 +32,16 @@ const apiKeysSchema = z.object({
   perplexity_model: z.string().optional(),
 });
 
+type ApiKeysForm = z.infer<typeof apiKeysSchema>;
+
 // Модели Perplexity с ценами (февраль 2026)
 const PERPLEXITY_MODELS = [
   { 
     id: 'sonar', 
     name: 'Sonar', 
-    description: 'Быстрая и дешёвая',
+    description: 'Быстрая и экономичная',
+    badge: 'Рекомендуется',
+    badgeColor: 'gold',
     inputPrice: 1.00, 
     outputPrice: 1.00, 
     requestFee: 5.00,
@@ -31,6 +51,8 @@ const PERPLEXITY_MODELS = [
     id: 'sonar-pro', 
     name: 'Sonar Pro', 
     description: 'Больше цитат, сложные запросы',
+    badge: 'Продвинутая',
+    badgeColor: 'info',
     inputPrice: 3.00, 
     outputPrice: 15.00, 
     requestFee: 6.00,
@@ -38,16 +60,16 @@ const PERPLEXITY_MODELS = [
   },
   { 
     id: 'sonar-reasoning-pro', 
-    name: 'Sonar Reasoning Pro', 
+    name: 'Sonar Reasoning', 
     description: 'С логическим рассуждением',
+    badge: 'Премиум',
+    badgeColor: 'violet',
     inputPrice: 2.00, 
     outputPrice: 8.00, 
     requestFee: 6.00,
     costPerSearch: 0.0085,
   },
 ];
-
-type ApiKeysForm = z.infer<typeof apiKeysSchema>;
 
 const ApiKeysPage = () => {
   const queryClient = useQueryClient();
@@ -68,11 +90,11 @@ const ApiKeysPage = () => {
     mutationFn: (data: Record<string, string>) => settingsApi.updateMany(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] });
-      setSaveMessage('✅ API ключи сохранены!');
+      setSaveMessage('success');
       setTimeout(() => setSaveMessage(''), 3000);
     },
     onError: () => {
-      setSaveMessage('❌ Ошибка сохранения');
+      setSaveMessage('error');
       setTimeout(() => setSaveMessage(''), 3000);
     },
   });
@@ -136,69 +158,91 @@ const ApiKeysPage = () => {
   // Получить информацию о выбранной модели
   const selectedModelInfo = PERPLEXITY_MODELS.find(m => m.id === perplexityModel) || PERPLEXITY_MODELS[0];
 
-
   if (isLoading) {
     return (
-      <div className="p-6 lg:p-8 max-w-2xl mx-auto">
-        <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="relative">
+            <div className="absolute inset-0 rounded-full animate-pulse-glow" 
+                 style={{ background: 'radial-gradient(circle, rgba(255, 215, 0, 0.3) 0%, transparent 70%)', filter: 'blur(10px)' }} />
+            <Loader2 className="w-12 h-12 animate-spin text-amber-400 relative" />
+          </div>
+          <span className="text-gray-400 text-sm" style={{ fontFamily: 'var(--font-heading)' }}>
+            Загрузка...
+          </span>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="p-6 lg:p-8 max-w-2xl mx-auto">
+    <div className="p-8 max-w-4xl mx-auto">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">API Ключи</h1>
-        <p className="text-gray-600 mt-1">
-          Настройте ключи для AI сервисов. Можно задать здесь или в Render.
-        </p>
-      </div>
-
-      {/* В Render только 2 переменные */}
-      <div className="mb-6 p-4 bg-amber-50 rounded-xl border border-amber-200">
-        <h3 className="font-semibold text-amber-900 mb-2">В Render задайте только 2 переменные</h3>
-        <p className="text-sm text-amber-800 mb-2">
-          Без них бот не подключится к базе данных. Остальное настраивается здесь.
-        </p>
-        <div className="space-y-1 text-sm font-mono text-amber-900 bg-white/50 p-3 rounded mb-2">
-          <div>SUPABASE_URL — URL вашего проекта Supabase</div>
-          <div>SUPABASE_SERVICE_KEY — ключ service_role из Supabase → Settings → API</div>
+      <div className="mb-10 animate-fade-in-up">
+        <div className="flex items-center gap-4 mb-3">
+          <div className="relative">
+            <div className="absolute inset-0 rounded-2xl" 
+                 style={{ background: 'radial-gradient(circle, rgba(255, 215, 0, 0.4) 0%, transparent 70%)', filter: 'blur(12px)' }} />
+            <div className="relative w-14 h-14 rounded-2xl flex items-center justify-center"
+                 style={{ 
+                   background: 'linear-gradient(135deg, rgba(255, 215, 0, 0.2), rgba(139, 92, 246, 0.15))',
+                   border: '1px solid rgba(255, 215, 0, 0.3)',
+                 }}>
+              <Key className="w-7 h-7 text-amber-400" />
+            </div>
+          </div>
+          <div>
+            <h1 className="text-3xl font-bold text-gradient-gold heading-display">
+              API Ключи
+            </h1>
+            <p className="text-gray-400 text-sm mt-1" style={{ fontFamily: 'var(--font-heading)' }}>
+              Настройка подключений к AI сервисам
+            </p>
+          </div>
         </div>
-        <p className="text-xs text-amber-700">
-          При первом запуске, если бот ещё не работал, задайте в Render также <code className="bg-white/70 px-1 rounded">TELEGRAM_BOT_TOKEN</code>, 
-          сохраните его здесь, затем можно удалить из Render — бот будет брать токен из админки.
-        </p>
       </div>
 
-      {/* Info */}
-      <div className="mb-6 p-4 bg-blue-50 rounded-xl flex items-start gap-3">
-        <Info className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
-        <div className="text-sm text-blue-800">
-          <p className="font-medium mb-1">Как это работает:</p>
-          <ul className="space-y-1 text-blue-700">
-            <li>• В Render обязательны только SUPABASE_URL и SUPABASE_SERVICE_KEY</li>
-            <li>• Все ключи ниже можно задать здесь — бот подхватит их при старте</li>
-          </ul>
+      {/* Info Card */}
+      <div className="card-info mb-8 animate-fade-in-up stagger-1" style={{ opacity: 0 }}>
+        <div className="flex items-start gap-4">
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+               style={{ background: 'rgba(59, 130, 246, 0.2)', border: '1px solid rgba(59, 130, 246, 0.3)' }}>
+            <Shield className="w-5 h-5 text-blue-400" />
+          </div>
+          <div>
+            <h3 className="font-semibold text-white mb-2" style={{ fontFamily: 'var(--font-heading)' }}>
+              Безопасное хранение
+            </h3>
+            <p className="text-gray-400 text-sm leading-relaxed">
+              Все API ключи хранятся в зашифрованной базе данных Supabase. 
+              В Render достаточно только <code className="px-1.5 py-0.5 rounded bg-white/5 text-amber-400 text-xs">SUPABASE_URL</code> и <code className="px-1.5 py-0.5 rounded bg-white/5 text-amber-400 text-xs">SUPABASE_SERVICE_KEY</code>.
+            </p>
+          </div>
         </div>
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
         
         {/* Telegram Bot Token */}
-        <div className="card">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2.5 bg-sky-100 rounded-xl">
-              <Key className="w-6 h-6 text-sky-600" />
+        <div className="card animate-fade-in-up stagger-2" style={{ opacity: 0 }}>
+          <div className="flex items-center gap-4 mb-5">
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center"
+                 style={{ 
+                   background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.2), rgba(56, 189, 248, 0.1))',
+                   border: '1px solid rgba(56, 189, 248, 0.3)',
+                   boxShadow: '0 0 20px rgba(56, 189, 248, 0.15)',
+                 }}>
+              <Bot className="w-6 h-6 text-sky-400" />
             </div>
             <div className="flex-1">
-              <h2 className="text-lg font-semibold text-gray-900">Telegram Bot Token</h2>
+              <h2 className="text-lg font-semibold text-white" style={{ fontFamily: 'var(--font-heading)' }}>
+                Telegram Bot Token
+              </h2>
               <p className="text-sm text-gray-500">Обязателен для работы бота</p>
             </div>
             {telegramKey && (
-              <span className="px-2 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">
+              <span className="badge-success">
+                <CheckCircle className="w-3.5 h-3.5 mr-1" />
                 Задан
               </span>
             )}
@@ -207,37 +251,48 @@ const ApiKeysPage = () => {
           <div className="relative">
             <input
               type={showTelegram ? 'text' : 'password'}
-              placeholder="123456:ABC..."
-              className="input bg-white text-gray-900 pr-12 font-mono text-sm"
-              style={{ colorScheme: 'light' }}
+              placeholder="123456789:ABCdefGHIjklMNOpqrSTUvwxYZ..."
+              className="input pr-12 font-mono text-sm"
               {...register('telegram_bot_token')}
             />
             <button
               type="button"
               onClick={() => setShowTelegram(!showTelegram)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg
+                         text-gray-500 hover:text-amber-400 hover:bg-amber-400/10
+                         transition-all duration-200"
             >
-              {showTelegram ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              {showTelegram ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
 
-          <p className="mt-2 text-xs text-gray-500">
-            Получить токен: напишите <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">@BotFather</a> в Telegram → /newbot
-          </p>
+          <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer"
+             className="inline-flex items-center gap-1.5 mt-3 text-xs text-gray-500 hover:text-amber-400 transition-colors">
+            <ExternalLink className="w-3 h-3" />
+            <span>Получить токен у @BotFather</span>
+          </a>
         </div>
 
         {/* OpenRouter API Key */}
-        <div className="card">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2.5 bg-green-100 rounded-xl">
-              <Key className="w-6 h-6 text-green-600" />
+        <div className="card animate-fade-in-up stagger-3" style={{ opacity: 0 }}>
+          <div className="flex items-center gap-4 mb-5">
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center"
+                 style={{ 
+                   background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.2), rgba(34, 197, 94, 0.1))',
+                   border: '1px solid rgba(34, 197, 94, 0.3)',
+                   boxShadow: '0 0 20px rgba(34, 197, 94, 0.15)',
+                 }}>
+              <Sparkles className="w-6 h-6 text-green-400" />
             </div>
             <div className="flex-1">
-              <h2 className="text-lg font-semibold text-gray-900">OpenRouter API Key</h2>
-              <p className="text-sm text-gray-500">Для AI моделей (обязателен)</p>
+              <h2 className="text-lg font-semibold text-white" style={{ fontFamily: 'var(--font-heading)' }}>
+                OpenRouter API Key
+              </h2>
+              <p className="text-sm text-gray-500">Для AI моделей (GPT, Claude, Llama)</p>
             </div>
             {openRouterKey && (
-              <span className="px-2 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">
+              <span className="badge-success">
+                <CheckCircle className="w-3.5 h-3.5 mr-1" />
                 Задан
               </span>
             )}
@@ -247,36 +302,47 @@ const ApiKeysPage = () => {
             <input
               type={showOpenRouter ? 'text' : 'password'}
               placeholder="sk-or-v1-..."
-              className="input bg-white text-gray-900 pr-12 font-mono text-sm"
-              style={{ colorScheme: 'light' }}
+              className="input pr-12 font-mono text-sm"
               {...register('openrouter_api_key')}
             />
             <button
               type="button"
               onClick={() => setShowOpenRouter(!showOpenRouter)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg
+                         text-gray-500 hover:text-amber-400 hover:bg-amber-400/10
+                         transition-all duration-200"
             >
-              {showOpenRouter ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              {showOpenRouter ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
 
-          <p className="mt-2 text-xs text-gray-500">
-            Получить ключ: <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">openrouter.ai/keys</a>
-          </p>
+          <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer"
+             className="inline-flex items-center gap-1.5 mt-3 text-xs text-gray-500 hover:text-amber-400 transition-colors">
+            <ExternalLink className="w-3 h-3" />
+            <span>openrouter.ai/keys</span>
+          </a>
         </div>
 
         {/* Groq API Key */}
-        <div className="card">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2.5 bg-purple-100 rounded-xl">
-              <Key className="w-6 h-6 text-purple-600" />
+        <div className="card animate-fade-in-up stagger-4" style={{ opacity: 0 }}>
+          <div className="flex items-center gap-4 mb-5">
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center"
+                 style={{ 
+                   background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.2), rgba(168, 85, 247, 0.1))',
+                   border: '1px solid rgba(168, 85, 247, 0.3)',
+                   boxShadow: '0 0 20px rgba(168, 85, 247, 0.15)',
+                 }}>
+              <Mic className="w-6 h-6 text-purple-400" />
             </div>
             <div className="flex-1">
-              <h2 className="text-lg font-semibold text-gray-900">Groq API Key</h2>
-              <p className="text-sm text-gray-500">Для бесплатной транскрипции голоса</p>
+              <h2 className="text-lg font-semibold text-white" style={{ fontFamily: 'var(--font-heading)' }}>
+                Groq API Key
+              </h2>
+              <p className="text-sm text-gray-500">Для транскрипции голоса (Whisper)</p>
             </div>
             {groqKey && (
-              <span className="px-2 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">
+              <span className="badge-success">
+                <CheckCircle className="w-3.5 h-3.5 mr-1" />
                 Задан
               </span>
             )}
@@ -286,99 +352,130 @@ const ApiKeysPage = () => {
             <input
               type={showGroq ? 'text' : 'password'}
               placeholder="gsk_..."
-              className="input bg-white text-gray-900 pr-12 font-mono text-sm"
-              style={{ colorScheme: 'light' }}
+              className="input pr-12 font-mono text-sm"
               {...register('groq_api_key')}
             />
             <button
               type="button"
               onClick={() => setShowGroq(!showGroq)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg
+                         text-gray-500 hover:text-amber-400 hover:bg-amber-400/10
+                         transition-all duration-200"
             >
-              {showGroq ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              {showGroq ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
 
-          <p className="mt-2 text-xs text-gray-500">
-            Получить ключ: <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">console.groq.com/keys</a>
-          </p>
-
-          <div className="mt-3 p-3 bg-green-50 rounded-lg">
-            <p className="text-sm text-green-700">
-              <span className="font-medium">Бесплатно!</span> Groq Whisper позволяет бесплатно транскрибировать голосовые сообщения.
-            </p>
+          <div className="flex items-center justify-between mt-3">
+            <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer"
+               className="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-amber-400 transition-colors">
+              <ExternalLink className="w-3 h-3" />
+              <span>console.groq.com/keys</span>
+            </a>
+            <span className="badge-success text-xs">
+              <Zap className="w-3 h-3 mr-1" />
+              Бесплатно
+            </span>
           </div>
         </div>
 
-        {/* Perplexity API Key */}
-        <div className="card border-2 border-indigo-200 bg-gradient-to-br from-indigo-50 to-purple-50">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2.5 bg-indigo-100 rounded-xl">
-              <Globe className="w-6 h-6 text-indigo-600" />
+        {/* Perplexity API Key + Web Search Settings */}
+        <div className="card-glow animate-fade-in-up stagger-5" style={{ opacity: 0 }}>
+          <div className="flex items-center gap-4 mb-5">
+            <div className="relative">
+              <div className="absolute inset-0 rounded-xl animate-pulse-glow"
+                   style={{ background: 'radial-gradient(circle, rgba(99, 102, 241, 0.3) 0%, transparent 70%)', filter: 'blur(8px)' }} />
+              <div className="relative w-12 h-12 rounded-xl flex items-center justify-center"
+                   style={{ 
+                     background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.3), rgba(139, 92, 246, 0.2))',
+                     border: '1px solid rgba(99, 102, 241, 0.4)',
+                   }}>
+                <Globe className="w-6 h-6 text-indigo-400" />
+              </div>
             </div>
             <div className="flex-1">
-              <h2 className="text-lg font-semibold text-gray-900">Perplexity API Key</h2>
-              <p className="text-sm text-gray-500">Доступ в интернет для поиска информации</p>
+              <h2 className="text-lg font-semibold text-white" style={{ fontFamily: 'var(--font-heading)' }}>
+                Perplexity API Key
+              </h2>
+              <p className="text-sm text-gray-500">Доступ в интернет для актуальной информации</p>
             </div>
             {perplexityKey && (
-              <span className="px-2 py-1 bg-green-100 text-green-700 text-xs font-medium rounded-full">
+              <span className="badge-success">
+                <CheckCircle className="w-3.5 h-3.5 mr-1" />
                 Задан
               </span>
             )}
           </div>
 
-          <div className="relative">
+          <div className="relative mb-4">
             <input
               type={showPerplexity ? 'text' : 'password'}
               placeholder="pplx-..."
-              className="input bg-white text-gray-900 pr-12 font-mono text-sm"
-              style={{ colorScheme: 'light' }}
+              className="input pr-12 font-mono text-sm"
               {...register('perplexity_api_key')}
             />
             <button
               type="button"
               onClick={() => setShowPerplexity(!showPerplexity)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg
+                         text-gray-500 hover:text-amber-400 hover:bg-amber-400/10
+                         transition-all duration-200"
             >
-              {showPerplexity ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
+              {showPerplexity ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
 
-          <p className="mt-2 text-xs text-gray-500">
-            Получить ключ: <a href="https://www.perplexity.ai/settings/api" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">perplexity.ai/settings/api</a>
-          </p>
+          <a href="https://www.perplexity.ai/settings/api" target="_blank" rel="noopener noreferrer"
+             className="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-amber-400 transition-colors mb-6">
+            <ExternalLink className="w-3 h-3" />
+            <span>perplexity.ai/settings/api</span>
+          </a>
+
+          <div className="divider my-6" />
 
           {/* Web Search Toggle */}
-          <div className="mt-4 p-4 bg-white rounded-lg border border-indigo-100">
+          <div className="p-4 rounded-xl mb-5"
+               style={{ background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
             <div className="flex items-center justify-between">
-              <div>
-                <h3 className="font-medium text-gray-900">Автоматический веб-поиск</h3>
-                <p className="text-sm text-gray-500">Бот сам будет искать в интернете при необходимости</p>
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg flex items-center justify-center"
+                     style={{ background: 'rgba(99, 102, 241, 0.15)' }}>
+                  <Globe className="w-5 h-5 text-indigo-400" />
+                </div>
+                <div>
+                  <h3 className="font-medium text-white" style={{ fontFamily: 'var(--font-heading)' }}>
+                    Автоматический веб-поиск
+                  </h3>
+                  <p className="text-xs text-gray-500">Бот ищет в интернете когда нужна актуальная информация</p>
+                </div>
               </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={webSearchEnabled === 'true'}
-                  onChange={(e) => setValue('web_search_enabled', e.target.checked ? 'true' : 'false', { shouldDirty: true })}
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-              </label>
+              <button
+                type="button"
+                onClick={() => setValue('web_search_enabled', webSearchEnabled === 'true' ? 'false' : 'true', { shouldDirty: true })}
+                className={`toggle ${webSearchEnabled === 'true' ? 'toggle-checked' : ''}`}
+              >
+                <span className={`toggle-dot ${webSearchEnabled === 'true' ? 'toggle-dot-checked' : ''}`} />
+              </button>
             </div>
           </div>
 
           {/* Model Selector */}
-          <div className="mt-4 p-4 bg-white rounded-lg border border-indigo-100">
-            <h3 className="font-medium text-gray-900 mb-3">Модель поиска</h3>
-            <div className="space-y-2">
+          <div className="p-4 rounded-xl"
+               style={{ background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
+            <h3 className="font-medium text-white mb-4" style={{ fontFamily: 'var(--font-heading)' }}>
+              Модель поиска
+            </h3>
+            
+            <div className="space-y-3">
               {PERPLEXITY_MODELS.map((model) => (
                 <label
                   key={model.id}
-                  className={`flex items-center p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                  className={`flex items-center p-4 rounded-xl cursor-pointer transition-all duration-300 ${
                     perplexityModel === model.id
-                      ? 'border-indigo-500 bg-indigo-50'
-                      : 'border-gray-200 hover:border-indigo-300'
+                      ? 'border-amber-500/50 bg-amber-500/5'
+                      : 'border-white/5 bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.04]'
                   }`}
+                  style={{ border: '1px solid' }}
                 >
                   <input
                     type="radio"
@@ -387,82 +484,79 @@ const ApiKeysPage = () => {
                     onChange={(e) => setValue('perplexity_model', e.target.value, { shouldDirty: true })}
                     className="sr-only"
                   />
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-gray-900">{model.name}</span>
-                      {model.id === 'sonar' && (
-                        <span className="px-1.5 py-0.5 bg-green-100 text-green-700 text-xs font-medium rounded">
-                          Дешёвая
-                        </span>
-                      )}
-                      {model.id === 'sonar-reasoning-pro' && (
-                        <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 text-xs font-medium rounded">
-                          С рассуждением
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-sm text-gray-500">{model.description}</p>
+                  
+                  {/* Radio indicator */}
+                  <div className={`w-5 h-5 rounded-full border-2 mr-4 flex items-center justify-center transition-all ${
+                    perplexityModel === model.id
+                      ? 'border-amber-400 bg-amber-400'
+                      : 'border-gray-600'
+                  }`}>
+                    {perplexityModel === model.id && (
+                      <div className="w-2 h-2 rounded-full bg-gray-900" />
+                    )}
                   </div>
+
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium text-white" style={{ fontFamily: 'var(--font-heading)' }}>
+                        {model.name}
+                      </span>
+                      <span className={`badge-${model.badgeColor === 'gold' ? 'gold' : model.badgeColor === 'violet' ? 'info' : 'info'} text-[10px] px-2 py-0.5`}>
+                        {model.badge}
+                      </span>
+                    </div>
+                    <p className="text-xs text-gray-500">{model.description}</p>
+                  </div>
+
                   <div className="text-right">
-                    <div className="text-sm font-medium text-gray-900">
+                    <div className="text-sm font-semibold text-amber-400" style={{ fontFamily: 'var(--font-heading)' }}>
                       ~${model.costPerSearch.toFixed(4)}
                     </div>
-                    <div className="text-xs text-gray-500">за поиск</div>
+                    <div className="text-[10px] text-gray-500">за поиск</div>
                   </div>
                 </label>
               ))}
             </div>
-            
-            {/* Cost estimate */}
-            <div className="mt-3 p-3 bg-gray-50 rounded-lg">
-              <div className="flex justify-between text-sm">
-                <span className="text-gray-600">Выбрана: <span className="font-medium">{selectedModelInfo.name}</span></span>
-                <span className="text-gray-900 font-medium">~${(selectedModelInfo.costPerSearch * 100).toFixed(2)} за 100 поисков</span>
-              </div>
-            </div>
-          </div>
 
-          <div className="mt-3 p-3 bg-indigo-100 rounded-lg">
-            <p className="text-sm text-indigo-800">
-              <span className="font-medium">🌐 Веб-поиск</span> — бот сможет искать актуальную информацию: новости, погоду, курсы валют и т.д.
-              <br />
-              <span className="text-xs">Команда /search доступна всегда, авто-поиск — при включении переключателя.</span>
-            </p>
+            {/* Cost Summary */}
+            <div className="mt-4 p-3 rounded-lg flex items-center justify-between"
+                 style={{ background: 'rgba(255, 215, 0, 0.05)', border: '1px solid rgba(255, 215, 0, 0.1)' }}>
+              <span className="text-sm text-gray-400">
+                Примерная стоимость 100 поисков:
+              </span>
+              <span className="font-semibold text-amber-400" style={{ fontFamily: 'var(--font-heading)' }}>
+                ~${(selectedModelInfo.costPerSearch * 100).toFixed(2)}
+              </span>
+            </div>
           </div>
         </div>
 
-        {/* Что в Render */}
-        <div className="card bg-gradient-to-br from-green-50 to-emerald-50">
-          <h3 className="font-semibold text-gray-900 mb-3">В Render только 2 переменные</h3>
-          <div className="space-y-2 text-sm">
-            <div className="flex items-center gap-2">
-              <span className="text-green-600">●</span>
-              <span className="text-gray-700"><code className="bg-white px-1 rounded">SUPABASE_URL</code></span>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className="text-green-600">●</span>
-              <span className="text-gray-700"><code className="bg-white px-1 rounded">SUPABASE_SERVICE_KEY</code></span>
-            </div>
-          </div>
-          <p className="mt-3 text-xs text-gray-600">
-            Остальное (Telegram, OpenRouter, Groq, Perplexity) настраивается на этой странице.
-          </p>
-        </div>
-
-        {/* Save */}
-        <div className="flex items-center justify-between">
+        {/* Save Button */}
+        <div className="flex items-center justify-between pt-6 animate-fade-in-up stagger-5" style={{ opacity: 0 }}>
           {saveMessage && (
-            <div className={`flex items-center gap-2 text-sm ${
-              saveMessage.includes('✅') ? 'text-green-600' : 'text-red-600'
+            <div className={`flex items-center gap-2 px-4 py-2 rounded-xl ${
+              saveMessage === 'success' 
+                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                : 'bg-red-500/10 text-red-400 border border-red-500/20'
             }`}>
-              {saveMessage.includes('✅') ? (
-                <CheckCircle className="w-4 h-4" />
+              {saveMessage === 'success' ? (
+                <>
+                  <CheckCircle className="w-4 h-4" />
+                  <span className="text-sm font-medium" style={{ fontFamily: 'var(--font-heading)' }}>
+                    Сохранено
+                  </span>
+                </>
               ) : (
-                <AlertCircle className="w-4 h-4" />
+                <>
+                  <AlertCircle className="w-4 h-4" />
+                  <span className="text-sm font-medium" style={{ fontFamily: 'var(--font-heading)' }}>
+                    Ошибка сохранения
+                  </span>
+                </>
               )}
-              {saveMessage.replace(/[✅❌]\s*/, '')}
             </div>
           )}
+          
           <div className="flex items-center gap-3 ml-auto">
             <button
               type="button"
