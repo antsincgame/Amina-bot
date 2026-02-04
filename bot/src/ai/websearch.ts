@@ -180,7 +180,92 @@ const REALTIME_PATTERNS = [
   // Явные запросы на поиск
   /найди|поищи|погугли|загугли/i,
   /search|find|google|look up/i,
+  
+  // Криптовалюты и акции
+  /биткоин|bitcoin|btc|эфир|ethereum|eth|крипт/i,
+  /акци|stock|nasdaq|s&p|dow jones/i,
 ];
+
+// --------------------------------------------
+// Query Enhancement — улучшение коротких запросов
+// --------------------------------------------
+
+interface QueryType {
+  pattern: RegExp;
+  enhancer: (query: string) => string;
+}
+
+const QUERY_ENHANCERS: QueryType[] = [
+  // Цены криптовалют
+  {
+    pattern: /цена\s*(биткоин|bitcoin|btc|эфир|ethereum|eth|крипт)/i,
+    enhancer: (q) => {
+      const match = q.match(/биткоин|bitcoin|btc|эфир|ethereum|eth/i);
+      const crypto = match ? match[0].toUpperCase() : 'BTC';
+      return `Какая текущая цена ${crypto} в долларах США прямо сейчас? Укажи точную цену.`;
+    },
+  },
+  // Курсы валют
+  {
+    pattern: /курс\s*(доллар|евро|рубл|usd|eur|rub)/i,
+    enhancer: (q) => {
+      const match = q.match(/доллар|евро|рубл|usd|eur|rub/i);
+      const currency = match ? match[0] : 'доллара';
+      return `Какой актуальный курс ${currency} к рублю сегодня? Укажи точный курс.`;
+    },
+  },
+  // Погода
+  {
+    pattern: /погода\s*(в\s+)?(\w+)?/i,
+    enhancer: (q) => {
+      const match = q.match(/погода\s*(?:в\s+)?(\w+)?/i);
+      const city = match?.[1] || 'Москве';
+      return `Какая погода в ${city} сейчас? Температура, осадки, ветер.`;
+    },
+  },
+  // Акции
+  {
+    pattern: /цена\s*акци|акци.*цена|stock\s*price/i,
+    enhancer: (q) => {
+      const match = q.match(/акци[ийя]?\s+(\w+)|(\w+)\s+акци/i);
+      const company = match?.[1] || match?.[2] || 'компании';
+      return `Какая текущая цена акций ${company} на бирже сегодня?`;
+    },
+  },
+  // Стоимость товаров
+  {
+    pattern: /сколько\s*стоит|стоимость|цена/i,
+    enhancer: (q) => {
+      // Если запрос очень короткий, добавляем контекст
+      if (q.length < 20) {
+        return `${q} — актуальная цена сегодня в России`;
+      }
+      return q;
+    },
+  },
+];
+
+/**
+ * Улучшает короткий запрос для более точного поиска
+ * Превращает "Цена биткоин?" в "Какая текущая цена BTC в долларах США прямо сейчас?"
+ */
+function enhanceSearchQuery(query: string): string {
+  // Пробуем найти подходящий enhancer
+  for (const { pattern, enhancer } of QUERY_ENHANCERS) {
+    if (pattern.test(query)) {
+      const enhanced = enhancer(query);
+      telegramLogger.debug({ original: query, enhanced }, 'Query enhanced for search');
+      return enhanced;
+    }
+  }
+  
+  // Если запрос очень короткий (< 15 символов), добавляем контекст
+  if (query.length < 15) {
+    return `${query} — актуальная информация сегодня`;
+  }
+  
+  return query;
+}
 
 // Паттерны ответов AI когда он не знает
 const UNCERTAINTY_PATTERNS = [
@@ -232,13 +317,25 @@ export async function webSearch(
   const selectedModel = await getSelectedModel();
   const modelInfo = getModelInfo(selectedModel);
   
+  // Улучшаем запрос для более точного поиска
+  const enhancedQuery = enhanceSearchQuery(query);
+  
   // Системный промпт для краткого поиска фактов
-  const systemPrompt = `Найди актуальную информацию по запросу и дай краткий фактический ответ.
-Отвечай только фактами, без вступлений. Если информация недоступна - скажи кратко.
-Язык ответа: русский.`;
+  // ВАЖНО: Явно указываем что нужна АКТУАЛЬНАЯ информация, не общие описания
+  const systemPrompt = `Ты — поисковый ассистент. Твоя задача — найти АКТУАЛЬНУЮ информацию ПРЯМО СЕЙЧАС.
+
+ПРАВИЛА:
+1. Для вопросов о ценах/курсах — дай ТОЧНУЮ ЦИФРУ с источником
+2. Для погоды — дай ТЕКУЩИЕ показатели (температура, осадки)
+3. Для новостей — дай СЕГОДНЯШНИЕ события
+4. НЕ давай общие описания или определения из Wikipedia
+5. Если спрашивают "цена биткоин" — нужна ЦЕНА В ДОЛЛАРАХ, не что такое биткоин
+
+Формат ответа: кратко, только факты, без вступлений.
+Язык: русский.`;
 
   telegramLogger.debug(
-    { query, model: selectedModel, pricePerMToken: modelInfo?.inputPrice }, 
+    { originalQuery: query, enhancedQuery, model: selectedModel, pricePerMToken: modelInfo?.inputPrice }, 
     'Performing web search'
   );
 
@@ -255,10 +352,10 @@ export async function webSearch(
       },
       signal: controller.signal,
       body: JSON.stringify({
-        model: selectedModel, // Динамически выбранная самая дешёвая модель
+        model: selectedModel, // Динамически выбранная модель из админки
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: query },
+          { role: 'user', content: enhancedQuery }, // Используем улучшенный запрос
         ],
         max_tokens: maxTokens,
         temperature: 0.1, // Минимальная температура для точности
@@ -369,11 +466,16 @@ export async function getSearchContext(query: string): Promise<string> {
     const result = await webSearch(query);
     
     // Форматируем как скрытый контекст для LLM
-    return `\n\n[АКТУАЛЬНАЯ ИНФОРМАЦИЯ ИЗ ИНТЕРНЕТА]
+    // ВАЖНО: Чёткие инструкции как использовать данные поиска
+    return `\n\n=== ДАННЫЕ ИЗ ИНТЕРНЕТА (${new Date().toLocaleDateString('ru-RU')}) ===
 ${result.answer}
-[/АКТУАЛЬНАЯ ИНФОРМАЦИЯ]
+=== КОНЕЦ ДАННЫХ ===
 
-Используй эту информацию в своём ответе естественно, не упоминая что это "информация из интернета". Просто отвечай как будто ты это знаешь.`;
+ИНСТРУКЦИЯ: Это актуальные данные из интернета. 
+- Если там есть ЦИФРЫ (цены, курсы, температура) — используй их напрямую
+- Отвечай кратко и по делу, используя эти данные
+- НЕ упоминай "по данным поиска" или "согласно интернету"
+- Просто дай ответ как будто ты это знаешь`;
   } catch (error) {
     // Молча игнорируем ошибки поиска - основная LLM ответит без интернета
     telegramLogger.debug({ error }, 'Search context failed, continuing without');
