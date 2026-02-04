@@ -24,9 +24,24 @@ export type {
 // Import types for internal use
 import type { Settings, Prompt, AnalyticsEvent } from '../../../shared/types/index.js';
 
-// Settings API
+// Bot API URL
+const BOT_URL = import.meta.env.VITE_BOT_URL || 'https://amina-bot.onrender.com';
+
+// Settings API - uses bot backend (has service_role access)
 export const settingsApi = {
   async getAll(): Promise<Settings[]> {
+    // Try bot API first (more reliable)
+    try {
+      const response = await fetch(`${BOT_URL}/api/settings`);
+      if (response.ok) {
+        const result = await response.json();
+        return result.data ?? [];
+      }
+    } catch {
+      // Fall back to direct Supabase
+    }
+    
+    // Fallback to Supabase
     const { data, error } = await supabase
       .from('settings')
       .select('*')
@@ -37,31 +52,49 @@ export const settingsApi = {
   },
 
   async update(key: string, value: string): Promise<void> {
-    const { error } = await supabase
-      .from('settings')
-      .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
-
-    if (error) throw error;
+    // Use bot API (has service_role access, bypasses RLS)
+    const response = await fetch(`${BOT_URL}/api/settings/${key}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value }),
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(error.error || 'Failed to update setting');
+    }
   },
 
   async updateMany(settings: Record<string, string>): Promise<void> {
-    const updates = Object.entries(settings).map(([key, value]) => ({
-      key,
-      value,
-      updated_at: new Date().toISOString(),
-    }));
-
-    const { error } = await supabase
-      .from('settings')
-      .upsert(updates, { onConflict: 'key' });
-
-    if (error) throw error;
+    // Use bot API (has service_role access, bypasses RLS)
+    const response = await fetch(`${BOT_URL}/api/settings`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(settings),
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(error.error || 'Failed to update settings');
+    }
   },
 };
 
-// Prompts API
+// Prompts API - uses bot backend (has service_role access)
 export const promptsApi = {
   async getAll(): Promise<Prompt[]> {
+    // Try bot API first
+    try {
+      const response = await fetch(`${BOT_URL}/api/prompts`);
+      if (response.ok) {
+        const result = await response.json();
+        return result.data ?? [];
+      }
+    } catch {
+      // Fall back to direct Supabase
+    }
+    
+    // Fallback
     const { data, error } = await supabase
       .from('prompts')
       .select('*')
@@ -72,51 +105,57 @@ export const promptsApi = {
   },
 
   async create(prompt: Omit<Prompt, 'id' | 'created_at' | 'updated_at'>): Promise<Prompt> {
-    const { data, error } = await supabase
-      .from('prompts')
-      .insert(prompt)
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data;
+    const response = await fetch(`${BOT_URL}/api/prompts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(prompt),
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(error.error || 'Failed to create prompt');
+    }
+    
+    const result = await response.json();
+    return result.data;
   },
 
   async update(id: string, updates: Partial<Omit<Prompt, 'id' | 'created_at'>>): Promise<Prompt> {
-    const { data, error } = await supabase
-      .from('prompts')
-      .update({ ...updates, updated_at: new Date().toISOString() })
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (error) throw error;
-    return data;
+    const response = await fetch(`${BOT_URL}/api/prompts/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(error.error || 'Failed to update prompt');
+    }
+    
+    const result = await response.json();
+    return result.data;
   },
 
   async delete(id: string): Promise<void> {
-    const { error } = await supabase
-      .from('prompts')
-      .delete()
-      .eq('id', id);
-
-    if (error) throw error;
+    const response = await fetch(`${BOT_URL}/api/prompts/${id}`, {
+      method: 'DELETE',
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(error.error || 'Failed to delete prompt');
+    }
   },
 
   async setActive(id: string): Promise<void> {
-    // Deactivate all
-    await supabase
-      .from('prompts')
-      .update({ is_active: false })
-      .eq('is_active', true);
-
-    // Activate selected
-    const { error } = await supabase
-      .from('prompts')
-      .update({ is_active: true })
-      .eq('id', id);
-
-    if (error) throw error;
+    const response = await fetch(`${BOT_URL}/api/prompts/${id}/activate`, {
+      method: 'POST',
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(error.error || 'Failed to activate prompt');
+    }
   },
 };
 
