@@ -13,7 +13,39 @@ const apiKeysSchema = z.object({
   groq_api_key: z.string().optional(),
   perplexity_api_key: z.string().optional(),
   web_search_enabled: z.string().optional(),
+  perplexity_model: z.string().optional(),
 });
+
+// Модели Perplexity с ценами (февраль 2026)
+const PERPLEXITY_MODELS = [
+  { 
+    id: 'sonar', 
+    name: 'Sonar', 
+    description: 'Быстрая и дешёвая',
+    inputPrice: 1.00, 
+    outputPrice: 1.00, 
+    requestFee: 5.00,
+    costPerSearch: 0.0055,
+  },
+  { 
+    id: 'sonar-pro', 
+    name: 'Sonar Pro', 
+    description: 'Больше цитат, сложные запросы',
+    inputPrice: 3.00, 
+    outputPrice: 15.00, 
+    requestFee: 6.00,
+    costPerSearch: 0.0105,
+  },
+  { 
+    id: 'sonar-reasoning-pro', 
+    name: 'Sonar Reasoning Pro', 
+    description: 'С логическим рассуждением',
+    inputPrice: 2.00, 
+    outputPrice: 8.00, 
+    requestFee: 6.00,
+    costPerSearch: 0.0085,
+  },
+];
 
 type ApiKeysForm = z.infer<typeof apiKeysSchema>;
 
@@ -60,6 +92,7 @@ const ApiKeysPage = () => {
       groq_api_key: '',
       perplexity_api_key: '',
       web_search_enabled: 'false',
+      perplexity_model: 'sonar',
     },
   });
 
@@ -68,6 +101,7 @@ const ApiKeysPage = () => {
   const groqKey = watch('groq_api_key');
   const perplexityKey = watch('perplexity_api_key');
   const webSearchEnabled = watch('web_search_enabled');
+  const perplexityModel = watch('perplexity_model');
 
   // Load settings
   useEffect(() => {
@@ -83,6 +117,7 @@ const ApiKeysPage = () => {
         groq_api_key: map['groq_api_key'] || '',
         perplexity_api_key: map['perplexity_api_key'] || '',
         web_search_enabled: map['web_search_enabled'] || 'false',
+        perplexity_model: map['perplexity_model'] || 'sonar',
       });
     }
   }, [settings, reset]);
@@ -94,8 +129,12 @@ const ApiKeysPage = () => {
       groq_api_key: data.groq_api_key || '',
       perplexity_api_key: data.perplexity_api_key || '',
       web_search_enabled: data.web_search_enabled || 'false',
+      perplexity_model: data.perplexity_model || 'sonar',
     });
   };
+
+  // Получить информацию о выбранной модели
+  const selectedModelInfo = PERPLEXITY_MODELS.find(m => m.id === perplexityModel) || PERPLEXITY_MODELS[0];
 
   // Маскировать ключ для отображения
   const maskKey = (key: string | undefined): string => {
@@ -330,6 +369,61 @@ const ApiKeysPage = () => {
                 />
                 <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-indigo-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
               </label>
+            </div>
+          </div>
+
+          {/* Model Selector */}
+          <div className="mt-4 p-4 bg-white rounded-lg border border-indigo-100">
+            <h3 className="font-medium text-gray-900 mb-3">Модель поиска</h3>
+            <div className="space-y-2">
+              {PERPLEXITY_MODELS.map((model) => (
+                <label
+                  key={model.id}
+                  className={`flex items-center p-3 rounded-lg border-2 cursor-pointer transition-all ${
+                    perplexityModel === model.id
+                      ? 'border-indigo-500 bg-indigo-50'
+                      : 'border-gray-200 hover:border-indigo-300'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    value={model.id}
+                    checked={perplexityModel === model.id}
+                    onChange={(e) => setValue('perplexity_model', e.target.value, { shouldDirty: true })}
+                    className="sr-only"
+                  />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-gray-900">{model.name}</span>
+                      {model.id === 'sonar' && (
+                        <span className="px-1.5 py-0.5 bg-green-100 text-green-700 text-xs font-medium rounded">
+                          Дешёвая
+                        </span>
+                      )}
+                      {model.id === 'sonar-reasoning-pro' && (
+                        <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 text-xs font-medium rounded">
+                          С рассуждением
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-sm text-gray-500">{model.description}</p>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-sm font-medium text-gray-900">
+                      ~${model.costPerSearch.toFixed(4)}
+                    </div>
+                    <div className="text-xs text-gray-500">за поиск</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+            
+            {/* Cost estimate */}
+            <div className="mt-3 p-3 bg-gray-50 rounded-lg">
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-600">Выбрана: <span className="font-medium">{selectedModelInfo.name}</span></span>
+                <span className="text-gray-900 font-medium">~${(selectedModelInfo.costPerSearch * 100).toFixed(2)} за 100 поисков</span>
+              </div>
             </div>
           </div>
 

@@ -105,6 +105,7 @@ function getModelInfo(modelId: string): PerplexityModel | undefined {
 // --------------------------------------------
 
 let cachedPerplexityKey: string | null = null;
+let cachedPerplexityModel: string | null = null;
 let cacheLoadedAt = 0;
 const CACHE_TTL = 60 * 1000; // 1 минута
 
@@ -128,6 +129,29 @@ async function getPerplexityApiKey(): Promise<string> {
     return cachedPerplexityKey;
   } catch {
     return '';
+  }
+}
+
+/**
+ * Получить выбранную модель из настроек
+ * По умолчанию: самая дешёвая (sonar)
+ */
+async function getSelectedModel(): Promise<string> {
+  // Проверяем кэш
+  const now = Date.now();
+  if (cachedPerplexityModel && now - cacheLoadedAt < CACHE_TTL) {
+    return cachedPerplexityModel;
+  }
+
+  // Загружаем из БД
+  try {
+    const model = await settingsRepo.get('perplexity_model');
+    // Проверяем что модель валидна
+    const validModel = PERPLEXITY_MODELS.find(m => m.id === model);
+    cachedPerplexityModel = validModel ? model : getCheapestOnlineModel();
+    return cachedPerplexityModel;
+  } catch {
+    return getCheapestOnlineModel();
   }
 }
 
@@ -184,8 +208,8 @@ export function aiShowsUncertainty(response: string): boolean {
 }
 
 /**
- * Выполняет веб-поиск через Perplexity API (самая дешёвая модель)
- * Результат форматируется как контекст для основной LLM
+ * Выполняет веб-поиск через Perplexity API
+ * Использует модель выбранную в админке (или самую дешёвую по умолчанию)
  */
 export async function webSearch(
   query: string,
@@ -204,8 +228,8 @@ export async function webSearch(
 
   const maxTokens = options.maxTokens || 512; // Короткие ответы для экономии
   
-  // Динамически выбираем самую дешёвую модель
-  const selectedModel = getCheapestOnlineModel();
+  // Получаем модель из настроек админки
+  const selectedModel = await getSelectedModel();
   const modelInfo = getModelInfo(selectedModel);
   
   // Системный промпт для краткого поиска фактов
@@ -215,7 +239,7 @@ export async function webSearch(
 
   telegramLogger.debug(
     { query, model: selectedModel, pricePerMToken: modelInfo?.inputPrice }, 
-    'Performing web search with cheapest model'
+    'Performing web search'
   );
 
   try {
@@ -388,25 +412,26 @@ export async function isWebSearchEnabled(): Promise<boolean> {
 }
 
 /**
- * Очистить кэш API ключа
+ * Очистить кэш API ключа и модели
  */
 export function clearPerplexityCache(): void {
   cachedPerplexityKey = null;
+  cachedPerplexityModel = null;
   cacheLoadedAt = 0;
 }
 
 /**
  * Получить информацию о текущей модели поиска (для админки)
  */
-export function getSearchModelInfo(): { 
+export async function getSearchModelInfo(): Promise<{ 
   model: string; 
   name: string; 
   priceInput: number; 
   priceOutput: number;
   requestFee: number;
   estimatedCostPer100Searches: number;
-} {
-  const model = getCheapestOnlineModel();
+}> {
+  const model = await getSelectedModel();
   const info = getModelInfo(model);
   
   if (!info) {

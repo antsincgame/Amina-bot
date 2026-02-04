@@ -804,7 +804,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
        */
       apiServer.get('/websearch/info', async (request: FastifyRequest, reply: FastifyReply) => {
         try {
-          const modelInfo = getSearchModelInfo();
+          const modelInfo = await getSearchModelInfo();
           const enabled = await isWebSearchEnabled();
           const allModels = getAvailableModels();
 
