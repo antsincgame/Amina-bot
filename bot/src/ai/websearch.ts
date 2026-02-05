@@ -363,8 +363,6 @@ export async function webSearch(
       }),
     });
 
-    clearTimeout(timeoutId);
-
     if (!response.ok) {
       const errorText = await response.text();
       telegramLogger.warn({ status: response.status, error: errorText }, 'Perplexity API error (silent)');
@@ -416,17 +414,17 @@ export async function webSearch(
       },
     };
   } catch (error) {
-    clearTimeout(timeoutId);
-    
     // Обработка таймаута
-    if ((error as any).name === 'AbortError') {
+    if (error instanceof DOMException && error.name === 'AbortError') {
       telegramLogger.warn({ query }, 'Web search timeout (15s)');
       throw Object.assign(new Error('Web search timeout'), { code: 'PERPLEXITY_TIMEOUT' });
     }
     
-    if ((error as any).code) throw error;
+    if (typeof error === 'object' && error !== null && 'code' in error) throw error;
     telegramLogger.warn({ error }, 'Silent web search failed');
     throw Object.assign(new Error('Web search failed'), { code: 'PERPLEXITY_ERROR' });
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

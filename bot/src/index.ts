@@ -8,6 +8,7 @@ import { createBot } from './telegram/bot.js';
 import { getSupabase, settingsRepo } from './db/supabase.js';
 import { aiService } from './ai/openrouter.js';
 import { registerApiRoutes } from './api/routes.js';
+import { stopCleanupInterval } from './utils/rate-limiter.js';
 
 // --------------------------------------------
 // Application Entry Point
@@ -227,6 +228,9 @@ const start = async (): Promise<void> => {
 
 const shutdown = async (signal: string): Promise<void> => {
   appLogger.info({ signal }, 'Shutdown signal received');
+
+  // Cleanup intervals/timers
+  stopCleanupInterval();
 
   if (bot) {
     appLogger.info('Stopping bot...');

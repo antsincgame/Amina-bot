@@ -2,7 +2,17 @@ import { z } from 'zod';
 import * as dotenv from 'dotenv';
 
 // Load environment variables
-dotenv.config();
+import { fileURLToPath } from 'url';
+import { dirname, resolve } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const botRoot = resolve(__dirname, '../..');
+
+// Load .env (or .env.test if it exists and NODE_ENV=test)
+dotenv.config({ path: resolve(botRoot, '.env') });
+// Also try loading .env.test which overrides — for test environments
+dotenv.config({ path: resolve(botRoot, '.env.test'), override: true });
 
 // --------------------------------------------
 // Environment Schema Validation
@@ -41,6 +51,9 @@ const parseEnv = () => {
   if (!result.success) {
     console.error('❌ Invalid environment variables:');
     console.error(result.error.format());
+    if (process.env.NODE_ENV === 'test') {
+      throw new Error(`Invalid env vars: ${JSON.stringify(result.error.flatten().fieldErrors)}`);
+    }
     process.exit(1);
   }
 

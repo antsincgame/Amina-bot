@@ -4,7 +4,7 @@ import { aiLogger } from '../config/logger.js';
 import { settingsRepo, promptsRepo } from '../db/supabase.js';
 import type { AIRequest, AIResponse, AIMessage } from '../../../shared/types/index.js';
 import { validateChannel, validateMessageContent, MAX_MESSAGE_LENGTH } from '../utils/validation.js';
-import { handleAIError } from '../utils/error-handler.js';
+import { handleAIError, AppError } from '../utils/error-handler.js';
 
 // --------------------------------------------
 // Динамический поиск бесплатных моделей через OpenRouter API
@@ -43,12 +43,15 @@ async function fetchFreeModels(): Promise<string[]> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 сек таймаут
     
-    const response = await fetch('https://openrouter.ai/api/v1/models', {
-      headers: { 'Authorization': `Bearer ${keys.openrouter}` },
-      signal: controller.signal,
-    });
-    
-    clearTimeout(timeoutId);
+    let response: Response;
+    try {
+      response = await fetch('https://openrouter.ai/api/v1/models', {
+        headers: { 'Authorization': `Bearer ${keys.openrouter}` },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
     
     if (!response.ok) {
       throw new Error(`OpenRouter API error: ${response.status}`);
@@ -300,11 +303,7 @@ export const aiService = {
 
       // Проверяем критические ошибки — для них НЕ делаем fallback
       if (errorMessage.includes('401') || errorMessage.includes('Unauthorized')) {
-        const detailedError = new Error(
-          `AUTH_ERROR: Неверный API ключ OpenRouter. Проверьте OPENROUTER_API_KEY.`
-        );
-        (detailedError as any).code = 'AUTH_ERROR';
-        throw detailedError;
+        throw new AppError('AUTH_ERROR', 'Неверный API ключ OpenRouter. Проверьте OPENROUTER_API_KEY.', primaryError);
       }
       
       // 402 (Payment Required) ТЕПЕРЬ запускает гонку бесплатных моделей!
@@ -318,11 +317,7 @@ export const aiService = {
       if (!needsRace) {
         // Rate limit — не поможет гонка, просто ждать
         if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
-          const detailedError = new Error(
-            `RATE_LIMIT: Превышен лимит запросов. Подождите минуту.`
-          );
-          (detailedError as any).code = 'RATE_LIMIT';
-          throw detailedError;
+          throw new AppError('RATE_LIMIT', 'Превышен лимит запросов. Подождите минуту.', primaryError);
         }
         throw primaryError;
       }
@@ -339,10 +334,11 @@ export const aiService = {
       '🏁 Starting dynamic free models race'
     );
 
-    // Таймаут-промис для ограничения гонки
+    // Таймаут-промис для ограничения гонки (с cleanup)
+    let raceTimeoutId: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => {
-        reject(new Error('RACE_TIMEOUT: Превышено время ожидания ответа от моделей'));
+      raceTimeoutId = setTimeout(() => {
+        reject(new AppError('RACE_TIMEOUT', 'Превышено время ожидания ответа от моделей'));
       }, RACE_TIMEOUT_MS);
     });
 
@@ -367,6 +363,9 @@ export const aiService = {
         timeoutPromise,
       ]);
       
+      // Очищаем таймаут после успешного завершения
+      if (raceTimeoutId) clearTimeout(raceTimeoutId);
+      
       aiLogger.info(
         { winner: winner.usedModel, tokens: winner.tokens_used.total },
         '🏆 Race winner! Saving as new default model'
@@ -387,16 +386,13 @@ export const aiService = {
 
       return winner;
     } catch (raceError) {
-      const errorMsg = raceError instanceof Error ? raceError.message : String(raceError);
+      // Очищаем таймаут при ошибке
+      if (raceTimeoutId) clearTimeout(raceTimeoutId);
       
       // Проверяем таймаут
-      if (errorMsg.includes('RACE_TIMEOUT')) {
+      if (raceError instanceof AppError && raceError.code === 'RACE_TIMEOUT') {
         aiLogger.error({ timeoutMs: RACE_TIMEOUT_MS }, '⏰ Race timeout — all models too slow');
-        const detailedError = new Error(
-          `RACE_TIMEOUT: Все модели отвечают слишком долго. Попробуйте позже.`
-        );
-        (detailedError as any).code = 'RACE_TIMEOUT';
-        throw detailedError;
+        throw raceError;
       }
 
       // Все модели упали
@@ -405,12 +401,11 @@ export const aiService = {
         '💀 All free models failed in race'
       );
 
-      const detailedError = new Error(
-        `ALL_MODELS_FAILED: Все ${modelsToTry.length} бесплатных моделей недоступны. Попробуйте позже.`
+      throw new AppError(
+        'ALL_MODELS_FAILED',
+        `Все ${modelsToTry.length} бесплатных моделей недоступны. Попробуйте позже.`,
+        raceError,
       );
-      (detailedError as any).code = 'ALL_MODELS_FAILED';
-      (detailedError as any).triedModels = modelsToTry;
-      throw detailedError;
     }
   },
 

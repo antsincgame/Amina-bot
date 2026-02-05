@@ -8,6 +8,7 @@ import OpenAI from 'openai';
 import { config } from '../config/index.js';
 import { aiLogger } from '../config/logger.js';
 import { settingsRepo } from '../db/supabase.js';
+import { AppError } from '../utils/error-handler.js';
 import type { AIResponse } from '../../../shared/types/index.js';
 
 // --------------------------------------------
@@ -317,19 +318,13 @@ export async function analyzeImage(
     aiLogger.error({ error, model: config.visionModel }, 'Image analysis failed');
     
     if (err.status === 404) {
-      const customError = new Error(`Vision модель "${config.visionModel}" не найдена на OpenRouter. Задайте другую в админке → Голос и Фото.`);
-      (customError as any).code = 'VISION_MODEL_NOT_FOUND';
-      throw customError;
+      throw new AppError('VISION_MODEL_NOT_FOUND', `Vision модель "${config.visionModel}" не найдена на OpenRouter. Задайте другую в админке → Голос и Фото.`, error);
     }
     if (err.status === 401) {
-      const customError = new Error('Неверный API ключ OpenRouter');
-      (customError as any).code = 'AUTH_ERROR';
-      throw customError;
+      throw new AppError('AUTH_ERROR', 'Неверный API ключ OpenRouter', error);
     }
     if (err.status === 503) {
-      const customError = new Error('Сервис анализа изображений временно недоступен. Попробуй отправить фото через минуту.');
-      (customError as any).code = 'VISION_SERVICE_UNAVAILABLE';
-      throw customError;
+      throw new AppError('VISION_SERVICE_UNAVAILABLE', 'Сервис анализа изображений временно недоступен. Попробуй отправить фото через минуту.', error);
     }
     throw error;
   }
@@ -504,42 +499,28 @@ export async function transcribeAudio(
     aiLogger.error({ error, model: openRouterModel }, 'Audio transcription failed');
     
     if (err.status === 404) {
-      const customError = new Error(`Audio модель "${openRouterModel}" не найдена на OpenRouter. Задайте другую в админке → Голос и Фото.`);
-      (customError as any).code = 'AUDIO_MODEL_NOT_FOUND';
-      throw customError;
+      throw new AppError('AUDIO_MODEL_NOT_FOUND', `Audio модель "${openRouterModel}" не найдена на OpenRouter. Задайте другую в админке → Голос и Фото.`, error);
     }
     if (err.status === 401) {
-      const customError = new Error('Неверный API ключ OpenRouter');
-      (customError as any).code = 'AUTH_ERROR';
-      throw customError;
+      throw new AppError('AUTH_ERROR', 'Неверный API ключ OpenRouter', error);
     }
     if (err.status === 400) {
       const msg = err.message ?? '';
       if (msg.includes('input_audio')) {
-        const customError = new Error(`Модель "${openRouterModel}" не поддерживает аудио. В админке выберите OpenRouter для аудио или настройте GROQ_API_KEY для Groq.`);
-        (customError as any).code = 'AUDIO_NOT_SUPPORTED';
-        throw customError;
+        throw new AppError('AUDIO_NOT_SUPPORTED', `Модель "${openRouterModel}" не поддерживает аудио. В админке выберите OpenRouter для аудио или настройте GROQ_API_KEY для Groq.`, error);
       }
       if (msg.includes('not a valid model ID') || msg.includes('invalid model')) {
-        const customError = new Error('Выбранная аудио модель недоступна на OpenRouter. В админке → Голос и Фото выберите «OpenRouter» или настройте Groq ключ.');
-        (customError as any).code = 'AUDIO_MODEL_NOT_FOUND';
-        throw customError;
+        throw new AppError('AUDIO_MODEL_NOT_FOUND', 'Выбранная аудио модель недоступна на OpenRouter. В админке → Голос и Фото выберите «OpenRouter» или настройте Groq ключ.', error);
       }
     }
     if (err.status === 429) {
-      const customError = new Error('Превышен лимит запросов. Подождите минуту и попробуйте снова.');
-      (customError as any).code = 'RATE_LIMIT';
-      throw customError;
+      throw new AppError('RATE_LIMIT', 'Превышен лимит запросов. Подождите минуту и попробуйте снова.', error);
     }
     if (err.status === 503) {
-      const customError = new Error('Сервис транскрипции временно недоступен. Попробуйте позже.');
-      (customError as any).code = 'SERVER_ERROR';
-      throw customError;
+      throw new AppError('SERVER_ERROR', 'Сервис транскрипции временно недоступен. Попробуйте позже.', error);
     }
     if (err.status && err.status >= 500) {
-      const customError = new Error('Сервер AI временно недоступен. Попробуйте позже.');
-      (customError as any).code = 'SERVER_ERROR';
-      throw customError;
+      throw new AppError('SERVER_ERROR', 'Сервер AI временно недоступен. Попробуйте позже.', error);
     }
     throw error;
   }
@@ -620,14 +601,10 @@ export async function transcribeAudioGroq(
     aiLogger.error({ error }, 'Groq Whisper transcription failed');
     
     if (err.status === 401) {
-      const customError = new Error('Неверный GROQ_API_KEY');
-      (customError as any).code = 'GROQ_AUTH_ERROR';
-      throw customError;
+      throw new AppError('GROQ_AUTH_ERROR', 'Неверный GROQ_API_KEY', error);
     }
     if (err.status === 413) {
-      const customError = new Error('Файл слишком большой (максимум 25MB)');
-      (customError as any).code = 'FILE_TOO_LARGE';
-      throw customError;
+      throw new AppError('FILE_TOO_LARGE', 'Файл слишком большой (максимум 25MB)', error);
     }
     throw error;
   }

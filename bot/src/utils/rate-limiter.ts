@@ -135,8 +135,30 @@ export function cleanupRateLimitStore(): void {
   }
 }
 
-// Запустить очистку каждые 5 минут
-setInterval(cleanupRateLimitStore, 5 * 60 * 1000);
+// Запустить очистку каждые 5 минут (с возможностью остановки)
+let cleanupInterval: ReturnType<typeof setInterval> | null = null;
+
+export function startCleanupInterval(): void {
+  if (!cleanupInterval) {
+    cleanupInterval = setInterval(cleanupRateLimitStore, 5 * 60 * 1000);
+    // Позволяет процессу завершиться даже если интервал активен
+    if (cleanupInterval && typeof cleanupInterval === 'object' && 'unref' in cleanupInterval) {
+      cleanupInterval.unref();
+    }
+  }
+}
+
+export function stopCleanupInterval(): void {
+  if (cleanupInterval) {
+    clearInterval(cleanupInterval);
+    cleanupInterval = null;
+  }
+}
+
+// Автозапуск (не в тестах)
+if (process.env.NODE_ENV !== 'test') {
+  startCleanupInterval();
+}
 
 /**
  * Fastify hook для rate limiting

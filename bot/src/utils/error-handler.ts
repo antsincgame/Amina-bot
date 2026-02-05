@@ -8,6 +8,17 @@ import { dbLogger, aiLogger } from '../config/logger.js';
 /**
  * Custom error types
  */
+
+/** Base error with typed `code` field — replaces all `(error as any).code` patterns */
+export class AppError extends Error {
+  public readonly code: string;
+  constructor(code: string, message: string, public readonly originalError?: unknown) {
+    super(message);
+    this.name = 'AppError';
+    this.code = code;
+  }
+}
+
 export class NotFoundError extends Error {
   constructor(message: string) {
     super(message);
@@ -34,6 +45,20 @@ export class AIError extends Error {
     super(message);
     this.name = 'AIError';
   }
+}
+
+/** Type guard to check if an error has a `code` property */
+export function isAppError(error: unknown): error is AppError {
+  return error instanceof AppError;
+}
+
+/** Extract error code from unknown error safely */
+export function getErrorCode(error: unknown): string | undefined {
+  if (error instanceof AppError) return error.code;
+  if (typeof error === 'object' && error !== null && 'code' in error) {
+    return String((error as { code: unknown }).code);
+  }
+  return undefined;
 }
 
 /**

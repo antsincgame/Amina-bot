@@ -6,6 +6,7 @@ import { processVoiceWithLLM, processImageWithLLM } from '../ai/multimodal.js';
 import { getSearchContext, enhanceResponseIfNeeded, searchAndFormat } from '../ai/websearch.js';
 import { conversationsRepo, analyticsRepo } from '../db/supabase.js';
 import { checkTelegramRateLimit } from '../utils/rate-limiter.js';
+import { getErrorCode } from '../utils/error-handler.js';
 import { 
   userProfileRepo, 
   userMemoryRepo, 
@@ -163,7 +164,7 @@ _Я сам ищу в интернете когда нужна актуальна
       await sendLongMessage(ctx, result);
       telegramLogger.info({ userId }, 'Explicit search completed');
     } catch (error) {
-      const errorCode = (error as any)?.code;
+      const errorCode = getErrorCode(error);
       telegramLogger.warn({ error, errorCode, userId }, 'Explicit search failed');
       
       let errorMessage = '😔 Не удалось найти информацию. Попробуй переформулировать запрос.';
@@ -335,7 +336,7 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
       );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      const errorCode = (error as any)?.code;
+      const errorCode = getErrorCode(error);
       
       telegramLogger.error({ error, userId, errorCode }, 'Failed to process message');
       
@@ -483,7 +484,7 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
     } catch (error) {
       telegramLogger.error({ error, userId }, 'Failed to process voice message');
       
-      const errorCode = (error as any)?.code;
+      const errorCode = getErrorCode(error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       
       await analyticsRepo.log('error', 'telegram', {
@@ -648,7 +649,7 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
     } catch (error) {
       telegramLogger.error({ error, userId }, 'Failed to process photo');
       
-      const errorCode = (error as any)?.code;
+      const errorCode = getErrorCode(error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       
       await analyticsRepo.log('error', 'telegram', {

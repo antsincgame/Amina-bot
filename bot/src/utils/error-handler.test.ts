@@ -8,6 +8,9 @@ import {
   ValidationError,
   DatabaseError,
   AIError,
+  AppError,
+  isAppError,
+  getErrorCode,
   isNotFoundError,
   handleSupabaseError,
   safeStringify,
@@ -271,5 +274,71 @@ describe('Error Inheritance', () => {
     expect(errors.filter(e => e instanceof ValidationError)).toHaveLength(1);
     expect(errors.filter(e => e instanceof DatabaseError)).toHaveLength(1);
     expect(errors.filter(e => e instanceof AIError)).toHaveLength(1);
+  });
+});
+
+// --------------------------------------------
+// AppError Tests (NEW)
+// --------------------------------------------
+
+describe('AppError', () => {
+  it('should create error with code and message', () => {
+    const error = new AppError('AUTH_ERROR', 'Invalid API key');
+    expect(error.name).toBe('AppError');
+    expect(error.code).toBe('AUTH_ERROR');
+    expect(error.message).toBe('Invalid API key');
+    expect(error instanceof Error).toBe(true);
+    expect(error instanceof AppError).toBe(true);
+  });
+
+  it('should store original error', () => {
+    const original = new Error('original');
+    const error = new AppError('WRAP', 'Wrapped error', original);
+    expect(error.originalError).toBe(original);
+  });
+
+  it('should have correct prototype chain', () => {
+    const error = new AppError('TEST', 'test');
+    expect(error instanceof Error).toBe(true);
+    expect(error instanceof AppError).toBe(true);
+  });
+});
+
+describe('isAppError', () => {
+  it('should return true for AppError instances', () => {
+    expect(isAppError(new AppError('CODE', 'msg'))).toBe(true);
+  });
+
+  it('should return false for plain Error', () => {
+    expect(isAppError(new Error('test'))).toBe(false);
+  });
+
+  it('should return false for non-errors', () => {
+    expect(isAppError(null)).toBe(false);
+    expect(isAppError(undefined)).toBe(false);
+    expect(isAppError('string')).toBe(false);
+    expect(isAppError({ code: 'FAKE' })).toBe(false);
+  });
+});
+
+describe('getErrorCode', () => {
+  it('should extract code from AppError', () => {
+    expect(getErrorCode(new AppError('AUTH', 'msg'))).toBe('AUTH');
+  });
+
+  it('should extract code from object with code property', () => {
+    const error = Object.assign(new Error('test'), { code: 'CUSTOM' });
+    expect(getErrorCode(error)).toBe('CUSTOM');
+  });
+
+  it('should return undefined for plain Error', () => {
+    expect(getErrorCode(new Error('test'))).toBeUndefined();
+  });
+
+  it('should return undefined for non-objects', () => {
+    expect(getErrorCode(null)).toBeUndefined();
+    expect(getErrorCode(undefined)).toBeUndefined();
+    expect(getErrorCode('string')).toBeUndefined();
+    expect(getErrorCode(42)).toBeUndefined();
   });
 });
