@@ -363,10 +363,16 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
             telegramLogger.info({ userId, task: extracted.task, scheduledAt: extracted.scheduled_at }, 'Reminder created');
             return;
           }
-          // Если AI не смог распарсить — продолжаем обычный flow
+          // Если AI не смог распарсить — говорим пользователю
+          telegramLogger.info({ userId }, 'Reminder detected but AI could not parse details');
+          await ctx.reply('⏰ Похоже, ты хочешь поставить напоминание, но я не смогла разобрать детали.\n\nПопробуй написать чётче, например:\n«Напомни через 2 часа позвонить маме»');
+          return;
         } catch (reminderError) {
-          telegramLogger.warn({ error: reminderError, userId }, 'Reminder extraction failed, continuing normal flow');
-          // Не блокируем — продолжаем обычный AI flow
+          telegramLogger.warn({ error: reminderError, userId }, 'Reminder extraction failed');
+          // ВАЖНО: НЕ продолжаем в обычный AI flow — иначе LLM ответит
+          // "конечно, напомню" но реально напоминание НЕ будет создано
+          await ctx.reply('⚠️ Не удалось создать напоминание — AI временно недоступен.\n\nПопробуй ещё раз через минуту.');
+          return;
         }
       }
 
@@ -606,8 +612,16 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
             telegramLogger.info({ userId, task: extracted.task }, 'Voice reminder created');
             return;
           }
+          // AI не смог распарсить детали
+          telegramLogger.info({ userId, transcribedText }, 'Voice reminder detected but AI could not parse');
+          await ctx.reply('⏰ Похоже, ты хочешь напоминание, но я не смогла разобрать детали.\n\nПопробуй сказать чётче, например:\n«Напомни через 2 часа позвонить маме»');
+          return;
         } catch (reminderError) {
-          telegramLogger.warn({ error: reminderError, userId }, 'Voice reminder extraction failed, continuing normal flow');
+          telegramLogger.warn({ error: reminderError, userId }, 'Voice reminder extraction failed');
+          // ВАЖНО: НЕ продолжаем в обычный AI flow — LLM может ответить
+          // "конечно, напомню" но реально напоминание НЕ будет создано
+          await ctx.reply('⚠️ Не удалось создать напоминание — AI временно недоступен.\n\nПопробуй ещё раз через минуту.');
+          return;
         }
       }
 
