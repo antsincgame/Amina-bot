@@ -2,7 +2,7 @@ import { Bot, Context, session, SessionFlavor } from 'grammy';
 import { config } from '../config/index.js';
 import { telegramLogger } from '../config/logger.js';
 import { aiService } from '../ai/openrouter.js';
-import { processVoiceWithLLM, processImageWithLLM } from '../ai/multimodal.js';
+import { processImageWithLLM, transcribeAudio } from '../ai/multimodal.js';
 import { getSearchContext, enhanceResponseIfNeeded, searchAndFormat } from '../ai/websearch.js';
 import { conversationsRepo, analyticsRepo } from '../db/supabase.js';
 import { checkTelegramRateLimit } from '../utils/rate-limiter.js';
@@ -557,17 +557,59 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         }));
       }
 
-      // Process voice: transcribe + LLM
-      const result = await processVoiceWithLLM(
-        audioBase64,
-        'audio/ogg',
-        ctx.session.messageHistory
-      );
+      // 1. Транскрибируем аудио
+      const transcription = await transcribeAudio(audioBase64, 'audio/ogg');
+      const transcribedText = transcription.text;
+
+      telegramLogger.debug({ userId, transcription: transcribedText.substring(0, 100) }, 'Voice transcribed');
+
+      // 2. Проверяем: это напоминание?
+      if (detectReminderIntent(transcribedText)) {
+        try {
+          const extracted = await extractReminder(transcribedText, new Date());
+          if (extracted) {
+            await remindersRepo.create(userId, chatId, extracted.task, extracted.scheduled_at);
+
+            // Сохраняем в историю
+            const userMsg: Message = {
+              role: 'user',
+              content: transcribedText,
+              timestamp: new Date().toISOString(),
+              metadata: { type: 'voice', voice_duration: duration },
+            };
+            const assistantMsg: Message = {
+              role: 'assistant',
+              content: extracted.reply,
+              timestamp: new Date().toISOString(),
+            };
+            await conversationsRepo.addMessage(ctx.session.conversationId, userMsg);
+            await conversationsRepo.addMessage(ctx.session.conversationId, assistantMsg);
+
+            ctx.session.messageHistory.push(
+              { role: 'user', content: transcribedText },
+              { role: 'assistant', content: extracted.reply }
+            );
+
+            await ctx.reply(extracted.reply);
+            telegramLogger.info({ userId, task: extracted.task }, 'Voice reminder created');
+            return;
+          }
+        } catch (reminderError) {
+          telegramLogger.warn({ error: reminderError, userId }, 'Voice reminder extraction failed, continuing normal flow');
+        }
+      }
+
+      // 3. Обычный flow: отправляем транскрипцию в LLM (без повторной транскрипции)
+      const voiceMessages = [
+        ...ctx.session.messageHistory,
+        { role: 'user' as const, content: transcribedText },
+      ];
+      const aiResponse = await aiService.chat(voiceMessages, 'telegram');
 
       // Update history
       ctx.session.messageHistory.push(
-        { role: 'user', content: result.transcription },
-        { role: 'assistant', content: result.response.content }
+        { role: 'user', content: transcribedText },
+        { role: 'assistant', content: aiResponse.content }
       );
 
       // Trim history if too long
@@ -578,17 +620,17 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
       // Save to database
       const userMsg: Message = {
         role: 'user',
-        content: result.transcription,
+        content: transcribedText,
         timestamp: new Date().toISOString(),
-        metadata: { voice_duration: duration },
+        metadata: { type: 'voice', voice_duration: duration },
       };
       const assistantMsg: Message = {
         role: 'assistant',
-        content: result.response.content,
+        content: aiResponse.content,
         timestamp: new Date().toISOString(),
         metadata: {
-          tokens_used: result.response.tokens_used.total,
-          model: result.response.model,
+          tokens_used: aiResponse.tokens_used.total,
+          model: aiResponse.model,
         },
       };
 
@@ -599,16 +641,16 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
       await analyticsRepo.log('ai_response', 'telegram', {
         userId,
         type: 'voice',
-        model: result.response.model,
-        tokens: result.response.tokens_used.total,
-        transcription_length: result.transcription.length,
+        model: aiResponse.model,
+        tokens: aiResponse.tokens_used.total,
+        transcription_length: transcribedText.length,
       });
 
       // Отправляем только финальный ответ (без промежуточной транскрипции)
-      await sendLongMessage(ctx, result.response.content);
+      await sendLongMessage(ctx, aiResponse.content);
 
       telegramLogger.info(
-        { userId, tokens: result.response.tokens_used.total },
+        { userId, tokens: aiResponse.tokens_used.total },
         'Voice response sent'
       );
     } catch (error) {
