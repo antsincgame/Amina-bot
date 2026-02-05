@@ -224,6 +224,7 @@ const start = async (): Promise<void> => {
     await bot.api.setMyCommands([
       { command: 'start', description: 'Начать сначала' },
       { command: 'help', description: 'Справка по боту' },
+      { command: 'imagine', description: 'Сгенерировать картинку' },
       { command: 'search', description: 'Поиск в интернете' },
       { command: 'reminders', description: 'Мои напоминания' },
       { command: 'remind_cancel', description: 'Отменить напоминание' },

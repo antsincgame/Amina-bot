@@ -1,4 +1,4 @@
-import { Bot, Context, session, SessionFlavor } from 'grammy';
+import { Bot, Context, session, SessionFlavor, InputFile } from 'grammy';
 import { config } from '../config/index.js';
 import { telegramLogger } from '../config/logger.js';
 import { aiService } from '../ai/openrouter.js';
@@ -17,6 +17,7 @@ import {
 } from '../memory/user-memory.js';
 import { detectReminderIntent, extractReminder } from '../reminders/reminder-parser.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';
+import { detectImageGenIntent, extractImagePrompt, generateImage } from '../ai/image-gen.js';
 import type { Message, AIMessage } from '../../../shared/types/index.js';
 
 // --------------------------------------------
@@ -95,9 +96,11 @@ const setupCommands = (bot: Bot<BotContext>): void => {
 📷 **Фото** — отправь картинку, я опишу что на ней
 🌐 **Интернет** — я сама ищу актуальную информацию
 ⏰ **Напоминания** — скажи «напомни через час...»
+🎨 **Картинки** — скажи «нарисуй...» или /imagine
 
 📋 **Команды:**
 /help — полная справка
+/imagine — сгенерировать картинку
 /search — поиск в интернете
 /reminders — мои напоминания
 /remind\\_cancel — отменить напоминание
@@ -122,15 +125,20 @@ const setupCommands = (bot: Bot<BotContext>): void => {
 📷 Анализировать и описывать фото
 🌐 Искать актуальную информацию в интернете
 ⏰ Ставить напоминания
+🎨 Генерировать изображения по описанию
+
+**🎨 Генерация картинок:**
+• «Нарисуй кота в космосе»
+• «Сгенерируй закат над горами»
+• /imagine futuristic city at night
 
 **⏰ Напоминания:**
-Просто скажи или напиши:
 • «Напомни через 30 минут выключить духовку»
 • «Напомни завтра в 10 купить молоко»
-• «Не забыть позвонить маме в пятницу»
 
 **📋 Команды:**
 /start — начать сначала
+/imagine \\_описание\\_ — сгенерировать картинку
 /search \\_запрос\\_ — поиск с источниками
 /reminders — список активных напоминаний
 /remind\\_cancel \\_номер\\_ — отменить напоминание
@@ -139,6 +147,7 @@ const setupCommands = (bot: Bot<BotContext>): void => {
 **💡 Подсказки:**
 • Спроси _«курс доллара»_ — я найду актуальный курс
 • Спроси _«погода в Москве»_ — я посмотрю прогноз
+• Напиши _«нарисуй...»_ — я сгенерирую картинку
 • Отправь фото — я опишу что на нём
 • Запиши голосовое — я пойму и отвечу`,
       { parse_mode: 'Markdown' }
@@ -232,6 +241,62 @@ const setupCommands = (bot: Bot<BotContext>): void => {
     } catch (error) {
       telegramLogger.error({ error, userId }, 'Failed to cancel reminder');
       await ctx.reply('😔 Ошибка при удалении напоминания.');
+    }
+  });
+
+  // /imagine - Генерация изображения
+  bot.command('imagine', async (ctx) => {
+    const prompt = ctx.match?.trim();
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+
+    if (!prompt) {
+      await ctx.reply(
+        '🎨 Опиши, что нарисовать!\n\n' +
+        'Примеры:\n' +
+        '• `/imagine кот-астронавт в космосе`\n' +
+        '• `/imagine закат над горами в стиле Ван Гога`\n' +
+        '• `/imagine futuristic city at night`',
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    telegramLogger.info({ userId, prompt }, 'Image generation requested');
+    await ctx.reply('🎨 Генерирую изображение... Это может занять 10-30 секунд.');
+
+    try {
+      const result = await generateImage(prompt);
+      const timeSeconds = (result.generationTimeMs / 1000).toFixed(1);
+
+      await ctx.replyWithPhoto(
+        new InputFile(result.image, 'generated.png'),
+        {
+          caption: `🎨 *${prompt}*\n⏱ ${timeSeconds}с | 🤖 FLUX.1-schnell`,
+          parse_mode: 'Markdown',
+        }
+      );
+
+      telegramLogger.info(
+        { userId, prompt, timeMs: result.generationTimeMs },
+        'Image sent to user'
+      );
+
+      // Аналитика
+      try {
+        await analyticsRepo.log('message_received', 'telegram', {
+          userId,
+          event: 'image_generated',
+          prompt,
+          model: result.model,
+          timeMs: result.generationTimeMs,
+        });
+      } catch {
+        // Аналитика не критична
+      }
+    } catch (error: unknown) {
+      const err = error as { message?: string; code?: string };
+      telegramLogger.error({ error, userId, prompt }, 'Image generation failed');
+      await ctx.reply(`😔 ${err.message || 'Не удалось создать изображение. Попробуй позже.'}`);
     }
   });
 
@@ -377,6 +442,47 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
           // "конечно, напомню" но реально напоминание НЕ будет создано
           await ctx.reply('⚠️ Не удалось создать напоминание — AI временно недоступен.\n\nПопробуй ещё раз через минуту.');
           return;
+        }
+      }
+
+      // === Автодетекция генерации изображения ("нарисуй...", "сгенерируй...") ===
+      if (detectImageGenIntent(userMessage)) {
+        const imgPrompt = extractImagePrompt(userMessage);
+        if (imgPrompt) {
+          telegramLogger.info({ userId, prompt: imgPrompt }, 'Image gen auto-detected from text');
+          await ctx.replyWithChatAction('upload_photo');
+
+          try {
+            const result = await generateImage(imgPrompt);
+            const timeSeconds = (result.generationTimeMs / 1000).toFixed(1);
+            const cleanPrompt = imgPrompt.replace(/, high quality.*$/, '');
+
+            await ctx.replyWithPhoto(
+              new InputFile(result.image, 'generated.png'),
+              {
+                caption: `🎨 *${cleanPrompt}*\n⏱ ${timeSeconds}с | 🤖 FLUX.1-schnell`,
+                parse_mode: 'Markdown',
+              }
+            );
+
+            try {
+              await analyticsRepo.log('message_received', 'telegram', {
+                userId,
+                event: 'image_generated',
+                prompt: imgPrompt,
+                model: result.model,
+                timeMs: result.generationTimeMs,
+              });
+            } catch {
+              // Аналитика не критична
+            }
+            return;
+          } catch (error: unknown) {
+            const err = error as { message?: string; code?: string };
+            telegramLogger.error({ error, userId }, 'Auto image gen failed');
+            await ctx.reply(`😔 ${err.message || 'Не удалось создать изображение.'}`);
+            return;
+          }
         }
       }
 
