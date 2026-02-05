@@ -101,6 +101,22 @@ export interface SystemLog {
 export type LogLevel = SystemLog['level'];
 
 // --------------------------------------------
+// Reminders Types
+// --------------------------------------------
+
+export interface Reminder {
+  id: string;
+  user_id: string;
+  chat_id: number;
+  task: string;
+  scheduled_at: string;
+  is_completed: boolean;
+  completed_at?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// --------------------------------------------
 // AI Types
 // --------------------------------------------
 

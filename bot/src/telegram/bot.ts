@@ -15,6 +15,8 @@ import {
   memoryContextBuilder,
   type TelegramUserInfo 
 } from '../memory/user-memory.js';
+import { detectReminderIntent, extractReminder } from '../reminders/reminder-parser.js';
+import { remindersRepo } from '../reminders/reminders-repo.js';
 import type { Message, AIMessage } from '../../../shared/types/index.js';
 
 // --------------------------------------------
@@ -89,9 +91,11 @@ const setupCommands = (bot: Bot<BotContext>): void => {
 Просто напиши мне сообщение, и я постараюсь помочь!
 
 🌐 Я могу искать актуальную информацию в интернете — просто спроси!
+⏰ Я могу ставить напоминания — просто скажи «напомни через 2 часа ...»
 
 Команды:
 /help — показать справку
+/reminders — мои напоминания
 /clear — очистить историю диалога`
     );
   });
@@ -108,10 +112,16 @@ const setupCommands = (bot: Bot<BotContext>): void => {
 • Объяснять сложные темы
 • Поддерживать диалог с контекстом
 • 🌐 Искать актуальную информацию в интернете
+• ⏰ Ставить напоминания
+
+**Напоминания:**
+Просто скажи: «напомни завтра в 10 купить молоко»
 
 **Команды:**
 /start — начать сначала
 /search — явный поиск с источниками
+/reminders — список напоминаний
+/remind\\_cancel — отменить напоминание
 /clear — очистить историю диалога
 
 _Я сам ищу в интернете когда нужна актуальная информация — просто спроси о погоде, новостях, курсах и т.д._`,
@@ -134,6 +144,79 @@ _Я сам ищу в интернете когда нужна актуальна
     telegramLogger.info({ userId: ctx.from?.id }, 'Conversation cleared');
     
     await ctx.reply('🧹 История диалога очищена. Начнём сначала!');
+  });
+
+  // /reminders - Список активных напоминаний
+  bot.command('reminders', async (ctx) => {
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+
+    try {
+      const reminders = await remindersRepo.getByUser(userId);
+
+      if (reminders.length === 0) {
+        await ctx.reply('📋 У тебя нет активных напоминаний.\n\nНапиши мне что-то вроде:\n«Напомни через 2 часа позвонить маме»');
+        return;
+      }
+
+      const lines = reminders.map((r, i) => {
+        const date = new Date(r.scheduled_at);
+        const dateStr = date.toLocaleString('ru-RU', {
+          timeZone: 'Europe/Moscow',
+          day: 'numeric',
+          month: 'short',
+          hour: '2-digit',
+          minute: '2-digit',
+        });
+        return `${i + 1}. ${r.task}\n   ⏰ ${dateStr}`;
+      });
+
+      await ctx.reply(
+        `📋 **Активные напоминания (${reminders.length}):**\n\n${lines.join('\n\n')}\n\n_Для отмены: /remind\\_cancel номер_`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (error) {
+      telegramLogger.error({ error, userId }, 'Failed to list reminders');
+      await ctx.reply('😔 Не удалось загрузить напоминания. Попробуй позже.');
+    }
+  });
+
+  // /remind_cancel - Отмена напоминания по номеру
+  bot.command('remind_cancel', async (ctx) => {
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const arg = ctx.message?.text?.replace(/^\/remind_cancel\s*/i, '').trim();
+
+    if (!arg) {
+      await ctx.reply('Использование: `/remind_cancel номер`\n\nСначала посмотри список: /reminders', { parse_mode: 'Markdown' });
+      return;
+    }
+
+    const index = parseInt(arg, 10);
+    if (isNaN(index) || index < 1) {
+      await ctx.reply('❌ Укажи номер напоминания из списка /reminders');
+      return;
+    }
+
+    try {
+      const reminders = await remindersRepo.getByUser(userId);
+
+      if (index > reminders.length) {
+        await ctx.reply(`❌ Напоминания с номером ${index} нет. У тебя ${reminders.length} активных.`);
+        return;
+      }
+
+      const reminder = reminders[index - 1]!;
+      const deleted = await remindersRepo.delete(reminder.id, userId);
+
+      if (deleted) {
+        await ctx.reply(`✅ Напоминание удалено: "${reminder.task}"`);
+        telegramLogger.info({ userId, reminderId: reminder.id }, 'Reminder cancelled by user');
+      } else {
+        await ctx.reply('❌ Не удалось удалить напоминание.');
+      }
+    } catch (error) {
+      telegramLogger.error({ error, userId }, 'Failed to cancel reminder');
+      await ctx.reply('😔 Ошибка при удалении напоминания.');
+    }
   });
 
   // /search - Explicit web search (показывает источники)
@@ -228,6 +311,53 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
     await ctx.replyWithChatAction('typing');
 
     try {
+      // === Проверка на напоминание (до основного AI flow) ===
+      if (detectReminderIntent(userMessage)) {
+        try {
+          const extracted = await extractReminder(userMessage, new Date());
+          if (extracted) {
+            await remindersRepo.create(userId, chatId, extracted.task, extracted.scheduled_at);
+
+            // Сохраняем в conversation history для контекста
+            if (!ctx.session.conversationId) {
+              const conversation = await conversationsRepo.getOrCreate(
+                userId,
+                'telegram',
+                { telegram_chat_id: chatId, telegram_user_id: ctx.from?.id }
+              );
+              ctx.session.conversationId = conversation.id;
+            }
+
+            const userMsg: Message = {
+              role: 'user',
+              content: userMessage,
+              timestamp: new Date().toISOString(),
+            };
+            const assistantMsg: Message = {
+              role: 'assistant',
+              content: extracted.reply,
+              timestamp: new Date().toISOString(),
+            };
+            await conversationsRepo.addMessage(ctx.session.conversationId, userMsg);
+            await conversationsRepo.addMessage(ctx.session.conversationId, assistantMsg);
+
+            // Обновляем session history
+            ctx.session.messageHistory.push(
+              { role: 'user', content: userMessage },
+              { role: 'assistant', content: extracted.reply }
+            );
+
+            await ctx.reply(extracted.reply);
+            telegramLogger.info({ userId, task: extracted.task, scheduledAt: extracted.scheduled_at }, 'Reminder created');
+            return;
+          }
+          // Если AI не смог распарсить — продолжаем обычный flow
+        } catch (reminderError) {
+          telegramLogger.warn({ error: reminderError, userId }, 'Reminder extraction failed, continuing normal flow');
+          // Не блокируем — продолжаем обычный AI flow
+        }
+      }
+
       // Get or create conversation
       if (!ctx.session.conversationId) {
         const conversation = await conversationsRepo.getOrCreate(

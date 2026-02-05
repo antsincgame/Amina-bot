@@ -9,6 +9,7 @@ import { getSupabase, settingsRepo } from './db/supabase.js';
 import { aiService } from './ai/openrouter.js';
 import { registerApiRoutes } from './api/routes.js';
 import { stopCleanupInterval } from './utils/rate-limiter.js';
+import { startReminderScheduler, stopReminderScheduler } from './reminders/reminder-scheduler.js';
 
 // --------------------------------------------
 // Application Entry Point
@@ -215,6 +216,10 @@ const start = async (): Promise<void> => {
       });
     }
 
+    // Start reminder scheduler
+    startReminderScheduler(bot);
+    appLogger.info('⏰ Reminder scheduler started');
+
     appLogger.info('✅ Amina Bot is ready!');
   } catch (error) {
     appLogger.fatal({ error }, 'Failed to start application');
@@ -231,6 +236,7 @@ const shutdown = async (signal: string): Promise<void> => {
 
   // Cleanup intervals/timers
   stopCleanupInterval();
+  stopReminderScheduler();
 
   if (bot) {
     appLogger.info('Stopping bot...');
