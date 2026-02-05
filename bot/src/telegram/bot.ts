@@ -22,6 +22,7 @@ import { notesRepo } from '../features/notes-repo.js';
 import { todosRepo } from '../features/todos-repo.js';
 import { userPrefsRepo } from '../features/user-prefs-repo.js';
 import { textToSpeech, detectLanguage } from '../features/tts.js';
+import { sendDigestNow } from '../features/digest-scheduler.js';
 import type { Message, AIMessage } from '../../../shared/types/index.js';
 
 // --------------------------------------------
@@ -520,16 +521,39 @@ const setupCommands = (bot: Bot<BotContext>): void => {
     const arg = ctx.match?.trim().toLowerCase();
 
     try {
+      // /digest now — запросить дайджест прямо сейчас
+      if (arg === 'now' || arg === 'сейчас') {
+        const prefs = await userPrefsRepo.getOrCreate(userId, chatId, ctx.from?.first_name);
+        await ctx.reply('☀️ Собираю дайджест... Это может занять 15-30 секунд.');
+        await ctx.replyWithChatAction('typing');
+        
+        try {
+          await sendDigestNow(
+            { api: ctx.api },
+            userId,
+            chatId,
+            prefs.first_name || ctx.from?.first_name || null,
+            prefs.digest_city || 'Гродно'
+          );
+        } catch (digestError) {
+          telegramLogger.error({ error: digestError, userId }, 'On-demand digest failed');
+          await ctx.reply('😔 Не удалось собрать дайджест. Попробуй позже.');
+        }
+        return;
+      }
+
       if (arg === 'on' || arg === 'вкл') {
         await userPrefsRepo.toggleDigest(userId, chatId, true);
         await ctx.reply(
           '☀️ Утренний дайджест *включён*!\n\n' +
-          'Каждое утро в 8:00 (МСК) я пришлю:\n' +
-          '🌤 Погоду\n⏰ Напоминания\n📝 Задачи\n📰 Новости\n\n' +
+          'Каждое утро в 10:00 (МСК) я пришлю:\n' +
+          '🌤 Погоду\n📰 Новости твоего города\n🌍 Мировые новости\n⏰ Напоминания\n📝 Задачи\n\n' +
+          'Всё это обработаю с эмоциями и комментариями!\n\n' +
           'Настройки:\n' +
           '`/digest off` — выключить\n' +
+          '`/digest now` — получить прямо сейчас\n' +
           '`/digest 7` — изменить час (0-23)\n' +
-          '`/digest город Санкт-Петербург` — город для погоды',
+          '`/digest город Минск` — город для новостей',
           { parse_mode: 'Markdown' }
         );
         return;
@@ -568,8 +592,8 @@ const setupCommands = (bot: Bot<BotContext>): void => {
       // Показать текущие настройки
       const prefs = await userPrefsRepo.get(userId);
       const status = prefs?.digest_enabled ? '✅ Включён' : '❌ Выключен';
-      const hour = prefs?.digest_hour ?? 8;
-      const city = prefs?.digest_city ?? 'Москва';
+      const hour = prefs?.digest_hour ?? 10;
+      const city = prefs?.digest_city ?? 'Гродно';
 
       const keyboard = new InlineKeyboard()
         .text(prefs?.digest_enabled ? '🔕 Выключить' : '🔔 Включить', 'digest_toggle');
@@ -582,8 +606,9 @@ const setupCommands = (bot: Bot<BotContext>): void => {
         `Настройки:\n` +
         '`/digest on` — включить\n' +
         '`/digest off` — выключить\n' +
-        '`/digest 7` — час отправки\n' +
-        '`/digest город Казань` — город',
+        '`/digest now` — получить прямо сейчас\n' +
+        '`/digest 10` — час отправки\n' +
+        '`/digest город Минск` — город',
         { parse_mode: 'Markdown', reply_markup: keyboard }
       );
     } catch {

@@ -46,13 +46,15 @@ export const userPrefsRepo = {
       return existing as UserPreferences;
     }
 
-    // Создать новые
+    // Создать новые (дефолт: 10:00 МСК, Гродно)
     const { data, error } = await getSupabase()
       .from('user_preferences')
       .insert({
         user_id: userId,
         chat_id: chatId,
         first_name: firstName ?? null,
+        digest_hour: 10,
+        digest_city: 'Гродно',
       })
       .select()
       .single();
