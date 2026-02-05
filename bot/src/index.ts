@@ -220,6 +220,17 @@ const start = async (): Promise<void> => {
     startReminderScheduler(bot);
     appLogger.info('⏰ Reminder scheduler started');
 
+    // Register bot menu commands in Telegram UI (после старта бота)
+    await bot.api.setMyCommands([
+      { command: 'start', description: 'Начать сначала' },
+      { command: 'help', description: 'Справка по боту' },
+      { command: 'search', description: 'Поиск в интернете' },
+      { command: 'reminders', description: 'Мои напоминания' },
+      { command: 'remind_cancel', description: 'Отменить напоминание' },
+      { command: 'clear', description: 'Очистить историю диалога' },
+    ]);
+    appLogger.info('📋 Bot menu commands registered');
+
     appLogger.info('✅ Amina Bot is ready!');
   } catch (error) {
     appLogger.fatal({ error }, 'Failed to start application');
