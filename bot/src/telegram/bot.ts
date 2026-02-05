@@ -65,6 +65,18 @@ export const createBot = (): Bot<BotContext> => {
   // Message handlers
   setupMessageHandlers(bot);
 
+  // Register bot menu commands in Telegram UI
+  bot.api.setMyCommands([
+    { command: 'start', description: 'Начать сначала' },
+    { command: 'help', description: 'Справка по боту' },
+    { command: 'search', description: 'Поиск в интернете' },
+    { command: 'reminders', description: 'Мои напоминания' },
+    { command: 'remind_cancel', description: 'Отменить напоминание' },
+    { command: 'clear', description: 'Очистить историю диалога' },
+  ]).catch((err) => {
+    telegramLogger.warn({ error: err }, 'Failed to set bot menu commands');
+  });
+
   telegramLogger.info('Telegram bot configured');
   return bot;
 };
