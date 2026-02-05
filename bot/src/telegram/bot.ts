@@ -1,4 +1,4 @@
-import { Bot, Context, session, SessionFlavor, InputFile } from 'grammy';
+import { Bot, Context, session, SessionFlavor, InputFile, InlineKeyboard } from 'grammy';
 import { config } from '../config/index.js';
 import { telegramLogger } from '../config/logger.js';
 import { aiService } from '../ai/openrouter.js';
@@ -18,6 +18,10 @@ import {
 import { detectReminderIntent, extractReminder } from '../reminders/reminder-parser.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';
 import { detectImageGenIntent, extractImagePrompt, generateImage } from '../ai/image-gen.js';
+import { notesRepo } from '../features/notes-repo.js';
+import { todosRepo } from '../features/todos-repo.js';
+import { userPrefsRepo } from '../features/user-prefs-repo.js';
+import { textToSpeech, detectLanguage } from '../features/tts.js';
 import type { Message, AIMessage } from '../../../shared/types/index.js';
 
 // --------------------------------------------
@@ -86,25 +90,30 @@ const setupCommands = (bot: Bot<BotContext>): void => {
       userId,
     });
 
+    // Сохраняем/обновляем настройки пользователя
+    try {
+      await userPrefsRepo.getOrCreate(userId, ctx.chat.id, ctx.from?.first_name);
+    } catch { /* не критично */ }
+
+    const name = ctx.from?.first_name ? `, ${ctx.from.first_name}` : '';
+
     await ctx.reply(
-      `👋 Привет! Я Amina — твой AI-ассистент.
+      `👋 Привет${name}! Я Amina — твой персональный AI-ассистент.
 
 Вот что я умею:
 
-💬 **Текст** — задай любой вопрос, я помогу
-🎤 **Голос** — отправь голосовое сообщение, я пойму
-📷 **Фото** — отправь картинку, я опишу что на ней
-🌐 **Интернет** — я сама ищу актуальную информацию
-⏰ **Напоминания** — скажи «напомни через час...»
-🎨 **Картинки** — скажи «нарисуй...» или /imagine
+💬 **Текст** — задай любой вопрос
+🎤 **Голос** — отправь голосовое, я пойму
+📷 **Фото** — отправь картинку, я опишу
+🌐 **Интернет** — ищу актуальную информацию
+🎨 **Картинки** — «нарисуй...» или /imagine
+⏰ **Напоминания** — «напомни через час...»
+📌 **Заметки** — «запомни ...» или /note
+✅ **Задачи** — /todo + /done
+☀️ **Дайджест** — утренняя сводка /digest
+🔊 **Голос** — «скажи голосом...»
 
-📋 **Команды:**
-/help — полная справка
-/imagine — сгенерировать картинку
-/search — поиск в интернете
-/reminders — мои напоминания
-/remind\\_cancel — отменить напоминание
-/clear — очистить историю
+📋 /help — полная справка со всеми командами
 
 Просто напиши или скажи — я слушаю! 🎧`,
       { parse_mode: 'Markdown' }
@@ -114,42 +123,31 @@ const setupCommands = (bot: Bot<BotContext>): void => {
   // /help - Help message
   bot.command('help', async (ctx) => {
     await ctx.reply(
-      `🤖 **Amina AI Bot — Справка**
+      `🤖 **Amina — Полная справка**
 
-**Что я умею:**
-💬 Отвечать на вопросы и помогать с текстами
-🌍 Переводить на любой язык
-📖 Объяснять сложные темы простым языком
-🧠 Помнить контекст нашего диалога
-🎤 Понимать голосовые сообщения
-📷 Анализировать и описывать фото
-🌐 Искать актуальную информацию в интернете
-⏰ Ставить напоминания
-🎨 Генерировать изображения по описанию
-
-**🎨 Генерация картинок:**
-• «Нарисуй кота в космосе»
-• «Сгенерируй закат над горами»
-• /imagine futuristic city at night
-
-**⏰ Напоминания:**
-• «Напомни через 30 минут выключить духовку»
-• «Напомни завтра в 10 купить молоко»
-
-**📋 Команды:**
-/start — начать сначала
+**📋 Все команды:**
 /imagine \\_описание\\_ — сгенерировать картинку
-/search \\_запрос\\_ — поиск с источниками
-/reminders — список активных напоминаний
+/search \\_запрос\\_ — поиск в интернете
+/note \\_текст\\_ — сохранить заметку
+/notes — список заметок
+/note\\_delete \\_номер\\_ — удалить заметку
+/todo \\_текст\\_ — добавить задачу
+/todos — список задач
+/done \\_номер\\_ — отметить задачу выполненной
+/reminders — напоминания
 /remind\\_cancel \\_номер\\_ — отменить напоминание
-/clear — очистить историю диалога
+/digest — утренний дайджест
+/clear — очистить историю
+/help — эта справка
 
-**💡 Подсказки:**
-• Спроси _«курс доллара»_ — я найду актуальный курс
-• Спроси _«погода в Москве»_ — я посмотрю прогноз
-• Напиши _«нарисуй...»_ — я сгенерирую картинку
-• Отправь фото — я опишу что на нём
-• Запиши голосовое — я пойму и отвечу`,
+**💡 Быстрые действия (без команд):**
+• _«Нарисуй кота в космосе»_ — генерация картинки
+• _«Напомни через час позвонить»_ — напоминание
+• _«Запомни: пароль от WiFi 12345»_ — заметка
+• _«Скажи голосом привет мир»_ — озвучка
+• _«Курс доллара»_ — автопоиск в интернете
+• Отправь фото — опишу что на нём
+• Отправь голосовое — пойму и отвечу`,
       { parse_mode: 'Markdown' }
     );
   });
@@ -342,6 +340,417 @@ const setupCommands = (bot: Bot<BotContext>): void => {
       await ctx.reply(errorMessage);
     }
   });
+
+  // ====== ЗАМЕТКИ ======
+
+  // /note - Создать заметку
+  bot.command('note', async (ctx) => {
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const content = ctx.match?.trim();
+
+    if (!content) {
+      await ctx.reply(
+        '📌 Чтобы сохранить заметку:\n\n`/note Текст заметки`\n\nПример: `/note Купить молоко и хлеб`',
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    try {
+      const note = await notesRepo.create(userId, content);
+      const keyboard = new InlineKeyboard()
+        .text('📋 Все заметки', 'notes_list');
+
+      await ctx.reply(`📌 Заметка сохранена!\n\n_${content}_`, {
+        parse_mode: 'Markdown',
+        reply_markup: keyboard,
+      });
+      telegramLogger.info({ userId, noteId: note.id }, 'Note created');
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      await ctx.reply(`😔 ${err.message || 'Не удалось сохранить заметку.'}`);
+    }
+  });
+
+  // /notes - Список заметок
+  bot.command('notes', async (ctx) => {
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+
+    try {
+      const notes = await notesRepo.getByUser(userId);
+
+      if (notes.length === 0) {
+        await ctx.reply('📋 У тебя пока нет заметок.\n\nСоздай: `/note текст`', {
+          parse_mode: 'Markdown',
+        });
+        return;
+      }
+
+      const lines = notes.map((n, i) => {
+        const date = new Date(n.created_at).toLocaleDateString('ru-RU', {
+          day: 'numeric',
+          month: 'short',
+          timeZone: 'Europe/Moscow',
+        });
+        return `${i + 1}. ${n.content}\n   _${date}_`;
+      });
+
+      await ctx.reply(
+        `📋 *Заметки (${notes.length}):*\n\n${lines.join('\n\n')}\n\n_Удалить: /note\\_delete номер_`,
+        { parse_mode: 'Markdown' }
+      );
+    } catch {
+      await ctx.reply('😔 Не удалось загрузить заметки.');
+    }
+  });
+
+  // /note_delete - Удалить заметку
+  bot.command('note_delete', async (ctx) => {
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const indexStr = ctx.match?.trim();
+    const index = parseInt(indexStr || '', 10);
+
+    if (!indexStr || isNaN(index) || index < 1) {
+      await ctx.reply('❌ Укажи номер заметки: `/note_delete 1`', { parse_mode: 'Markdown' });
+      return;
+    }
+
+    try {
+      const deleted = await notesRepo.deleteByIndex(userId, index);
+      if (deleted) {
+        await ctx.reply(`🗑 Заметка удалена: "${deleted.content}"`);
+      } else {
+        await ctx.reply('❌ Заметка с таким номером не найдена.');
+      }
+    } catch {
+      await ctx.reply('😔 Ошибка при удалении заметки.');
+    }
+  });
+
+  // ====== TO-DO ======
+
+  // /todo - Создать задачу
+  bot.command('todo', async (ctx) => {
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const task = ctx.match?.trim();
+
+    if (!task) {
+      await ctx.reply(
+        '✅ Чтобы добавить задачу:\n\n`/todo Текст задачи`\n\nПример: `/todo Сделать отчёт`',
+        { parse_mode: 'Markdown' }
+      );
+      return;
+    }
+
+    try {
+      await todosRepo.create(userId, task);
+      const keyboard = new InlineKeyboard()
+        .text('📋 Все задачи', 'todos_list');
+
+      await ctx.reply(`✅ Задача добавлена!\n\n☐ _${task}_`, {
+        parse_mode: 'Markdown',
+        reply_markup: keyboard,
+      });
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      await ctx.reply(`😔 ${err.message || 'Не удалось добавить задачу.'}`);
+    }
+  });
+
+  // /todos - Список задач
+  bot.command('todos', async (ctx) => {
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+
+    try {
+      const todos = await todosRepo.getActive(userId);
+
+      if (todos.length === 0) {
+        await ctx.reply('🎉 Все задачи выполнены!\n\nДобавь: `/todo текст`', {
+          parse_mode: 'Markdown',
+        });
+        return;
+      }
+
+      const lines = todos.map((t, i) => `${i + 1}. ☐ ${t.task}`);
+
+      const keyboard = new InlineKeyboard();
+      const MAX_BUTTONS = Math.min(todos.length, 5);
+      for (let i = 1; i <= MAX_BUTTONS; i++) {
+        keyboard.text(`✅ ${i}`, `todo_done_${i}`);
+      }
+
+      await ctx.reply(
+        `📋 *Задачи (${todos.length}):*\n\n${lines.join('\n')}\n\n_Нажми кнопку или: /done номер_`,
+        { parse_mode: 'Markdown', reply_markup: keyboard }
+      );
+    } catch {
+      await ctx.reply('😔 Не удалось загрузить задачи.');
+    }
+  });
+
+  // /done - Отметить задачу выполненной
+  bot.command('done', async (ctx) => {
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const indexStr = ctx.match?.trim();
+    const index = parseInt(indexStr || '', 10);
+
+    if (!indexStr || isNaN(index) || index < 1) {
+      await ctx.reply('❌ Укажи номер задачи: `/done 1`', { parse_mode: 'Markdown' });
+      return;
+    }
+
+    try {
+      const done = await todosRepo.markDone(userId, index);
+      if (done) {
+        await ctx.reply(`🎉 Выполнено: ~~${done.task}~~`, { parse_mode: 'Markdown' });
+      } else {
+        await ctx.reply('❌ Задача с таким номером не найдена.');
+      }
+    } catch {
+      await ctx.reply('😔 Ошибка при обновлении задачи.');
+    }
+  });
+
+  // ====== ДАЙДЖЕСТ ======
+
+  // /digest - Управление утренним дайджестом
+  bot.command('digest', async (ctx) => {
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const chatId = ctx.chat.id;
+    const arg = ctx.match?.trim().toLowerCase();
+
+    try {
+      if (arg === 'on' || arg === 'вкл') {
+        await userPrefsRepo.toggleDigest(userId, chatId, true);
+        await ctx.reply(
+          '☀️ Утренний дайджест *включён*!\n\n' +
+          'Каждое утро в 8:00 (МСК) я пришлю:\n' +
+          '🌤 Погоду\n⏰ Напоминания\n📝 Задачи\n📰 Новости\n\n' +
+          'Настройки:\n' +
+          '`/digest off` — выключить\n' +
+          '`/digest 7` — изменить час (0-23)\n' +
+          '`/digest город Санкт-Петербург` — город для погоды',
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+
+      if (arg === 'off' || arg === 'выкл') {
+        await userPrefsRepo.toggleDigest(userId, chatId, false);
+        await ctx.reply('🌙 Утренний дайджест *выключен*.', { parse_mode: 'Markdown' });
+        return;
+      }
+
+      // Изменение часа
+      const hourMatch = arg?.match(/^(\d{1,2})$/);
+      if (hourMatch) {
+        const hour = parseInt(hourMatch[1], 10);
+        if (hour < 0 || hour > 23) {
+          await ctx.reply('❌ Час должен быть от 0 до 23.');
+          return;
+        }
+        await userPrefsRepo.getOrCreate(userId, chatId, ctx.from?.first_name);
+        await userPrefsRepo.update(userId, { digest_hour: hour });
+        await ctx.reply(`⏰ Дайджест будет приходить в *${hour}:00* МСК.`, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      // Изменение города
+      const cityMatch = arg?.match(/^город\s+(.+)$/i);
+      if (cityMatch) {
+        const city = cityMatch[1].trim();
+        await userPrefsRepo.getOrCreate(userId, chatId, ctx.from?.first_name);
+        await userPrefsRepo.update(userId, { digest_city: city });
+        await ctx.reply(`🏙 Город для погоды: *${city}*`, { parse_mode: 'Markdown' });
+        return;
+      }
+
+      // Показать текущие настройки
+      const prefs = await userPrefsRepo.get(userId);
+      const status = prefs?.digest_enabled ? '✅ Включён' : '❌ Выключен';
+      const hour = prefs?.digest_hour ?? 8;
+      const city = prefs?.digest_city ?? 'Москва';
+
+      const keyboard = new InlineKeyboard()
+        .text(prefs?.digest_enabled ? '🔕 Выключить' : '🔔 Включить', 'digest_toggle');
+
+      await ctx.reply(
+        `☀️ *Утренний дайджест*\n\n` +
+        `Статус: ${status}\n` +
+        `Время: ${hour}:00 МСК\n` +
+        `Город: ${city}\n\n` +
+        `Настройки:\n` +
+        '`/digest on` — включить\n' +
+        '`/digest off` — выключить\n' +
+        '`/digest 7` — час отправки\n' +
+        '`/digest город Казань` — город',
+        { parse_mode: 'Markdown', reply_markup: keyboard }
+      );
+    } catch {
+      await ctx.reply('😔 Ошибка настройки дайджеста.');
+    }
+  });
+
+  // /voice - Включить/выключить голосовые ответы (сохраняем в settings)
+  bot.command('voice', async (ctx) => {
+    await ctx.reply(
+      '🔊 *Голосовые ответы*\n\n' +
+      'Я могу отвечать голосовым сообщением.\n' +
+      'Просто напиши: *«скажи голосом ...»* или *«озвучь ...»*\n\n' +
+      'Примеры:\n' +
+      '• «Скажи голосом привет мир»\n' +
+      '• «Озвучь стихотворение Пушкина»',
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  // ====== CALLBACK QUERIES (инлайн-кнопки) ======
+
+  bot.callbackQuery('notes_list', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const notes = await notesRepo.getByUser(userId);
+
+    if (notes.length === 0) {
+      await ctx.editMessageText('📋 У тебя пока нет заметок.');
+      return;
+    }
+
+    const lines = notes.map((n, i) => `${i + 1}. ${n.content}`);
+    await ctx.editMessageText(
+      `📋 *Заметки (${notes.length}):*\n\n${lines.join('\n')}`,
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  bot.callbackQuery('todos_list', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const todos = await todosRepo.getActive(userId);
+
+    if (todos.length === 0) {
+      await ctx.editMessageText('🎉 Все задачи выполнены!');
+      return;
+    }
+
+    const lines = todos.map((t, i) => `${i + 1}. ☐ ${t.task}`);
+    const keyboard = new InlineKeyboard();
+    const MAX_BUTTONS = Math.min(todos.length, 5);
+    for (let i = 1; i <= MAX_BUTTONS; i++) {
+      keyboard.text(`✅ ${i}`, `todo_done_${i}`);
+    }
+
+    await ctx.editMessageText(
+      `📋 *Задачи (${todos.length}):*\n\n${lines.join('\n')}`,
+      { parse_mode: 'Markdown', reply_markup: keyboard }
+    );
+  });
+
+  // Callback для кнопок "✅ 1", "✅ 2" и т.д.
+  bot.callbackQuery(/^todo_done_(\d+)$/, async (ctx) => {
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const index = parseInt(ctx.match[1], 10);
+
+    try {
+      const done = await todosRepo.markDone(userId, index);
+      if (done) {
+        await ctx.answerCallbackQuery({ text: `✅ ${done.task}` });
+
+        // Обновить список
+        const remaining = await todosRepo.getActive(userId);
+        if (remaining.length === 0) {
+          await ctx.editMessageText('🎉 Все задачи выполнены!');
+        } else {
+          const lines = remaining.map((t, i) => `${i + 1}. ☐ ${t.task}`);
+          const keyboard = new InlineKeyboard();
+          const maxBtn = Math.min(remaining.length, 5);
+          for (let i = 1; i <= maxBtn; i++) {
+            keyboard.text(`✅ ${i}`, `todo_done_${i}`);
+          }
+          await ctx.editMessageText(
+            `📋 *Задачи (${remaining.length}):*\n\n${lines.join('\n')}`,
+            { parse_mode: 'Markdown', reply_markup: keyboard }
+          );
+        }
+      } else {
+        await ctx.answerCallbackQuery({ text: '❌ Задача не найдена' });
+      }
+    } catch {
+      await ctx.answerCallbackQuery({ text: '❌ Ошибка' });
+    }
+  });
+
+  // Callback для дайджеста
+  bot.callbackQuery('digest_toggle', async (ctx) => {
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const chatId = ctx.chat?.id ?? 0;
+
+    try {
+      const prefs = await userPrefsRepo.get(userId);
+      const newState = !(prefs?.digest_enabled ?? false);
+      await userPrefsRepo.toggleDigest(userId, chatId, newState);
+
+      await ctx.answerCallbackQuery({
+        text: newState ? '✅ Дайджест включён' : '❌ Дайджест выключен',
+      });
+
+      const keyboard = new InlineKeyboard()
+        .text(newState ? '🔕 Выключить' : '🔔 Включить', 'digest_toggle');
+
+      await ctx.editMessageText(
+        `☀️ *Утренний дайджест*\n\nСтатус: ${newState ? '✅ Включён' : '❌ Выключен'}`,
+        { parse_mode: 'Markdown', reply_markup: keyboard }
+      );
+    } catch {
+      await ctx.answerCallbackQuery({ text: '❌ Ошибка' });
+    }
+  });
+
+  // Callback: сохранить последний ответ в заметки
+  bot.callbackQuery('save_to_notes', async (ctx) => {
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const messageText = ctx.callbackQuery.message?.text;
+
+    if (!messageText) {
+      await ctx.answerCallbackQuery({ text: '❌ Нечего сохранять' });
+      return;
+    }
+
+    try {
+      // Берём первые 500 символов ответа
+      const content = messageText.slice(0, 500);
+      await notesRepo.create(userId, content);
+      await ctx.answerCallbackQuery({ text: '📌 Сохранено в заметки!' });
+    } catch {
+      await ctx.answerCallbackQuery({ text: '❌ Не удалось сохранить' });
+    }
+  });
+
+  // Callback: озвучить ответ
+  bot.callbackQuery('read_aloud', async (ctx) => {
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const messageText = ctx.callbackQuery.message?.text;
+
+    if (!messageText) {
+      await ctx.answerCallbackQuery({ text: '❌ Нечего озвучивать' });
+      return;
+    }
+
+    await ctx.answerCallbackQuery({ text: '🔊 Генерирую аудио...' });
+
+    try {
+      const lang = detectLanguage(messageText);
+      const audio = await textToSpeech(messageText, lang);
+
+      if (audio) {
+        await ctx.replyWithVoice(new InputFile(audio, 'voice.mp3'));
+      } else {
+        await ctx.reply('😔 Не удалось сгенерировать аудио.');
+      }
+    } catch {
+      await ctx.reply('😔 Ошибка генерации голоса.');
+    }
+  });
 };
 
 // --------------------------------------------
@@ -486,6 +895,46 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         }
       }
 
+      // === Автодетекция TTS: "скажи голосом...", "озвучь..." ===
+      const ttsMatch = userMessage.match(/^(скажи голосом|озвучь|произнеси|read aloud)\s+(.+)/i);
+      if (ttsMatch) {
+        const ttsText = ttsMatch[2].trim();
+        if (ttsText) {
+          await ctx.replyWithChatAction('record_voice');
+          try {
+            const lang = detectLanguage(ttsText);
+            const audio = await textToSpeech(ttsText, lang);
+            if (audio) {
+              await ctx.replyWithVoice(new InputFile(audio, 'voice.mp3'));
+            } else {
+              await ctx.reply('😔 Не удалось сгенерировать аудио. Попробуй позже.');
+            }
+          } catch {
+            await ctx.reply('😔 Ошибка генерации голоса.');
+          }
+          return;
+        }
+      }
+
+      // === Автодетекция заметок: "запомни ...", "запиши ..." ===
+      const noteMatch = userMessage.match(/^(запомни|запиши|сохрани заметку)\s+(.+)/i);
+      if (noteMatch) {
+        const noteContent = noteMatch[2].trim();
+        if (noteContent) {
+          try {
+            await notesRepo.create(userId, noteContent);
+            const keyboard = new InlineKeyboard().text('📋 Все заметки', 'notes_list');
+            await ctx.reply(`📌 Сохранено!\n\n_${noteContent}_`, {
+              parse_mode: 'Markdown',
+              reply_markup: keyboard,
+            });
+          } catch {
+            await ctx.reply('😔 Не удалось сохранить заметку.');
+          }
+          return;
+        }
+      }
+
       // Get or create conversation
       if (!ctx.session.conversationId) {
         const conversation = await conversationsRepo.getOrCreate(
@@ -507,6 +956,10 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
       } catch (memError) {
         telegramLogger.warn({ error: memError, userId }, 'Failed to build memory context, continuing without');
       }
+
+      // Умный контекст: время суток, день недели, имя пользователя
+      const timeContext = buildTimeContext(ctx.from?.first_name);
+      memoryContext = timeContext + (memoryContext ? '\n' + memoryContext : '');
 
       // Прозрачный веб-поиск: бот сам решает нужен ли интернет
       const webSearchContext = await getSearchContext(userMessage);
@@ -585,8 +1038,12 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         tokens: response.tokens_used.total,
       });
 
-      // Send response (split if too long)
-      await sendLongMessage(ctx, response.content);
+      // Send response with inline buttons
+      const responseKeyboard = new InlineKeyboard()
+        .text('📌 В заметки', 'save_to_notes')
+        .text('🔊 Озвучить', 'read_aloud');
+
+      await sendLongMessage(ctx, response.content, responseKeyboard);
 
       telegramLogger.info(
         { userId, tokens: response.tokens_used.total },
@@ -1126,9 +1583,49 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
 // Utility Functions
 // --------------------------------------------
 
-const sendLongMessage = async (ctx: BotContext, text: string): Promise<void> => {
+// --------------------------------------------
+// Smart Time Context
+// --------------------------------------------
+
+const WEEKDAYS_RU = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
+
+/**
+ * Контекст времени суток + день недели + имя для system prompt
+ */
+const buildTimeContext = (firstName?: string): string => {
+  const now = new Date();
+  const moscowTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Moscow' }));
+  const hour = moscowTime.getHours();
+  const day = WEEKDAYS_RU[moscowTime.getDay()];
+  const dateStr = moscowTime.toLocaleDateString('ru-RU', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'Europe/Moscow',
+  });
+
+  let greeting = '';
+  if (hour >= 5 && hour < 12) greeting = 'утро';
+  else if (hour >= 12 && hour < 17) greeting = 'день';
+  else if (hour >= 17 && hour < 22) greeting = 'вечер';
+  else greeting = 'ночь';
+
+  const nameStr = firstName ? `Имя пользователя: ${firstName}.` : '';
+
+  return `[Контекст: ${dateStr}, ${day}, ${greeting} (${hour}:${String(moscowTime.getMinutes()).padStart(2, '0')} МСК). ${nameStr}]`;
+};
+
+// --------------------------------------------
+// Send Long Message (split by Telegram limit)
+// --------------------------------------------
+
+const sendLongMessage = async (
+  ctx: BotContext,
+  text: string,
+  keyboard?: InlineKeyboard
+): Promise<void> => {
   if (text.length <= MAX_MESSAGE_LENGTH) {
-    await ctx.reply(text);
+    await ctx.reply(text, keyboard ? { reply_markup: keyboard } : undefined);
     return;
   }
 
@@ -1167,8 +1664,12 @@ const sendLongMessage = async (ctx: BotContext, text: string): Promise<void> => 
     chunks.push(currentChunk.trim());
   }
 
-  // Send all chunks
-  for (const chunk of chunks) {
-    await ctx.reply(chunk);
+  // Send all chunks (кнопки — только к последнему)
+  for (let i = 0; i < chunks.length; i++) {
+    const isLast = i === chunks.length - 1;
+    await ctx.reply(
+      chunks[i],
+      isLast && keyboard ? { reply_markup: keyboard } : undefined
+    );
   }
 };

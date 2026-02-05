@@ -10,6 +10,7 @@ import { aiService } from './ai/openrouter.js';
 import { registerApiRoutes } from './api/routes.js';
 import { stopCleanupInterval } from './utils/rate-limiter.js';
 import { startReminderScheduler, stopReminderScheduler } from './reminders/reminder-scheduler.js';
+import { startDigestScheduler, stopDigestScheduler } from './features/digest-scheduler.js';
 
 // --------------------------------------------
 // Application Entry Point
@@ -220,15 +221,24 @@ const start = async (): Promise<void> => {
     startReminderScheduler(bot);
     appLogger.info('⏰ Reminder scheduler started');
 
+    // Start digest scheduler
+    startDigestScheduler(bot);
+    appLogger.info('☀️ Digest scheduler started');
+
     // Register bot menu commands in Telegram UI (после старта бота)
     await bot.api.setMyCommands([
       { command: 'start', description: 'Начать сначала' },
       { command: 'help', description: 'Справка по боту' },
       { command: 'imagine', description: 'Сгенерировать картинку' },
       { command: 'search', description: 'Поиск в интернете' },
+      { command: 'note', description: 'Сохранить заметку' },
+      { command: 'notes', description: 'Мои заметки' },
+      { command: 'todo', description: 'Добавить задачу' },
+      { command: 'todos', description: 'Список задач' },
+      { command: 'done', description: 'Отметить задачу выполненной' },
       { command: 'reminders', description: 'Мои напоминания' },
-      { command: 'remind_cancel', description: 'Отменить напоминание' },
-      { command: 'clear', description: 'Очистить историю диалога' },
+      { command: 'digest', description: 'Утренний дайджест' },
+      { command: 'clear', description: 'Очистить историю' },
     ]);
     appLogger.info('📋 Bot menu commands registered');
 
@@ -249,6 +259,7 @@ const shutdown = async (signal: string): Promise<void> => {
   // Cleanup intervals/timers
   stopCleanupInterval();
   stopReminderScheduler();
+  stopDigestScheduler();
 
   if (bot) {
     appLogger.info('Stopping bot...');
