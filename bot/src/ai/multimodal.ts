@@ -31,32 +31,106 @@ export interface AudioTranscriptionResult {
 // Model Lists
 // --------------------------------------------
 
-// Vision модели (поддерживают анализ изображений)
-// ВАЖНО: Проверены на OpenRouter 2026-02-04
-export const VISION_MODELS = {
-  free: [
-    { id: 'allenai/molmo-2-8b:free', name: 'Molmo2 8B (free)', description: 'AllenAI vision модель, поддерживает фото и видео' },
-  ],
-  premium: [
-    { id: 'openai/gpt-4o', name: 'GPT-4o', description: 'OpenAI мультимодальная модель' },
-    { id: 'openai/gpt-4o-mini', name: 'GPT-4o Mini', description: 'Быстрая OpenAI vision модель' },
-    { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet', description: 'Anthropic vision модель' },
-  ],
-};
+// Статический fallback vision моделей (если API недоступен)
+const STATIC_FREE_VISION_MODELS = [
+  { id: 'allenai/molmo-2-8b:free', name: 'Molmo2 8B', description: 'AllenAI vision модель' },
+];
 
-// Audio модели для транскрипции
+// Кэш динамических бесплатных vision моделей
+let cachedFreeVisionModels: Array<{ id: string; name: string; description: string }> | null = null;
+let visionModelsCacheTime: number = 0;
+const VISION_MODELS_CACHE_TTL = 5 * 60 * 1000; // 5 минут
+
+/**
+ * Динамически получает список БЕСПЛАТНЫХ vision моделей от OpenRouter
+ */
+async function fetchFreeVisionModels(): Promise<Array<{ id: string; name: string; description: string }>> {
+  const now = Date.now();
+  
+  if (cachedFreeVisionModels && (now - visionModelsCacheTime) < VISION_MODELS_CACHE_TTL) {
+    return cachedFreeVisionModels;
+  }
+
+  try {
+    const keys = await getApiKeys();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+    let response: Response;
+    try {
+      response = await fetch('https://openrouter.ai/api/v1/models', {
+        headers: { 'Authorization': `Bearer ${keys.openrouter}` },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!response.ok) throw new Error(`OpenRouter API error: ${response.status}`);
+
+    const data = await response.json() as {
+      data: Array<{
+        id: string;
+        name: string;
+        description?: string;
+        pricing: { prompt: string; completion: string };
+        architecture?: { input_modalities?: string[] };
+        context_length?: number;
+      }>;
+    };
+
+    // Фильтруем: бесплатные + поддерживают image input
+    const freeVision = data.data
+      .filter(m => m.pricing.prompt === '0' && m.pricing.completion === '0')
+      .filter(m => m.architecture?.input_modalities?.includes('image'))
+      .filter(m => (m.context_length || 0) >= 2048)
+      .map(m => ({
+        id: m.id,
+        name: m.name || m.id.split('/').pop() || m.id,
+        description: m.description || 'Бесплатная vision модель',
+      }));
+
+    if (freeVision.length > 0) {
+      cachedFreeVisionModels = freeVision;
+      visionModelsCacheTime = now;
+      aiLogger.info({ count: freeVision.length }, '🆓👁️ Fetched free vision models');
+      return freeVision;
+    }
+
+    throw new Error('No free vision models found');
+  } catch (error) {
+    aiLogger.warn({ error }, 'Failed to fetch free vision models, using static list');
+    return STATIC_FREE_VISION_MODELS;
+  }
+}
+
+/** Принудительно обновить кэш vision моделей */
+export async function refreshFreeVisionModelsCache(): Promise<Array<{ id: string; name: string; description: string }>> {
+  cachedFreeVisionModels = null;
+  visionModelsCacheTime = 0;
+  return await fetchFreeVisionModels();
+}
+
+/** Получить бесплатные vision модели (для API и админки) */
+export async function getFreeVisionModels(): Promise<Array<{ id: string; name: string; description: string }>> {
+  try {
+    return await fetchFreeVisionModels();
+  } catch {
+    return STATIC_FREE_VISION_MODELS;
+  }
+}
+
+// Audio модели для транскрипции (только бесплатные Groq)
 export const AUDIO_MODELS = {
   free: [
-    // Groq Whisper - БЕСПЛАТНО!
     { id: 'groq/whisper-large-v3', name: 'Groq Whisper Large V3 (FREE)', description: 'Бесплатная транскрипция через Groq' },
     { id: 'groq/whisper-large-v3-turbo', name: 'Groq Whisper Turbo (FREE)', description: 'Быстрая бесплатная транскрипция' },
     { id: 'groq/distil-whisper-large-v3-en', name: 'Groq Distil Whisper (FREE)', description: 'Облегчённая версия для английского' },
   ],
-  premium: [
-    { id: 'openai/gpt-audio', name: 'GPT Audio', description: 'OpenAI специализированная аудио модель' },
-    { id: 'openai/gpt-audio-mini', name: 'GPT Audio Mini', description: 'Быстрая аудио модель' },
-  ],
 };
+
+// Таймаут для гонки vision моделей
+const VISION_RACE_TIMEOUT_MS = 20000;
 
 // --------------------------------------------
 // OpenRouter Client (dynamic API key)
@@ -123,7 +197,6 @@ const getGroqClient = async (): Promise<OpenAI | null> => {
 interface MultimodalConfig {
   visionModel: string;
   audioModel: string;
-  audioFallbackModel: string;
   maxTokens: number;
   visionPrompt: string;
   visionMaxTokens: number;
@@ -131,40 +204,9 @@ interface MultimodalConfig {
 
 // Дефолтные модели
 const DEFAULT_VISION_MODEL = 'allenai/molmo-2-8b:free';
-// Используем Groq Whisper по умолчанию (бесплатно!)
 const DEFAULT_AUDIO_MODEL = 'groq/whisper-large-v3';
-// Дефолт fallback при Groq без ключа (настраивается в админке)
-const DEFAULT_AUDIO_FALLBACK_MODEL = 'openai/gpt-audio-mini';
-
-// Дефолтный промпт для описания изображений
 const DEFAULT_VISION_PROMPT = 'Опиши подробно что изображено на этой картинке. Обрати внимание на детали, цвета, объекты и их расположение.';
 const DEFAULT_VISION_MAX_TOKENS = 1024;
-
-// Список валидных vision моделей (поддерживают изображения)
-const VALID_VISION_MODELS = [
-  'allenai/molmo-2-8b:free',
-  'openai/gpt-4o',
-  'openai/gpt-4o-mini',
-  'anthropic/claude-3.5-sonnet',
-  'anthropic/claude-3-haiku',
-  'google/gemini-pro-vision',
-  'google/gemini-1.5-pro',
-  'google/gemini-1.5-flash',
-  'meta-llama/llama-3.2-11b-vision-instruct',
-  'meta-llama/llama-3.2-90b-vision-instruct',
-  'qwen/qwen-2-vl-7b-instruct',
-];
-
-/**
- * Проверяет, является ли модель валидной vision моделью
- */
-const isValidVisionModel = (model: string): boolean => {
-  // Точное совпадение
-  if (VALID_VISION_MODELS.includes(model)) return true;
-  // Проверка по паттернам (vision, 4o, molmo, gemini)
-  const visionPatterns = ['vision', 'molmo', 'gpt-4o', 'gemini', 'claude-3'];
-  return visionPatterns.some(pattern => model.toLowerCase().includes(pattern));
-};
 
 const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
   const settings = await settingsRepo.getMany([
@@ -172,46 +214,26 @@ const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
     'audio_model',
     'vision_model_override',
     'audio_model_override',
-    'audio_fallback_model',
     'max_tokens',
     'vision_prompt',
     'vision_max_tokens',
   ]);
 
-  // Vision model priority: override > setting > default
-  // С ВАЛИДАЦИЕЙ: если модель не поддерживает изображения — используем дефолт
+  // Vision model: override > setting > default
   let visionModel = DEFAULT_VISION_MODEL;
   let visionSource = 'default';
-  
   if (settings['vision_model']?.trim()) {
-    const candidate = settings['vision_model'].trim();
-    if (isValidVisionModel(candidate)) {
-      visionModel = candidate;
-      visionSource = 'database';
-    } else {
-      aiLogger.warn(
-        { invalidModel: candidate, usingDefault: DEFAULT_VISION_MODEL },
-        'Invalid vision model in settings (not a vision model), using default'
-      );
-    }
+    visionModel = settings['vision_model'].trim();
+    visionSource = 'database';
   }
   if (settings['vision_model_override']?.trim()) {
-    const candidate = settings['vision_model_override'].trim();
-    if (isValidVisionModel(candidate)) {
-      visionModel = candidate;
-      visionSource = 'override';
-    } else {
-      aiLogger.warn(
-        { invalidModel: candidate },
-        'Invalid vision model override (not a vision model), ignoring'
-      );
-    }
+    visionModel = settings['vision_model_override'].trim();
+    visionSource = 'override';
   }
 
-  // Audio model priority: override > setting > default
+  // Audio: override > setting > default
   let audioModel = DEFAULT_AUDIO_MODEL;
   let audioSource = 'default';
-  
   if (settings['audio_model']?.trim()) {
     audioModel = settings['audio_model'].trim();
     audioSource = 'database';
@@ -221,22 +243,14 @@ const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
     audioSource = 'override';
   }
 
-  // Fallback модель (OpenRouter) — когда Groq выбран, но GROQ_API_KEY не задан
-  const audioFallbackModel =
-    settings['audio_fallback_model']?.trim() || DEFAULT_AUDIO_FALLBACK_MODEL;
-
-  // Vision prompt и max_tokens из админки
   const visionPrompt = settings['vision_prompt']?.trim() || DEFAULT_VISION_PROMPT;
   const visionMaxTokens = settings['vision_max_tokens'] 
     ? Number(settings['vision_max_tokens']) 
     : DEFAULT_VISION_MAX_TOKENS;
 
   aiLogger.debug({
-    visionModel,
-    visionSource,
-    audioModel,
-    audioSource,
-    audioFallbackModel,
+    visionModel, visionSource,
+    audioModel, audioSource,
     visionPrompt: visionPrompt.substring(0, 50) + '...',
     visionMaxTokens,
   }, 'Multimodal config loaded');
@@ -244,7 +258,6 @@ const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
   return {
     visionModel,
     audioModel,
-    audioFallbackModel,
     maxTokens: settings['max_tokens'] ? Number(settings['max_tokens']) : 2048,
     visionPrompt,
     visionMaxTokens,
@@ -255,78 +268,159 @@ const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
 // Vision Service
 // --------------------------------------------
 
+// Ошибки при которых запускаем гонку vision моделей
+const VISION_RACE_ERROR_PATTERNS = [
+  'Provider returned error', 'Empty response', 'No endpoints found',
+  '503', '502', '500', '400', '402', 'Payment Required',
+  'temporarily unavailable', 'overloaded', '404', 'not found',
+];
+
+// Трекер последнего переключения vision модели
+let lastVisionFallbackSwitch: {
+  reason: string | null;
+  time: Date | null;
+  fromModel: string | null;
+  toModel: string | null;
+} = { reason: null, time: null, fromModel: null, toModel: null };
+
+/** Получить статус fallback vision модели */
+export function getVisionFallbackStatus() {
+  return { ...lastVisionFallbackSwitch };
+}
+
 /**
- * Анализировать изображение и получить текстовое описание
+ * Анализировать изображение с авто-recovery:
+ * 1. Пробуем основную модель
+ * 2. При ошибке — обновляем список бесплатных vision моделей
+ * 3. Запускаем гонку всех бесплатных vision моделей
+ * 4. Победитель сохраняется как новая основная модель
+ * 5. Всё прозрачно для пользователя — контекст сохраняется
  */
 export async function analyzeImage(
   imageBase64: string,
   mimeType: string = 'image/jpeg',
   userPrompt?: string
 ): Promise<VisionAnalysisResult> {
-  const config = await getMultimodalConfig();
+  const multiConfig = await getMultimodalConfig();
   const client = await getClient();
+  const prompt = userPrompt || multiConfig.visionPrompt;
 
-  // Используем промпт из админки или переданный пользователем (caption от фото)
-  const prompt = userPrompt || config.visionPrompt;
-
-  aiLogger.info({ 
-    model: config.visionModel, 
-    maxTokens: config.visionMaxTokens,
-    hasCustomPrompt: !!userPrompt,
-  }, 'Analyzing image');
-
-  try {
+  // Хелпер: запрос к одной vision модели
+  const tryVisionModel = async (model: string): Promise<VisionAnalysisResult & { usedModel: string }> => {
     const response = await client.chat.completions.create({
-      model: config.visionModel,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: prompt,
-            },
-            {
-              type: 'image_url',
-              image_url: {
-                url: `data:${mimeType};base64,${imageBase64}`,
-              },
-            },
-          ],
-        },
-      ],
-      max_tokens: config.visionMaxTokens, // Используем настройку из админки
+      model,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: prompt },
+          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${imageBase64}` } },
+        ],
+      }],
+      max_tokens: multiConfig.visionMaxTokens,
     });
 
     const content = response.choices[0]?.message?.content;
-    if (!content) {
-      throw new Error('Empty response from vision model');
-    }
-
-    aiLogger.info(
-      { model: response.model, tokens: response.usage?.total_tokens },
-      'Image analysis complete'
-    );
+    if (!content) throw new Error('Empty response from vision model');
 
     return {
       description: content,
       model: response.model,
       tokens_used: response.usage?.total_tokens ?? 0,
+      usedModel: model,
     };
-  } catch (error: unknown) {
-    const err = error as { status?: number; message?: string };
-    aiLogger.error({ error, model: config.visionModel }, 'Image analysis failed');
-    
-    if (err.status === 404) {
-      throw new AppError('VISION_MODEL_NOT_FOUND', `Vision модель "${config.visionModel}" не найдена на OpenRouter. Задайте другую в админке → Голос и Фото.`, error);
+  };
+
+  // === ШАГ 1: Пробуем основную модель ===
+  aiLogger.info({ model: multiConfig.visionModel, hasCustomPrompt: !!userPrompt }, 'Trying primary vision model');
+
+  try {
+    const result = await tryVisionModel(multiConfig.visionModel);
+    aiLogger.info({ model: result.model, tokens: result.tokens_used }, 'Primary vision model OK');
+    return result;
+  } catch (primaryError) {
+    const errorMessage = primaryError instanceof Error ? primaryError.message : String(primaryError);
+    aiLogger.warn({ error: errorMessage, model: multiConfig.visionModel }, 'Primary vision model failed');
+
+    // Критические ошибки — НЕ делаем fallback
+    if (errorMessage.includes('401') || errorMessage.includes('Unauthorized')) {
+      throw new AppError('AUTH_ERROR', 'Неверный API ключ OpenRouter', primaryError);
     }
-    if (err.status === 401) {
-      throw new AppError('AUTH_ERROR', 'Неверный API ключ OpenRouter', error);
+
+    const needsRace = VISION_RACE_ERROR_PATTERNS.some(p => errorMessage.toLowerCase().includes(p.toLowerCase()));
+    if (!needsRace) {
+      if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
+        throw new AppError('RATE_LIMIT', 'Превышен лимит запросов для vision. Подождите минуту.', primaryError);
+      }
+      throw primaryError;
     }
-    if (err.status === 503) {
-      throw new AppError('VISION_SERVICE_UNAVAILABLE', 'Сервис анализа изображений временно недоступен. Попробуй отправить фото через минуту.', error);
+
+    aiLogger.info({ originalError: errorMessage }, '🔄 Vision: refreshing models + starting race');
+  }
+
+  // === ШАГ 2: Обновляем список бесплатных vision моделей ===
+  const freshModels = await refreshFreeVisionModelsCache();
+  const modelsToRace = freshModels
+    .filter(m => m.id !== multiConfig.visionModel) // Исключаем упавшую
+    .slice(0, 5); // Максимум 5 для гонки
+
+  if (modelsToRace.length === 0) {
+    throw new AppError('ALL_VISION_MODELS_FAILED', 'Нет доступных бесплатных vision моделей. Попробуйте позже.');
+  }
+
+  aiLogger.info(
+    { count: modelsToRace.length, models: modelsToRace.map(m => m.id) },
+    '🏁 Starting vision models race'
+  );
+
+  // === ШАГ 3: Гонка vision моделей ===
+  let raceTimeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    raceTimeoutId = setTimeout(() => {
+      reject(new AppError('VISION_RACE_TIMEOUT', 'Превышено время ожидания ответа от vision моделей'));
+    }, VISION_RACE_TIMEOUT_MS);
+  });
+
+  const racePromises = modelsToRace.map(async (m) => {
+    try {
+      const result = await tryVisionModel(m.id);
+      aiLogger.debug({ model: m.id }, 'Vision model responded in race');
+      return result;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      aiLogger.debug({ model: m.id, error: msg }, 'Vision model failed in race');
+      throw error;
     }
-    throw error;
+  });
+
+  try {
+    const winner = await Promise.race([Promise.any(racePromises), timeoutPromise]);
+    if (raceTimeoutId) clearTimeout(raceTimeoutId);
+
+    aiLogger.info({ winner: winner.usedModel, tokens: winner.tokens_used }, '🏆 Vision race winner! Saving as default');
+
+    lastVisionFallbackSwitch = {
+      reason: `Vision race winner: ${winner.usedModel} (primary ${multiConfig.visionModel} failed)`,
+      time: new Date(),
+      fromModel: multiConfig.visionModel,
+      toModel: winner.usedModel,
+    };
+
+    // Сохраняем победителя как новую основную vision модель
+    settingsRepo.set('vision_model', winner.usedModel).catch(err => {
+      aiLogger.warn({ error: err }, 'Failed to save vision race winner');
+    });
+
+    return winner;
+  } catch (raceError) {
+    if (raceTimeoutId) clearTimeout(raceTimeoutId);
+
+    if (raceError instanceof AppError && raceError.code === 'VISION_RACE_TIMEOUT') {
+      aiLogger.error({ timeoutMs: VISION_RACE_TIMEOUT_MS }, '⏰ Vision race timeout');
+      throw raceError;
+    }
+
+    aiLogger.error({ count: modelsToRace.length }, '💀 All free vision models failed');
+    throw new AppError('ALL_VISION_MODELS_FAILED', `Все ${modelsToRace.length} vision моделей недоступны. Попробуйте позже.`, raceError);
   }
 }
 
@@ -391,13 +485,8 @@ export async function analyzeImageUrl(
 const MAX_GROQ_FILE_SIZE = 25 * 1024 * 1024; // 25MB лимит Groq
 
 /**
- * Транскрибировать аудио в текст
- * Приоритет: Groq Whisper (бесплатно) → OpenRouter Audio (fallback)
- * 
- * Fallback срабатывает если:
- * - GROQ_API_KEY не задан
- * - Groq API вернул ошибку (401, 413, 429, 500 и др.)
- * - Файл слишком большой для Groq (>25MB)
+ * Транскрибировать аудио в текст через Groq Whisper (бесплатно)
+ * Groq — единственный провайдер для аудио (бесплатный)
  */
 export async function transcribeAudio(
   audioBase64: string,
@@ -411,133 +500,19 @@ export async function transcribeAudio(
     model: multimodalConfig.audioModel, 
     size: audioBuffer.length,
     sizeMB: fileSizeMB,
-  }, 'Transcribing audio');
+  }, 'Transcribing audio via Groq');
 
-  // Если выбрана Groq модель — пробуем бесплатный Groq Whisper
-  if (multimodalConfig.audioModel.startsWith('groq/')) {
-    const groq = await getGroqClient();
-    
-    // Проверка 1: есть ли ключ?
-    if (!groq) {
-      aiLogger.warn('Groq model selected but GROQ_API_KEY not set, falling back to OpenRouter');
-    }
-    // Проверка 2: размер файла в пределах лимита Groq?
-    else if (audioBuffer.length > MAX_GROQ_FILE_SIZE) {
-      aiLogger.warn({ sizeMB: fileSizeMB, limit: '25MB' }, 
-        'File too large for Groq (>25MB), falling back to OpenRouter');
-    }
-    // Всё ок — пробуем Groq с fallback при ошибке
-    else {
-      try {
-        return await transcribeAudioGroq(audioBuffer, 'voice.ogg');
-      } catch (groqError: unknown) {
-        const err = groqError as { status?: number; code?: string; message?: string };
-        aiLogger.warn({ 
-          error: err.message, 
-          status: err.status,
-          code: err.code,
-        }, 'Groq transcription failed, falling back to OpenRouter');
-        
-        // НЕ пробрасываем ошибку — идём в fallback
-      }
-    }
-  }
-
-  // OpenRouter: никогда не отправлять groq/* — только модели OpenRouter
-  const client = await getClient();
-  let openRouterModel = multimodalConfig.audioModel.startsWith('groq/')
-    ? (multimodalConfig.audioFallbackModel?.trim() || 'openai/gpt-audio-mini')
-    : multimodalConfig.audioModel;
-  if (openRouterModel.startsWith('groq/')) {
-    openRouterModel = 'openai/gpt-audio-mini';
-    aiLogger.warn('groq/* не поддерживается OpenRouter, используем openai/gpt-audio-mini');
-  }
+  const groq = await getGroqClient();
   
-  aiLogger.info({ model: openRouterModel }, 'Using OpenRouter for audio transcription');
-
-  try {
-    // OpenRouter использует chat completions API для аудио
-    const response = await client.chat.completions.create({
-      model: openRouterModel,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'text',
-              text: 'Транскрибируй это аудио сообщение. Верни только текст того, что было сказано, без дополнительных комментариев.',
-            },
-            {
-              type: 'input_audio' as any,
-              input_audio: {
-                data: audioBase64,
-                format: getAudioFormatForOpenRouter(mimeType),
-              },
-            } as any,
-          ],
-        },
-      ],
-      max_tokens: multimodalConfig.maxTokens,
-    });
-
-    const content = response.choices[0]?.message?.content;
-    if (!content) {
-      throw new Error('Empty response from audio model');
-    }
-
-    aiLogger.info(
-      { model: response.model, textLength: content.length },
-      'Audio transcription complete'
-    );
-
-    return {
-      text: content.trim(),
-      model: response.model,
-    };
-  } catch (error: unknown) {
-    const err = error as { status?: number; message?: string };
-    aiLogger.error({ error, model: openRouterModel }, 'Audio transcription failed');
-    
-    if (err.status === 404) {
-      throw new AppError('AUDIO_MODEL_NOT_FOUND', `Audio модель "${openRouterModel}" не найдена на OpenRouter. Задайте другую в админке → Голос и Фото.`, error);
-    }
-    if (err.status === 401) {
-      throw new AppError('AUTH_ERROR', 'Неверный API ключ OpenRouter', error);
-    }
-    if (err.status === 400) {
-      const msg = err.message ?? '';
-      if (msg.includes('input_audio')) {
-        throw new AppError('AUDIO_NOT_SUPPORTED', `Модель "${openRouterModel}" не поддерживает аудио. В админке выберите OpenRouter для аудио или настройте GROQ_API_KEY для Groq.`, error);
-      }
-      if (msg.includes('not a valid model ID') || msg.includes('invalid model')) {
-        throw new AppError('AUDIO_MODEL_NOT_FOUND', 'Выбранная аудио модель недоступна на OpenRouter. В админке → Голос и Фото выберите «OpenRouter» или настройте Groq ключ.', error);
-      }
-    }
-    if (err.status === 429) {
-      throw new AppError('RATE_LIMIT', 'Превышен лимит запросов. Подождите минуту и попробуйте снова.', error);
-    }
-    if (err.status === 503) {
-      throw new AppError('SERVER_ERROR', 'Сервис транскрипции временно недоступен. Попробуйте позже.', error);
-    }
-    if (err.status && err.status >= 500) {
-      throw new AppError('SERVER_ERROR', 'Сервер AI временно недоступен. Попробуйте позже.', error);
-    }
-    throw error;
+  if (!groq) {
+    throw new AppError('GROQ_AUTH_ERROR', 'GROQ_API_KEY не настроен. Задайте его в Render или в админке для транскрипции голоса.');
   }
-}
 
-/**
- * Определить формат аудио для OpenRouter API
- */
-function getAudioFormatForOpenRouter(mimeType: string): string {
-  if (mimeType.includes('ogg') || mimeType.includes('opus')) return 'ogg';
-  if (mimeType.includes('mp3') || mimeType.includes('mpeg')) return 'mp3';
-  if (mimeType.includes('wav')) return 'wav';
-  if (mimeType.includes('flac')) return 'flac';
-  if (mimeType.includes('webm')) return 'webm';
-  if (mimeType.includes('m4a') || mimeType.includes('mp4')) return 'mp4';
-  // Telegram отправляет OGG Opus
-  return 'ogg';
+  if (audioBuffer.length > MAX_GROQ_FILE_SIZE) {
+    throw new AppError('FILE_TOO_LARGE', `Файл слишком большой (${fileSizeMB}MB, максимум 25MB)`);
+  }
+
+  return await transcribeAudioGroq(audioBuffer, 'voice.ogg');
 }
 
 /**
@@ -606,39 +581,6 @@ export async function transcribeAudioGroq(
     if (err.status === 413) {
       throw new AppError('FILE_TOO_LARGE', 'Файл слишком большой (максимум 25MB)', error);
     }
-    throw error;
-  }
-}
-
-/**
- * Альтернативный метод транскрипции через OpenAI Whisper API (платно)
- */
-export async function transcribeAudioWhisper(
-  audioBuffer: Buffer,
-  filename: string = 'audio.ogg'
-): Promise<AudioTranscriptionResult> {
-  const client = await getClient();
-
-  aiLogger.info({ filename }, 'Transcribing audio via OpenAI Whisper (paid)');
-
-  try {
-    // Создаём File-like объект
-    const file = new File([audioBuffer], filename, { type: 'audio/ogg' });
-
-    const response = await client.audio.transcriptions.create({
-      file,
-      model: 'whisper-1',
-      language: 'ru',
-    });
-
-    aiLogger.info({ textLength: response.text.length }, 'OpenAI Whisper transcription complete');
-
-    return {
-      text: response.text,
-      model: 'openai/whisper-1',
-    };
-  } catch (error) {
-    aiLogger.error({ error }, 'OpenAI Whisper transcription failed');
     throw error;
   }
 }
@@ -719,16 +661,8 @@ export async function processVoiceWithLLM(
 // Model Lists Export
 // --------------------------------------------
 
-export function getAllVisionModels() {
-  return {
-    free: VISION_MODELS.free,
-    premium: VISION_MODELS.premium,
-  };
-}
-
 export function getAllAudioModels() {
   return {
     free: AUDIO_MODELS.free,
-    premium: AUDIO_MODELS.premium,
   };
 }

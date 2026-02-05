@@ -326,8 +326,8 @@ export const aiService = {
     }
 
     // === ШАГ 2: Динамическая гонка бесплатных моделей ===
-    // Получаем актуальный список бесплатных моделей от OpenRouter API
-    const freeModels = await getFreeModels();
+    // Принудительно обновляем список: модель упала → кэш может быть устаревшим
+    const freeModels = await refreshFreeModelsCache();
     
     aiLogger.info(
       { modelsCount: freeModels.length, timeoutMs: RACE_TIMEOUT_MS, models: freeModels.slice(0, 5) },

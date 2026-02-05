@@ -1,15 +1,18 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { settingsApi } from '../api/supabase';
-import { Save, Loader2, RefreshCw, Eye, Mic, CheckCircle, AlertCircle, Sparkles, MessageSquare } from 'lucide-react';
+import { Save, Loader2, RefreshCw, Eye, Mic, CheckCircle, AlertCircle, Sparkles, MessageSquare, Download } from 'lucide-react';
 
-// Schema with additional settings
+// Bot API URL
+const BOT_URL = import.meta.env.VITE_BOT_URL || 'https://amina-bot.onrender.com';
+
+// Schema
 const settingsSchema = z.object({
-  audio_mode: z.enum(['groq', 'openrouter']),
-  vision_mode: z.enum(['free', 'premium']),
+  audio_model: z.string().min(1),
+  vision_model: z.string().min(1),
   vision_prompt: z.string().min(10).max(500),
   vision_max_tokens: z.number().min(100).max(4096),
 });
@@ -18,10 +21,28 @@ type SettingsForm = z.infer<typeof settingsSchema>;
 
 const DEFAULT_VISION_PROMPT = 'Опиши подробно что изображено на этой картинке. Обрати внимание на детали, цвета, объекты и их расположение.';
 const DEFAULT_VISION_MAX_TOKENS = 1024;
+const DEFAULT_AUDIO_MODEL = 'groq/whisper-large-v3';
+const DEFAULT_VISION_MODEL = 'allenai/molmo-2-8b:free';
+
+// Groq audio models (бесплатные)
+const AUDIO_MODELS = [
+  { id: 'groq/whisper-large-v3', name: 'Groq Whisper Large V3', description: 'Лучшее качество транскрипции' },
+  { id: 'groq/whisper-large-v3-turbo', name: 'Groq Whisper Turbo', description: 'Быстрая транскрипция' },
+  { id: 'groq/distil-whisper-large-v3-en', name: 'Groq Distil Whisper (EN)', description: 'Для английского языка' },
+];
+
+interface VisionModel {
+  id: string;
+  name: string;
+  description: string;
+}
 
 const MultimodalSettingsPage = () => {
   const queryClient = useQueryClient();
   const [saveMessage, setSaveMessage] = useState('');
+  const [visionModels, setVisionModels] = useState<VisionModel[]>([]);
+  const [isRefreshingVision, setIsRefreshingVision] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState('');
 
   // Fetch current settings
   const { data: settings, isLoading } = useQuery({
@@ -29,16 +50,49 @@ const MultimodalSettingsPage = () => {
     queryFn: settingsApi.getAll,
   });
 
+  // Fetch vision models from bot API
+  const fetchVisionModels = useCallback(async (force = false) => {
+    try {
+      setIsRefreshingVision(true);
+      const endpoint = force ? '/api/models/vision/refresh' : '/api/models/vision';
+      const method = force ? 'POST' : 'GET';
+      const response = await fetch(`${BOT_URL}${endpoint}`, { method });
+      if (response.ok) {
+        const result = await response.json();
+        const models = force ? result.data?.models : result.data?.models;
+        if (models && models.length > 0) {
+          setVisionModels(models);
+          if (force) {
+            setRefreshMessage(`Загружено ${models.length} бесплатных vision моделей`);
+            setTimeout(() => setRefreshMessage(''), 3000);
+          }
+        }
+      }
+    } catch {
+      if (force) {
+        setRefreshMessage('Ошибка загрузки моделей');
+        setTimeout(() => setRefreshMessage(''), 3000);
+      }
+    } finally {
+      setIsRefreshingVision(false);
+    }
+  }, []);
+
+  // Load vision models on mount
+  useEffect(() => {
+    fetchVisionModels(false);
+  }, [fetchVisionModels]);
+
   // Save mutation
   const { mutate: saveSettings, isPending: isSaving } = useMutation({
     mutationFn: (data: Record<string, string>) => settingsApi.updateMany(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] });
-      setSaveMessage('✅ Настройки сохранены!');
+      setSaveMessage('Настройки сохранены!');
       setTimeout(() => setSaveMessage(''), 3000);
     },
     onError: () => {
-      setSaveMessage('❌ Ошибка сохранения');
+      setSaveMessage('Ошибка сохранения');
       setTimeout(() => setSaveMessage(''), 3000);
     },
   });
@@ -52,18 +106,17 @@ const MultimodalSettingsPage = () => {
   } = useForm<SettingsForm>({
     resolver: zodResolver(settingsSchema),
     defaultValues: {
-      audio_mode: 'groq',
-      vision_mode: 'free',
+      audio_model: DEFAULT_AUDIO_MODEL,
+      vision_model: DEFAULT_VISION_MODEL,
       vision_prompt: DEFAULT_VISION_PROMPT,
       vision_max_tokens: DEFAULT_VISION_MAX_TOKENS,
     },
   });
 
-  const audioMode = watch('audio_mode');
-  const visionMode = watch('vision_mode');
   const visionMaxTokens = watch('vision_max_tokens');
+  const selectedVisionModel = watch('vision_model');
 
-  // Load settings
+  // Load settings into form
   useEffect(() => {
     if (settings) {
       const map = settings.reduce(
@@ -71,41 +124,20 @@ const MultimodalSettingsPage = () => {
         {} as Record<string, string>
       );
 
-      // Определяем режим аудио по сохранённой модели
-      const savedAudio = map['audio_model'] || '';
-      const audioMode = savedAudio.startsWith('groq/') ? 'groq' : 'openrouter';
-
-      // Определяем режим vision
-      const savedVision = map['vision_model'] || '';
-      const visionMode = savedVision.includes(':free') || savedVision.includes('molmo') ? 'free' : 'premium';
-
-      // Vision prompt и max_tokens
-      const visionPrompt = map['vision_prompt'] || DEFAULT_VISION_PROMPT;
-      const visionMaxTokens = parseInt(map['vision_max_tokens'] || String(DEFAULT_VISION_MAX_TOKENS), 10);
-
-      reset({ 
-        audio_mode: audioMode, 
-        vision_mode: visionMode,
-        vision_prompt: visionPrompt,
-        vision_max_tokens: visionMaxTokens,
+      reset({
+        audio_model: map['audio_model'] || DEFAULT_AUDIO_MODEL,
+        vision_model: map['vision_model'] || DEFAULT_VISION_MODEL,
+        vision_prompt: map['vision_prompt'] || DEFAULT_VISION_PROMPT,
+        vision_max_tokens: parseInt(map['vision_max_tokens'] || String(DEFAULT_VISION_MAX_TOKENS), 10),
       });
     }
   }, [settings, reset]);
 
   const onSubmit = (data: SettingsForm) => {
-    // Преобразуем простые опции в конкретные модели
-    const audioModel = data.audio_mode === 'groq' 
-      ? 'groq/whisper-large-v3' 
-      : 'openai/gpt-audio-mini';
-    
-    const visionModel = data.vision_mode === 'free'
-      ? 'allenai/molmo-2-8b:free'
-      : 'openai/gpt-4o-mini';
-
     saveSettings({
-      audio_model: audioModel,
+      audio_model: data.audio_model,
       audio_model_override: '',
-      vision_model: visionModel,
+      vision_model: data.vision_model,
       vision_model_override: '',
       vision_prompt: data.vision_prompt,
       vision_max_tokens: String(data.vision_max_tokens),
@@ -147,60 +179,34 @@ const MultimodalSettingsPage = () => {
             </div>
             <div>
               <h2 className="text-lg font-semibold text-white">Голосовые сообщения</h2>
-              <p className="text-sm text-white/50">Транскрипция голоса в текст</p>
+              <p className="text-sm text-white/50">Транскрипция через Groq Whisper (бесплатно)</p>
             </div>
           </div>
 
           <div className="space-y-3">
-            {/* Groq Option */}
-            <label className={`block p-4 rounded-xl border-2 cursor-pointer transition-all ${
-              audioMode === 'groq' 
-                ? 'border-blue-500 bg-blue-500/10' 
-                : 'border-white/10 hover:border-white/20 bg-white/5'
-            }`}>
-              <div className="flex items-start gap-3">
-                <input
-                  type="radio"
-                  value="groq"
-                  {...register('audio_mode')}
-                  className="mt-1 accent-blue-500"
-                />
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-white">Groq Whisper</span>
-                    <span className="badge-success">БЕСПЛАТНО</span>
+            {AUDIO_MODELS.map((model) => (
+              <label key={model.id} className={`block p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                watch('audio_model') === model.id
+                  ? 'border-blue-500 bg-blue-500/10' 
+                  : 'border-white/10 hover:border-white/20 bg-white/5'
+              }`}>
+                <div className="flex items-start gap-3">
+                  <input
+                    type="radio"
+                    value={model.id}
+                    {...register('audio_model')}
+                    className="mt-1 accent-blue-500"
+                  />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-white">{model.name}</span>
+                      <span className="badge-success">БЕСПЛАТНО</span>
+                    </div>
+                    <p className="text-sm text-white/60 mt-1">{model.description}</p>
                   </div>
-                  <p className="text-sm text-white/60 mt-1">
-                    Быстрая и качественная транскрипция на русском языке
-                  </p>
                 </div>
-              </div>
-            </label>
-
-            {/* OpenRouter Option */}
-            <label className={`block p-4 rounded-xl border-2 cursor-pointer transition-all ${
-              audioMode === 'openrouter' 
-                ? 'border-blue-500 bg-blue-500/10' 
-                : 'border-white/10 hover:border-white/20 bg-white/5'
-            }`}>
-              <div className="flex items-start gap-3">
-                <input
-                  type="radio"
-                  value="openrouter"
-                  {...register('audio_mode')}
-                  className="mt-1 accent-blue-500"
-                />
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-white">OpenRouter Audio</span>
-                    <span className="badge-warning">ПЛАТНО</span>
-                  </div>
-                  <p className="text-sm text-white/60 mt-1">
-                    Использует баланс OpenRouter для транскрипции
-                  </p>
-                </div>
-              </div>
-            </label>
+              </label>
+            ))}
           </div>
         </div>
 
@@ -210,62 +216,84 @@ const MultimodalSettingsPage = () => {
             <div className="p-2.5 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl shadow-lg shadow-purple-500/25">
               <Eye className="w-6 h-6 text-white" />
             </div>
-            <div>
+            <div className="flex-1">
               <h2 className="text-lg font-semibold text-white">Анализ изображений</h2>
-              <p className="text-sm text-white/50">Описание картинок для основной LLM</p>
+              <p className="text-sm text-white/50">Бесплатные vision модели с авто-fallback</p>
             </div>
+            <button
+              type="button"
+              onClick={() => fetchVisionModels(true)}
+              disabled={isRefreshingVision}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-amber-500 to-orange-500 rounded-lg hover:from-amber-600 hover:to-orange-600 transition-all shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isRefreshingVision ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span className="hidden sm:inline">Загрузка...</span>
+                </>
+              ) : (
+                <>
+                  <Download className="w-4 h-4" />
+                  <span className="hidden sm:inline">Обновить модели</span>
+                </>
+              )}
+            </button>
           </div>
 
-          <div className="space-y-3 mb-6">
-            {/* Free Option */}
-            <label className={`block p-4 rounded-xl border-2 cursor-pointer transition-all ${
-              visionMode === 'free' 
-                ? 'border-purple-500 bg-purple-500/10' 
-                : 'border-white/10 hover:border-white/20 bg-white/5'
+          {refreshMessage && (
+            <div className={`mb-4 text-sm p-3 rounded-lg flex items-center gap-2 ${
+              refreshMessage.startsWith('Ошибка') 
+                ? 'bg-red-500/10 border border-red-500/20 text-red-400' 
+                : 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
             }`}>
-              <div className="flex items-start gap-3">
-                <input
-                  type="radio"
-                  value="free"
-                  {...register('vision_mode')}
-                  className="mt-1 accent-purple-500"
-                />
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-white">Molmo 2</span>
-                    <span className="badge-success">БЕСПЛАТНО</span>
-                  </div>
-                  <p className="text-sm text-white/60 mt-1">
-                    Хорошо описывает фото, не тратит баланс OpenRouter
-                  </p>
-                </div>
-              </div>
-            </label>
+              {refreshMessage.startsWith('Ошибка') ? (
+                <AlertCircle className="w-4 h-4" />
+              ) : (
+                <CheckCircle className="w-4 h-4" />
+              )}
+              {refreshMessage}
+            </div>
+          )}
 
-            {/* Premium Option */}
-            <label className={`block p-4 rounded-xl border-2 cursor-pointer transition-all ${
-              visionMode === 'premium' 
-                ? 'border-purple-500 bg-purple-500/10' 
-                : 'border-white/10 hover:border-white/20 bg-white/5'
-            }`}>
-              <div className="flex items-start gap-3">
-                <input
-                  type="radio"
-                  value="premium"
-                  {...register('vision_mode')}
-                  className="mt-1 accent-purple-500"
-                />
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-white">GPT-4o Mini</span>
-                    <span className="badge-warning">ПЛАТНО</span>
-                  </div>
-                  <p className="text-sm text-white/60 mt-1">
-                    Точнее понимает контекст и мелкие детали изображений
-                  </p>
-                </div>
+          {/* Vision Model Selection */}
+          <div className="mb-6">
+            <label className="label mb-2">Основная vision модель</label>
+            {visionModels.length > 0 ? (
+              <div className="space-y-2 max-h-[320px] overflow-y-auto pr-2 scrollbar-thin">
+                {visionModels.map((model) => (
+                  <label key={model.id} className={`block p-3 rounded-xl border-2 cursor-pointer transition-all ${
+                    selectedVisionModel === model.id
+                      ? 'border-purple-500 bg-purple-500/10' 
+                      : 'border-white/10 hover:border-white/20 bg-white/5'
+                  }`}>
+                    <div className="flex items-start gap-3">
+                      <input
+                        type="radio"
+                        value={model.id}
+                        {...register('vision_model')}
+                        className="mt-1 accent-purple-500"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-medium text-white text-sm truncate">{model.name}</span>
+                          <span className="badge-success text-xs">FREE</span>
+                        </div>
+                        <p className="text-xs text-white/40 mt-0.5 font-mono truncate">{model.id}</p>
+                      </div>
+                    </div>
+                  </label>
+                ))}
               </div>
-            </label>
+            ) : (
+              <div className="p-4 rounded-xl border-2 border-white/10 bg-white/5 text-center">
+                <p className="text-white/50 text-sm">
+                  Нажмите "Обновить модели" для загрузки списка
+                </p>
+              </div>
+            )}
+            <p className="text-white/40 text-xs mt-2">
+              При недоступности выбранной модели автоматически запустится гонка всех бесплатных vision моделей. Победитель станет новой основной моделью.
+            </p>
           </div>
 
           {/* Vision Prompt */}
@@ -321,7 +349,7 @@ const MultimodalSettingsPage = () => {
               <div>
                 <p className="font-medium text-white">Голосовое сообщение</p>
                 <p className="text-white/60">
-                  Голос → Транскрипция → Текст отправляется в основную LLM → Ответ
+                  Голос → Groq Whisper (бесплатно) → Текст → Основная LLM → Ответ
                 </p>
               </div>
             </div>
@@ -332,7 +360,18 @@ const MultimodalSettingsPage = () => {
               <div>
                 <p className="font-medium text-white">Изображение</p>
                 <p className="text-white/60">
-                  Фото → Vision-модель описывает → Описание + вопрос → Основная LLM → Ответ
+                  Фото → Vision-модель → Описание → Основная LLM → Ответ
+                </p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
+              <div className="p-1.5 bg-amber-500/20 rounded-lg">
+                <RefreshCw className="w-4 h-4 text-amber-400" />
+              </div>
+              <div>
+                <p className="font-medium text-white">Авто-fallback</p>
+                <p className="text-white/60">
+                  Если vision модель упала → обновление списка → гонка всех бесплатных → победитель становится основной моделью. Прозрачно для пользователя.
                 </p>
               </div>
             </div>
@@ -343,14 +382,14 @@ const MultimodalSettingsPage = () => {
         <div className="flex items-center justify-between animate-fade-in-up stagger-4">
           {saveMessage && (
             <div className={`flex items-center gap-2 text-sm ${
-              saveMessage.includes('✅') ? 'text-emerald-400' : 'text-red-400'
+              saveMessage.includes('сохранены') ? 'text-emerald-400' : 'text-red-400'
             }`}>
-              {saveMessage.includes('✅') ? (
+              {saveMessage.includes('сохранены') ? (
                 <CheckCircle className="w-4 h-4" />
               ) : (
                 <AlertCircle className="w-4 h-4" />
               )}
-              {saveMessage.replace(/[✅❌]\s*/, '')}
+              {saveMessage}
             </div>
           )}
           <div className="flex items-center gap-3 ml-auto">
@@ -362,13 +401,12 @@ const MultimodalSettingsPage = () => {
                     (acc, s) => ({ ...acc, [s.key]: s.value }),
                     {} as Record<string, string>
                   );
-                  const savedAudio = map['audio_model'] || '';
-                  const audioMode = savedAudio.startsWith('groq/') ? 'groq' : 'openrouter';
-                  const savedVision = map['vision_model'] || '';
-                  const visionMode = savedVision.includes(':free') || savedVision.includes('molmo') ? 'free' : 'premium';
-                  const visionPrompt = map['vision_prompt'] || DEFAULT_VISION_PROMPT;
-                  const visionMaxTokens = parseInt(map['vision_max_tokens'] || String(DEFAULT_VISION_MAX_TOKENS), 10);
-                  reset({ audio_mode: audioMode, vision_mode: visionMode, vision_prompt: visionPrompt, vision_max_tokens: visionMaxTokens });
+                  reset({
+                    audio_model: map['audio_model'] || DEFAULT_AUDIO_MODEL,
+                    vision_model: map['vision_model'] || DEFAULT_VISION_MODEL,
+                    vision_prompt: map['vision_prompt'] || DEFAULT_VISION_PROMPT,
+                    vision_max_tokens: parseInt(map['vision_max_tokens'] || String(DEFAULT_VISION_MAX_TOKENS), 10),
+                  });
                 }
               }}
               disabled={!isDirty}

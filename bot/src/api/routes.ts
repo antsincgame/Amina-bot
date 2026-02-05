@@ -6,7 +6,7 @@ import { validateMessageContent, validateUserId } from '../utils/validation.js';
 import { handleAIError } from '../utils/error-handler.js';
 import { aiLogger, getLogs, getLogStats } from '../config/logger.js';
 import { rateLimitHook } from '../utils/rate-limiter.js';
-import { getAllVisionModels, getAllAudioModels } from '../ai/multimodal.js';
+import { getAllAudioModels, getFreeVisionModels, refreshFreeVisionModelsCache, getVisionFallbackStatus } from '../ai/multimodal.js';
 import { getSearchModelInfo, getAvailableModels, isWebSearchEnabled } from '../ai/websearch.js';
 import { userProfileRepo, userMemoryRepo, userLogsRepo } from '../memory/user-memory.js';
 import { config } from '../config/index.js';
@@ -632,20 +632,46 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
 
       /**
        * GET /api/models/vision
-       * Get available vision models (static list)
+       * Динамический список бесплатных vision моделей
        */
       apiServer.get('/models/vision', async (request: FastifyRequest, reply: FastifyReply) => {
         try {
-          const models = getAllVisionModels();
+          const models = await getFreeVisionModels();
+          const fallbackStatus = getVisionFallbackStatus();
+          const currentModel = await settingsRepo.get('vision_model');
           return reply.code(200).send({
             success: true,
-            data: models,
+            data: {
+              models,
+              currentModel: currentModel || 'allenai/molmo-2-8b:free',
+              fallbackStatus,
+            },
           });
         } catch (error) {
           aiLogger.error({ error }, 'Get vision models error');
           return reply.code(500).send({
             success: false,
             error: 'Failed to fetch vision models',
+          });
+        }
+      });
+
+      /**
+       * POST /api/models/vision/refresh
+       * Принудительно обновить кэш бесплатных vision моделей
+       */
+      apiServer.post('/models/vision/refresh', async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+          const freshModels = await refreshFreeVisionModelsCache();
+          return reply.code(200).send({
+            success: true,
+            data: { models: freshModels, count: freshModels.length },
+          });
+        } catch (error) {
+          aiLogger.error({ error }, 'Refresh vision models error');
+          return reply.code(500).send({
+            success: false,
+            error: 'Failed to refresh vision models',
           });
         }
       });
@@ -672,55 +698,15 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
 
       /**
        * GET /api/models/openrouter/vision
-       * Fetch actual vision models from OpenRouter API
+       * Динамический список бесплатных vision моделей от OpenRouter
        */
       apiServer.get('/models/openrouter/vision', async (request: FastifyRequest, reply: FastifyReply) => {
         try {
-          const response = await fetch('https://openrouter.ai/api/v1/models', {
-            headers: {
-              'Authorization': `Bearer ${config.ai.apiKey}`,
-            },
-          });
-
-          if (!response.ok) {
-            throw new Error(`OpenRouter API error: ${response.status}`);
-          }
-
-          const data = await response.json() as { data: Array<{
-            id: string;
-            name: string;
-            description?: string;
-            pricing: { prompt: string; completion: string };
-            architecture?: { input_modalities?: string[] };
-          }> };
-
-          // Filter models that support image input
-          const visionModels = data.data.filter(model => 
-            model.architecture?.input_modalities?.includes('image')
-          );
-
-          const free = visionModels
-            .filter(m => m.pricing.prompt === '0' && m.pricing.completion === '0')
-            .map(m => ({
-              id: m.id,
-              name: m.name,
-              description: m.description || 'Vision модель',
-            }));
-
-          const premium = visionModels
-            .filter(m => m.pricing.prompt !== '0' || m.pricing.completion !== '0')
-            .slice(0, 10)
-            .map(m => ({
-              id: m.id,
-              name: m.name,
-              description: m.description || 'Vision модель (платная)',
-            }));
-
-          aiLogger.info({ freeCount: free.length, premiumCount: premium.length }, 'Fetched vision models from OpenRouter');
-
+          const models = await refreshFreeVisionModelsCache();
+          aiLogger.info({ count: models.length }, 'Fetched free vision models from OpenRouter');
           return reply.code(200).send({
             success: true,
-            data: { free, premium },
+            data: { free: models },
             source: 'openrouter',
           });
         } catch (error) {
