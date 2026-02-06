@@ -283,11 +283,8 @@ function enhanceSearchQuery(query: string): string {
     }
   }
   
-  // Если запрос очень короткий (< 15 символов), добавляем контекст
-  if (query.length < 15) {
-    return `${query} — актуальная информация сегодня`;
-  }
-  
+  // Не добавляем "актуальная информация" к коротким запросам —
+  // это превращало "ты как" в поиск новостей
   return query;
 }
 
@@ -546,6 +543,13 @@ export async function enhanceResponseIfNeeded(
   // Проверяем, включён ли поиск
   const enabled = await isWebSearchEnabled();
   if (!enabled) return { response: aiResponse, wasEnhanced: false };
+  
+  // КРИТИЧНО: НЕ запускаем поиск если сообщение НЕ требует актуальных данных
+  // Иначе "ты как" → "неуверенный ответ" → enhanceSearchQuery → "ты как — актуальная информация"
+  // → Perplexity возвращает НОВОСТИ вместо нормального ответа
+  if (!needsWebSearch(originalQuery)) {
+    return { response: aiResponse, wasEnhanced: false };
+  }
   
   // Проверяем, показывает ли AI неуверенность
   if (!aiShowsUncertainty(aiResponse)) {
