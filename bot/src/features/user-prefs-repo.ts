@@ -22,46 +22,50 @@ export interface UserPreferences {
 export const userPrefsRepo = {
   /**
    * Получить или создать настройки пользователя
+   * FIX: Используем upsert вместо SELECT+INSERT для атомарности (race condition)
    */
   async getOrCreate(
     userId: string,
     chatId: number,
     firstName?: string
   ): Promise<UserPreferences> {
-    // Попытка найти существующие
-    const { data: existing } = await getSupabase()
-      .from('user_preferences')
-      .select('*')
-      .eq('user_id', userId)
-      .single();
-
-    if (existing) {
-      // Обновить first_name если изменилось
-      if (firstName && existing.first_name !== firstName) {
-        await getSupabase()
-          .from('user_preferences')
-          .update({ first_name: firstName })
-          .eq('user_id', userId);
-      }
-      return existing as UserPreferences;
-    }
-
-    // Создать новые (дефолт: 10:00 МСК, Гродно)
     const { data, error } = await getSupabase()
       .from('user_preferences')
-      .insert({
-        user_id: userId,
-        chat_id: chatId,
-        first_name: firstName ?? null,
-        digest_hour: 10,
-        digest_city: 'Гродно',
-      })
+      .upsert(
+        {
+          user_id: userId,
+          chat_id: chatId,
+          first_name: firstName ?? null,
+          digest_hour: 10,
+          digest_city: 'Минск',
+        },
+        { onConflict: 'user_id', ignoreDuplicates: false }
+      )
       .select()
       .single();
 
     if (error) {
-      dbLogger.error({ error, userId }, 'Failed to create user prefs');
+      dbLogger.error({ error, userId }, 'Failed to upsert user prefs');
+      // Fallback: попробовать просто прочитать (может уже существует)
+      const { data: existing } = await getSupabase()
+        .from('user_preferences')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
+      if (existing) return existing as UserPreferences;
       throw error;
+    }
+
+    // Обновляем first_name если оно изменилось (upsert не перезаписывает если уже есть)
+    if (firstName && data.first_name !== firstName) {
+      try {
+        await getSupabase()
+          .from('user_preferences')
+          .update({ first_name: firstName })
+          .eq('user_id', userId);
+      } catch (err) {
+        dbLogger.warn({ error: err, userId }, 'Failed to update first_name');
+      }
     }
 
     return data as UserPreferences;
@@ -123,6 +127,7 @@ export const userPrefsRepo = {
 
   /**
    * Получить настройки пользователя (или null)
+   * FIX: Различаем "не найдено" от реальных ошибок БД
    */
   async get(userId: string): Promise<UserPreferences | null> {
     const { data, error } = await getSupabase()
@@ -131,7 +136,12 @@ export const userPrefsRepo = {
       .eq('user_id', userId)
       .single();
 
-    if (error) return null;
+    if (error) {
+      // PGRST116 = row not found — ожидаемый случай
+      if (error.code === 'PGRST116') return null;
+      dbLogger.error({ error, userId }, 'Failed to get user prefs');
+      return null;
+    }
     return data as UserPreferences;
   },
 };

@@ -245,7 +245,7 @@ async function buildDigest(
   const todayStr = new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
 
   // --- Запускаем ВСЕ запросы параллельно ---
-  const [weatherResult, cityNewsResult, worldNewsResult, remindersResult, todosResult] = 
+  const [weatherResult, cityNewsResult, belarusNewsResult, remindersResult, todosResult] = 
     await Promise.allSettled([
       // 1. Погода — подробно
       webSearchWithRetry(
@@ -255,9 +255,9 @@ async function buildDigest(
       webSearchWithRetry(
         `Последние новости ${city} Беларусь ${todayStr}: основные события, происшествия, решения властей, жизнь города за последние 24 часа. Минимум 5-7 конкретных новостей с датами и деталями.`
       ),
-      // 3. Новости Беларуси и мира
+      // 3. Новости Беларуси (ТОЛЬКО Беларусь, без мировых)
       webSearchWithRetry(
-        `Главные новости Беларуси и мира ${todayStr}: самые важные события за последние 24 часа. 5-7 конкретных пунктов с деталями.`
+        `Главные новости Беларуси ${todayStr}: экономика, политика, общество, спорт, культура за последние 24 часа. Только белорусские новости! 5-7 конкретных пунктов с деталями.`
       ),
       // 4. Напоминания из БД
       remindersRepo.getByUser(userId),
@@ -284,12 +284,12 @@ async function buildDigest(
     }
   }
 
-  if (worldNewsResult.status === 'fulfilled' && worldNewsResult.value?.answer) {
-    rawData.push(`[НОВОСТИ БЕЛАРУСИ И МИРА]\n${worldNewsResult.value.answer}`);
+  if (belarusNewsResult.status === 'fulfilled' && belarusNewsResult.value?.answer) {
+    rawData.push(`[НОВОСТИ БЕЛАРУСИ]\n${belarusNewsResult.value.answer}`);
   } else {
-    rawData.push(`[НОВОСТИ БЕЛАРУСИ И МИРА]\nНе удалось получить мировые новости`);
-    if (worldNewsResult.status === 'rejected') {
-      appLogger.warn({ error: worldNewsResult.reason }, 'Digest: world news failed after retries');
+    rawData.push(`[НОВОСТИ БЕЛАРУСИ]\nНе удалось получить новости Беларуси`);
+    if (belarusNewsResult.status === 'rejected') {
+      appLogger.warn({ error: belarusNewsResult.reason }, 'Digest: Belarus news failed after retries');
     }
   }
 
@@ -334,20 +334,21 @@ ${rawData.join('\n\n')}
 
 ---
 
-ЗАДАЧА: Живой, эмоциональный утренний дайджест.
+ЗАДАЧА: Живой, эмоциональный утренний дайджест ТОЛЬКО ПО БЕЛАРУСИ.
 
 ПРАВИЛА:
 1. Тёплое приветствие по имени
 2. Погода — с эмоциями и советом ("Бери зонт!" / "Идеально для прогулки!")
 3. Новости ${city} — главная часть! Прокомментируй каждую с эмоцией
-4. Новости Беларуси и мира — кратко, с комментарием
+4. Новости Беларуси — кратко, с комментарием (ТОЛЬКО Беларусь, без мировых!)
 5. Напоминания/задачи — подбодри
 6. Позитивное завершение
 7. Эмодзи уместно, не перебарщивай
 8. Формат: Markdown для Telegram (*bold* заголовки)
 9. НЕ ПРИДУМЫВАЙ — только из данных выше
 10. Если данные не получены — честно скажи, не выдумывай
-11. Длина: 1500-3500 символов`;
+11. Длина: 1500-3500 символов
+12. Фокус ТОЛЬКО на Беларуси — никаких мировых новостей!`;
 
   try {
     const llmResponse = await aiService.chat(

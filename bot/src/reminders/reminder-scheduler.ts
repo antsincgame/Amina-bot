@@ -95,8 +95,8 @@ async function processReminders(bot: BotLike): Promise<void> {
             { error: sendError, id: reminder.id, userId: reminder.user_id },
             'Failed to send reminder'
           );
-          // Не помечаем completed — попробуем снова через 30 сек
-          // TODO: добавить retry_count колонку чтобы не ретраить бесконечно
+          // Инкрементируем retry_count; после MAX_RETRY_COUNT попыток — отменяем
+          await remindersRepo.markFailed(reminder.id);
         }
       }
     }

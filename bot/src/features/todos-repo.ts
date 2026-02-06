@@ -22,6 +22,11 @@ export const todosRepo = {
    * Создать задачу
    */
   async create(userId: string, task: string): Promise<Todo> {
+    // Валидация
+    if (!task || task.trim().length === 0) {
+      throw new Error('Текст задачи не может быть пустым');
+    }
+
     const count = await this.countActive(userId);
     if (count >= MAX_TODOS_PER_USER) {
       throw new Error(`Максимум ${MAX_TODOS_PER_USER} активных задач. Отметь выполненные через /done.`);
@@ -29,7 +34,7 @@ export const todosRepo = {
 
     const { data, error } = await getSupabase()
       .from('todos')
-      .insert({ user_id: userId, task })
+      .insert({ user_id: userId, task: task.trim() })
       .select()
       .single();
 

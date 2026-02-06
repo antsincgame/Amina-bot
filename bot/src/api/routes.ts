@@ -7,9 +7,9 @@ import { handleAIError } from '../utils/error-handler.js';
 import { aiLogger, getLogs, getLogStats } from '../config/logger.js';
 import { rateLimitHook } from '../utils/rate-limiter.js';
 import { getAllAudioModels, getFreeVisionModels, refreshFreeVisionModelsCache, getVisionFallbackStatus } from '../ai/multimodal.js';
-import { getSearchModelInfo, getAvailableModels, isWebSearchEnabled } from '../ai/websearch.js';
+import { getSearchModelInfo, getAvailableModels, isWebSearchEnabled, clearPerplexityCache } from '../ai/websearch.js';
 import { userProfileRepo, userMemoryRepo, userLogsRepo } from '../memory/user-memory.js';
-import { config } from '../config/index.js';
+import { config, clearApiKeysCache } from '../config/index.js';
 import type { Message, Conversation, LogLevel } from '../../../shared/types/index.js';
 
 // --------------------------------------------
@@ -297,7 +297,12 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
               }
             }
 
-            aiLogger.info({ keys: Object.keys(settings) }, 'Settings updated via API');
+            // Инвалидируем ВСЕ кэши после обновления настроек
+            clearApiKeysCache();
+            clearPerplexityCache();
+            settingsRepo.invalidateCache?.();
+
+            aiLogger.info({ keys: Object.keys(settings) }, 'Settings updated via API (caches invalidated)');
 
             return reply.code(200).send({
               success: true,

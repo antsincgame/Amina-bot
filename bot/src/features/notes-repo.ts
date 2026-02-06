@@ -20,6 +20,11 @@ export const notesRepo = {
    * Создать заметку
    */
   async create(userId: string, content: string): Promise<Note> {
+    // Валидация
+    if (!content || content.trim().length === 0) {
+      throw new Error('Текст заметки не может быть пустым');
+    }
+
     const count = await this.countByUser(userId);
     if (count >= MAX_NOTES_PER_USER) {
       throw new Error(`Максимум ${MAX_NOTES_PER_USER} заметок. Удали старые через /note_delete.`);
@@ -27,7 +32,7 @@ export const notesRepo = {
 
     const { data, error } = await getSupabase()
       .from('notes')
-      .insert({ user_id: userId, content })
+      .insert({ user_id: userId, content: content.trim() })
       .select()
       .single();
 

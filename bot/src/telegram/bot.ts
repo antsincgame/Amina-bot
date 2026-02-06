@@ -23,6 +23,7 @@ import { todosRepo } from '../features/todos-repo.js';
 import { userPrefsRepo } from '../features/user-prefs-repo.js';
 import { textToSpeech, detectLanguage } from '../features/tts.js';
 import { sendDigestNow } from '../features/digest-scheduler.js';
+import { verifyResponse } from '../ai/llm-verifier.js';
 import type { Message, AIMessage } from '../../../shared/types/index.js';
 
 // --------------------------------------------
@@ -1481,6 +1482,29 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
           response = { ...response, content: enhanced.response };
           telegramLogger.info({ userId }, 'Response enhanced with web search');
         }
+      }
+
+      // === ВЕРИФИКАЦИЯ ВТОРОЙ LLM (прозрачно для пользователя) ===
+      // Вторая модель проверяет ответ на галлюцинации, невыполнение инструкций
+      const verification = await verifyResponse(userMessage, response.content, webSearchContext).catch(err => {
+        telegramLogger.debug({ error: err }, 'Verification failed silently');
+        return null;
+      });
+
+      if (verification && !verification.isValid && !verification.skipped) {
+        telegramLogger.warn({ 
+          userId, 
+          reason: verification.reason,
+          verifyTimeMs: verification.verifyTimeMs,
+          responseSnippet: response.content.substring(0, 80),
+        }, 'LLM verification flagged issues — response may contain errors');
+        // Логируем для аналитики, но НЕ блокируем ответ
+        // (блокировка может ухудшить UX, лучше логировать и анализировать)
+        analyticsRepo.log('message_received', 'telegram', {
+          event: 'llm_verify_failed',
+          reason: verification.reason,
+          responseLength: response.content.length,
+        }, userId).catch(() => {});
       }
 
       // === ЗАЩИТА: пост-обработка от симуляции поиска бесплатными моделями ===
