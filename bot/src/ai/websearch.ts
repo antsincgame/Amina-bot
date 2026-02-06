@@ -520,8 +520,10 @@ ${result.answer}${citationsList}
 - Перескажи информацию своими словами, живо и эмоционально
 - НЕ упоминай источники если пользователь не просил`;
   } catch (error) {
-    // Молча игнорируем ошибки поиска - основная LLM ответит без интернета
-    telegramLogger.debug({ error }, 'Search context failed, continuing without');
+    // Логируем на WARN — ошибка поиска важна для диагностики
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const errCode = (error as { code?: string }).code ?? 'UNKNOWN';
+    telegramLogger.warn({ error: errMsg, code: errCode, query: query.substring(0, 50) }, 'Search context failed');
     return '';
   }
 }

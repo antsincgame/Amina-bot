@@ -3,7 +3,7 @@ import { config } from '../config/index.js';
 import { telegramLogger } from '../config/logger.js';
 import { aiService } from '../ai/openrouter.js';
 import { processImageWithLLM, transcribeAudio } from '../ai/multimodal.js';
-import { getSearchContext, enhanceResponseIfNeeded, searchAndFormat } from '../ai/websearch.js';
+import { getSearchContext, enhanceResponseIfNeeded, searchAndFormat, needsWebSearch } from '../ai/websearch.js';
 import { conversationsRepo, analyticsRepo } from '../db/supabase.js';
 import { checkTelegramRateLimit } from '../utils/rate-limiter.js';
 import { getErrorCode } from '../utils/error-handler.js';
@@ -999,7 +999,17 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
       }
 
       // Get AI response with memory context and web search results
-      const fullContext = memoryContext + webSearchContext;
+      let fullContext = memoryContext + webSearchContext;
+
+      // Если поиск был нужен но данные НЕ получены — явно предупреждаем LLM
+      if (!webSearchContext && needsWebSearch(userMessage)) {
+        fullContext += '\n\n⚠️ СИСТЕМНОЕ УВЕДОМЛЕНИЕ: Поиск в интернете был запрошен, но данные НЕ получены. ' +
+          'СТРОГО ЗАПРЕЩЕНО: НЕ симулируй поиск, НЕ пиши "Ищу...", "Поиск в интернете", "Сейчас найду". ' +
+          'Честно скажи пользователю что актуальные данные из интернета сейчас недоступны. ' +
+          'НЕ выдумывай даты, факты, новости — лучше скажи "не удалось получить данные".';
+        telegramLogger.warn({ userId, query: userMessage.substring(0, 50) }, 'Search needed but no data — injected warning');
+      }
+
       let response = await aiService.chat(ctx.session.messageHistory, 'telegram', fullContext);
 
       // Если AI показывает неуверенность и поиск ещё не был сделан — пробуем найти ответ
@@ -1339,8 +1349,18 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
       }
 
       // Get AI response with full context
-      const fullContext = memoryContext + webSearchContext;
-      let aiResponse = await aiService.chat(ctx.session.messageHistory, 'telegram', fullContext);
+      let fullVoiceContext = memoryContext + webSearchContext;
+
+      // Если поиск был нужен но данные НЕ получены — явно предупреждаем LLM
+      if (!webSearchContext && needsWebSearch(transcribedText)) {
+        fullVoiceContext += '\n\n⚠️ СИСТЕМНОЕ УВЕДОМЛЕНИЕ: Поиск в интернете был запрошен, но данные НЕ получены. ' +
+          'СТРОГО ЗАПРЕЩЕНО: НЕ симулируй поиск, НЕ пиши "Ищу...", "Поиск в интернете", "Сейчас найду". ' +
+          'Честно скажи пользователю что актуальные данные из интернета сейчас недоступны. ' +
+          'НЕ выдумывай даты, факты, новости — лучше скажи "не удалось получить данные".';
+        telegramLogger.warn({ userId, query: transcribedText.substring(0, 50) }, 'Voice: search needed but no data');
+      }
+
+      let aiResponse = await aiService.chat(ctx.session.messageHistory, 'telegram', fullVoiceContext);
 
       // Если AI неуверен и поиск ещё не был сделан — пробуем найти ответ
       if (!webSearchContext) {
