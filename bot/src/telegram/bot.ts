@@ -155,27 +155,17 @@ const setupCommands = (bot: Bot<BotContext>): void => {
 
   // /clear - Clear conversation history
   bot.command('clear', async (ctx) => {
-    const userId = ctx.from?.id.toString() ?? 'unknown';
-    const chatId = ctx.chat?.id ?? 0;
-    
     ctx.session.messageHistory = [];
     
-    try {
-      // If conversationId is not in session (e.g. after bot restart), look it up from DB
-      if (!ctx.session.conversationId) {
-        const conversation = await conversationsRepo.getOrCreate(
-          userId,
-          'telegram',
-          { telegram_chat_id: chatId, telegram_user_id: ctx.from?.id }
-        );
-        ctx.session.conversationId = conversation.id;
+    if (ctx.session.conversationId) {
+      try {
+        await conversationsRepo.clearMessages(ctx.session.conversationId);
+      } catch (error) {
+        telegramLogger.error({ error }, 'Failed to clear messages in DB');
       }
-      
-      await conversationsRepo.clearMessages(ctx.session.conversationId);
-      telegramLogger.info({ userId: ctx.from?.id, conversationId: ctx.session.conversationId }, 'Conversation cleared in DB');
-    } catch (error) {
-      telegramLogger.error({ error, userId }, 'Failed to clear messages in DB');
     }
+    
+    telegramLogger.info({ userId: ctx.from?.id }, 'Conversation cleared');
     
     await ctx.reply('🧹 История диалога очищена. Начнём сначала!');
   });
@@ -556,14 +546,14 @@ const setupCommands = (bot: Bot<BotContext>): void => {
         await userPrefsRepo.toggleDigest(userId, chatId, true);
         await ctx.reply(
           '☀️ Утренний дайджест *включён*!\n\n' +
-          'Каждое утро в 10:00 (по Минску) я пришлю:\n' +
+          'Каждое утро в 10:00 (МСК) я пришлю:\n' +
           '🌤 Погоду\n📰 Новости твоего города\n🌍 Мировые новости\n⏰ Напоминания\n📝 Задачи\n\n' +
           'Всё это обработаю с эмоциями и комментариями!\n\n' +
           'Настройки:\n' +
           '`/digest off` — выключить\n' +
           '`/digest now` — получить прямо сейчас\n' +
           '`/digest 7` — изменить час (0-23)\n' +
-          '`/digest город Гродно` — город для новостей',
+          '`/digest город Минск` — город для новостей',
           { parse_mode: 'Markdown' }
         );
         return;
@@ -585,7 +575,7 @@ const setupCommands = (bot: Bot<BotContext>): void => {
         }
         await userPrefsRepo.getOrCreate(userId, chatId, ctx.from?.first_name);
         await userPrefsRepo.update(userId, { digest_hour: hour });
-        await ctx.reply(`⏰ Дайджест будет приходить в *${hour}:00* по Минску.`, { parse_mode: 'Markdown' });
+        await ctx.reply(`⏰ Дайджест будет приходить в *${hour}:00* МСК.`, { parse_mode: 'Markdown' });
         return;
       }
 
@@ -611,14 +601,14 @@ const setupCommands = (bot: Bot<BotContext>): void => {
       await ctx.reply(
         `☀️ *Утренний дайджест*\n\n` +
         `Статус: ${status}\n` +
-        `Время: ${hour}:00 по Минску\n` +
+        `Время: ${hour}:00 МСК\n` +
         `Город: ${city}\n\n` +
         `Настройки:\n` +
         '`/digest on` — включить\n' +
         '`/digest off` — выключить\n' +
         '`/digest now` — получить прямо сейчас\n' +
         '`/digest 10` — час отправки\n' +
-        '`/digest город Гродно` — город',
+        '`/digest город Минск` — город',
         { parse_mode: 'Markdown', reply_markup: keyboard }
       );
     } catch {
@@ -1830,7 +1820,7 @@ const WEEKDAYS_RU = ['воскресенье', 'понедельник', 'вто
 
 /**
  * Контекст времени суток + день недели + имя для system prompt.
- * TZ=Europe/Minsk → new Date() уже в минском времени.
+ * TZ=Europe/Moscow → new Date() уже в московском времени.
  */
 const buildTimeContext = (firstName?: string): string => {
   const now = new Date();
