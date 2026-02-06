@@ -974,20 +974,18 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         }));
       }
 
-      // Build memory context for personalized responses (graceful degradation)
-      let memoryContext = '';
-      try {
-        memoryContext = await memoryContextBuilder.buildContext(userId, telegramInfo);
-      } catch (memError) {
-        telegramLogger.warn({ error: memError, userId }, 'Failed to build memory context, continuing without');
-      }
-
-      // Умный контекст: время суток, день недели, имя пользователя
+      // === ОПТИМИЗАЦИЯ: memoryContext + webSearch параллельно ===
       const timeContext = buildTimeContext(ctx.from?.first_name);
-      memoryContext = timeContext + (memoryContext ? '\n' + memoryContext : '');
 
-      // Прозрачный веб-поиск: бот сам решает нужен ли интернет
-      const webSearchContext = await getSearchContext(userMessage);
+      const [memoryContextRaw, webSearchContext] = await Promise.all([
+        memoryContextBuilder.buildContext(userId, telegramInfo).catch((err) => {
+          telegramLogger.warn({ error: err, userId }, 'Failed to build memory context');
+          return '';
+        }),
+        getSearchContext(userMessage),
+      ]);
+
+      const memoryContext = timeContext + (memoryContextRaw ? '\n' + memoryContextRaw : '');
 
       // Add user message to history
       ctx.session.messageHistory.push({
@@ -1019,11 +1017,20 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         content: response.content,
       });
 
-      // Update user profile stats (fire and forget)
+      // === ОПТИМИЗАЦИЯ: отправляем ответ СРАЗУ, до записи в БД ===
+      const responseKeyboard = new InlineKeyboard()
+        .text('📌 В заметки', 'save_to_notes')
+        .text('🔊 Озвучить', 'read_aloud');
+
+      await sendLongMessage(ctx, response.content, responseKeyboard);
+
+      // === ОПТИМИЗАЦИЯ: все DB-записи — fire-and-forget, после ответа пользователю ===
+      const responseTime = Date.now() - startTime;
+
+      // Update user profile stats
       userProfileRepo.updateOnMessage(userId, 'message', response.tokens_used.total, telegramInfo).catch(() => {});
 
-      // Log AI response (fire and forget)
-      const responseTime = Date.now() - startTime;
+      // Log AI response
       userLogsRepo.add(userId, 'ai_response', response.content, {
         chatId,
         responseLength: response.content.length,
@@ -1034,44 +1041,40 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         responseTimeMs: responseTime,
       }).catch(() => {});
 
-      // Extract facts from conversation (async, don't wait)
+      // Extract facts from conversation
       memoryExtractor.extractFacts(userId, userMessage, response.content).catch(() => {});
 
-      // Save to database
+      // Save to database (параллельно user + assistant)
+      const nowISO = new Date().toISOString();
       const userMsg: Message = {
         role: 'user',
         content: userMessage,
-        timestamp: new Date().toISOString(),
+        timestamp: nowISO,
       };
       const assistantMsg: Message = {
         role: 'assistant',
         content: response.content,
-        timestamp: new Date().toISOString(),
+        timestamp: nowISO,
         metadata: {
           tokens_used: response.tokens_used.total,
           model: response.model,
         },
       };
 
-      await conversationsRepo.addMessage(ctx.session.conversationId, userMsg);
-      await conversationsRepo.addMessage(ctx.session.conversationId, assistantMsg);
-
-      // Log analytics
-      await analyticsRepo.log('ai_response', 'telegram', {
-        userId,
-        model: response.model,
-        tokens: response.tokens_used.total,
+      Promise.all([
+        conversationsRepo.addMessage(ctx.session.conversationId, userMsg),
+        conversationsRepo.addMessage(ctx.session.conversationId, assistantMsg),
+        analyticsRepo.log('ai_response', 'telegram', {
+          userId,
+          model: response.model,
+          tokens: response.tokens_used.total,
+        }),
+      ]).catch((err) => {
+        telegramLogger.warn({ error: err, userId }, 'Background DB writes failed');
       });
 
-      // Send response with inline buttons
-      const responseKeyboard = new InlineKeyboard()
-        .text('📌 В заметки', 'save_to_notes')
-        .text('🔊 Озвучить', 'read_aloud');
-
-      await sendLongMessage(ctx, response.content, responseKeyboard);
-
       telegramLogger.info(
-        { userId, tokens: response.tokens_used.total },
+        { userId, tokens: response.tokens_used.total, responseTimeMs: responseTime },
         'Response sent'
       );
     } catch (error) {
@@ -1080,11 +1083,11 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
       
       telegramLogger.error({ error, userId, errorCode }, 'Failed to process message');
       
-      await analyticsRepo.log('error', 'telegram', {
+      analyticsRepo.log('error', 'telegram', {
         userId,
         error: errorMessage,
         errorCode,
-      });
+      }).catch(() => {});
 
       // Подробные сообщения об ошибках для пользователя
       let userMessage = '😔 Извини, произошла ошибка. Попробуй ещё раз или напиши /clear для сброса диалога.';
@@ -1308,20 +1311,18 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
 
       // 6. Обычный AI flow — с полным контекстом (время, память, веб-поиск)
 
-      // Build memory context (graceful degradation)
-      let memoryContext = '';
-      try {
-        memoryContext = await memoryContextBuilder.buildContext(userId, telegramInfo);
-      } catch (memError) {
-        telegramLogger.warn({ error: memError, userId }, 'Failed to build memory context for voice');
-      }
-
-      // Умный контекст: время суток, день недели, имя
+      // === ОПТИМИЗАЦИЯ: memoryContext + webSearch параллельно ===
       const timeContext = buildTimeContext(ctx.from?.first_name);
-      memoryContext = timeContext + (memoryContext ? '\n' + memoryContext : '');
 
-      // Прозрачный веб-поиск
-      const webSearchContext = await getSearchContext(transcribedText);
+      const [memoryContextRaw, webSearchContext] = await Promise.all([
+        memoryContextBuilder.buildContext(userId, telegramInfo).catch((err) => {
+          telegramLogger.warn({ error: err, userId }, 'Failed to build memory context for voice');
+          return '';
+        }),
+        getSearchContext(transcribedText),
+      ]);
+
+      const memoryContext = timeContext + (memoryContextRaw ? '\n' + memoryContextRaw : '');
 
       // Add user message to history
       ctx.session.messageHistory.push({
@@ -1353,63 +1354,47 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         content: aiResponse.content,
       });
 
-      // Update user profile stats (fire and forget)
-      userProfileRepo.updateOnMessage(userId, 'voice', aiResponse.tokens_used.total, telegramInfo).catch(() => {});
-
-      // Log AI response (fire and forget)
-      const responseTime = Date.now() - startTime;
-      userLogsRepo.add(userId, 'ai_response', aiResponse.content, {
-        chatId,
-        type: 'voice',
-        responseLength: aiResponse.content.length,
-      }, {
-        model: aiResponse.model,
-        tokensPrompt: aiResponse.tokens_used.prompt,
-        tokensCompletion: aiResponse.tokens_used.completion,
-        responseTimeMs: responseTime,
-      }).catch(() => {});
-
-      // Extract facts from conversation (async, don't wait)
-      memoryExtractor.extractFacts(userId, transcribedText, aiResponse.content).catch(() => {});
-
-      // Save to database
-      const userMsg: Message = {
-        role: 'user',
-        content: transcribedText,
-        timestamp: new Date().toISOString(),
-        metadata: { type: 'voice', voice_duration: duration },
-      };
-      const assistantMsg: Message = {
-        role: 'assistant',
-        content: aiResponse.content,
-        timestamp: new Date().toISOString(),
-        metadata: {
-          tokens_used: aiResponse.tokens_used.total,
-          model: aiResponse.model,
-        },
-      };
-
-      await conversationsRepo.addMessage(ctx.session.conversationId, userMsg);
-      await conversationsRepo.addMessage(ctx.session.conversationId, assistantMsg);
-
-      // Log analytics
-      await analyticsRepo.log('ai_response', 'telegram', {
-        userId,
-        type: 'voice',
-        model: aiResponse.model,
-        tokens: aiResponse.tokens_used.total,
-        transcription_length: transcribedText.length,
-      });
-
-      // Send response with inline buttons
+      // === ОПТИМИЗАЦИЯ: отправляем ответ СРАЗУ, до записи в БД ===
       const responseKeyboard = new InlineKeyboard()
         .text('📌 В заметки', 'save_to_notes')
         .text('🔊 Озвучить', 'read_aloud');
 
       await sendLongMessage(ctx, aiResponse.content, responseKeyboard);
 
+      // === Fire-and-forget: все DB-записи после ответа ===
+      const responseTime = Date.now() - startTime;
+
+      userProfileRepo.updateOnMessage(userId, 'voice', aiResponse.tokens_used.total, telegramInfo).catch(() => {});
+      userLogsRepo.add(userId, 'ai_response', aiResponse.content, {
+        chatId, type: 'voice', responseLength: aiResponse.content.length,
+      }, {
+        model: aiResponse.model,
+        tokensPrompt: aiResponse.tokens_used.prompt,
+        tokensCompletion: aiResponse.tokens_used.completion,
+        responseTimeMs: responseTime,
+      }).catch(() => {});
+      memoryExtractor.extractFacts(userId, transcribedText, aiResponse.content).catch(() => {});
+
+      const nowISO = new Date().toISOString();
+      Promise.all([
+        conversationsRepo.addMessage(ctx.session.conversationId, {
+          role: 'user', content: transcribedText, timestamp: nowISO,
+          metadata: { type: 'voice', voice_duration: duration },
+        }),
+        conversationsRepo.addMessage(ctx.session.conversationId, {
+          role: 'assistant', content: aiResponse.content, timestamp: nowISO,
+          metadata: { tokens_used: aiResponse.tokens_used.total, model: aiResponse.model },
+        }),
+        analyticsRepo.log('ai_response', 'telegram', {
+          userId, type: 'voice', model: aiResponse.model,
+          tokens: aiResponse.tokens_used.total,
+        }),
+      ]).catch((err) => {
+        telegramLogger.warn({ error: err, userId }, 'Background voice DB writes failed');
+      });
+
       telegramLogger.info(
-        { userId, tokens: aiResponse.tokens_used.total },
+        { userId, tokens: aiResponse.tokens_used.total, responseTimeMs: responseTime },
         'Voice response sent'
       );
     } catch (error) {
@@ -1418,12 +1403,12 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
       const errorCode = getErrorCode(error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       
-      await analyticsRepo.log('error', 'telegram', {
+      analyticsRepo.log('error', 'telegram', {
         userId,
         type: 'voice',
         error: errorMessage,
         errorCode,
-      });
+      }).catch(() => {});
 
       // Детальные сообщения об ошибках
       let userMessage = '😔 Не удалось обработать голосовое сообщение. Попробуй ещё раз или отправь текст.';

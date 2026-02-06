@@ -49,55 +49,62 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
     };
   });
 
-  // Readiness check (with dependencies)
+  // === ОПТИМИЗАЦИЯ: Health/Ready/Status кешируются на 10 секунд ===
+  const HEALTH_CACHE_TTL = 10_000;
+  let healthCache: { checks: Record<string, boolean>; ts: number } | null = null;
+
   server.get('/ready', async () => {
-    const checks: Record<string, boolean> = {
-      database: false,
-      ai: false,
+    const now = Date.now();
+    if (healthCache && now - healthCache.ts < HEALTH_CACHE_TTL) {
+      const allHealthy = Object.values(healthCache.checks).every(Boolean);
+      return { status: allHealthy ? 'ready' : 'degraded', checks: healthCache.checks, timestamp: new Date().toISOString(), cached: true };
+    }
+
+    const checks: Record<string, boolean> = { database: false, ai: false };
+
+    // Проверки параллельно
+    const dbCheck = async (): Promise<boolean> => {
+      try {
+        const { error } = await getSupabase().from('settings').select('key').limit(1);
+        return !error;
+      } catch { return false; }
     };
-
-    try {
-      const supabase = getSupabase();
-      const { error } = await supabase.from('settings').select('key').limit(1);
-      checks['database'] = !error;
-    } catch {
-      checks['database'] = false;
-    }
-
-    try {
-      checks['ai'] = await aiService.testConnection();
-    } catch {
-      checks['ai'] = false;
-    }
+    const [dbOk, aiOk] = await Promise.all([
+      dbCheck(),
+      aiService.testConnection().catch(() => false),
+    ]);
+    checks['database'] = dbOk;
+    checks['ai'] = aiOk;
+    healthCache = { checks, ts: now };
 
     const allHealthy = Object.values(checks).every(Boolean);
-
-    return {
-      status: allHealthy ? 'ready' : 'degraded',
-      checks,
-      timestamp: new Date().toISOString(),
-    };
+    return { status: allHealthy ? 'ready' : 'degraded', checks, timestamp: new Date().toISOString() };
   });
 
-  // API endpoint for service status (used by admin dashboard)
   server.get('/api/status', async () => {
-    const checks: Record<string, { ready: boolean; engine: string }> = {
-      telegram: { ready: true, engine: 'grammy' },
-      ai: { ready: false, engine: 'OpenRouter' },
-      database: { ready: false, engine: 'Supabase' },
+    const now = Date.now();
+    // Reuse ready cache
+    if (!healthCache || now - healthCache.ts >= HEALTH_CACHE_TTL) {
+      const dbCheck = async (): Promise<boolean> => {
+        try {
+          const { error } = await getSupabase().from('settings').select('key').limit(1);
+          return !error;
+        } catch { return false; }
+      };
+      const [dbOk, aiOk] = await Promise.all([
+        dbCheck(),
+        aiService.testConnection().catch(() => false),
+      ]);
+      healthCache = { checks: { database: dbOk, ai: aiOk }, ts: now };
+    }
+    return {
+      checks: {
+        telegram: { ready: true, engine: 'grammy' },
+        ai: { ready: healthCache.checks['ai'] ?? false, engine: 'OpenRouter' },
+        database: { ready: healthCache.checks['database'] ?? false, engine: 'Supabase' },
+      },
+      timestamp: new Date().toISOString(),
     };
-
-    try {
-      checks['ai'] = { ready: await aiService.testConnection(), engine: 'OpenRouter' };
-    } catch { /* ignore */ }
-
-    try {
-      const supabase = getSupabase();
-      const { error } = await supabase.from('settings').select('key').limit(1);
-      checks['database'] = { ready: !error, engine: 'Supabase' };
-    } catch { /* ignore */ }
-
-    return { checks, timestamp: new Date().toISOString() };
   });
 
   // API routes for admin panel - stats

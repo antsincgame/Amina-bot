@@ -39,11 +39,22 @@ export const getSupabase = (): SupabaseClient => {
 };
 
 // --------------------------------------------
-// Settings Repository
+// Settings Repository (with in-memory cache)
 // --------------------------------------------
+
+/** Кеш настроек: ключ → { value, timestamp } */
+const SETTINGS_CACHE = new Map<string, { value: string | null; ts: number }>();
+/** TTL кеша настроек — 5 минут. Настройки меняются редко. */
+const SETTINGS_CACHE_TTL = 5 * 60 * 1000;
 
 export const settingsRepo = {
   async get(key: string): Promise<string | null> {
+    // Проверяем кеш
+    const cached = SETTINGS_CACHE.get(key);
+    if (cached && Date.now() - cached.ts < SETTINGS_CACHE_TTL) {
+      return cached.value;
+    }
+
     const { data, error } = await getSupabase()
       .from('settings')
       .select('value')
@@ -51,12 +62,17 @@ export const settingsRepo = {
       .single();
 
     if (error) {
-      if (isNotFoundError(error)) return null;
+      if (isNotFoundError(error)) {
+        SETTINGS_CACHE.set(key, { value: null, ts: Date.now() });
+        return null;
+      }
       dbLogger.error({ error, key }, 'Failed to get setting');
       throw error;
     }
 
-    return (data as { value: string } | null)?.value ?? null;
+    const value = (data as { value: string } | null)?.value ?? null;
+    SETTINGS_CACHE.set(key, { value, ts: Date.now() });
+    return value;
   },
 
   async set(key: string, value: string): Promise<void> {
@@ -71,6 +87,9 @@ export const settingsRepo = {
       dbLogger.error({ error, key }, 'Failed to set setting');
       throw error;
     }
+
+    // Инвалидируем кеш при записи
+    SETTINGS_CACHE.set(key, { value, ts: Date.now() });
   },
 
   async getAll(): Promise<Settings[]> {
@@ -84,24 +103,68 @@ export const settingsRepo = {
       throw error;
     }
 
-    return (data as Settings[]) ?? [];
+    const settings = (data as Settings[]) ?? [];
+
+    // Обновляем кеш всех полученных настроек
+    const now = Date.now();
+    for (const s of settings) {
+      SETTINGS_CACHE.set(s.key, { value: s.value, ts: now });
+    }
+
+    return settings;
   },
 
   async getMany(keys: string[]): Promise<Record<string, string>> {
+    // Проверяем какие ключи есть в кеше
+    const now = Date.now();
+    const result: Record<string, string> = {};
+    const missedKeys: string[] = [];
+
+    for (const key of keys) {
+      const cached = SETTINGS_CACHE.get(key);
+      if (cached && now - cached.ts < SETTINGS_CACHE_TTL) {
+        if (cached.value !== null) {
+          result[key] = cached.value;
+        }
+      } else {
+        missedKeys.push(key);
+      }
+    }
+
+    // Если всё в кеше — не ходим в БД
+    if (missedKeys.length === 0) {
+      return result;
+    }
+
     const { data, error } = await getSupabase()
       .from('settings')
       .select('key, value')
-      .in('key', keys);
+      .in('key', missedKeys);
 
     if (error) {
-      dbLogger.error({ error, keys }, 'Failed to get settings');
+      dbLogger.error({ error, keys: missedKeys }, 'Failed to get settings');
       throw error;
     }
 
-    return ((data as { key: string; value: string }[]) ?? []).reduce(
-      (acc, { key, value }) => ({ ...acc, [key]: value }),
-      {} as Record<string, string>
-    );
+    const fetched = (data as { key: string; value: string }[]) ?? [];
+    for (const { key, value } of fetched) {
+      result[key] = value;
+      SETTINGS_CACHE.set(key, { value, ts: now });
+    }
+
+    // Кешируем отсутствующие ключи как null
+    for (const key of missedKeys) {
+      if (!result[key]) {
+        SETTINGS_CACHE.set(key, { value: null, ts: now });
+      }
+    }
+
+    return result;
+  },
+
+  /** Инвалидировать весь кеш настроек (используется при обновлении из админки) */
+  invalidateCache(): void {
+    SETTINGS_CACHE.clear();
   },
 };
 

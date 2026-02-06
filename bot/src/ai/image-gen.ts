@@ -5,9 +5,21 @@
  * Бесплатно, через hf-inference провайдер.
  */
 
-import { InferenceClient } from '@huggingface/inference';
+// === ОПТИМИЗАЦИЯ: lazy import @huggingface/inference (~2MB) ===
+// Загружается только при первом вызове generateImage()
+import type { InferenceClient } from '@huggingface/inference';
 import { aiLogger } from '../config/logger.js';
 import { settingsRepo } from '../db/supabase.js';
+
+let InferenceClientClass: typeof import('@huggingface/inference').InferenceClient | null = null;
+
+async function getInferenceClientClass(): Promise<typeof import('@huggingface/inference').InferenceClient> {
+  if (!InferenceClientClass) {
+    const mod = await import('@huggingface/inference');
+    InferenceClientClass = mod.InferenceClient;
+  }
+  return InferenceClientClass;
+}
 
 // --------------------------------------------
 // Constants
@@ -82,7 +94,8 @@ async function getClient(): Promise<InferenceClient> {
   }
 
   if (!hfClient || currentHfToken !== token) {
-    hfClient = new InferenceClient(token);
+    const ClientClass = await getInferenceClientClass();
+    hfClient = new ClientClass(token);
     currentHfToken = token;
   }
 

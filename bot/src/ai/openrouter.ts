@@ -175,17 +175,32 @@ interface AIConfig {
   temperature: number;
 }
 
-const getAIConfig = async (channel: 'telegram' | 'voice'): Promise<AIConfig> => {
-  // Get settings from database
-  const settings = await settingsRepo.getMany([
-    'openrouter_model',
-    'custom_model_override',
-    'max_tokens',
-    'temperature',
-  ]);
+/** Кеш промпта (меняется редко — TTL 5 минут) */
+let cachedPrompt: { content: string; channel: string; ts: number } | null = null;
+const PROMPT_CACHE_TTL = 5 * 60 * 1000;
 
-  // Get active prompt for channel
-  const prompt = await promptsRepo.getActive(channel);
+const getAIConfig = async (channel: 'telegram' | 'voice'): Promise<AIConfig> => {
+  // === ОПТИМИЗАЦИЯ: settings (уже кешированы) + prompt параллельно ===
+  const now = Date.now();
+  const promptCached = cachedPrompt && cachedPrompt.channel === channel
+    && now - cachedPrompt.ts < PROMPT_CACHE_TTL;
+
+  const [settings, prompt] = await Promise.all([
+    settingsRepo.getMany([
+      'openrouter_model',
+      'custom_model_override',
+      'max_tokens',
+      'temperature',
+    ]),
+    promptCached
+      ? Promise.resolve({ content: cachedPrompt!.content } as { content: string })
+      : promptsRepo.getActive(channel).then(p => {
+          if (p) {
+            cachedPrompt = { content: p.content, channel, ts: now };
+          }
+          return p;
+        }),
+  ]);
 
   // Priority: custom_model_override > openrouter_model > config default
   let model = settings['openrouter_model'] ?? config.ai.model ?? 'openrouter/free';
@@ -264,8 +279,11 @@ export const aiService = {
     channel: 'telegram' | 'voice' = 'telegram',
     userMemoryContext?: string
   ): Promise<AIResponse> {
-    const aiConfig = await getAIConfig(channel);
-    const client = await getClient();
+    // === ОПТИМИЗАЦИЯ: config + client параллельно ===
+    const [aiConfig, client] = await Promise.all([
+      getAIConfig(channel),
+      getClient(),
+    ]);
 
     // Build system prompt with memory context
     let systemPrompt = aiConfig.systemPrompt;
@@ -438,8 +456,10 @@ export const aiService = {
     messages: AIMessage[],
     channel: 'telegram' | 'voice' = 'telegram'
   ): AsyncGenerator<string, AIResponse> {
-    const aiConfig = await getAIConfig(channel);
-    const client = await getClient();
+    const [aiConfig, client] = await Promise.all([
+      getAIConfig(channel),
+      getClient(),
+    ]);
 
     const fullMessages: AIMessage[] = [
       { role: 'system', content: aiConfig.systemPrompt },
