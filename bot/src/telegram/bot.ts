@@ -185,7 +185,6 @@ const setupCommands = (bot: Bot<BotContext>): void => {
       const lines = reminders.map((r, i) => {
         const date = new Date(r.scheduled_at);
         const dateStr = date.toLocaleString('ru-RU', {
-          timeZone: 'Europe/Moscow',
           day: 'numeric',
           month: 'short',
           hour: '2-digit',
@@ -393,7 +392,6 @@ const setupCommands = (bot: Bot<BotContext>): void => {
         const date = new Date(n.created_at).toLocaleDateString('ru-RU', {
           day: 'numeric',
           month: 'short',
-          timeZone: 'Europe/Moscow',
         });
         return `${i + 1}. ${n.content}\n   _${date}_`;
       });
@@ -1758,18 +1756,17 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
 const WEEKDAYS_RU = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
 
 /**
- * Контекст времени суток + день недели + имя для system prompt
+ * Контекст времени суток + день недели + имя для system prompt.
+ * TZ=Europe/Moscow → new Date() уже в московском времени.
  */
 const buildTimeContext = (firstName?: string): string => {
   const now = new Date();
-  const moscowTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Moscow' }));
-  const hour = moscowTime.getHours();
-  const day = WEEKDAYS_RU[moscowTime.getDay()];
-  const dateStr = moscowTime.toLocaleDateString('ru-RU', {
+  const hour = now.getHours();
+  const day = WEEKDAYS_RU[now.getDay()] ?? 'неизвестно';
+  const dateStr = now.toLocaleDateString('ru-RU', {
     day: 'numeric',
     month: 'long',
     year: 'numeric',
-    timeZone: 'Europe/Moscow',
   });
 
   let greeting = '';
@@ -1780,7 +1777,7 @@ const buildTimeContext = (firstName?: string): string => {
 
   const nameStr = firstName ? `Имя пользователя: ${firstName}.` : '';
 
-  return `[Контекст: ${dateStr}, ${day}, ${greeting} (${hour}:${String(moscowTime.getMinutes()).padStart(2, '0')} МСК). ${nameStr}]`;
+  return `[Контекст: ${dateStr}, ${day}, ${greeting} (${hour}:${String(now.getMinutes()).padStart(2, '0')} МСК). ${nameStr}]`;
 };
 
 // --------------------------------------------

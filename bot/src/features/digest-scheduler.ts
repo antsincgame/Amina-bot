@@ -2,6 +2,7 @@
  * Morning Digest Scheduler
  * 
  * Каждую минуту проверяет, не пора ли отправить утренний дайджест.
+ * Сервер работает в TZ=Europe/Moscow — new Date() уже в московском времени.
  * 
  * Логика:
  * 1. Perplexity (sonar-reasoning-pro) ищет: погоду, новости города, мировые новости
@@ -37,7 +38,7 @@ export function startDigestScheduler(bot: BotLike): void {
     return;
   }
 
-  appLogger.info('Starting morning digest scheduler');
+  appLogger.info('Starting morning digest scheduler (TZ=Europe/Moscow)');
 
   // Очищаем sent-кеш в полночь
   resetSentCacheAtMidnight();
@@ -77,30 +78,19 @@ export async function sendDigestNow(
 }
 
 /**
- * Сбросить кеш отправленных дайджестов в полночь (Москва)
+ * Сбросить кеш отправленных дайджестов в полночь
+ * TZ=Europe/Moscow → new Date().getHours() возвращает московское время
  */
 function resetSentCacheAtMidnight(): void {
-  const now = new Date();
-  const moscowHour = getMoscowHour(now);
-
-  if (moscowHour === 0) {
+  if (new Date().getHours() === 0) {
     SENT_TODAY.clear();
   }
 
   setInterval(() => {
-    const h = getMoscowHour(new Date());
-    if (h === 0) {
+    if (new Date().getHours() === 0) {
       SENT_TODAY.clear();
     }
   }, 60 * 60 * 1000).unref();
-}
-
-/**
- * Получить текущий час по Москве
- */
-function getMoscowHour(date: Date): number {
-  const moscowTime = new Date(date.toLocaleString('en-US', { timeZone: 'Europe/Moscow' }));
-  return moscowTime.getHours();
 }
 
 /**
@@ -111,8 +101,7 @@ async function processDigests(bot: BotLike): Promise<void> {
   isProcessing = true;
 
   try {
-    const now = new Date();
-    const currentHour = getMoscowHour(now);
+    const currentHour = new Date().getHours();
 
     const users = await userPrefsRepo.getDigestUsers(currentHour);
     if (users.length === 0) return;
@@ -197,17 +186,20 @@ async function buildDigest(
   }
 
   // 4. Напоминания на сегодня (из БД)
+  // TZ=Europe/Moscow → toLocaleDateString даёт московскую дату
   try {
     const reminders = await remindersRepo.getByUser(userId);
-    const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
+    const todayStr = new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD в локальном TZ
 
-    const todayReminders = reminders.filter(r => r.scheduled_at.split('T')[0] === todayStr);
+    const todayReminders = reminders.filter(r => {
+      const reminderDate = new Date(r.scheduled_at).toLocaleDateString('sv-SE');
+      return reminderDate === todayStr;
+    });
 
     if (todayReminders.length > 0) {
       const lines = todayReminders.map(r => {
         const time = new Date(r.scheduled_at).toLocaleTimeString('ru-RU', {
-          hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Moscow',
+          hour: '2-digit', minute: '2-digit',
         });
         return `${time} — ${r.task}`;
       });
@@ -227,10 +219,9 @@ async function buildDigest(
   // --- Передаём сырые данные в LLM для эмоциональной обработки ---
 
   const nameStr = firstName || 'друг';
-  const now = new Date();
-  const moscowDate = now.toLocaleDateString('ru-RU', {
+  // TZ=Europe/Moscow → toLocaleDateString сразу в московском времени
+  const moscowDate = new Date().toLocaleDateString('ru-RU', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-    timeZone: 'Europe/Moscow',
   });
 
   const digestPrompt = `Ты — Amina, персональный ассистент. Сейчас ${moscowDate}.
@@ -275,9 +266,10 @@ ${rawData.join('\n\n')}
 
 /**
  * Приветствие по времени суток (fallback)
+ * TZ=Europe/Moscow → getHours() = московское время
  */
 function getTimeGreeting(name: string | null): string {
-  const hour = getMoscowHour(new Date());
+  const hour = new Date().getHours();
   const nameStr = name ? `, ${name}` : '';
 
   if (hour >= 5 && hour < 12) return `☀️ *Доброе утро${nameStr}!*`;

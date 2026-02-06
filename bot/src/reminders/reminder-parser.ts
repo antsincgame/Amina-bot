@@ -75,21 +75,22 @@ function extractTaskFromText(text: string): string {
 }
 
 /**
- * Форматировать время в московском часовом поясе для пользователя
+ * Форматировать время для пользователя.
+ * TZ=Europe/Moscow → toLocaleString уже в московском времени.
  */
 function formatMoscowTime(date: Date): string {
   return date.toLocaleString('ru-RU', {
-    timeZone: 'Europe/Moscow',
     hour: '2-digit',
     minute: '2-digit',
   });
 }
 
 /**
- * Форматировать ISO 8601 с московским часовым поясом
+ * Форматировать ISO 8601 с московским часовым поясом (+03:00).
+ * TZ=Europe/Moscow → toLocaleString('sv-SE') отдаёт YYYY-MM-DD HH:mm:ss.
  */
 function toMoscowISO(date: Date): string {
-  const moscowStr = date.toLocaleString('sv-SE', { timeZone: 'Europe/Moscow' });
+  const moscowStr = date.toLocaleString('sv-SE');
   return moscowStr.replace(' ', 'T') + '+03:00';
 }
 
@@ -199,10 +200,9 @@ export async function extractReminder(
   // ========= ЭТАП 2: AI с retry (для сложных случаев) =========
   aiLogger.debug({ text }, 'Regex could not parse reminder, trying AI');
 
-  // Московское время
-  const moscowTime = now.toLocaleString('sv-SE', { timeZone: 'Europe/Moscow' }).replace(' ', 'T') + '+03:00';
+  // TZ=Europe/Moscow → toLocaleString уже в московском времени
+  const moscowTime = now.toLocaleString('sv-SE').replace(' ', 'T') + '+03:00';
   const moscowReadable = now.toLocaleString('ru-RU', {
-    timeZone: 'Europe/Moscow',
     weekday: 'long',
     day: 'numeric',
     month: 'long',
