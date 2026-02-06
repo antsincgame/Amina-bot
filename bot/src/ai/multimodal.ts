@@ -431,16 +431,16 @@ export async function analyzeImageUrl(
   imageUrl: string,
   userPrompt?: string
 ): Promise<VisionAnalysisResult> {
-  const config = await getMultimodalConfig();
+  const multiConfig = await getMultimodalConfig();
   const client = await getClient();
 
   const prompt = userPrompt || 'Опиши что ты видишь на этом изображении. Будь кратким и информативным.';
 
-  aiLogger.info({ model: config.visionModel, url: imageUrl }, 'Analyzing image from URL');
+  aiLogger.info({ model: multiConfig.visionModel, url: imageUrl }, 'Analyzing image from URL');
 
   try {
     const response = await client.chat.completions.create({
-      model: config.visionModel,
+      model: multiConfig.visionModel,
       messages: [
         {
           role: 'user',
@@ -458,7 +458,7 @@ export async function analyzeImageUrl(
           ],
         },
       ],
-      max_tokens: config.maxTokens,
+      max_tokens: multiConfig.maxTokens,
     });
 
     const content = response.choices[0]?.message?.content;

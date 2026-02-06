@@ -568,7 +568,7 @@ const setupCommands = (bot: Bot<BotContext>): void => {
       // Изменение часа
       const hourMatch = arg?.match(/^(\d{1,2})$/);
       if (hourMatch) {
-        const hour = parseInt(hourMatch[1], 10);
+        const hour = parseInt(hourMatch[1]!, 10);
         if (hour < 0 || hour > 23) {
           await ctx.reply('❌ Час должен быть от 0 до 23.');
           return;
@@ -582,7 +582,7 @@ const setupCommands = (bot: Bot<BotContext>): void => {
       // Изменение города
       const cityMatch = arg?.match(/^город\s+(.+)$/i);
       if (cityMatch) {
-        const city = cityMatch[1].trim();
+        const city = cityMatch[1]!.trim();
         await userPrefsRepo.getOrCreate(userId, chatId, ctx.from?.first_name);
         await userPrefsRepo.update(userId, { digest_city: city });
         await ctx.reply(`🏙 Город для погоды: *${city}*`, { parse_mode: 'Markdown' });
@@ -674,7 +674,7 @@ const setupCommands = (bot: Bot<BotContext>): void => {
   // Callback для кнопок "✅ 1", "✅ 2" и т.д.
   bot.callbackQuery(/^todo_done_(\d+)$/, async (ctx) => {
     const userId = ctx.from?.id.toString() ?? 'unknown';
-    const index = parseInt(ctx.match[1], 10);
+    const index = parseInt(ctx.match![1]!, 10);
 
     try {
       const done = await todosRepo.markDone(userId, index);
@@ -923,7 +923,7 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
       // === Автодетекция TTS: "скажи голосом...", "озвучь..." ===
       const ttsMatch = userMessage.match(/^(скажи голосом|озвучь|произнеси|read aloud)\s+(.+)/i);
       if (ttsMatch) {
-        const ttsText = ttsMatch[2].trim();
+        const ttsText = ttsMatch[2]!.trim();
         if (ttsText) {
           await ctx.replyWithChatAction('record_voice');
           try {
@@ -944,7 +944,7 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
       // === Автодетекция заметок: "запомни ...", "запиши ..." ===
       const noteMatch = userMessage.match(/^(запомни|запиши|сохрани заметку)\s+(.+)/i);
       if (noteMatch) {
-        const noteContent = noteMatch[2].trim();
+        const noteContent = noteMatch[2]!.trim();
         if (noteContent) {
           try {
             await notesRepo.create(userId, noteContent);
@@ -1090,30 +1090,30 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
       }).catch(() => {});
 
       // Подробные сообщения об ошибках для пользователя
-      let userMessage = '😔 Извини, произошла ошибка. Попробуй ещё раз или напиши /clear для сброса диалога.';
+      let errorReply = '😔 Извини, произошла ошибка. Попробуй ещё раз или напиши /clear для сброса диалога.';
       
       if (errorCode === 'MODEL_NOT_FOUND' || errorMessage.includes('MODEL_NOT_FOUND')) {
-        userMessage = `❌ Модель AI не найдена!\n\n` +
+        errorReply = `❌ Модель AI не найдена!\n\n` +
           `Текущая модель не существует на OpenRouter.\n` +
           `Администратор должен изменить модель в настройках:\n` +
           `https://amina-admin.onrender.com/settings`;
       } else if (errorCode === 'AUTH_ERROR' || errorMessage.includes('AUTH_ERROR')) {
-        userMessage = `🔑 Ошибка авторизации AI!\n\n` +
+        errorReply = `🔑 Ошибка авторизации AI!\n\n` +
           `Неверный API ключ OpenRouter.\n` +
           `Администратор должен проверить настройки в Render.`;
       } else if (errorCode === 'RATE_LIMIT' || errorMessage.includes('429') || errorMessage.includes('rate limit')) {
-        userMessage = `⏳ Слишком много запросов!\n\nЛимит OpenRouter превышен. Подожди минуту и попробуй снова.`;
+        errorReply = `⏳ Слишком много запросов!\n\nЛимит OpenRouter превышен. Подожди минуту и попробуй снова.`;
       } else if (errorCode === 'PAYMENT_REQUIRED') {
-        userMessage = `💳 Пополни баланс на OpenRouter или выбери бесплатную модель в админке.`;
+        errorReply = `💳 Пополни баланс на OpenRouter или выбери бесплатную модель в админке.`;
       } else if (errorCode === 'ALL_MODELS_FAILED' || errorMessage.includes('ALL_MODELS_FAILED')) {
-        userMessage = `🔄 Все бесплатные модели AI заняты.\n\nПопробуй через 30 секунд или напиши /start для сброса.`;
+        errorReply = `🔄 Все бесплатные модели AI заняты.\n\nПопробуй через 30 секунд или напиши /start для сброса.`;
       } else if (errorCode === 'RACE_TIMEOUT' || errorMessage.includes('RACE_TIMEOUT')) {
-        userMessage = `⏰ AI отвечает слишком долго.\n\nПопробуй ещё раз — может повезёт быстрее!`;
+        errorReply = `⏰ AI отвечает слишком долго.\n\nПопробуй ещё раз — может повезёт быстрее!`;
       } else if (errorCode === 'SERVER_ERROR' || errorMessage.includes('500') || errorMessage.includes('502')) {
-        userMessage = `🔧 Сервер AI временно недоступен.\n\nПопробуй через несколько минут.`;
+        errorReply = `🔧 Сервер AI временно недоступен.\n\nПопробуй через несколько минут.`;
       }
 
-      await ctx.reply(userMessage);
+      await ctx.reply(errorReply);
     }
   });
 
@@ -1133,11 +1133,11 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
       return;
     }
 
-    await analyticsRepo.log('message_received', 'telegram', {
+    analyticsRepo.log('message_received', 'telegram', {
       userId,
       type: 'voice',
       duration,
-    });
+    }).catch(() => {});
 
     // Show typing indicator
     await ctx.replyWithChatAction('typing');
@@ -1145,9 +1145,12 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
     try {
       // Download voice file
       const file = await ctx.getFile();
+      if (!file.file_path) {
+        throw Object.assign(new Error('Telegram не вернул путь к файлу'), { code: 'FILE_NOT_FOUND' });
+      }
       const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
       
-      telegramLogger.debug({ fileUrl }, 'Downloading voice file');
+      telegramLogger.debug({ filePath: file.file_path }, 'Downloading voice file');
       
       const response = await fetch(fileUrl);
       if (!response.ok) {
@@ -1411,27 +1414,27 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
       }).catch(() => {});
 
       // Детальные сообщения об ошибках
-      let userMessage = '😔 Не удалось обработать голосовое сообщение. Попробуй ещё раз или отправь текст.';
+      let errorReply = '😔 Не удалось обработать голосовое сообщение. Попробуй ещё раз или отправь текст.';
       
       if (errorCode === 'AUDIO_MODEL_NOT_FOUND') {
-        userMessage = `🔧 Audio модель не найдена на OpenRouter.\n\nОбратитесь к администратору для настройки модели в админке.`;
+        errorReply = `🔧 Audio модель не найдена на OpenRouter.\n\nОбратитесь к администратору для настройки модели в админке.`;
       } else if (errorCode === 'AUDIO_NOT_SUPPORTED') {
-        userMessage = `🔧 Выбранная модель не поддерживает аудио.\n\nОбратитесь к администратору для смены модели.`;
+        errorReply = `🔧 Выбранная модель не поддерживает аудио.\n\nОбратитесь к администратору для смены модели.`;
       } else if (errorCode === 'AUTH_ERROR' || errorCode === 'GROQ_AUTH_ERROR') {
-        userMessage = '🔑 Ошибка авторизации API. Обратитесь к администратору.';
+        errorReply = '🔑 Ошибка авторизации API. Обратитесь к администратору.';
       } else if (errorCode === 'RATE_LIMIT') {
-        userMessage = '⏳ Слишком много запросов!\n\nПодожди минуту и попробуй снова.';
+        errorReply = '⏳ Слишком много запросов!\n\nПодожди минуту и попробуй снова.';
       } else if (errorCode === 'ALL_MODELS_FAILED') {
-        userMessage = '🔄 Все бесплатные модели AI заняты.\n\nПопробуй через 30 секунд.';
+        errorReply = '🔄 Все бесплатные модели AI заняты.\n\nПопробуй через 30 секунд.';
       } else if (errorCode === 'RACE_TIMEOUT') {
-        userMessage = '⏰ AI отвечает слишком долго.\n\nПопробуй ещё раз!';
+        errorReply = '⏰ AI отвечает слишком долго.\n\nПопробуй ещё раз!';
       } else if (errorCode === 'SERVER_ERROR') {
-        userMessage = '🔧 Сервер AI временно недоступен.\n\nПопробуй через несколько минут.';
+        errorReply = '🔧 Сервер AI временно недоступен.\n\nПопробуй через несколько минут.';
       } else if (errorCode === 'FILE_TOO_LARGE') {
-        userMessage = '📁 Голосовое сообщение слишком длинное.\n\nПопробуй записать сообщение короче.';
+        errorReply = '📁 Голосовое сообщение слишком длинное.\n\nПопробуй записать сообщение короче.';
       }
 
-      await ctx.reply(userMessage);
+      await ctx.reply(errorReply);
     }
   });
 
@@ -1470,9 +1473,12 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
       
       // Download photo
       const file = await ctx.api.getFile(largestPhoto.file_id);
+      if (!file.file_path) {
+        throw Object.assign(new Error('Telegram не вернул путь к файлу'), { code: 'FILE_NOT_FOUND' });
+      }
       const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
       
-      telegramLogger.debug({ fileUrl, width: largestPhoto.width, height: largestPhoto.height }, 'Downloading photo');
+      telegramLogger.debug({ filePath: file.file_path, width: largestPhoto.width, height: largestPhoto.height }, 'Downloading photo');
       
       const response = await fetch(fileUrl);
       if (!response.ok) {
@@ -1629,6 +1635,9 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
     try {
       // Download document
       const file = await ctx.getFile();
+      if (!file.file_path) {
+        throw Object.assign(new Error('Telegram не вернул путь к файлу'), { code: 'FILE_NOT_FOUND' });
+      }
       const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
       
       const response = await fetch(fileUrl);
@@ -1843,8 +1852,9 @@ const sendLongMessage = async (
   text: string,
   keyboard?: InlineKeyboard
 ): Promise<void> => {
-  // Разбиваем текст на чанки
-  const chunks = splitIntoChunks(text);
+  // Конвертируем в HTML ПЕРЕД разбиением (HTML может быть длиннее исходника)
+  const htmlText = markdownToTelegramHtml(text);
+  const chunks = splitIntoChunks(htmlText);
 
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
@@ -1857,8 +1867,7 @@ const sendLongMessage = async (
 
     // Попробуем HTML → при ошибке plain text без markdown
     try {
-      const htmlChunk = markdownToTelegramHtml(chunk);
-      await ctx.reply(htmlChunk, { ...options, parse_mode: 'HTML' });
+      await ctx.reply(chunk, { ...options, parse_mode: 'HTML' });
     } catch {
       // Telegram отклонил HTML — отправляем чистый текст
       const plainChunk = stripMarkdown(chunk);

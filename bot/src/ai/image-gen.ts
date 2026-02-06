@@ -59,6 +59,7 @@ let hfTokenCacheTime: number = 0;
 
 /**
  * Получить HF токен из БД
+ * НЕ обновляет currentHfToken — это делает только getClient()
  */
 async function getHfToken(): Promise<string | null> {
   const now = Date.now();
@@ -70,10 +71,10 @@ async function getHfToken(): Promise<string | null> {
   try {
     const token = await settingsRepo.get('hf_token');
     if (token) {
-      currentHfToken = token;
       hfTokenCacheTime = now;
+      return token;
     }
-    return token || null;
+    return null;
   } catch (error) {
     aiLogger.error({ error }, 'Failed to get HF token from DB');
     return currentHfToken || null;
@@ -82,6 +83,7 @@ async function getHfToken(): Promise<string | null> {
 
 /**
  * Получить HF клиент
+ * Пересоздаёт клиент если токен изменился
  */
 async function getClient(): Promise<InferenceClient> {
   const token = await getHfToken();
@@ -93,6 +95,7 @@ async function getClient(): Promise<InferenceClient> {
     );
   }
 
+  // Пересоздаём клиент если токен изменился
   if (!hfClient || currentHfToken !== token) {
     const ClientClass = await getInferenceClientClass();
     hfClient = new ClientClass(token);
@@ -159,26 +162,29 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
   aiLogger.info({ prompt, model: DEFAULT_MODEL }, 'Generating image via HF FLUX.1-schnell');
 
   try {
-    // AbortController для таймаута — защита от зависших запросов
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), GENERATION_TIMEOUT_MS);
+    // Promise.race для таймаута — HF InferenceClient не поддерживает AbortSignal
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        reject(Object.assign(
+          new Error('Генерация заняла слишком долго. Попробуй более простой промпт.'),
+          { code: 'HF_TIMEOUT', name: 'AbortError' }
+        ));
+      }, GENERATION_TIMEOUT_MS);
+    });
 
-    let imageBlob: Blob;
-    try {
-      // InferenceClient не сохраняет overload-типы, поэтому cast необходим.
-      // По умолчанию (без outputType) textToImage возвращает Blob.
-      const result = await client.textToImage({
+    // InferenceClient не сохраняет overload-типы, поэтому cast необходим.
+    // По умолчанию (без outputType) textToImage возвращает Blob.
+    const imageBlob = await Promise.race([
+      client.textToImage({
         model: DEFAULT_MODEL,
         inputs: prompt,
         provider: HF_PROVIDER,
         parameters: {
           num_inference_steps: 4,
         },
-      });
-      imageBlob = result as unknown as Blob;
-    } finally {
-      clearTimeout(timeoutId);
-    }
+      }) as unknown as Promise<Blob>,
+      timeoutPromise,
+    ]);
 
     // Blob → Buffer (совместимо с Node.js 18+)
     const arrayBuffer = await imageBlob.arrayBuffer();

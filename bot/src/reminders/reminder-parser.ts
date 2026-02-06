@@ -87,10 +87,16 @@ function formatMoscowTime(date: Date): string {
 
 /**
  * Форматировать ISO 8601 с московским часовым поясом (+03:00).
- * TZ=Europe/Moscow → toLocaleString('sv-SE') отдаёт YYYY-MM-DD HH:mm:ss.
+ * Явно указываем timeZone: 'Europe/Moscow' для надёжности (не зависим от TZ env).
  */
 function toMoscowISO(date: Date): string {
-  const moscowStr = date.toLocaleString('sv-SE');
+  const fmt = new Intl.DateTimeFormat('sv-SE', {
+    timeZone: 'Europe/Moscow',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: false,
+  });
+  const moscowStr = fmt.format(date);
   return moscowStr.replace(' ', 'T') + '+03:00';
 }
 
@@ -110,7 +116,7 @@ function parseSimpleTime(text: string): RegexTimeMatch | null {
   // "через N минут(у/ы)"
   const minuteMatch = text.match(/через\s+(\d+)\s*(минут\w*|мин)/i);
   if (minuteMatch) {
-    const n = parseInt(minuteMatch[1], 10);
+    const n = parseInt(minuteMatch[1]!, 10);
     if (n >= 1 && n <= 1440) { // от 1 мин до 24 часов
       return { offsetMs: n * MINUTE_MS, label: `через ${n} мин.` };
     }
@@ -119,7 +125,7 @@ function parseSimpleTime(text: string): RegexTimeMatch | null {
   // "через N час(ов/а)"
   const hourMatch = text.match(/через\s+(\d+)\s*(час\w*)/i);
   if (hourMatch) {
-    const n = parseInt(hourMatch[1], 10);
+    const n = parseInt(hourMatch[1]!, 10);
     if (n >= 1 && n <= 72) {
       const hoursLabel = n === 1 ? 'час' : (n < 5 ? 'часа' : 'часов');
       return { offsetMs: n * HOUR_MS, label: `через ${n} ${hoursLabel}` };

@@ -68,12 +68,10 @@ async function processReminders(bot: BotLike): Promise<void> {
 
     for (const reminder of dueReminders) {
       try {
-        // Формируем сообщение
-        const message = `🔔 **Напоминание**\n\n${reminder.task}`;
+        // Формируем сообщение (без parse_mode для надёжности)
+        const message = `🔔 Напоминание\n\n${reminder.task}`;
 
-        await bot.api.sendMessage(reminder.chat_id, message, {
-          parse_mode: 'Markdown',
-        });
+        await bot.api.sendMessage(reminder.chat_id, message);
 
         // Помечаем как выполненное
         await remindersRepo.markCompleted(reminder.id);
@@ -98,6 +96,7 @@ async function processReminders(bot: BotLike): Promise<void> {
             'Failed to send reminder'
           );
           // Не помечаем completed — попробуем снова через 30 сек
+          // TODO: добавить retry_count колонку чтобы не ретраить бесконечно
         }
       }
     }

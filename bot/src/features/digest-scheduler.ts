@@ -27,6 +27,7 @@ const CHECK_INTERVAL_MS = 60_000; // 1 минута
 const SENT_TODAY = new Set<string>(); // Защита от повторной отправки
 
 let digestInterval: ReturnType<typeof setInterval> | null = null;
+let midnightResetInterval: ReturnType<typeof setInterval> | null = null;
 let isProcessing = false;
 
 /**
@@ -59,8 +60,12 @@ export function stopDigestScheduler(): void {
   if (digestInterval) {
     clearInterval(digestInterval);
     digestInterval = null;
-    appLogger.info('Digest scheduler stopped');
   }
+  if (midnightResetInterval) {
+    clearInterval(midnightResetInterval);
+    midnightResetInterval = null;
+  }
+  appLogger.info('Digest scheduler stopped');
 }
 
 /**
@@ -74,7 +79,13 @@ export async function sendDigestNow(
   city: string
 ): Promise<void> {
   const digestText = await buildDigest(userId, firstName, city);
-  await bot.api.sendMessage(chatId, digestText, { parse_mode: 'Markdown' });
+  try {
+    await bot.api.sendMessage(chatId, digestText);
+  } catch {
+    // Fallback: отправляем без форматирования
+    const plainText = digestText.replace(/[*_`~[\]()]/g, '');
+    await bot.api.sendMessage(chatId, plainText);
+  }
 }
 
 /**
@@ -86,11 +97,13 @@ function resetSentCacheAtMidnight(): void {
     SENT_TODAY.clear();
   }
 
-  setInterval(() => {
+  midnightResetInterval = setInterval(() => {
     if (new Date().getHours() === 0) {
       SENT_TODAY.clear();
+      appLogger.debug('Digest SENT_TODAY cache cleared at midnight');
     }
-  }, 60 * 60 * 1000).unref();
+  }, 60 * 60 * 1000);
+  midnightResetInterval.unref();
 }
 
 /**
@@ -113,9 +126,13 @@ async function processDigests(bot: BotLike): Promise<void> {
       try {
         const digestText = await buildDigest(user.user_id, user.first_name, user.digest_city);
 
-        await bot.api.sendMessage(user.chat_id, digestText, {
-          parse_mode: 'Markdown',
-        });
+        try {
+          await bot.api.sendMessage(user.chat_id, digestText);
+        } catch {
+          // Fallback: отправляем без форматирования
+          const plainText = digestText.replace(/[*_`~[\]()]/g, '');
+          await bot.api.sendMessage(user.chat_id, plainText);
+        }
 
         SENT_TODAY.add(cacheKey);
         appLogger.info({ userId: user.user_id, hour: currentHour, city: user.digest_city }, 'Digest sent');

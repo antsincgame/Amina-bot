@@ -2,9 +2,8 @@ import OpenAI from 'openai';
 import { config, getApiKeys } from '../config/index.js';
 import { aiLogger } from '../config/logger.js';
 import { settingsRepo, promptsRepo } from '../db/supabase.js';
-import type { AIRequest, AIResponse, AIMessage } from '../../../shared/types/index.js';
-import { validateChannel, validateMessageContent, MAX_MESSAGE_LENGTH } from '../utils/validation.js';
-import { handleAIError, AppError } from '../utils/error-handler.js';
+import type { AIResponse, AIMessage } from '../../../shared/types/index.js';
+import { AppError } from '../utils/error-handler.js';
 
 // --------------------------------------------
 // Динамический поиск бесплатных моделей через OpenRouter API
@@ -65,9 +64,14 @@ async function fetchFreeModels(): Promise<string[]> {
       }>;
     };
     
+    // Валидация ответа API
+    if (!data?.data || !Array.isArray(data.data)) {
+      throw new Error('Unexpected OpenRouter API response format');
+    }
+
     // Фильтруем бесплатные модели (pricing = 0)
     const freeModels = data.data
-      .filter(m => m.pricing.prompt === '0' && m.pricing.completion === '0')
+      .filter(m => m.pricing?.prompt === '0' && m.pricing?.completion === '0')
       .filter(m => (m.context_length || 0) >= 4096) // Минимум 4K контекст
       .map(m => m.id)
       .slice(0, 15); // Максимум 15 моделей для гонки
@@ -204,10 +208,14 @@ const getAIConfig = async (channel: 'telegram' | 'voice'): Promise<AIConfig> => 
 
   // Priority: custom_model_override > openrouter_model > config default
   let model = settings['openrouter_model'] ?? config.ai.model ?? 'openrouter/free';
-  let modelSource = 'database';
+  let modelSource: string;
   
-  if (!settings['openrouter_model']) {
-    modelSource = settings['openrouter_model'] ? 'database' : (config.ai.model ? 'env_config' : 'default_fallback');
+  if (settings['openrouter_model']) {
+    modelSource = 'database';
+  } else if (config.ai.model) {
+    modelSource = 'env_config';
+  } else {
+    modelSource = 'default_fallback';
   }
   
   if (settings['custom_model_override'] && settings['custom_model_override'].trim()) {
@@ -226,8 +234,12 @@ const getAIConfig = async (channel: 'telegram' | 'voice'): Promise<AIConfig> => 
   return {
     model,
     systemPrompt: prompt?.content ?? getDefaultSystemPrompt(),
-    maxTokens: settings['max_tokens'] ? Number(settings['max_tokens']) : config.ai.maxTokens,
-    temperature: settings['temperature'] ? Number(settings['temperature']) : config.ai.temperature,
+    maxTokens: settings['max_tokens'] && !isNaN(Number(settings['max_tokens']))
+      ? Number(settings['max_tokens'])
+      : config.ai.maxTokens,
+    temperature: settings['temperature'] && !isNaN(Number(settings['temperature']))
+      ? Number(settings['temperature'])
+      : config.ai.temperature,
   };
 };
 
@@ -415,21 +427,16 @@ export const aiService = {
       
       aiLogger.info(
         { winner: winner.usedModel, tokens: winner.tokens_used.total },
-        '🏆 Race winner! Saving as new default model'
+        '🏆 Race winner used as fallback (NOT saved as default)'
       );
 
-      // Трекаем переключение
+      // Трекаем переключение (только в памяти, не перезаписываем выбор админа)
       lastFallbackSwitch = {
-        reason: `Race winner: ${winner.usedModel} (primary ${aiConfig.model} failed)`,
+        reason: `Race fallback: ${winner.usedModel} (primary ${aiConfig.model} failed)`,
         time: new Date(),
         fromModel: aiConfig.model,
         toModel: winner.usedModel,
       };
-
-      // Сохраняем победителя как новую основную модель
-      settingsRepo.set('openrouter_model', winner.usedModel).catch((err) => {
-        aiLogger.warn({ error: err }, 'Failed to save race winner model');
-      });
 
       return winner;
     } catch (raceError) {
@@ -609,7 +616,7 @@ export async function getFallbackStatus(): Promise<{
  * Принудительно обновить кэш бесплатных моделей
  */
 export async function refreshFreeModelsCache(): Promise<string[]> {
-  cachedFreeModels = null;
-  freeModelsCacheTime = 0;
-  return await fetchFreeModels();
+  // Загружаем сначала, обновляем кеш атомарно
+  const freshModels = await fetchFreeModels();
+  return freshModels;
 }

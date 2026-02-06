@@ -74,8 +74,13 @@ const PERPLEXITY_MODELS: PerplexityModel[] = [
  * Учитывает и стоимость токенов, и request fee
  */
 function getCheapestOnlineModel(): string {
+  const DEFAULT_FALLBACK_MODEL = 'sonar';
   const onlineModels = PERPLEXITY_MODELS.filter(m => m.online);
   
+  if (onlineModels.length === 0) {
+    return PERPLEXITY_MODELS[0]?.id ?? DEFAULT_FALLBACK_MODEL;
+  }
+
   // Примерно 500 токенов на запрос (250 input + 250 output)
   // Считаем общую стоимость: tokens + request_fee/1000
   const estimateCost = (m: PerplexityModel) => {
@@ -86,7 +91,7 @@ function getCheapestOnlineModel(): string {
   
   onlineModels.sort((a, b) => estimateCost(a) - estimateCost(b));
   
-  const cheapest = onlineModels[0];
+  const cheapest = onlineModels[0]!;
   const cost = estimateCost(cheapest);
   telegramLogger.debug({ model: cheapest.id, costPerRequest: cost.toFixed(6) }, 'Selected cheapest model');
   
@@ -106,7 +111,8 @@ function getModelInfo(modelId: string): PerplexityModel | undefined {
 
 let cachedPerplexityKey: string | null = null;
 let cachedPerplexityModel: string | null = null;
-let cacheLoadedAt = 0;
+let keyCacheLoadedAt = 0;
+let modelCacheLoadedAt = 0;
 const CACHE_TTL = 60 * 1000; // 1 минута
 
 async function getPerplexityApiKey(): Promise<string> {
@@ -115,20 +121,22 @@ async function getPerplexityApiKey(): Promise<string> {
     return config.perplexity.apiKey;
   }
 
-  // Проверяем кэш
+  // Проверяем кэш — только непустые ключи кешируются
   const now = Date.now();
-  if (cachedPerplexityKey && now - cacheLoadedAt < CACHE_TTL) {
+  if (cachedPerplexityKey && now - keyCacheLoadedAt < CACHE_TTL) {
     return cachedPerplexityKey;
   }
 
   // Загружаем из БД
   try {
     const key = await settingsRepo.get('perplexity_api_key');
-    cachedPerplexityKey = key || '';
-    cacheLoadedAt = now;
-    return cachedPerplexityKey;
+    if (key) {
+      cachedPerplexityKey = key;
+      keyCacheLoadedAt = now;
+    }
+    return key || '';
   } catch {
-    return '';
+    return cachedPerplexityKey || '';
   }
 }
 
@@ -139,7 +147,7 @@ async function getPerplexityApiKey(): Promise<string> {
 async function getSelectedModel(): Promise<string> {
   // Проверяем кэш
   const now = Date.now();
-  if (cachedPerplexityModel && now - cacheLoadedAt < CACHE_TTL) {
+  if (cachedPerplexityModel && now - modelCacheLoadedAt < CACHE_TTL) {
     return cachedPerplexityModel;
   }
 
@@ -148,7 +156,8 @@ async function getSelectedModel(): Promise<string> {
     const model = await settingsRepo.get('perplexity_model');
     // Проверяем что модель валидна
     const validModel = PERPLEXITY_MODELS.find(m => m.id === model);
-    cachedPerplexityModel = validModel ? model : getCheapestOnlineModel();
+    cachedPerplexityModel = validModel ? validModel.id : getCheapestOnlineModel();
+    modelCacheLoadedAt = now;
     return cachedPerplexityModel;
   } catch {
     return getCheapestOnlineModel();
@@ -214,11 +223,11 @@ const QUERY_ENHANCERS: QueryType[] = [
       return `Какой актуальный курс ${currency} к рублю сегодня? Укажи точный курс.`;
     },
   },
-  // Погода
+  // Погода ([\wа-яёА-ЯЁ]+ для поддержки кириллицы)
   {
-    pattern: /погода\s*(в\s+)?(\w+)?/i,
+    pattern: /погода/i,
     enhancer: (q) => {
-      const match = q.match(/погода\s*(?:в\s+)?(\w+)?/i);
+      const match = q.match(/погода\s*(?:в\s+)?([\wа-яёА-ЯЁ]+)?/i);
       const city = match?.[1] || 'Москве';
       return `Какая погода в ${city} сейчас? Температура, осадки, ветер.`;
     },
@@ -249,9 +258,9 @@ const QUERY_ENHANCERS: QueryType[] = [
     enhancer: (q) => {
       const today = new Date();
       const dateStr = today.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
-      // Ищем название города
-      const cityMatch = q.match(/(?:в\s+|про\s+|о\s+)?(\b[А-ЯЁ][а-яё]{2,}\b)/);
-      const city = cityMatch ? cityMatch[1] : '';
+      // Ищем название города — только после предлога "в"
+      const cityMatch = q.match(/\bв\s+([А-ЯЁ][а-яё]{2,})/);
+      const city = cityMatch ? cityMatch[1]! : '';
       const cityPart = city ? ` в ${city} и регионе` : '';
       const isYesterday = /вчера/i.test(q);
       const timePart = isYesterday ? 'за вчера' : `за сегодня (${dateStr})`;
@@ -408,7 +417,7 @@ export async function webSearch(
       throw Object.assign(new Error(`Perplexity error: ${response.status}`), { code: 'PERPLEXITY_ERROR' });
     }
 
-    const data: PerplexityResponse = await response.json();
+    const data = await response.json() as PerplexityResponse;
     const content = data.choices?.[0]?.message?.content || '';
     const citations = data.citations || [];
 
@@ -442,13 +451,17 @@ export async function webSearch(
       },
     };
   } catch (error) {
-    // Обработка таймаута
-    if (error instanceof DOMException && error.name === 'AbortError') {
+    // Обработка таймаута (совместимо с Node 18+ и старше)
+    if (error instanceof Error && error.name === 'AbortError') {
       telegramLogger.warn({ query }, 'Web search timeout (15s)');
       throw Object.assign(new Error('Web search timeout'), { code: 'PERPLEXITY_TIMEOUT' });
     }
     
-    if (typeof error === 'object' && error !== null && 'code' in error) throw error;
+    // Пробрасываем наши ошибки с PERPLEXITY_ кодами
+    if (typeof error === 'object' && error !== null && 'code' in error) {
+      const code = String((error as { code: unknown }).code);
+      if (code.startsWith('PERPLEXITY_')) throw error;
+    }
     telegramLogger.warn({ error }, 'Silent web search failed');
     throw Object.assign(new Error('Web search failed'), { code: 'PERPLEXITY_ERROR' });
   } finally {
@@ -556,7 +569,8 @@ export async function isWebSearchEnabled(): Promise<boolean> {
   try {
     const enabled = await settingsRepo.get('web_search_enabled');
     return enabled === 'true';
-  } catch {
+  } catch (error) {
+    telegramLogger.warn({ error }, 'Failed to check web_search_enabled, defaulting to false');
     return false; // По умолчанию выключен
   }
 }
@@ -567,7 +581,8 @@ export async function isWebSearchEnabled(): Promise<boolean> {
 export function clearPerplexityCache(): void {
   cachedPerplexityKey = null;
   cachedPerplexityModel = null;
-  cacheLoadedAt = 0;
+  keyCacheLoadedAt = 0;
+  modelCacheLoadedAt = 0;
 }
 
 /**

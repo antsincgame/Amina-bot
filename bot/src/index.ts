@@ -201,7 +201,9 @@ const start = async (): Promise<void> => {
 
     // Setup webhook if in production
     if (config.isProd && config.telegram.webhook.url) {
-      app.post('/webhook/telegram', webhookCallback(bot, 'fastify'));
+      app.post('/webhook/telegram', webhookCallback(bot, 'fastify', {
+        secretToken: config.telegram.webhook.secret,
+      }));
       await bot.api.setWebhook(`${config.telegram.webhook.url}/webhook/telegram`, {
         secret_token: config.telegram.webhook.secret,
       });
@@ -270,11 +272,11 @@ const shutdown = async (signal: string): Promise<void> => {
 
   if (bot) {
     appLogger.info('Stopping bot...');
-    await bot.stop();
+    try { await bot.stop(); } catch (e) { appLogger.warn({ error: e }, 'Bot stop error (ignored)'); }
   }
 
   appLogger.info('Closing server...');
-  await app.close();
+  try { await app.close(); } catch (e) { appLogger.warn({ error: e }, 'Server close error (ignored)'); }
 
   appLogger.info('👋 Goodbye!');
   process.exit(0);

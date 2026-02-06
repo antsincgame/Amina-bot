@@ -250,11 +250,16 @@ export const promptsRepo = {
   },
 
   async setActive(id: string): Promise<void> {
-    // Deactivate all prompts first
-    await getSupabase()
+    // Deactivate all prompts first — with error handling
+    const { error: deactivateError } = await getSupabase()
       .from('prompts')
       .update({ is_active: false })
       .eq('is_active', true);
+
+    if (deactivateError) {
+      dbLogger.error({ error: deactivateError }, 'Failed to deactivate prompts');
+      throw deactivateError;
+    }
 
     // Activate the selected one
     const { error } = await getSupabase()
@@ -283,14 +288,19 @@ export const conversationsRepo = {
     const validChannel = validateChannel(channel);
 
     // Try to find existing conversation
-    const { data: existing } = await getSupabase()
+    const { data: existing, error: findError } = await getSupabase()
       .from('conversations')
       .select('*')
       .eq('user_id', validUserId)
       .eq('channel', validChannel)
       .order('updated_at', { ascending: false })
       .limit(1)
-      .single();
+      .maybeSingle();
+
+    if (findError) {
+      dbLogger.error({ error: findError, userId: validUserId }, 'Failed to find conversation');
+      throw findError;
+    }
 
     if (existing) {
       return existing as Conversation;
