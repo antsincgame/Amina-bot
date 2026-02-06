@@ -1773,6 +1773,68 @@ const escapeMarkdown = (text: string): string =>
   text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
 
 // --------------------------------------------
+// Convert LLM Markdown → Telegram HTML
+// --------------------------------------------
+
+/**
+ * Конвертирует стандартный Markdown из LLM в Telegram HTML.
+ * Telegram HTML поддерживает: <b>, <i>, <code>, <pre>, <a>.
+ */
+const markdownToTelegramHtml = (text: string): string => {
+  let html = text;
+
+  // Экранируем HTML-сущности (до конвертации)
+  html = html.replace(/&/g, '&amp;');
+  html = html.replace(/</g, '&lt;');
+  html = html.replace(/>/g, '&gt;');
+
+  // ``` code blocks ``` → <pre>
+  html = html.replace(/```[\w]*\n?([\s\S]*?)```/g, '<pre>$1</pre>');
+
+  // `inline code` → <code>
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  // **bold** → <b>
+  html = html.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+
+  // *italic* (но не внутри <b>)
+  html = html.replace(/(?<![<\w])\*([^*]+?)\*(?![>\w])/g, '<i>$1</i>');
+
+  // __bold__ → <b>
+  html = html.replace(/__(.+?)__/g, '<b>$1</b>');
+
+  // _italic_ → <i>
+  html = html.replace(/(?<![<\w])_([^_]+?)_(?![>\w])/g, '<i>$1</i>');
+
+  // ~~strikethrough~~ → <s>
+  html = html.replace(/~~(.+?)~~/g, '<s>$1</s>');
+
+  // [text](url) → <a href="url">text</a>
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+
+  return html;
+};
+
+/**
+ * Удаляет Markdown-форматирование, оставляя чистый текст.
+ * Фолбэк если HTML-парсинг не удался.
+ */
+const stripMarkdown = (text: string): string => {
+  let clean = text;
+  clean = clean.replace(/```[\w]*\n?([\s\S]*?)```/g, '$1');
+  clean = clean.replace(/`([^`]+)`/g, '$1');
+  clean = clean.replace(/\*\*(.+?)\*\*/g, '$1');
+  clean = clean.replace(/(?<![<\w])\*([^*]+?)\*(?![>\w])/g, '$1');
+  clean = clean.replace(/__(.+?)__/g, '$1');
+  clean = clean.replace(/(?<![<\w])_([^_]+?)_(?![>\w])/g, '$1');
+  clean = clean.replace(/~~(.+?)~~/g, '$1');
+  clean = clean.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)');
+  // Убираем Markdown-заголовки (### Заголовок → Заголовок)
+  clean = clean.replace(/^#{1,6}\s+/gm, '');
+  return clean;
+};
+
+// --------------------------------------------
 // Send Long Message (split by Telegram limit)
 // --------------------------------------------
 
@@ -1781,12 +1843,38 @@ const sendLongMessage = async (
   text: string,
   keyboard?: InlineKeyboard
 ): Promise<void> => {
+  // Разбиваем текст на чанки
+  const chunks = splitIntoChunks(text);
+
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    if (!chunk) continue;
+    const isLast = i === chunks.length - 1;
+    const options: Record<string, unknown> = {};
+    if (isLast && keyboard) {
+      options.reply_markup = keyboard;
+    }
+
+    // Попробуем HTML → при ошибке plain text без markdown
+    try {
+      const htmlChunk = markdownToTelegramHtml(chunk);
+      await ctx.reply(htmlChunk, { ...options, parse_mode: 'HTML' });
+    } catch {
+      // Telegram отклонил HTML — отправляем чистый текст
+      const plainChunk = stripMarkdown(chunk);
+      await ctx.reply(plainChunk, options);
+    }
+  }
+};
+
+/**
+ * Разбивает длинный текст на чанки по лимиту Telegram (4096).
+ */
+const splitIntoChunks = (text: string): string[] => {
   if (text.length <= MAX_MESSAGE_LENGTH) {
-    await ctx.reply(text, keyboard ? { reply_markup: keyboard } : undefined);
-    return;
+    return [text];
   }
 
-  // Split by paragraphs first, then by length
   const chunks: string[] = [];
   let currentChunk = '';
 
@@ -1797,7 +1885,7 @@ const sendLongMessage = async (
         chunks.push(currentChunk.trim());
         currentChunk = '';
       }
-      
+
       // If single paragraph is too long, split by sentences
       if (paragraph.length > MAX_MESSAGE_LENGTH) {
         const sentences = paragraph.split(/(?<=[.!?])\s+/);
@@ -1821,14 +1909,5 @@ const sendLongMessage = async (
     chunks.push(currentChunk.trim());
   }
 
-  // Send all chunks (кнопки — только к последнему)
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-    if (!chunk) continue;
-    const isLast = i === chunks.length - 1;
-    await ctx.reply(
-      chunk,
-      isLast && keyboard ? { reply_markup: keyboard } : undefined
-    );
-  }
+  return chunks;
 };

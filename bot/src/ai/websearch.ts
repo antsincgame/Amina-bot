@@ -169,7 +169,7 @@ const REALTIME_PATTERNS = [
   // Информация требующая поиска
   /погода|прогноз/i,
   /курс|котировк|цена|стоимость/i,
-  /новост|событи/i,
+  /новост|событи|сводк|дайджест/i,
   /расписани|график/i,
   
   // Факты которые могут измениться
@@ -243,6 +243,21 @@ const QUERY_ENHANCERS: QueryType[] = [
       return q;
     },
   },
+  // Новости / сводка новостей
+  {
+    pattern: /новост|сводк|событи|что.*произошло|что.*случилось/i,
+    enhancer: (q) => {
+      const today = new Date();
+      const dateStr = today.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+      // Ищем название города
+      const cityMatch = q.match(/(?:в\s+|про\s+|о\s+)?(\b[А-ЯЁ][а-яё]{2,}\b)/);
+      const city = cityMatch ? cityMatch[1] : '';
+      const cityPart = city ? ` в ${city} и регионе` : '';
+      const isYesterday = /вчера/i.test(q);
+      const timePart = isYesterday ? 'за вчера' : `за сегодня (${dateStr})`;
+      return `Последние новости и события${cityPart} ${timePart}. Дай подробную сводку: основные события, происшествия, погода, важные решения. Минимум 5 пунктов.`;
+    },
+  },
 ];
 
 /**
@@ -311,7 +326,9 @@ export async function webSearch(
     );
   }
 
-  const maxTokens = options.maxTokens || 512; // Короткие ответы для экономии
+  // Для новостных/сводочных запросов нужно больше токенов
+  const isNewsQuery = /новост|сводк|событи|дайджест/i.test(query);
+  const maxTokens = options.maxTokens || (isNewsQuery ? 1500 : 600);
   
   // Получаем модель из настроек админки
   const selectedModel = await getSelectedModel();
@@ -320,9 +337,20 @@ export async function webSearch(
   // Улучшаем запрос для более точного поиска
   const enhancedQuery = enhanceSearchQuery(query);
   
-  // Системный промпт для краткого поиска фактов
-  // ВАЖНО: Явно указываем что нужна АКТУАЛЬНАЯ информация, не общие описания
-  const systemPrompt = `Ты — поисковый ассистент. Твоя задача — найти АКТУАЛЬНУЮ информацию ПРЯМО СЕЙЧАС.
+  // Системный промпт зависит от типа запроса
+  const systemPrompt = isNewsQuery
+    ? `Ты — новостной ассистент. Найди РЕАЛЬНЫЕ АКТУАЛЬНЫЕ новости и события.
+
+ПРАВИЛА:
+1. Ищи КОНКРЕТНЫЕ события, факты, происшествия — НЕ общие описания городов
+2. Каждая новость — отдельный пункт с кратким описанием
+3. Указывай дату события если известна
+4. Если про конкретный город — ищи местные новости, не общую информацию
+5. Минимум 3-5 пунктов реальных новостей
+6. Если новостей мало — добавь новости региона/страны
+
+Формат: нумерованный список. Язык: русский.`
+    : `Ты — поисковый ассистент. Твоя задача — найти АКТУАЛЬНУЮ информацию ПРЯМО СЕЙЧАС.
 
 ПРАВИЛА:
 1. Для вопросов о ценах/курсах — дай ТОЧНУЮ ЦИФРУ с источником
@@ -436,11 +464,11 @@ export async function searchAndFormat(query: string): Promise<string> {
   
   let formattedResponse = result.answer;
   
-  // Добавляем источники если есть
+  // Добавляем источники если есть (без Markdown — sendLongMessage сконвертирует)
   if (result.citations.length > 0) {
-    formattedResponse += '\n\n📚 **Источники:**\n';
+    formattedResponse += '\n\n📚 Источники:\n';
     result.citations.slice(0, 3).forEach((citation, index) => {
-      const shortUrl = citation.length > 50 ? citation.substring(0, 47) + '...' : citation;
+      const shortUrl = citation.length > 60 ? citation.substring(0, 57) + '...' : citation;
       formattedResponse += `${index + 1}. ${shortUrl}\n`;
     });
   }
@@ -464,16 +492,20 @@ export async function getSearchContext(query: string): Promise<string> {
     const result = await webSearch(query);
     
     // Форматируем как скрытый контекст для LLM
-    // ВАЖНО: Чёткие инструкции как использовать данные поиска
+    const citationsList = result.citations.length > 0
+      ? `\nИсточники: ${result.citations.slice(0, 3).join(', ')}`
+      : '';
+
     return `\n\n=== ДАННЫЕ ИЗ ИНТЕРНЕТА (${new Date().toLocaleDateString('ru-RU')}) ===
-${result.answer}
+${result.answer}${citationsList}
 === КОНЕЦ ДАННЫХ ===
 
-ИНСТРУКЦИЯ: Это актуальные данные из интернета. 
-- Если там есть ЦИФРЫ (цены, курсы, температура) — используй их напрямую
-- Отвечай кратко и по делу, используя эти данные
-- НЕ упоминай "по данным поиска" или "согласно интернету"
-- Просто дай ответ как будто ты это знаешь`;
+ИНСТРУКЦИЯ ПО ДАННЫМ ИЗ ИНТЕРНЕТА:
+- Используй эти данные НАПРЯМУЮ в своём ответе — они уже найдены
+- НИКОГДА не пиши "Ищу...", "Поиск в интернете", "Сейчас найду" — поиск УЖЕ сделан
+- Если есть цифры (цены, курсы, температура) — приводи их точно
+- Перескажи информацию своими словами, живо и эмоционально
+- НЕ упоминай источники если пользователь не просил`;
   } catch (error) {
     // Молча игнорируем ошибки поиска - основная LLM ответит без интернета
     telegramLogger.debug({ error }, 'Search context failed, continuing without');
