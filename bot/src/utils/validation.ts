@@ -17,17 +17,22 @@ export const userIdSchema = z.string().regex(/^\d+$/).or(z.literal('unknown'));
 export const messageContentSchema = z.string().min(1).max(MAX_MESSAGE_LENGTH);
 
 // Channel validation
-export const channelSchema = z.enum(['telegram', 'voice', 'all']);
+export const channelSchema = z.enum(['telegram', 'voice', 'admin', 'all']);
 
-// Event type validation
+// Event type validation (must match AnalyticsEventType in shared/types)
 export const eventTypeSchema = z.enum([
   'message_received',
   'message_sent',
-  'ai_request',
-  'ai_response',
-  'error',
   'call_started',
   'call_ended',
+  'ai_response',
+  'error',
+  'warning',
+  'settings_updated',
+  'prompt_updated',
+  'rate_limit_exceeded',
+  'api_request',
+  'system_log',
 ]);
 
 /**
@@ -58,7 +63,7 @@ export function validateMessageContent(content: string): string {
 /**
  * Validate channel
  */
-export function validateChannel(channel: string): 'telegram' | 'voice' | 'all' {
+export function validateChannel(channel: string): 'telegram' | 'voice' | 'admin' | 'all' {
   const result = channelSchema.safeParse(channel);
   if (!result.success) {
     throw new Error(`Invalid channel: ${channel}`);

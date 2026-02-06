@@ -291,7 +291,7 @@ function enhanceSearchQuery(query: string): string {
   return query;
 }
 
-// Паттерны ответов AI когда он не знает
+// Паттерны ответов AI когда он не знает или симулирует поиск
 const UNCERTAINTY_PATTERNS = [
   /не знаю|не уверен|не могу сказать точно/i,
   /у меня нет.*информации/i,
@@ -300,6 +300,10 @@ const UNCERTAINTY_PATTERNS = [
   /рекомендую.*проверить|уточни.*источник/i,
   /на момент моего обучения|по состоянию на/i,
   /i don't know|i'm not sure|cannot say for certain/i,
+  // Симуляция поиска — LLM притворяется что ищет (частая проблема бесплатных моделей)
+  /ищу\.\.\.|поиск в интернете|сейчас найду|сейчас поищу/i,
+  /\*\(поиск/i,
+  /🔍\s*ищу/i,
 ];
 
 /**
@@ -371,14 +375,14 @@ export async function webSearch(
 Формат ответа: кратко, только факты, без вступлений.
 Язык: русский.`;
 
-  telegramLogger.debug(
-    { originalQuery: query, enhancedQuery, model: selectedModel, pricePerMToken: modelInfo?.inputPrice }, 
-    'Performing web search'
+  telegramLogger.info(
+    { originalQuery: query.substring(0, 80), enhancedQuery: enhancedQuery.substring(0, 100), model: selectedModel }, 
+    'Performing web search via Perplexity API'
   );
 
-  // Таймаут для поиска (15 секунд)
+  // Таймаут для поиска (20 секунд — увеличен с 15 для sonar-reasoning-pro)
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000);
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
 
   try {
     const response = await fetch(PERPLEXITY_API_URL, {
@@ -401,20 +405,23 @@ export async function webSearch(
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      telegramLogger.warn({ status: response.status, error: errorText }, 'Perplexity API error (silent)');
+      const errorText = await response.text().catch(() => 'unable to read error body');
+      telegramLogger.error(
+        { status: response.status, error: errorText.substring(0, 500), model: selectedModel, query: query.substring(0, 50) }, 
+        'Perplexity API error'
+      );
       
       if (response.status === 401) {
-        throw Object.assign(new Error('Invalid Perplexity API key'), { code: 'PERPLEXITY_AUTH_ERROR' });
+        throw Object.assign(new Error(`Invalid Perplexity API key: ${errorText.substring(0, 100)}`), { code: 'PERPLEXITY_AUTH_ERROR' });
       }
       if (response.status === 429) {
-        throw Object.assign(new Error('Perplexity rate limit'), { code: 'PERPLEXITY_RATE_LIMIT' });
+        throw Object.assign(new Error(`Perplexity rate limit: ${errorText.substring(0, 100)}`), { code: 'PERPLEXITY_RATE_LIMIT' });
       }
       if (response.status === 402) {
-        throw Object.assign(new Error('Perplexity payment required'), { code: 'PERPLEXITY_PAYMENT_REQUIRED' });
+        throw Object.assign(new Error(`Perplexity payment required: ${errorText.substring(0, 100)}`), { code: 'PERPLEXITY_PAYMENT_REQUIRED' });
       }
       
-      throw Object.assign(new Error(`Perplexity error: ${response.status}`), { code: 'PERPLEXITY_ERROR' });
+      throw Object.assign(new Error(`Perplexity HTTP ${response.status}: ${errorText.substring(0, 200)}`), { code: 'PERPLEXITY_ERROR' });
     }
 
     const data = await response.json() as PerplexityResponse;
@@ -432,13 +439,13 @@ export async function webSearch(
     const requestCost = modelInfo ? modelInfo.requestFee / 1000 : 0;
     const totalCost = tokenCost + requestCost;
 
-    telegramLogger.debug({ 
+    telegramLogger.info({ 
       tokens: usage.total_tokens, 
       model: selectedModel,
-      tokenCostUSD: tokenCost.toFixed(6),
-      requestFeeUSD: requestCost.toFixed(6),
+      answerLength: content.length,
+      citations: citations.length,
       totalCostUSD: totalCost.toFixed(6),
-    }, 'Web search completed');
+    }, 'Web search completed successfully');
 
     return {
       answer: content,
@@ -565,15 +572,31 @@ export async function enhanceResponseIfNeeded(
 }
 
 /**
- * Проверяет, включён ли веб-поиск
+ * Проверяет, включён ли веб-поиск.
+ * 
+ * Логика:
+ * 1. Если в БД явно задано web_search_enabled = 'false' → выключен
+ * 2. Если в БД явно задано web_search_enabled = 'true' → включён
+ * 3. Если настройка НЕ задана → авто-определение: включён если Perplexity API ключ существует
+ *    (раньше по умолчанию был выключен, что приводило к тому что поиск не работал
+ *     даже при настроенном ключе — LLM симулировала поиск вместо реального)
  */
 export async function isWebSearchEnabled(): Promise<boolean> {
   try {
     const enabled = await settingsRepo.get('web_search_enabled');
-    return enabled === 'true';
+    
+    // Явно выключен в настройках
+    if (enabled === 'false') return false;
+    
+    // Явно включён в настройках
+    if (enabled === 'true') return true;
+    
+    // Настройка не задана → авто-определение по наличию API ключа
+    const apiKey = await getPerplexityApiKey();
+    return !!apiKey;
   } catch (error) {
     telegramLogger.warn({ error }, 'Failed to check web_search_enabled, defaulting to false');
-    return false; // По умолчанию выключен
+    return false;
   }
 }
 

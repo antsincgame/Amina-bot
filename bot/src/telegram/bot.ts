@@ -3,7 +3,7 @@ import { config } from '../config/index.js';
 import { telegramLogger } from '../config/logger.js';
 import { aiService } from '../ai/openrouter.js';
 import { processImageWithLLM, transcribeAudio } from '../ai/multimodal.js';
-import { getSearchContext, enhanceResponseIfNeeded, searchAndFormat, needsWebSearch } from '../ai/websearch.js';
+import { getSearchContext, enhanceResponseIfNeeded, searchAndFormat, needsWebSearch, webSearch, isWebSearchEnabled } from '../ai/websearch.js';
 import { conversationsRepo, analyticsRepo } from '../db/supabase.js';
 import { checkTelegramRateLimit } from '../utils/rate-limiter.js';
 import { getErrorCode } from '../utils/error-handler.js';
@@ -960,6 +960,15 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         }
       }
 
+      // === ПРЯМОЙ ВЕБ-ПОИСК: перехватываем запросы требующие актуальных данных ===
+      // Обходим LLM полностью для поисковых запросов — это предотвращает
+      // симуляцию поиска бесплатными моделями ("Ищу...", "(Поиск в интернете)")
+      if (needsWebSearch(userMessage)) {
+        const handled = await handleDirectWebSearch(ctx, userMessage, userId, chatId, startTime);
+        if (handled) return;
+        // Если handleDirectWebSearch вернул false — продолжаем к обычному LLM
+      }
+
       // Get or create conversation
       if (!ctx.session.conversationId) {
         const conversation = await conversationsRepo.getOrCreate(
@@ -972,6 +981,10 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
           role: m.role,
           content: m.content,
         }));
+
+        // === ЗАЩИТА: санитизация истории при загрузке ===
+        // Удаляем отравленные записи (дубликаты ответов и симуляции поиска)
+        ctx.session.messageHistory = sanitizeMessageHistory(ctx.session.messageHistory);
       }
 
       // === ОПТИМИЗАЦИЯ: memoryContext + webSearch параллельно ===
@@ -982,7 +995,10 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
           telegramLogger.warn({ error: err, userId }, 'Failed to build memory context');
           return '';
         }),
-        getSearchContext(userMessage),
+        getSearchContext(userMessage).catch((err) => {
+          telegramLogger.warn({ error: err, userId }, 'Failed to get search context');
+          return '';
+        }),
       ]);
 
       const memoryContext = timeContext + (memoryContextRaw ? '\n' + memoryContextRaw : '');
@@ -1021,11 +1037,32 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         }
       }
 
-      // Add assistant response to history
-      ctx.session.messageHistory.push({
-        role: 'assistant',
-        content: response.content,
-      });
+      // === ЗАЩИТА: пост-обработка от симуляции поиска бесплатными моделями ===
+      // Если LLM проигнорировала предупреждение и всё равно написала "Ищу..." / "(Поиск в интернете)" —
+      // заменяем на честный ответ. Бесплатные модели часто игнорируют инструкции.
+      if (!webSearchContext && looksLikeSearchSimulation(response.content)) {
+        telegramLogger.warn({ userId, responseSnippet: response.content.substring(0, 100) }, 'LLM simulated search — replacing with honest response');
+        response = {
+          ...response,
+          content: '😔 К сожалению, сейчас не удалось получить актуальные данные из интернета.\n\n' +
+            'Попробуй:\n' +
+            '• Через минуту повторить запрос\n' +
+            '• Использовать команду `/search` для явного поиска\n\n' +
+            '_Если проблема повторяется — обратитесь к администратору для проверки настроек поиска._',
+        };
+      }
+
+      // === ЗАЩИТА ОТ ОТРАВЛЕНИЯ КОНТЕКСТА ===
+      // Не сохраняем фейковые ответы в историю — они отравляют контекст
+      // и заставляют LLM повторять их на ВСЕ последующие сообщения
+      if (!looksLikeSearchSimulation(response.content)) {
+        ctx.session.messageHistory.push({
+          role: 'assistant',
+          content: response.content,
+        });
+      } else {
+        telegramLogger.warn({ userId }, 'Blocked search simulation from being saved to history');
+      }
 
       // === ОПТИМИЗАЦИЯ: отправляем ответ СРАЗУ, до записи в БД ===
       const responseKeyboard = new InlineKeyboard()
@@ -1332,7 +1369,10 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
           telegramLogger.warn({ error: err, userId }, 'Failed to build memory context for voice');
           return '';
         }),
-        getSearchContext(transcribedText),
+        getSearchContext(transcribedText).catch((err) => {
+          telegramLogger.warn({ error: err, userId }, 'Failed to get search context for voice');
+          return '';
+        }),
       ]);
 
       const memoryContext = timeContext + (memoryContextRaw ? '\n' + memoryContextRaw : '');
@@ -1371,11 +1411,20 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         }
       }
 
-      // Add assistant response to history
-      ctx.session.messageHistory.push({
-        role: 'assistant',
-        content: aiResponse.content,
-      });
+      // === ЗАЩИТА ОТ ОТРАВЛЕНИЯ КОНТЕКСТА (голос) ===
+      if (!looksLikeSearchSimulation(aiResponse.content)) {
+        ctx.session.messageHistory.push({
+          role: 'assistant',
+          content: aiResponse.content,
+        });
+      } else {
+        telegramLogger.warn({ userId }, 'Voice: blocked search simulation from being saved to history');
+        // Заменяем ответ на честный
+        aiResponse = {
+          ...aiResponse,
+          content: '😔 К сожалению, не удалось получить актуальные данные из интернета. Попробуй позже или используй /search.',
+        };
+      }
 
       // === ОПТИМИЗАЦИЯ: отправляем ответ СРАЗУ, до записи в БД ===
       const responseKeyboard = new InlineKeyboard()
@@ -1864,6 +1913,281 @@ const stripMarkdown = (text: string): string => {
 };
 
 // --------------------------------------------
+// Sanitize Message History — защита от отравления контекста
+// Если один ответ повторяется 3+ раз, вся история заражена
+// и LLM будет повторять его на ЛЮБЫЕ сообщения
+// --------------------------------------------
+
+const sanitizeMessageHistory = (history: AIMessage[]): AIMessage[] => {
+  if (history.length === 0) return history;
+
+  // Шаг 1: Удалить ответы-симуляции поиска
+  let cleaned = history.filter(m => {
+    if (m.role === 'assistant' && looksLikeSearchSimulation(m.content)) {
+      return false; // Убираем симуляции поиска
+    }
+    return true;
+  });
+
+  // Шаг 2: Детекция отравления — если один ответ повторяется 3+ раз
+  const assistantResponses = cleaned.filter(m => m.role === 'assistant');
+  const responseCounts = new Map<string, number>();
+  for (const msg of assistantResponses) {
+    const key = msg.content.substring(0, 100); // Сравниваем по первым 100 символам
+    responseCounts.set(key, (responseCounts.get(key) || 0) + 1);
+  }
+
+  // Находим отравляющие ответы (повтор 3+ раз)
+  const poisonedPrefixes = new Set<string>();
+  for (const [prefix, count] of responseCounts) {
+    if (count >= 3) {
+      poisonedPrefixes.add(prefix);
+    }
+  }
+
+  if (poisonedPrefixes.size > 0) {
+    telegramLogger.warn(
+      { poisonedCount: poisonedPrefixes.size, historyBefore: cleaned.length },
+      'Context poisoning detected — removing duplicated responses'
+    );
+    
+    // Оставляем максимум 1 копию каждого отравленного ответа
+    const seen = new Set<string>();
+    cleaned = cleaned.filter(m => {
+      if (m.role !== 'assistant') return true;
+      const prefix = m.content.substring(0, 100);
+      if (poisonedPrefixes.has(prefix)) {
+        if (seen.has(prefix)) return false; // Убираем дубль
+        seen.add(prefix);
+      }
+      return true;
+    });
+    
+    telegramLogger.info({ historyAfter: cleaned.length }, 'History sanitized');
+  }
+
+  return cleaned;
+};
+
+// --------------------------------------------
+// Direct Web Search Handler — обходит LLM для запросов
+// требующих актуальных данных из интернета.
+// Решает проблему: бесплатные LLM игнорируют инструкции
+// и симулируют поиск ("Ищу...", "Поиск в интернете")
+// вместо честного ответа что данных нет.
+// --------------------------------------------
+
+const handleDirectWebSearch = async (
+  ctx: BotContext,
+  userMessage: string,
+  userId: string,
+  chatId: number,
+  startTime: number
+): Promise<boolean> => {
+  // Шаг 1: Проверяем включён ли поиск
+  const searchEnabled = await isWebSearchEnabled();
+  if (!searchEnabled) {
+    telegramLogger.warn({ userId }, 'Web search disabled — skipping direct search');
+    // НЕ вызываем LLM для поисковых запросов если поиск выключен
+    await ctx.reply(
+      '🔍 Поиск в интернете сейчас отключён.\n\n' +
+      '_Обратитесь к администратору для включения веб-поиска._',
+      { parse_mode: 'Markdown' }
+    );
+    return true;
+  }
+
+  await ctx.replyWithChatAction('typing');
+
+  try {
+    // Шаг 2: Прямой поиск через Perplexity API
+    telegramLogger.info({ userId, query: userMessage.substring(0, 80) }, 'Direct web search started');
+
+    const searchResult = await webSearch(userMessage);
+
+    telegramLogger.info(
+      { userId, model: searchResult.model, tokens: searchResult.tokens_used.total, answerLength: searchResult.answer.length },
+      'Direct web search succeeded'
+    );
+
+    // Шаг 3: Форматируем результат через LLM для персонализации (в стиле Амины)
+    const timeContext = buildTimeContext(ctx.from?.first_name);
+
+    const searchContext = `${timeContext}\n\n` +
+      `=== ДАННЫЕ ИЗ ИНТЕРНЕТА (${new Date().toLocaleDateString('ru-RU')}) ===\n` +
+      `${searchResult.answer}\n` +
+      `=== КОНЕЦ ДАННЫХ ===\n\n` +
+      `ИНСТРУКЦИЯ: Перескажи эти данные пользователю в своём стиле. ` +
+      `Данные УЖЕ найдены — НЕ пиши "Ищу...", "Поиск...", "Сейчас найду". ` +
+      `Просто представь информацию красиво и структурированно.`;
+
+    // Загружаем историю сообщений если есть
+    if (!ctx.session.conversationId) {
+      const conversation = await conversationsRepo.getOrCreate(
+        userId,
+        'telegram',
+        { telegram_chat_id: chatId, telegram_user_id: ctx.from?.id }
+      );
+      ctx.session.conversationId = conversation.id;
+      ctx.session.messageHistory = conversation.messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
+    }
+
+    ctx.session.messageHistory.push({ role: 'user', content: userMessage });
+
+    // Trim history
+    const MAX_HIST = 20;
+    if (ctx.session.messageHistory.length > MAX_HIST) {
+      ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HIST);
+    }
+
+    await ctx.replyWithChatAction('typing');
+
+    const response = await aiService.chat(
+      ctx.session.messageHistory,
+      'telegram',
+      searchContext
+    );
+
+    // Пост-обработка: если LLM ВСЁ РАВНО симулирует поиск (игнорируя данные) — шлём сырые данные
+    let finalContent = response.content;
+    if (looksLikeSearchSimulation(finalContent)) {
+      telegramLogger.warn({ userId }, 'LLM ignored search data and simulated search — using raw results');
+      finalContent = searchResult.answer;
+      if (searchResult.citations.length > 0) {
+        finalContent += '\n\n📚 Источники:\n';
+        searchResult.citations.slice(0, 3).forEach((citation: string, index: number) => {
+          const shortUrl = citation.length > 60 ? citation.substring(0, 57) + '...' : citation;
+          finalContent += `${index + 1}. ${shortUrl}\n`;
+        });
+      }
+    }
+
+    ctx.session.messageHistory.push({ role: 'assistant', content: finalContent });
+
+    const responseKeyboard = new InlineKeyboard()
+      .text('📌 В заметки', 'save_to_notes')
+      .text('🔊 Озвучить', 'read_aloud');
+
+    await sendLongMessage(ctx, finalContent, responseKeyboard);
+
+    // Fire-and-forget аналитика
+    const responseTime = Date.now() - startTime;
+    userProfileRepo.updateOnMessage(userId, 'message', response.tokens_used.total, {
+      id: ctx.from?.id,
+      first_name: ctx.from?.first_name,
+      last_name: ctx.from?.last_name,
+      username: ctx.from?.username,
+      language_code: ctx.from?.language_code,
+    } as TelegramUserInfo).catch(() => {});
+
+    conversationsRepo.addMessage(ctx.session.conversationId!, {
+      role: 'user',
+      content: userMessage,
+      timestamp: new Date().toISOString(),
+    }).catch(() => {});
+    conversationsRepo.addMessage(ctx.session.conversationId!, {
+      role: 'assistant',
+      content: finalContent,
+      timestamp: new Date().toISOString(),
+    }).catch(() => {});
+
+    analyticsRepo.log('message_sent', 'telegram', {
+      userId,
+      model: response.model,
+      tokens: response.tokens_used.total,
+      responseTimeMs: responseTime,
+      webSearch: true,
+      webSearchModel: searchResult.model,
+    }).catch(() => {});
+
+    telegramLogger.info({ userId, responseTimeMs: responseTime, webSearchModel: searchResult.model }, 'Direct search response sent');
+    return true;
+
+  } catch (error) {
+    // Поиск не удался — подробное логирование для диагностики
+    const err = error instanceof Error ? error : new Error(String(error));
+    const errCode = (error as { code?: string })?.code ?? 'UNKNOWN';
+    
+    telegramLogger.error(
+      { 
+        error: err.message, 
+        code: errCode, 
+        stack: err.stack?.split('\n').slice(0, 3).join(' | '),
+        userId, 
+        query: userMessage.substring(0, 80) 
+      },
+      'Direct web search FAILED — sending honest error to user'
+    );
+
+    // Честный ответ пользователю — НЕ вызываем LLM, он нагаллюцинирует
+    let userErrorMsg = '😔 К сожалению, не удалось получить актуальные данные из интернета.';
+
+    if (errCode === 'PERPLEXITY_NOT_CONFIGURED') {
+      userErrorMsg += '\n\n_API ключ поиска не настроен. Обратитесь к администратору._';
+    } else if (errCode === 'PERPLEXITY_AUTH_ERROR') {
+      userErrorMsg += '\n\n_Ошибка авторизации API поиска. Проверьте ключ в настройках._';
+    } else if (errCode === 'PERPLEXITY_PAYMENT_REQUIRED') {
+      userErrorMsg += '\n\n_Исчерпан лимит API поиска. Пополните баланс Perplexity._';
+    } else if (errCode === 'PERPLEXITY_RATE_LIMIT') {
+      userErrorMsg += '\n\n_Слишком много запросов. Попробуй через минуту._';
+    } else if (errCode === 'PERPLEXITY_TIMEOUT') {
+      userErrorMsg += '\n\n_Сервис поиска не ответил вовремя. Попробуй через минуту._';
+    } else {
+      userErrorMsg += '\n\n_Попробуй через минуту или используй /search для прямого поиска._';
+    }
+
+    await ctx.reply(userErrorMsg, { parse_mode: 'Markdown' });
+    return true; // Обработано — НЕ передаём в LLM
+  }
+};
+
+// --------------------------------------------
+// Detect if LLM response is a fake/simulated search
+// (common problem with free models that ignore instructions)
+// --------------------------------------------
+
+const SEARCH_SIMULATION_PATTERNS = [
+  /🔍\s*ищу/i,
+  /\*?\(?\*?поиск в интернете\*?\)?\*?/i,
+  /сейчас я найду|сейчас найду|сейчас поищу/i,
+  /ищу\.\.\./i,
+  /ищу информацию/i,
+  /выполняю поиск/i,
+  /производится поиск/i,
+  /подожди.*ищу|подожди.*поиск/i,
+];
+
+const looksLikeSearchSimulation = (text: string): boolean => {
+  // Ответ выглядит как симуляция поиска если:
+  // 1. Содержит >= 2 паттерна симуляции, ИЛИ
+  // 2. Содержит >= 1 паттерн И ответ короткий (< 300 символов — т.е. нет реального контента)
+  const matches = SEARCH_SIMULATION_PATTERNS.filter(p => p.test(text));
+  if (matches.length >= 2) return true;
+  if (matches.length >= 1 && text.length < 300) return true;
+  return false;
+};
+
+// --------------------------------------------
+// Strip HTML tags and entities (for fallback plain text)
+// --------------------------------------------
+
+const stripHtml = (text: string): string => {
+  let clean = text;
+  // Remove HTML tags (<b>, <i>, <code>, <pre>, <s>, <a href="...">)
+  clean = clean.replace(/<[^>]+>/g, '');
+  // Decode HTML entities
+  clean = clean.replace(/&amp;/g, '&');
+  clean = clean.replace(/&lt;/g, '<');
+  clean = clean.replace(/&gt;/g, '>');
+  clean = clean.replace(/&quot;/g, '"');
+  clean = clean.replace(/&apos;/g, "'");
+  return clean;
+};
+
+// --------------------------------------------
 // Send Long Message (split by Telegram limit)
 // --------------------------------------------
 
@@ -1885,12 +2209,12 @@ const sendLongMessage = async (
       options.reply_markup = keyboard;
     }
 
-    // Попробуем HTML → при ошибке plain text без markdown
+    // Попробуем HTML → при ошибке plain text без форматирования
     try {
       await ctx.reply(chunk, { ...options, parse_mode: 'HTML' });
     } catch {
-      // Telegram отклонил HTML — отправляем чистый текст
-      const plainChunk = stripMarkdown(chunk);
+      // Telegram отклонил HTML — стрипаем HTML-теги и HTML-сущности
+      const plainChunk = stripHtml(chunk);
       await ctx.reply(plainChunk, options);
     }
   }
