@@ -19,6 +19,7 @@
     "dotenv": "^16.4.1",
     "fastify": "^4.26.0",
     "grammy": "^1.21.1",
+    "msedge-tts": "^2.0.4",
     "openai": "^4.28.0",
     "pino": "^8.18.0",
     "pino-pretty": "^10.3.1",

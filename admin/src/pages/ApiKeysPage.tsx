@@ -30,6 +30,7 @@ const apiKeysSchema = z.object({
   perplexity_api_key: z.string().optional(),
   web_search_enabled: z.string().optional(),
   perplexity_model: z.string().optional(),
+  web_search_max_tokens: z.string().optional(),
 });
 
 type ApiKeysForm = z.infer<typeof apiKeysSchema>;
@@ -115,6 +116,7 @@ const ApiKeysPage = () => {
       perplexity_api_key: '',
       web_search_enabled: 'false',
       perplexity_model: 'sonar',
+      web_search_max_tokens: '1200',
     },
   });
 
@@ -124,6 +126,7 @@ const ApiKeysPage = () => {
   const perplexityKey = watch('perplexity_api_key');
   const webSearchEnabled = watch('web_search_enabled');
   const perplexityModel = watch('perplexity_model');
+  const searchMaxTokens = watch('web_search_max_tokens');
 
   // Load settings
   useEffect(() => {
@@ -140,6 +143,7 @@ const ApiKeysPage = () => {
         perplexity_api_key: map['perplexity_api_key'] || '',
         web_search_enabled: map['web_search_enabled'] || 'false',
         perplexity_model: map['perplexity_model'] || 'sonar',
+        web_search_max_tokens: map['web_search_max_tokens'] || '1200',
       });
     }
   }, [settings, reset]);
@@ -152,6 +156,7 @@ const ApiKeysPage = () => {
       perplexity_api_key: data.perplexity_api_key || '',
       web_search_enabled: data.web_search_enabled || 'false',
       perplexity_model: data.perplexity_model || 'sonar',
+      web_search_max_tokens: data.web_search_max_tokens || '1200',
     });
   };
 
@@ -527,6 +532,64 @@ const ApiKeysPage = () => {
               <span className="font-semibold text-amber-400" style={{ fontFamily: 'var(--font-heading)' }}>
                 ~${(selectedModelInfo.costPerSearch * 100).toFixed(2)}
               </span>
+            </div>
+          </div>
+
+          <div className="divider my-6" />
+
+          {/* Max Tokens Setting */}
+          <div className="p-4 rounded-xl"
+               style={{ background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-lg flex items-center justify-center"
+                   style={{ background: 'rgba(251, 146, 60, 0.15)' }}>
+                <Zap className="w-5 h-5 text-orange-400" />
+              </div>
+              <div>
+                <h3 className="font-medium text-white" style={{ fontFamily: 'var(--font-heading)' }}>
+                  Длина ответа поиска
+                </h3>
+                <p className="text-xs text-gray-500">Максимум токенов для каждого поискового запроса</p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center gap-4">
+                <input
+                  type="range"
+                  min="400"
+                  max="4000"
+                  step="200"
+                  value={searchMaxTokens || '1200'}
+                  onChange={(e) => setValue('web_search_max_tokens', e.target.value, { shouldDirty: true })}
+                  className="flex-1 accent-amber-400"
+                  style={{ accentColor: 'rgb(251, 191, 36)' }}
+                />
+                <div className="w-20 text-right">
+                  <span className="text-lg font-bold text-amber-400" style={{ fontFamily: 'var(--font-heading)' }}>
+                    {searchMaxTokens || '1200'}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex justify-between text-[10px] text-gray-600 px-1">
+                <span>400 — Экономно</span>
+                <span>1200 — Баланс</span>
+                <span>2500 — Подробно</span>
+                <span>4000 — Макс</span>
+              </div>
+
+              <div className="p-2.5 rounded-lg text-xs"
+                   style={{ background: 'rgba(251, 146, 60, 0.08)', border: '1px solid rgba(251, 146, 60, 0.15)' }}>
+                <span className="text-gray-400">
+                  💡 Больше токенов = более подробные ответы, но дороже.{' '}
+                  {Number(searchMaxTokens || 1200) >= 2000 
+                    ? 'Отличный выбор для глубоких ответов!' 
+                    : Number(searchMaxTokens || 1200) >= 1000 
+                      ? 'Хороший баланс цены и качества.' 
+                      : 'Экономный режим — ответы могут быть краткими.'}
+                </span>
+              </div>
             </div>
           </div>
         </div>

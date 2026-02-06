@@ -237,18 +237,18 @@ const start = async (): Promise<void> => {
 
     // Register bot menu commands in Telegram UI (после старта бота)
     await bot.api.setMyCommands([
-      { command: 'start', description: 'Начать сначала' },
-      { command: 'help', description: 'Справка по боту' },
-      { command: 'imagine', description: 'Сгенерировать картинку' },
-      { command: 'search', description: 'Поиск в интернете' },
-      { command: 'note', description: 'Сохранить заметку' },
-      { command: 'notes', description: 'Мои заметки' },
-      { command: 'todo', description: 'Добавить задачу' },
-      { command: 'todos', description: 'Список задач' },
-      { command: 'done', description: 'Отметить задачу выполненной' },
-      { command: 'reminders', description: 'Мои напоминания' },
-      { command: 'digest', description: 'Утренний дайджест' },
-      { command: 'clear', description: 'Очистить историю' },
+      { command: 'menu', description: '🎛 Главное меню с кнопками' },
+      { command: 'search', description: '🌐 Поиск в интернете' },
+      { command: 'imagine', description: '🎨 Сгенерировать картинку' },
+      { command: 'note', description: '📌 Сохранить заметку' },
+      { command: 'notes', description: '📋 Мои заметки' },
+      { command: 'todo', description: '✅ Добавить задачу' },
+      { command: 'todos', description: '📋 Список задач' },
+      { command: 'done', description: '✔️ Выполнить задачу' },
+      { command: 'reminders', description: '⏰ Мои напоминания' },
+      { command: 'digest', description: '☀️ Утренний дайджест' },
+      { command: 'clear', description: '🧹 Очистить историю' },
+      { command: 'help', description: '📋 Справка по боту' },
     ]);
     appLogger.info('📋 Bot menu commands registered');
 

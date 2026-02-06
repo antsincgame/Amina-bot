@@ -1,7 +1,9 @@
 /**
  * Web Search via Perplexity API
- * Автоматический поиск в интернете когда бот не знает ответ
- * Процесс полностью прозрачен для пользователя
+ * Агрессивный движок поиска в интернете.
+ * Бот АКТИВНО ищет информацию — при любых вопросах требующих актуальных данных.
+ * 
+ * Принцип: лучше поискать лишний раз, чем ответить устаревшей информацией.
  */
 
 import { config } from '../config/index.js';
@@ -48,151 +50,177 @@ export interface WebSearchResult {
 
 const PERPLEXITY_API_URL = 'https://api.perplexity.ai/chat/completions';
 
+// Значения по умолчанию для токенов поиска
+const DEFAULT_SEARCH_MAX_TOKENS = 1200;
+const DEFAULT_NEWS_MAX_TOKENS = 2000;
+const DEFAULT_DIGEST_MAX_TOKENS = 2500;
+
 // Модели Perplexity с ценами ($/1M токенов) — обновлено февраль 2026
-// Источник: https://docs.perplexity.ai/docs/getting-started/pricing
 interface PerplexityModel {
   id: string;
   name: string;
-  inputPrice: number;  // $ per 1M tokens
-  outputPrice: number; // $ per 1M tokens
-  requestFee: number;  // $ per 1K requests (low context)
-  online: boolean;     // Имеет доступ в интернет
+  inputPrice: number;
+  outputPrice: number;
+  requestFee: number;
+  online: boolean;
 }
 
 const PERPLEXITY_MODELS: PerplexityModel[] = [
-  // Новые названия моделей (февраль 2026)
-  // Sonar — самая дешёвая, быстрая, для простых запросов
   { id: 'sonar', name: 'Sonar', inputPrice: 1.00, outputPrice: 1.00, requestFee: 5.00, online: true },
-  // Sonar Pro — для сложных запросов, больше цитат
   { id: 'sonar-pro', name: 'Sonar Pro', inputPrice: 3.00, outputPrice: 15.00, requestFee: 6.00, online: true },
-  // Sonar Reasoning Pro — с рассуждением
   { id: 'sonar-reasoning-pro', name: 'Sonar Reasoning Pro', inputPrice: 2.00, outputPrice: 8.00, requestFee: 6.00, online: true },
 ];
 
-/**
- * Получить самую дешёвую online-модель
- * Учитывает и стоимость токенов, и request fee
- */
 function getCheapestOnlineModel(): string {
   const DEFAULT_FALLBACK_MODEL = 'sonar';
   const onlineModels = PERPLEXITY_MODELS.filter(m => m.online);
-  
-  if (onlineModels.length === 0) {
-    return PERPLEXITY_MODELS[0]?.id ?? DEFAULT_FALLBACK_MODEL;
-  }
-
-  // Примерно 500 токенов на запрос (250 input + 250 output)
-  // Считаем общую стоимость: tokens + request_fee/1000
+  if (onlineModels.length === 0) return PERPLEXITY_MODELS[0]?.id ?? DEFAULT_FALLBACK_MODEL;
   const estimateCost = (m: PerplexityModel) => {
     const tokenCost = (250 * m.inputPrice / 1_000_000) + (250 * m.outputPrice / 1_000_000);
-    const requestCost = m.requestFee / 1000; // за 1 запрос
-    return tokenCost + requestCost;
+    return tokenCost + m.requestFee / 1000;
   };
-  
   onlineModels.sort((a, b) => estimateCost(a) - estimateCost(b));
-  
-  const cheapest = onlineModels[0]!;
-  const cost = estimateCost(cheapest);
-  telegramLogger.debug({ model: cheapest.id, costPerRequest: cost.toFixed(6) }, 'Selected cheapest model');
-  
-  return cheapest.id;
+  return onlineModels[0]!.id;
 }
 
-/**
- * Получить информацию о модели по ID
- */
 function getModelInfo(modelId: string): PerplexityModel | undefined {
   return PERPLEXITY_MODELS.find(m => m.id === modelId);
 }
 
 // --------------------------------------------
-// API Key Management
+// API Key & Config Management
 // --------------------------------------------
 
 let cachedPerplexityKey: string | null = null;
 let cachedPerplexityModel: string | null = null;
+let cachedSearchMaxTokens: number | null = null;
 let keyCacheLoadedAt = 0;
 let modelCacheLoadedAt = 0;
+let tokensCacheLoadedAt = 0;
 const CACHE_TTL = 60 * 1000; // 1 минута
 
 async function getPerplexityApiKey(): Promise<string> {
-  // Сначала проверяем env
-  if (config.perplexity?.apiKey) {
-    return config.perplexity.apiKey;
-  }
-
-  // Проверяем кэш — только непустые ключи кешируются
+  if (config.perplexity?.apiKey) return config.perplexity.apiKey;
   const now = Date.now();
-  if (cachedPerplexityKey && now - keyCacheLoadedAt < CACHE_TTL) {
-    return cachedPerplexityKey;
-  }
-
-  // Загружаем из БД
+  if (cachedPerplexityKey && now - keyCacheLoadedAt < CACHE_TTL) return cachedPerplexityKey;
   try {
     const key = await settingsRepo.get('perplexity_api_key');
-    if (key) {
-      cachedPerplexityKey = key;
-      keyCacheLoadedAt = now;
-    }
+    if (key) { cachedPerplexityKey = key; keyCacheLoadedAt = now; }
     return key || '';
-  } catch {
-    return cachedPerplexityKey || '';
-  }
+  } catch { return cachedPerplexityKey || ''; }
 }
 
-/**
- * Получить выбранную модель из настроек
- * По умолчанию: самая дешёвая (sonar)
- */
 async function getSelectedModel(): Promise<string> {
-  // Проверяем кэш
   const now = Date.now();
-  if (cachedPerplexityModel && now - modelCacheLoadedAt < CACHE_TTL) {
-    return cachedPerplexityModel;
-  }
-
-  // Загружаем из БД
+  if (cachedPerplexityModel && now - modelCacheLoadedAt < CACHE_TTL) return cachedPerplexityModel;
   try {
     const model = await settingsRepo.get('perplexity_model');
-    // Проверяем что модель валидна
     const validModel = PERPLEXITY_MODELS.find(m => m.id === model);
     cachedPerplexityModel = validModel ? validModel.id : getCheapestOnlineModel();
     modelCacheLoadedAt = now;
     return cachedPerplexityModel;
-  } catch {
-    return getCheapestOnlineModel();
-  }
+  } catch { return getCheapestOnlineModel(); }
+}
+
+/**
+ * Получить настраиваемый лимит токенов для поиска из админки
+ */
+async function getSearchMaxTokens(): Promise<number> {
+  const now = Date.now();
+  if (cachedSearchMaxTokens !== null && now - tokensCacheLoadedAt < CACHE_TTL) return cachedSearchMaxTokens;
+  try {
+    const val = await settingsRepo.get('web_search_max_tokens');
+    const parsed = val ? parseInt(val, 10) : NaN;
+    cachedSearchMaxTokens = (!isNaN(parsed) && parsed >= 200 && parsed <= 8000) ? parsed : DEFAULT_SEARCH_MAX_TOKENS;
+    tokensCacheLoadedAt = now;
+    return cachedSearchMaxTokens;
+  } catch { return cachedSearchMaxTokens ?? DEFAULT_SEARCH_MAX_TOKENS; }
 }
 
 // --------------------------------------------
-// Search Detection
+// Search Detection — РАСШИРЕННЫЕ ПАТТЕРНЫ
 // --------------------------------------------
 
-// Паттерны вопросов требующих актуальной информации
+// Паттерны вопросов ОДНОЗНАЧНО требующих поиска (высокий приоритет)
 const REALTIME_PATTERNS = [
-  // Время-зависимые вопросы
-  /сегодня|сейчас|вчера|завтра|на этой неделе|в этом году/i,
-  /актуальн|последн|свежи|новы|текущ/i,
-  /\d{4}\s*год/i, // Вопросы про конкретный год
+  // === Время-зависимые вопросы ===
+  /сегодня|сейчас|вчера|завтра|на этой неделе|в этом месяце|в этом году/i,
+  /актуальн|последн|свежи|новы|текущ|нынешн/i,
+  /\d{4}\s*год/i,
+  /на данный момент|в настоящее время|в наше время/i,
   
-  // Информация требующая поиска
-  /погода|прогноз/i,
-  /курс|котировк|цена|стоимость/i,
-  /новост|событи|сводк|дайджест/i,
-  /расписани|график/i,
+  // === Погода ===
+  /погода|прогноз|температур|осадк|ветер|дождь|снег|мороз|жара/i,
   
-  // Факты которые могут измениться
-  /президент|премьер|министр|глава/i,
-  /население|количество жителей/i,
-  /рекорд|чемпион|победител/i,
+  // === Финансы ===
+  /курс|котировк|цена|стоимость|тариф/i,
+  /доллар|евро|рубл|юань|фунт|йена|usd|eur|rub|cny/i,
+  /биткоин|bitcoin|btc|эфир|ethereum|eth|крипт|солана|solana|ton|тон/i,
+  /акци|stock|nasdaq|s&p|dow jones|индекс|биржа|рынок/i,
   
-  // Явные запросы на поиск
-  /найди|поищи|погугли|загугли/i,
-  /search|find|google|look up/i,
+  // === Новости и события ===
+  /новост|событи|сводк|дайджест|что.{0,10}произош|что.{0,10}случил/i,
+  /скандал|протест|конфликт|война|ситуаци[яи]\s*(в|на|с)\s/i,
+  /выбор[ыа]|референдум|голосован/i,
+  /заявил|объявил|сообщил|анонсир/i,
   
-  // Криптовалюты и акции
-  /биткоин|bitcoin|btc|эфир|ethereum|eth|крипт/i,
-  /акци|stock|nasdaq|s&p|dow jones/i,
+  // === Явные запросы на поиск ===
+  /найди|поищи|погугли|загугли|проверь|узнай|подскажи/i,
+  /search|find|google|look up|what is the current/i,
+  /расскажи\s*(про|о|об)\s/i,
+  /что\s*(такое|значит|означает)\s/i,
+  /как\s*(работает|устроен|действует|называется)\s/i,
+  /сколько\s*(стоит|весит|длит|зараб|живёт|лет|км|метр)/i,
+  /где\s*(находит|расположен|можно|купить|найти)/i,
+  /кто\s*(такой|такая|такие|создал|изобрёл|основал|написал)/i,
+  /когда\s*(будет|был[аои]?|состоит|начн[её]т|закончи|выйд|вышл)/i,
+  /какой|какая|какие|каков/i,
+  /почему|зачем|отчего/i,
+  
+  // === Факты о мире ===
+  /президент|премьер|министр|глава|губернатор|мэр|лидер/i,
+  /население|жителей|площадь|столица|валюта|территори/i,
+  /рекорд|чемпион|победител|лауреат|призёр/i,
+  
+  // === Спорт ===
+  /матч|игра|счёт|трансфер|лига чемпион|чемпионат|турнир|олимпи/i,
+  /футбол|хокке|баскетбол|теннис|формула|гонк/i,
+  
+  // === Технологии ===
+  /релиз|обновлени|версия|вышл[аои]|запуск/i,
+  /iphone|android|ios|windows|macos|linux/i,
+  /openai|google|microsoft|apple|meta|nvidia|tesla/i,
+  /искусственн.{0,5}интеллект|нейросет|chatgpt|gpt-?[45]|gemini|claude/i,
+  
+  // === Культура и развлечения ===
+  /фильм|кино|сериал|сезон|серия|премьера/i,
+  /музык|альбом|песн|клип|концерт/i,
+  /книг[аиу]|автор|писател/i,
+  
+  // === Расписание и графики ===
+  /расписани|график|рейс|поезд|автобус|самолёт/i,
+  /работает\s*(ли|до|с|сегодня)|часы\s*работы|режим\s*работы/i,
+  
+  // === Здоровье ===
+  /симптом|лечени|лекарств|препарат|болезн|диагноз/i,
+  
+  // === Еда и рецепты ===
+  /рецепт|калорийность|ингредиент|приготовить/i,
+  
+  // === Путешествия ===
+  /виз[аы]|загранпаспорт|перелёт|отел[ьи]|тур(?:ы|изм)|достопримечательност/i,
+];
+
+// Паттерны для ПРИНУДИТЕЛЬНОГО поиска — LLM не может ответить без актуальных данных
+const FORCE_SEARCH_PATTERNS = [
+  /погода/i,
+  /курс\s*(доллар|евро|рубл|usd|eur)/i,
+  /цена\s*(биткоин|bitcoin|btc|эфир|ethereum|eth)/i,
+  /новости\s*(за\s*)?(сегодня|вчера|неделю)/i,
+  /что\s*(произошло|случилось|нового)/i,
+  /последние\s*новости/i,
+  /сколько\s*стоит/i,
+  /счёт\s*(матча|игры)/i,
 ];
 
 // --------------------------------------------
@@ -304,10 +332,25 @@ const UNCERTAINTY_PATTERNS = [
 ];
 
 /**
- * Определяет, нужен ли веб-поиск для данного сообщения
+ * Определяет, нужен ли веб-поиск для данного сообщения (расширенная детекция)
  */
 export function needsWebSearch(message: string): boolean {
+  // Игнорируем очень короткие сообщения (приветствия, "ок", "да/нет")
+  if (message.length < 5) return false;
+  
+  // Игнорируем чисто эмоциональные / бытовые сообщения
+  if (/^(привет|здравствуй|ок|да|нет|спасибо|хорошо|ладно|пока|ты как|как дела)\s*[.!?]*$/i.test(message.trim())) {
+    return false;
+  }
+  
   return REALTIME_PATTERNS.some(pattern => pattern.test(message));
+}
+
+/**
+ * Определяет, ОБЯЗАТЕЛЕН ли поиск (LLM не может ответить без интернета)
+ */
+export function shouldForceWebSearch(message: string): boolean {
+  return FORCE_SEARCH_PATTERNS.some(pattern => pattern.test(message));
 }
 
 /**
@@ -319,12 +362,13 @@ export function aiShowsUncertainty(response: string): boolean {
 
 /**
  * Выполняет веб-поиск через Perplexity API
- * Использует модель выбранную в админке (или самую дешёвую по умолчанию)
+ * Использует настраиваемые токены из админки + модель
  */
 export async function webSearch(
   query: string,
   options: {
     maxTokens?: number;
+    forDigest?: boolean;
   } = {}
 ): Promise<WebSearchResult> {
   const apiKey = await getPerplexityApiKey();
@@ -338,48 +382,56 @@ export async function webSearch(
 
   // Для новостных/сводочных запросов нужно больше токенов
   const isNewsQuery = /новост|сводк|событи|дайджест/i.test(query);
-  const maxTokens = options.maxTokens || (isNewsQuery ? 1500 : 600);
+
+  // Определяем токены: опции > настройки из админки > дефолт
+  let maxTokens: number;
+  if (options.maxTokens) {
+    maxTokens = options.maxTokens;
+  } else if (options.forDigest) {
+    maxTokens = DEFAULT_DIGEST_MAX_TOKENS;
+  } else {
+    const configuredTokens = await getSearchMaxTokens();
+    maxTokens = isNewsQuery
+      ? Math.max(configuredTokens, DEFAULT_NEWS_MAX_TOKENS) // Для новостей минимум 2000
+      : configuredTokens;
+  }
   
-  // Получаем модель из настроек админки
   const selectedModel = await getSelectedModel();
   const modelInfo = getModelInfo(selectedModel);
-  
-  // Улучшаем запрос для более точного поиска
   const enhancedQuery = enhanceSearchQuery(query);
   
-  // Системный промпт зависит от типа запроса
+  // Системный промпт — более агрессивный, заставляющий давать подробные ответы
   const systemPrompt = isNewsQuery
     ? `Ты — новостной ассистент. Найди РЕАЛЬНЫЕ АКТУАЛЬНЫЕ новости и события.
 
 ПРАВИЛА:
-1. Ищи КОНКРЕТНЫЕ события, факты, происшествия — НЕ общие описания городов
-2. Каждая новость — отдельный пункт с кратким описанием
-3. Указывай дату события если известна
-4. Если про конкретный город — ищи местные новости, не общую информацию
-5. Минимум 3-5 пунктов реальных новостей
-6. Если новостей мало — добавь новости региона/страны
-
-Формат: нумерованный список. Язык: русский.`
-    : `Ты — поисковый ассистент. Твоя задача — найти АКТУАЛЬНУЮ информацию ПРЯМО СЕЙЧАС.
+1. Ищи КОНКРЕТНЫЕ события с датами — НЕ общие описания
+2. Каждая новость — отдельный пункт с подробным описанием
+3. Указывай дату и источник каждого события
+4. Минимум 5-7 пунктов реальных новостей
+5. Если про город — местные + региональные новости
+6. Формат: нумерованный список с подробностями. Язык: русский.
+7. Давай МАКСИМАЛЬНО подробные и развёрнутые ответы.`
+    : `Ты — поисковый ассистент с доступом в интернет. Найди АКТУАЛЬНУЮ информацию.
 
 ПРАВИЛА:
-1. Для вопросов о ценах/курсах — дай ТОЧНУЮ ЦИФРУ с источником
-2. Для погоды — дай ТЕКУЩИЕ показатели (температура, осадки)
-3. Для новостей — дай СЕГОДНЯШНИЕ события
-4. НЕ давай общие описания или определения из Wikipedia
-5. Если спрашивают "цена биткоин" — нужна ЦЕНА В ДОЛЛАРАХ, не что такое биткоин
-
-Формат ответа: кратко, только факты, без вступлений.
-Язык: русский.`;
+1. Цены/курсы — ТОЧНАЯ ЦИФРА + дата + источник
+2. Погода — ТЕКУЩИЕ данные: температура, осадки, ветер, влажность, ощущается как
+3. Новости — СЕГОДНЯШНИЕ события с подробностями
+4. Факты — проверенные данные с источниками
+5. НЕ давай определения из Wikipedia когда спрашивают актуальное
+6. Отвечай ПОДРОБНО и РАЗВЁРНУТО с фактами
+7. Если спрашивают цену — дай цену, а не описание
+8. Формат: структурированный, с фактами. Язык: русский.`;
 
   telegramLogger.info(
-    { originalQuery: query.substring(0, 80), enhancedQuery: enhancedQuery.substring(0, 100), model: selectedModel }, 
+    { originalQuery: query.substring(0, 80), enhancedQuery: enhancedQuery.substring(0, 100), model: selectedModel, maxTokens }, 
     'Performing web search via Perplexity API'
   );
 
-  // Таймаут для поиска (20 секунд — увеличен с 15 для sonar-reasoning-pro)
+  // Таймаут 25 секунд (увеличен для sonar-reasoning-pro и подробных ответов)
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 20000);
+  const timeoutId = setTimeout(() => controller.abort(), 25000);
 
   try {
     const response = await fetch(PERPLEXITY_API_URL, {
@@ -390,13 +442,13 @@ export async function webSearch(
       },
       signal: controller.signal,
       body: JSON.stringify({
-        model: selectedModel, // Динамически выбранная модель из админки
+        model: selectedModel,
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: enhancedQuery }, // Используем улучшенный запрос
+          { role: 'user', content: enhancedQuery },
         ],
         max_tokens: maxTokens,
-        temperature: 0.1, // Минимальная температура для точности
+        temperature: 0.1,
         return_citations: true,
       }),
     });
@@ -424,11 +476,8 @@ export async function webSearch(
     const data = await response.json() as PerplexityResponse;
     const content = data.choices?.[0]?.message?.content || '';
     const citations = data.citations || [];
-
-    // Защита от отсутствия usage
     const usage = data.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
-    // Рассчитываем примерную стоимость (токены + request fee)
     const tokenCost = modelInfo 
       ? (usage.prompt_tokens * modelInfo.inputPrice / 1_000_000) + 
         (usage.completion_tokens * modelInfo.outputPrice / 1_000_000)
@@ -439,6 +488,7 @@ export async function webSearch(
     telegramLogger.info({ 
       tokens: usage.total_tokens, 
       model: selectedModel,
+      maxTokensUsed: maxTokens,
       answerLength: content.length,
       citations: citations.length,
       totalCostUSD: totalCost.toFixed(6),
@@ -455,13 +505,10 @@ export async function webSearch(
       },
     };
   } catch (error) {
-    // Обработка таймаута (совместимо с Node 18+ и старше)
     if (error instanceof Error && error.name === 'AbortError') {
-      telegramLogger.warn({ query }, 'Web search timeout (15s)');
+      telegramLogger.warn({ query, timeout: 25000 }, 'Web search timeout');
       throw Object.assign(new Error('Web search timeout'), { code: 'PERPLEXITY_TIMEOUT' });
     }
-    
-    // Пробрасываем наши ошибки с PERPLEXITY_ кодами
     if (typeof error === 'object' && error !== null && 'code' in error) {
       const code = String((error as { code: unknown }).code);
       if (code.startsWith('PERPLEXITY_')) throw error;
@@ -495,22 +542,20 @@ export async function searchAndFormat(query: string): Promise<string> {
 
 /**
  * Получает контекст из интернета для основной LLM (прозрачно для пользователя)
- * Возвращает строку контекста или пустую строку если поиск не нужен/не удался
+ * АГРЕССИВНАЯ стратегия: ищет при любых вопросах требующих актуальных данных
  */
 export async function getSearchContext(query: string): Promise<string> {
-  // Проверяем, включён ли поиск
   const enabled = await isWebSearchEnabled();
   if (!enabled) return '';
   
-  // Проверяем, нужен ли поиск для этого запроса
+  // Проверяем по расширенным паттернам
   if (!needsWebSearch(query)) return '';
   
   try {
     const result = await webSearch(query);
     
-    // Форматируем как скрытый контекст для LLM
     const citationsList = result.citations.length > 0
-      ? `\nИсточники: ${result.citations.slice(0, 3).join(', ')}`
+      ? `\nИсточники: ${result.citations.slice(0, 5).join(', ')}`
       : '';
 
     return `\n\n=== ДАННЫЕ ИЗ ИНТЕРНЕТА (${new Date().toLocaleDateString('ru-RU')}) ===
@@ -518,13 +563,13 @@ ${result.answer}${citationsList}
 === КОНЕЦ ДАННЫХ ===
 
 ИНСТРУКЦИЯ ПО ДАННЫМ ИЗ ИНТЕРНЕТА:
-- Используй эти данные НАПРЯМУЮ в своём ответе — они уже найдены
-- НИКОГДА не пиши "Ищу...", "Поиск в интернете", "Сейчас найду" — поиск УЖЕ сделан
-- Если есть цифры (цены, курсы, температура) — приводи их точно
-- Перескажи информацию своими словами, живо и эмоционально
-- НЕ упоминай источники если пользователь не просил`;
+- Данные УЖЕ найдены — используй их НАПРЯМУЮ в ответе
+- ЗАПРЕЩЕНО: "Ищу...", "Поиск...", "Сейчас найду" — поиск ЗАВЕРШЁН
+- Цифры (цены, курсы, температура) — приводи ТОЧНО из данных
+- Перескажи живо, эмоционально, своими словами
+- НЕ упоминай источники если не просили
+- Если данные содержат числа — обязательно включи их в ответ`;
   } catch (error) {
-    // Логируем на WARN — ошибка поиска важна для диагностики
     const errMsg = error instanceof Error ? error.message : String(error);
     const errCode = (error as { code?: string }).code ?? 'UNKNOWN';
     telegramLogger.warn({ error: errMsg, code: errCode, query: query.substring(0, 50) }, 'Search context failed');
@@ -533,40 +578,47 @@ ${result.answer}${citationsList}
 }
 
 /**
- * Дополняет ответ AI если он показывает неуверенность
- * Возвращает улучшенный ответ или оригинальный если поиск не помог
+ * Дополняет ответ AI если он показывает неуверенность.
+ * Более агрессивная стратегия: ищет и когда AI не уверен, и когда
+ * запрос явно требует актуальных данных но AI их не предоставил.
  */
 export async function enhanceResponseIfNeeded(
   originalQuery: string,
   aiResponse: string
 ): Promise<{ response: string; wasEnhanced: boolean }> {
-  // Проверяем, включён ли поиск
   const enabled = await isWebSearchEnabled();
   if (!enabled) return { response: aiResponse, wasEnhanced: false };
   
-  // КРИТИЧНО: НЕ запускаем поиск если сообщение НЕ требует актуальных данных
-  // Иначе "ты как" → "неуверенный ответ" → enhanceSearchQuery → "ты как — актуальная информация"
-  // → Perplexity возвращает НОВОСТИ вместо нормального ответа
+  // Не запускаем для бытовых / эмоциональных сообщений
   if (!needsWebSearch(originalQuery)) {
     return { response: aiResponse, wasEnhanced: false };
   }
   
-  // Проверяем, показывает ли AI неуверенность
-  if (!aiShowsUncertainty(aiResponse)) {
+  // Ищем если AI неуверен ИЛИ ответ подозрительно короткий для информационного запроса
+  const isUncertain = aiShowsUncertainty(aiResponse);
+  const isTooShort = aiResponse.length < 100 && shouldForceWebSearch(originalQuery);
+  
+  if (!isUncertain && !isTooShort) {
     return { response: aiResponse, wasEnhanced: false };
   }
   
-  telegramLogger.info({ query: originalQuery }, 'AI showed uncertainty, searching...');
+  telegramLogger.info(
+    { query: originalQuery, reason: isUncertain ? 'uncertainty' : 'too_short' }, 
+    'Enhancing response with web search'
+  );
   
   try {
     const searchResult = await webSearch(originalQuery);
     
-    // Если поиск дал результат - возвращаем его напрямую
     if (searchResult.answer && searchResult.answer.length > 50) {
-      return { 
-        response: searchResult.answer, 
-        wasEnhanced: true 
-      };
+      let enhanced = searchResult.answer;
+      if (searchResult.citations.length > 0) {
+        enhanced += '\n\n📚 Источники:\n';
+        searchResult.citations.slice(0, 3).forEach((c, i) => {
+          enhanced += `${i + 1}. ${c.length > 60 ? c.substring(0, 57) + '...' : c}\n`;
+        });
+      }
+      return { response: enhanced, wasEnhanced: true };
     }
   } catch (error) {
     telegramLogger.debug({ error }, 'Enhancement search failed');
@@ -605,13 +657,15 @@ export async function isWebSearchEnabled(): Promise<boolean> {
 }
 
 /**
- * Очистить кэш API ключа и модели
+ * Очистить кэш API ключа, модели и токенов
  */
 export function clearPerplexityCache(): void {
   cachedPerplexityKey = null;
   cachedPerplexityModel = null;
+  cachedSearchMaxTokens = null;
   keyCacheLoadedAt = 0;
   modelCacheLoadedAt = 0;
+  tokensCacheLoadedAt = 0;
 }
 
 /**

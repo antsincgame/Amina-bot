@@ -1,9 +1,9 @@
-import { Bot, Context, session, SessionFlavor, InputFile, InlineKeyboard } from 'grammy';
+import { Bot, Context, session, SessionFlavor, InputFile, InlineKeyboard, Keyboard } from 'grammy';
 import { config } from '../config/index.js';
 import { telegramLogger } from '../config/logger.js';
 import { aiService } from '../ai/openrouter.js';
 import { processImageWithLLM, transcribeAudio } from '../ai/multimodal.js';
-import { getSearchContext, enhanceResponseIfNeeded, searchAndFormat, needsWebSearch, webSearch, isWebSearchEnabled } from '../ai/websearch.js';
+import { getSearchContext, enhanceResponseIfNeeded, searchAndFormat, needsWebSearch, webSearch, isWebSearchEnabled, shouldForceWebSearch } from '../ai/websearch.js';
 import { conversationsRepo, analyticsRepo } from '../db/supabase.js';
 import { checkTelegramRateLimit } from '../utils/rate-limiter.js';
 import { getErrorCode } from '../utils/error-handler.js';
@@ -42,6 +42,45 @@ type BotContext = Context & SessionFlavor<SessionData>;
 
 const MAX_HISTORY_MESSAGES = 20;
 const MAX_MESSAGE_LENGTH = 4096; // Telegram limit
+
+// --------------------------------------------
+// Menu Builders
+// --------------------------------------------
+
+/** Главное inline-меню с кнопками для всех функций */
+const buildMainMenu = (): InlineKeyboard => {
+  return new InlineKeyboard()
+    // Ряд 1: Поиск и Картинки
+    .text('🌐 Поиск в сети', 'menu_search')
+    .text('🎨 Нарисовать', 'menu_imagine')
+    .row()
+    // Ряд 2: Заметки и Задачи
+    .text('📌 Заметки', 'menu_notes')
+    .text('✅ Задачи', 'menu_todos')
+    .row()
+    // Ряд 3: Напоминания и Дайджест
+    .text('⏰ Напоминания', 'menu_reminders')
+    .text('☀️ Дайджест', 'menu_digest')
+    .row()
+    // Ряд 4: Голос и Очистить
+    .text('🔊 Голос', 'menu_voice')
+    .text('🧹 Очистить', 'menu_clear')
+    .row()
+    // Ряд 5: Помощь
+    .text('📋 Все команды', 'menu_help');
+};
+
+/** Постоянная клавиатура (ReplyKeyboard) снизу чата */
+const buildReplyKeyboard = (): Keyboard => {
+  return new Keyboard()
+    .text('🌐 Поиск').text('🎨 Картинка').text('📌 Заметки')
+    .row()
+    .text('✅ Задачи').text('⏰ Напоминания').text('☀️ Дайджест')
+    .row()
+    .text('📋 Меню').text('🧹 Очистить')
+    .resized()     // Компактная клавиатура
+    .persistent(); // Не скрывается после нажатия
+};
 
 // --------------------------------------------
 // Create Bot Instance
@@ -96,60 +135,76 @@ const setupCommands = (bot: Bot<BotContext>): void => {
       await userPrefsRepo.getOrCreate(userId, ctx.chat.id, ctx.from?.first_name);
     } catch { /* не критично */ }
 
-    const name = ctx.from?.first_name ? `, ${ctx.from.first_name}` : '';
+    const name = ctx.from?.first_name || 'друг';
 
     await ctx.reply(
-      `👋 Привет${name}! Я Amina — твой персональный AI-ассистент.
+      `✨ *Привет, ${name}!* Я — *Amina*, твой персональный AI-ассистент.\n\n` +
+      `Вот что я умею:\n\n` +
+      `💬 *Чат* — задай любой вопрос\n` +
+      `🌐 *Интернет* — ищу актуальную информацию в сети\n` +
+      `🎨 *Картинки* — «нарисуй...» или кнопка ниже\n` +
+      `🎤 *Голос* — отправь голосовое, я пойму\n` +
+      `📷 *Фото* — отправь картинку для анализа\n` +
+      `⏰ *Напоминания* — «напомни через час...»\n` +
+      `📌 *Заметки* — «запомни ...» или кнопка\n` +
+      `✅ *Задачи* — добавляй и выполняй\n` +
+      `☀️ *Дайджест* — утренняя сводка с погодой и новостями\n` +
+      `🔊 *Озвучка* — «скажи голосом...»\n\n` +
+      `👇 *Используй кнопки ниже или просто напиши!*`,
+      { 
+        parse_mode: 'Markdown',
+        reply_markup: buildReplyKeyboard(),
+      }
+    );
 
-Вот что я умею:
+    // Отправляем inline-меню отдельным сообщением
+    await ctx.reply(
+      `🎛 *Быстрое меню* — нажми на нужную кнопку:`,
+      { 
+        parse_mode: 'Markdown',
+        reply_markup: buildMainMenu(),
+      }
+    );
+  });
 
-💬 **Текст** — задай любой вопрос
-🎤 **Голос** — отправь голосовое, я пойму
-📷 **Фото** — отправь картинку, я опишу
-🌐 **Интернет** — ищу актуальную информацию
-🎨 **Картинки** — «нарисуй...» или /imagine
-⏰ **Напоминания** — «напомни через час...»
-📌 **Заметки** — «запомни ...» или /note
-✅ **Задачи** — /todo + /done
-☀️ **Дайджест** — утренняя сводка /digest
-🔊 **Голос** — «скажи голосом...»
-
-📋 /help — полная справка со всеми командами
-
-Просто напиши или скажи — я слушаю! 🎧`,
-      { parse_mode: 'Markdown' }
+  // /menu - Показать главное меню
+  bot.command('menu', async (ctx) => {
+    await ctx.reply(
+      `🎛 *Меню Amina* — выбери действие:`,
+      { 
+        parse_mode: 'Markdown',
+        reply_markup: buildMainMenu(),
+      }
     );
   });
 
   // /help - Help message
   bot.command('help', async (ctx) => {
     await ctx.reply(
-      `🤖 **Amina — Полная справка**
-
-**📋 Все команды:**
-/imagine \\_описание\\_ — сгенерировать картинку
-/search \\_запрос\\_ — поиск в интернете
-/note \\_текст\\_ — сохранить заметку
-/notes — список заметок
-/note\\_delete \\_номер\\_ — удалить заметку
-/todo \\_текст\\_ — добавить задачу
-/todos — список задач
-/done \\_номер\\_ — отметить задачу выполненной
-/reminders — напоминания
-/remind\\_cancel \\_номер\\_ — отменить напоминание
-/digest — утренний дайджест
-/clear — очистить историю
-/help — эта справка
-
-**💡 Быстрые действия (без команд):**
-• _«Нарисуй кота в космосе»_ — генерация картинки
-• _«Напомни через час позвонить»_ — напоминание
-• _«Запомни: пароль от WiFi 12345»_ — заметка
-• _«Скажи голосом привет мир»_ — озвучка
-• _«Курс доллара»_ — автопоиск в интернете
-• Отправь фото — опишу что на нём
-• Отправь голосовое — пойму и отвечу`,
-      { parse_mode: 'Markdown' }
+      `🤖 *Amina — Полная справка*\n\n` +
+      `*📋 Команды:*\n` +
+      `/menu — главное меню с кнопками\n` +
+      `/imagine \\_описание\\_ — картинка\n` +
+      `/search \\_запрос\\_ — поиск в сети\n` +
+      `/note \\_текст\\_ — заметка\n` +
+      `/notes — список заметок\n` +
+      `/note\\_delete \\_номер\\_ — удалить заметку\n` +
+      `/todo \\_текст\\_ — задача\n` +
+      `/todos — список задач\n` +
+      `/done \\_номер\\_ — выполнить\n` +
+      `/reminders — напоминания\n` +
+      `/remind\\_cancel \\_номер\\_ — отменить\n` +
+      `/digest — утренний дайджест\n` +
+      `/clear — очистить историю\n\n` +
+      `*💡 Быстрые действия (без команд):*\n` +
+      `• _Нарисуй кота в космосе_ — картинка\n` +
+      `• _Напомни через час позвонить_ — напоминание\n` +
+      `• _Запомни: пароль 12345_ — заметка\n` +
+      `• _Скажи голосом привет_ — озвучка\n` +
+      `• _Курс доллара_ — автопоиск\n` +
+      `• Отправь 📷 фото — опишу\n` +
+      `• Отправь 🎤 голосовое — пойму`,
+      { parse_mode: 'Markdown', reply_markup: buildMainMenu() }
     );
   });
 
@@ -761,6 +816,297 @@ const setupCommands = (bot: Bot<BotContext>): void => {
     }
   });
 
+  // ====== CALLBACK-КНОПКИ ГЛАВНОГО МЕНЮ ======
+
+  bot.callbackQuery('menu_search', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      '🌐 *Поиск в интернете*\n\n' +
+      'Напиши запрос или используй команду:\n' +
+      '`/search курс доллара`\n\n' +
+      'Примеры:\n' +
+      '• _Погода в Минске_\n' +
+      '• _Новости технологий_\n' +
+      '• _Цена биткоина_\n' +
+      '• _Что нового в мире?_\n\n' +
+      '💡 Я автоматически ищу в сети когда нужно — просто спроси!',
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  bot.callbackQuery('menu_imagine', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      '🎨 *Генерация картинок*\n\n' +
+      'Напиши что нарисовать или используй команду:\n' +
+      '`/imagine кот в космосе`\n\n' +
+      'Примеры:\n' +
+      '• _Нарисуй закат над горами_\n' +
+      '• _Сгенерируй логотип для кафе_\n' +
+      '• _Создай абстрактный фон_\n\n' +
+      '⏱ Генерация занимает 10-30 секунд',
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  bot.callbackQuery('menu_notes', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    try {
+      const notes = await notesRepo.getByUser(userId);
+      if (notes.length === 0) {
+        const keyboard = new InlineKeyboard()
+          .text('📌 Создать заметку', 'menu_note_help');
+        await ctx.reply('📋 У тебя пока нет заметок.', { reply_markup: keyboard });
+      } else {
+        const lines = notes.map((n, i) => {
+          const date = new Date(n.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
+          return `${i + 1}. ${n.content}\n   _${date}_`;
+        });
+        const keyboard = new InlineKeyboard()
+          .text('📌 Добавить', 'menu_note_help')
+          .text('🔄 Обновить', 'menu_notes');
+        await ctx.reply(
+          `📋 *Заметки (${notes.length}):*\n\n${lines.join('\n\n')}\n\n_Удалить: /note\\_delete номер_`,
+          { parse_mode: 'Markdown', reply_markup: keyboard }
+        );
+      }
+    } catch {
+      await ctx.reply('😔 Не удалось загрузить заметки.');
+    }
+  });
+
+  bot.callbackQuery('menu_note_help', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      '📌 *Как создать заметку:*\n\n' +
+      '• Напиши: _запомни купить молоко_\n' +
+      '• Или команда: `/note Текст заметки`\n\n' +
+      'Просмотр: /notes\nУдаление: `/note_delete 1`',
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  bot.callbackQuery('menu_todos', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    try {
+      const todos = await todosRepo.getActive(userId);
+      if (todos.length === 0) {
+        const keyboard = new InlineKeyboard()
+          .text('✅ Добавить задачу', 'menu_todo_help');
+        await ctx.reply('🎉 Все задачи выполнены!', { reply_markup: keyboard });
+      } else {
+        const lines = todos.map((t, i) => `${i + 1}. ☐ ${t.task}`);
+        const keyboard = new InlineKeyboard();
+        const MAX_BUTTONS = Math.min(todos.length, 5);
+        for (let i = 1; i <= MAX_BUTTONS; i++) {
+          keyboard.text(`✅ ${i}`, `todo_done_${i}`);
+        }
+        keyboard.row().text('➕ Добавить', 'menu_todo_help');
+        await ctx.reply(
+          `📋 *Задачи (${todos.length}):*\n\n${lines.join('\n')}`,
+          { parse_mode: 'Markdown', reply_markup: keyboard }
+        );
+      }
+    } catch {
+      await ctx.reply('😔 Не удалось загрузить задачи.');
+    }
+  });
+
+  bot.callbackQuery('menu_todo_help', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      '✅ *Как добавить задачу:*\n\n' +
+      'Команда: `/todo Сделать отчёт`\n\n' +
+      'Выполнить: `/done 1`\nСписок: /todos',
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  bot.callbackQuery('menu_reminders', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    try {
+      const reminders = await remindersRepo.getByUser(userId);
+      if (reminders.length === 0) {
+        await ctx.reply(
+          '⏰ *Напоминания*\n\nУ тебя нет активных напоминаний.\n\n' +
+          'Просто напиши:\n' +
+          '• _Напомни через 2 часа позвонить_\n' +
+          '• _Напомни завтра в 9:00 встреча_\n' +
+          '• _Через 30 минут выключи духовку_',
+          { parse_mode: 'Markdown' }
+        );
+      } else {
+        const lines = reminders.map((r, i) => {
+          const date = new Date(r.scheduled_at);
+          const dateStr = date.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+          return `${i + 1}. ${r.task}\n   ⏰ ${dateStr}`;
+        });
+        const keyboard = new InlineKeyboard()
+          .text('🔄 Обновить', 'menu_reminders');
+        await ctx.reply(
+          `⏰ *Напоминания (${reminders.length}):*\n\n${lines.join('\n\n')}\n\n_Отмена: /remind\\_cancel номер_`,
+          { parse_mode: 'Markdown', reply_markup: keyboard }
+        );
+      }
+    } catch {
+      await ctx.reply('😔 Не удалось загрузить напоминания.');
+    }
+  });
+
+  bot.callbackQuery('menu_digest', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const chatId = ctx.chat?.id ?? 0;
+    try {
+      const prefs = await userPrefsRepo.get(userId);
+      const status = prefs?.digest_enabled ? '✅ Включён' : '❌ Выключен';
+      const hour = prefs?.digest_hour ?? 10;
+      const city = prefs?.digest_city ?? 'Гродно';
+
+      const keyboard = new InlineKeyboard()
+        .text(prefs?.digest_enabled ? '🔕 Выключить' : '🔔 Включить', 'digest_toggle')
+        .text('🔄 Сейчас', 'digest_now')
+        .row()
+        .text('🏙 Город', 'digest_city_help')
+        .text('🕐 Время', 'digest_time_help');
+
+      await ctx.reply(
+        `☀️ *Утренний дайджест*\n\n` +
+        `Статус: ${status}\n` +
+        `Время: ${hour}:00 по Минску\n` +
+        `Город: ${city}\n\n` +
+        `📰 Включает: погоду, новости, напоминания и задачи`,
+        { parse_mode: 'Markdown', reply_markup: keyboard }
+      );
+    } catch {
+      await ctx.reply('😔 Ошибка загрузки настроек дайджеста.');
+    }
+  });
+
+  bot.callbackQuery('digest_now', async (ctx) => {
+    await ctx.answerCallbackQuery({ text: '☀️ Собираю дайджест...' });
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const chatId = ctx.chat?.id ?? 0;
+    try {
+      const prefs = await userPrefsRepo.getOrCreate(userId, chatId, ctx.from?.first_name);
+      await ctx.reply('☀️ Собираю дайджест... Это может занять 15-30 секунд.');
+      await sendDigestNow(
+        { api: ctx.api },
+        userId,
+        chatId,
+        prefs.first_name || ctx.from?.first_name || null,
+        prefs.digest_city || 'Гродно'
+      );
+    } catch {
+      await ctx.reply('😔 Не удалось собрать дайджест. Попробуй позже.');
+    }
+  });
+
+  bot.callbackQuery('digest_city_help', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      '🏙 *Изменить город:*\n\n`/digest город Минск`\n`/digest город Гродно`',
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  bot.callbackQuery('digest_time_help', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      '🕐 *Изменить время:*\n\n`/digest 7` — в 7:00\n`/digest 10` — в 10:00\n`/digest 22` — в 22:00',
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  bot.callbackQuery('menu_voice', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      '🔊 *Голосовые функции*\n\n' +
+      '*Отправь мне:*\n' +
+      '🎤 Голосовое сообщение — я расшифрую и отвечу\n\n' +
+      '*Попроси:*\n' +
+      '• _Скажи голосом привет мир_\n' +
+      '• _Озвучь стихотворение_\n\n' +
+      'Также можно озвучить любой мой ответ кнопкой 🔊 под сообщением!',
+      { parse_mode: 'Markdown' }
+    );
+  });
+
+  bot.callbackQuery('menu_clear', async (ctx) => {
+    const keyboard = new InlineKeyboard()
+      .text('✅ Да, очистить', 'confirm_clear')
+      .text('❌ Отмена', 'cancel_clear');
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      '🧹 *Очистить историю диалога?*\n\n_Все предыдущие сообщения будут забыты._',
+      { parse_mode: 'Markdown', reply_markup: keyboard }
+    );
+  });
+
+  bot.callbackQuery('confirm_clear', async (ctx) => {
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const chatId = ctx.chat?.id ?? 0;
+    ctx.session.messageHistory = [];
+    try {
+      if (!ctx.session.conversationId) {
+        const conversation = await conversationsRepo.getOrCreate(
+          userId, 'telegram', { telegram_chat_id: chatId, telegram_user_id: ctx.from?.id }
+        );
+        ctx.session.conversationId = conversation.id;
+      }
+      await conversationsRepo.clearMessages(ctx.session.conversationId);
+    } catch {}
+    await ctx.answerCallbackQuery({ text: '✅ История очищена!' });
+    await ctx.editMessageText('🧹 История диалога очищена. Начнём сначала!');
+  });
+
+  bot.callbackQuery('cancel_clear', async (ctx) => {
+    await ctx.answerCallbackQuery({ text: '↩️ Отменено' });
+    await ctx.editMessageText('↩️ Очистка отменена.');
+  });
+
+  bot.callbackQuery('menu_help', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      `🤖 *Amina — Полная справка*\n\n` +
+      `*📋 Команды:*\n` +
+      `/menu — главное меню с кнопками\n` +
+      `/imagine \\_описание\\_ — картинка\n` +
+      `/search \\_запрос\\_ — поиск в сети\n` +
+      `/note \\_текст\\_ — заметка\n` +
+      `/notes — список заметок\n` +
+      `/note\\_delete \\_номер\\_ — удалить заметку\n` +
+      `/todo \\_текст\\_ — задача\n` +
+      `/todos — список задач\n` +
+      `/done \\_номер\\_ — выполнить задачу\n` +
+      `/reminders — напоминания\n` +
+      `/remind\\_cancel \\_номер\\_ — отменить\n` +
+      `/digest — дайджест настройки\n` +
+      `/clear — очистить историю\n\n` +
+      `*💡 Без команд:*\n` +
+      `• _Нарисуй кота_ — картинка\n` +
+      `• _Напомни через час_ — напоминание\n` +
+      `• _Запомни: пароль 123_ — заметка\n` +
+      `• _Скажи голосом привет_ — озвучка\n` +
+      `• _Курс доллара_ — автопоиск\n` +
+      `• Отправь фото — опишу\n` +
+      `• Отправь голосовое — пойму`,
+      { parse_mode: 'Markdown', reply_markup: buildMainMenu() }
+    );
+  });
+
+  // Callback: показать главное меню
+  bot.callbackQuery('show_menu', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      `🎛 *Меню Amina* — выбери действие:`,
+      { parse_mode: 'Markdown', reply_markup: buildMainMenu() }
+    );
+  });
+
   // Callback: озвучить ответ
   bot.callbackQuery('read_aloud', async (ctx) => {
     const userId = ctx.from?.id.toString() ?? 'unknown';
@@ -799,6 +1145,97 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
     const chatId = ctx.chat.id;
     const userMessage = ctx.message.text;
     const startTime = Date.now();
+
+    // === Обработка кнопок ReplyKeyboard ===
+    const replyButtonHandlers: Record<string, () => Promise<void>> = {
+      '🌐 Поиск': async () => {
+        await ctx.reply(
+          '🌐 *Поиск в интернете*\n\nНапиши запрос или: `/search запрос`\n\n' +
+          'Примеры: _погода_, _курс доллара_, _новости_',
+          { parse_mode: 'Markdown' }
+        );
+      },
+      '🎨 Картинка': async () => {
+        await ctx.reply(
+          '🎨 *Генерация картинки*\n\nНапиши что нарисовать или: `/imagine описание`\n\n' +
+          'Пример: _Нарисуй кота в космосе_',
+          { parse_mode: 'Markdown' }
+        );
+      },
+      '📌 Заметки': async () => {
+        try {
+          const notes = await notesRepo.getByUser(userId);
+          if (notes.length === 0) {
+            await ctx.reply('📋 У тебя пока нет заметок.\n\nСоздай: `/note текст` или напиши _запомни ..._', { parse_mode: 'Markdown' });
+          } else {
+            const lines = notes.map((n, i) => `${i + 1}. ${n.content}`);
+            const keyboard = new InlineKeyboard().text('📌 Добавить', 'menu_note_help');
+            await ctx.reply(
+              `📋 *Заметки (${notes.length}):*\n\n${lines.join('\n')}\n\n_Удалить: /note\\_delete номер_`,
+              { parse_mode: 'Markdown', reply_markup: keyboard }
+            );
+          }
+        } catch { await ctx.reply('😔 Не удалось загрузить заметки.'); }
+      },
+      '✅ Задачи': async () => {
+        try {
+          const todos = await todosRepo.getActive(userId);
+          if (todos.length === 0) {
+            await ctx.reply('🎉 Все задачи выполнены!\n\nДобавь: `/todo текст`', { parse_mode: 'Markdown' });
+          } else {
+            const lines = todos.map((t, i) => `${i + 1}. ☐ ${t.task}`);
+            const keyboard = new InlineKeyboard();
+            const maxBtn = Math.min(todos.length, 5);
+            for (let i = 1; i <= maxBtn; i++) keyboard.text(`✅ ${i}`, `todo_done_${i}`);
+            await ctx.reply(
+              `📋 *Задачи (${todos.length}):*\n\n${lines.join('\n')}\n\n_/done номер для выполнения_`,
+              { parse_mode: 'Markdown', reply_markup: keyboard }
+            );
+          }
+        } catch { await ctx.reply('😔 Не удалось загрузить задачи.'); }
+      },
+      '⏰ Напоминания': async () => {
+        try {
+          const reminders = await remindersRepo.getByUser(userId);
+          if (reminders.length === 0) {
+            await ctx.reply('⏰ Нет активных напоминаний.\n\nНапиши: _напомни через 2 часа ..._', { parse_mode: 'Markdown' });
+          } else {
+            const lines = reminders.map((r, i) => {
+              const d = new Date(r.scheduled_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+              return `${i + 1}. ${r.task} — ⏰ ${d}`;
+            });
+            await ctx.reply(`⏰ *Напоминания (${reminders.length}):*\n\n${lines.join('\n')}\n\n_/remind\\_cancel номер_`, { parse_mode: 'Markdown' });
+          }
+        } catch { await ctx.reply('😔 Не удалось загрузить напоминания.'); }
+      },
+      '☀️ Дайджест': async () => {
+        const prefs = await userPrefsRepo.get(userId);
+        const status = prefs?.digest_enabled ? '✅ Включён' : '❌ Выключен';
+        const keyboard = new InlineKeyboard()
+          .text(prefs?.digest_enabled ? '🔕 Выключить' : '🔔 Включить', 'digest_toggle')
+          .text('🔄 Сейчас', 'digest_now');
+        await ctx.reply(
+          `☀️ *Дайджест:* ${status}\n\nВремя: ${prefs?.digest_hour ?? 10}:00 | Город: ${prefs?.digest_city ?? 'Гродно'}`,
+          { parse_mode: 'Markdown', reply_markup: keyboard }
+        );
+      },
+      '📋 Меню': async () => {
+        await ctx.reply('🎛 *Меню Amina* — выбери действие:', { parse_mode: 'Markdown', reply_markup: buildMainMenu() });
+      },
+      '🧹 Очистить': async () => {
+        const keyboard = new InlineKeyboard()
+          .text('✅ Да, очистить', 'confirm_clear')
+          .text('❌ Отмена', 'cancel_clear');
+        await ctx.reply('🧹 *Очистить историю?*', { parse_mode: 'Markdown', reply_markup: keyboard });
+      },
+    };
+
+    // Проверяем, нажата ли кнопка ReplyKeyboard
+    const buttonHandler = replyButtonHandlers[userMessage];
+    if (buttonHandler) {
+      await buttonHandler();
+      return;
+    }
 
     // Telegram user info for profile
     const telegramInfo: TelegramUserInfo = {
@@ -971,12 +1408,11 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
       }
 
       // === ПРЯМОЙ ВЕБ-ПОИСК: перехватываем запросы требующие актуальных данных ===
-      // Обходим LLM полностью для поисковых запросов — это предотвращает
-      // симуляцию поиска бесплатными моделями ("Ищу...", "(Поиск в интернете)")
-      if (needsWebSearch(userMessage)) {
+      // Для ПРИНУДИТЕЛЬНЫХ запросов (погода, курс, новости) — обходим LLM полностью.
+      // Для обычных поисковых запросов — тоже, если поиск включён.
+      if (shouldForceWebSearch(userMessage) || needsWebSearch(userMessage)) {
         const handled = await handleDirectWebSearch(ctx, userMessage, userId, chatId, startTime);
         if (handled) return;
-        // Если handleDirectWebSearch вернул false — продолжаем к обычному LLM
       }
 
       // Get or create conversation
@@ -1076,8 +1512,9 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
 
       // === ОПТИМИЗАЦИЯ: отправляем ответ СРАЗУ, до записи в БД ===
       const responseKeyboard = new InlineKeyboard()
-        .text('📌 В заметки', 'save_to_notes')
-        .text('🔊 Озвучить', 'read_aloud');
+        .text('📌 Заметка', 'save_to_notes')
+        .text('🔊 Озвучить', 'read_aloud')
+        .text('🎛 Меню', 'show_menu');
 
       await sendLongMessage(ctx, response.content, responseKeyboard);
 
@@ -1371,6 +1808,12 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
 
       // 6. Обычный AI flow — с полным контекстом (время, память, веб-поиск)
 
+      // === Проверка прямого веб-поиска для голосовых ===
+      if (shouldForceWebSearch(transcribedText) || needsWebSearch(transcribedText)) {
+        const handled = await handleDirectWebSearch(ctx, transcribedText, userId, chatId, startTime);
+        if (handled) return;
+      }
+
       // === ОПТИМИЗАЦИЯ: memoryContext + webSearch параллельно ===
       const timeContext = buildTimeContext(ctx.from?.first_name);
 
@@ -1438,8 +1881,9 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
 
       // === ОПТИМИЗАЦИЯ: отправляем ответ СРАЗУ, до записи в БД ===
       const responseKeyboard = new InlineKeyboard()
-        .text('📌 В заметки', 'save_to_notes')
-        .text('🔊 Озвучить', 'read_aloud');
+        .text('📌 Заметка', 'save_to_notes')
+        .text('🔊 Озвучить', 'read_aloud')
+        .text('🎛 Меню', 'show_menu');
 
       await sendLongMessage(ctx, aiResponse.content, responseKeyboard);
 

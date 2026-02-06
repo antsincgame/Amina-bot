@@ -201,10 +201,40 @@ async function processDigests(bot: BotLike): Promise<void> {
 // --------------------------------------------
 
 /**
+ * Поиск с повторной попыткой при ошибке
+ */
+async function webSearchWithRetry(
+  query: string,
+  retries = 2
+): Promise<{ answer: string } | null> {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      const result = await webSearch(query, { forDigest: true });
+      if (result.answer && result.answer.length > 30) {
+        return result;
+      }
+      appLogger.warn({ query: query.substring(0, 50), attempt, answerLength: result.answer?.length ?? 0 }, 'Digest: search returned weak result');
+    } catch (error) {
+      appLogger.warn({ error, query: query.substring(0, 50), attempt }, `Digest: search attempt ${attempt} failed`);
+      if (attempt < retries) {
+        // Пауза перед повтором (1.5 сек)
+        await new Promise(resolve => setTimeout(resolve, 1500));
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * Собрать дайджест:
- * 1. Perplexity собирает сырые данные ПАРАЛЛЕЛЬНО (погода, новости города, Беларусь и мир)
- * 2. БД: напоминания, задачи (параллельно)
- * 3. Основная LLM превращает всё в живой текст
+ * 1. Perplexity собирает сырые данные ПАРАЛЛЕЛЬНО (погода, новости города, мир)
+ * 2. БД: напоминания, задачи
+ * 3. LLM формирует живой текст
+ * 
+ * Улучшения:
+ * - Увеличены токены для подробных ответов (forDigest: true)
+ * - Повторные попытки при ошибках
+ * - Лучшие промпты для поиска
  */
 async function buildDigest(
   userId: string,
@@ -212,16 +242,23 @@ async function buildDigest(
   city: string
 ): Promise<string> {
   const rawData: string[] = [];
+  const todayStr = new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
 
-  // --- Запускаем ВСЕ запросы параллельно для скорости ---
+  // --- Запускаем ВСЕ запросы параллельно ---
   const [weatherResult, cityNewsResult, worldNewsResult, remindersResult, todosResult] = 
     await Promise.allSettled([
-      // 1. Погода
-      webSearch(`Погода ${city} Беларусь сегодня температура осадки ветер`),
-      // 2. Новости города
-      webSearch(`Новости ${city} Беларусь сегодня: события, происшествия, жизнь города. 5-7 главных новостей.`),
+      // 1. Погода — подробно
+      webSearchWithRetry(
+        `Погода ${city} Беларусь сегодня ${todayStr}: точная температура сейчас, днём и ночью, осадки, ветер, влажность, давление. Прогноз на весь день.`
+      ),
+      // 2. Новости города — подробные, конкретные
+      webSearchWithRetry(
+        `Последние новости ${city} Беларусь ${todayStr}: основные события, происшествия, решения властей, жизнь города за последние 24 часа. Минимум 5-7 конкретных новостей с датами и деталями.`
+      ),
       // 3. Новости Беларуси и мира
-      webSearch('Главные новости Беларуси и мира сегодня коротко, 5-7 пунктов'),
+      webSearchWithRetry(
+        `Главные новости Беларуси и мира ${todayStr}: самые важные события за последние 24 часа. 5-7 конкретных пунктов с деталями.`
+      ),
       // 4. Напоминания из БД
       remindersRepo.getByUser(userId),
       // 5. Задачи из БД
@@ -234,7 +271,7 @@ async function buildDigest(
   } else {
     rawData.push(`[ПОГОДА ${city}]\nНе удалось получить данные о погоде`);
     if (weatherResult.status === 'rejected') {
-      appLogger.warn({ error: weatherResult.reason, city }, 'Digest: weather search failed');
+      appLogger.warn({ error: weatherResult.reason, city }, 'Digest: weather search failed after retries');
     }
   }
 
@@ -243,31 +280,30 @@ async function buildDigest(
   } else {
     rawData.push(`[НОВОСТИ ${city.toUpperCase()}]\nНе удалось получить новости города`);
     if (cityNewsResult.status === 'rejected') {
-      appLogger.warn({ error: cityNewsResult.reason, city }, 'Digest: city news search failed');
+      appLogger.warn({ error: cityNewsResult.reason, city }, 'Digest: city news failed after retries');
     }
   }
 
   if (worldNewsResult.status === 'fulfilled' && worldNewsResult.value?.answer) {
     rawData.push(`[НОВОСТИ БЕЛАРУСИ И МИРА]\n${worldNewsResult.value.answer}`);
-  } else if (worldNewsResult.status === 'rejected') {
-    appLogger.warn({ error: worldNewsResult.reason }, 'Digest: world news search failed');
+  } else {
+    rawData.push(`[НОВОСТИ БЕЛАРУСИ И МИРА]\nНе удалось получить мировые новости`);
+    if (worldNewsResult.status === 'rejected') {
+      appLogger.warn({ error: worldNewsResult.reason }, 'Digest: world news failed after retries');
+    }
   }
 
   // 4. Напоминания на сегодня
   if (remindersResult.status === 'fulfilled') {
     const reminders = remindersResult.value;
-    const todayStr = new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD
-
+    const todayISO = new Date().toLocaleDateString('sv-SE');
     const todayReminders = reminders.filter(r => {
       const reminderDate = new Date(r.scheduled_at).toLocaleDateString('sv-SE');
-      return reminderDate === todayStr;
+      return reminderDate === todayISO;
     });
-
     if (todayReminders.length > 0) {
       const lines = todayReminders.map(r => {
-        const time = new Date(r.scheduled_at).toLocaleTimeString('ru-RU', {
-          hour: '2-digit', minute: '2-digit',
-        });
+        const time = new Date(r.scheduled_at).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
         return `${time} — ${r.task}`;
       });
       rawData.push(`[НАПОМИНАНИЯ НА СЕГОДНЯ]\n${lines.join('\n')}`);
@@ -278,40 +314,40 @@ async function buildDigest(
   if (todosResult.status === 'fulfilled') {
     const todos = todosResult.value;
     if (todos.length > 0) {
-      const lines = todos.slice(0, 7).map(t => `- ${t.task}`);
+      const lines = todos.slice(0, 10).map(t => `- ${t.task}`);
       rawData.push(`[ЗАДАЧИ]\n${lines.join('\n')}`);
     }
   }
 
-  // --- Передаём сырые данные в LLM для эмоциональной обработки ---
-
+  // --- LLM обработка ---
   const nameStr = firstName || 'друг';
   const todayDate = new Date().toLocaleDateString('ru-RU', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   });
 
   const digestPrompt = `Ты — Amina, персональный ассистент. Сейчас ${todayDate}.
-Тебе нужно составить УТРЕННИЙ ДАЙДЖЕСТ для пользователя по имени ${nameStr} из города ${city}, Беларусь.
+Составь УТРЕННИЙ ДАЙДЖЕСТ для ${nameStr} из города ${city}, Беларусь.
 
-Вот сырые данные из интернета и базы данных:
+Вот данные из интернета и БД:
 
 ${rawData.join('\n\n')}
 
 ---
 
-ЗАДАЧА: Преврати это в живой, эмоциональный утренний дайджест.
+ЗАДАЧА: Живой, эмоциональный утренний дайджест.
 
 ПРАВИЛА:
-1. Начни с тёплого приветствия по имени
-2. Погоду подай с эмоциями и советом ("Бери зонт!" или "Идеально для прогулки!")
-3. Новости ${city} — главная часть! Прокомментируй каждую новость с живой реакцией, юмором или сочувствием
-4. Новости Беларуси и мира — коротко, 2-3 предложения, с комментарием
-5. Напоминания и задачи — если есть, подбодри и мотивируй
-6. Заверши позитивной нотой или пожеланием на день
-7. Используй эмодзи уместно, но не перебарщивай
-8. Формат: Markdown (для Telegram), жирный текст (*bold*) для заголовков
-9. НЕ придумывай новости — используй ТОЛЬКО то что в данных выше
-10. Длина: 1500-3000 символов (не слишком коротко, не слишком длинно)`;
+1. Тёплое приветствие по имени
+2. Погода — с эмоциями и советом ("Бери зонт!" / "Идеально для прогулки!")
+3. Новости ${city} — главная часть! Прокомментируй каждую с эмоцией
+4. Новости Беларуси и мира — кратко, с комментарием
+5. Напоминания/задачи — подбодри
+6. Позитивное завершение
+7. Эмодзи уместно, не перебарщивай
+8. Формат: Markdown для Telegram (*bold* заголовки)
+9. НЕ ПРИДУМЫВАЙ — только из данных выше
+10. Если данные не получены — честно скажи, не выдумывай
+11. Длина: 1500-3500 символов`;
 
   try {
     const llmResponse = await aiService.chat(
@@ -319,14 +355,14 @@ ${rawData.join('\n\n')}
       'telegram'
     );
     
-    // Добавляем подпись
-    return llmResponse.content + '\n\n_Настройки: /digest | Запросить сейчас: /digest now_';
+    const keyboard = '📋 /digest | 🔄 /digest now';
+    return llmResponse.content + `\n\n_${keyboard}_`;
   } catch (error) {
     appLogger.error({ error, userId }, 'LLM failed to process digest, using raw data');
     
-    // Fallback: отправляем сырые данные если LLM недоступна
+    // Fallback: сырые данные
     const greeting = getTimeGreeting(firstName);
-    return `${greeting}\n\n${rawData.join('\n\n')}\n\n_Настройки: /digest_`;
+    return `${greeting}\n\n${rawData.join('\n\n')}\n\n_/digest — настройки дайджеста_`;
   }
 }
 
