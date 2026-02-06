@@ -267,11 +267,13 @@ const setupCommands = (bot: Bot<BotContext>): void => {
       const result = await generateImage(prompt);
       const timeSeconds = (result.generationTimeMs / 1000).toFixed(1);
 
+      // Экранируем спецсимволы Markdown в промпте
+      const safePrompt = escapeMarkdown(prompt);
+
       await ctx.replyWithPhoto(
         new InputFile(result.image, 'generated.png'),
         {
-          caption: `🎨 *${prompt}*\n⏱ ${timeSeconds}с | 🤖 FLUX.1-schnell`,
-          parse_mode: 'Markdown',
+          caption: `🎨 ${safePrompt}\n⏱ ${timeSeconds}с | FLUX.1-schnell`,
         }
       );
 
@@ -890,12 +892,12 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
             const result = await generateImage(imgPrompt);
             const timeSeconds = (result.generationTimeMs / 1000).toFixed(1);
             const cleanPrompt = imgPrompt.replace(/, high quality.*$/, '');
+            const safePrompt = escapeMarkdown(cleanPrompt);
 
             await ctx.replyWithPhoto(
               new InputFile(result.image, 'generated.png'),
               {
-                caption: `🎨 *${cleanPrompt}*\n⏱ ${timeSeconds}с | 🤖 FLUX.1-schnell`,
-                parse_mode: 'Markdown',
+                caption: `🎨 ${safePrompt}\n⏱ ${timeSeconds}с | FLUX.1-schnell`,
               }
             );
 
@@ -1119,6 +1121,7 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
     const userId = ctx.from?.id.toString() ?? 'unknown';
     const chatId = ctx.chat.id;
     const duration = ctx.message.voice.duration;
+    const startTime = Date.now();
     
     telegramLogger.info({ userId, duration }, 'Voice message received');
 
@@ -1173,6 +1176,15 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
 
       telegramLogger.debug({ userId, transcription: transcribedText.substring(0, 100) }, 'Voice transcribed');
 
+      // Telegram user info for profile
+      const telegramInfo: TelegramUserInfo = {
+        id: ctx.from?.id ?? 0,
+        username: ctx.from?.username,
+        first_name: ctx.from?.first_name,
+        last_name: ctx.from?.last_name,
+        language_code: ctx.from?.language_code,
+      };
+
       // 2. Проверяем: это напоминание?
       if (detectReminderIntent(transcribedText)) {
         try {
@@ -1210,30 +1222,157 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
           return;
         } catch (reminderError) {
           telegramLogger.warn({ error: reminderError, userId }, 'Voice reminder extraction failed');
-          // ВАЖНО: НЕ продолжаем в обычный AI flow — LLM может ответить
-          // "конечно, напомню" но реально напоминание НЕ будет создано
           await ctx.reply('⚠️ Не удалось создать напоминание — AI временно недоступен.\n\nПопробуй ещё раз через минуту.');
           return;
         }
       }
 
-      // 3. Обычный flow: отправляем транскрипцию в LLM (без повторной транскрипции)
-      const voiceMessages = [
-        ...ctx.session.messageHistory,
-        { role: 'user' as const, content: transcribedText },
-      ];
-      const aiResponse = await aiService.chat(voiceMessages, 'telegram');
+      // 3. Автодетекция генерации изображения из голоса ("нарисуй...", "сгенерируй...")
+      if (detectImageGenIntent(transcribedText)) {
+        const imgPrompt = extractImagePrompt(transcribedText);
+        if (imgPrompt) {
+          telegramLogger.info({ userId, prompt: imgPrompt }, 'Image gen auto-detected from voice');
+          await ctx.replyWithChatAction('upload_photo');
 
-      // Update history
-      ctx.session.messageHistory.push(
-        { role: 'user', content: transcribedText },
-        { role: 'assistant', content: aiResponse.content }
-      );
+          try {
+            const result = await generateImage(imgPrompt);
+            const timeSeconds = (result.generationTimeMs / 1000).toFixed(1);
+            const cleanPrompt = imgPrompt.replace(/, high quality.*$/, '');
+            const safePrompt = escapeMarkdown(cleanPrompt);
+
+            await ctx.replyWithPhoto(
+              new InputFile(result.image, 'generated.png'),
+              {
+                caption: `🎨 ${safePrompt}\n⏱ ${timeSeconds}с | FLUX.1-schnell`,
+              }
+            );
+
+            try {
+              await analyticsRepo.log('message_received', 'telegram', {
+                userId,
+                event: 'image_generated_voice',
+                prompt: imgPrompt,
+                model: result.model,
+                timeMs: result.generationTimeMs,
+              });
+            } catch {
+              // Аналитика не критична
+            }
+            return;
+          } catch (error: unknown) {
+            const err = error as { message?: string; code?: string };
+            telegramLogger.error({ error, userId }, 'Voice image gen failed');
+            await ctx.reply(`😔 ${err.message || 'Не удалось создать изображение.'}`);
+            return;
+          }
+        }
+      }
+
+      // 4. Автодетекция TTS из голоса: "скажи голосом...", "озвучь..."
+      const ttsMatch = transcribedText.match(/^(скажи голосом|озвучь|произнеси|read aloud)\s+(.+)/i);
+      if (ttsMatch) {
+        const ttsText = ttsMatch[2]?.trim();
+        if (ttsText) {
+          await ctx.replyWithChatAction('record_voice');
+          try {
+            const lang = detectLanguage(ttsText);
+            const audio = await textToSpeech(ttsText, lang);
+            if (audio) {
+              await ctx.replyWithVoice(new InputFile(audio, 'voice.mp3'));
+            } else {
+              await ctx.reply('😔 Не удалось сгенерировать аудио. Попробуй позже.');
+            }
+          } catch {
+            await ctx.reply('😔 Ошибка генерации голоса.');
+          }
+          return;
+        }
+      }
+
+      // 5. Автодетекция заметок из голоса: "запомни...", "запиши..."
+      const noteMatch = transcribedText.match(/^(запомни|запиши|сохрани заметку)\s+(.+)/i);
+      if (noteMatch) {
+        const noteContent = noteMatch[2]?.trim();
+        if (noteContent) {
+          try {
+            await notesRepo.create(userId, noteContent);
+            const keyboard = new InlineKeyboard().text('📋 Все заметки', 'notes_list');
+            await ctx.reply(`📌 Сохранено!\n\n_${noteContent}_`, {
+              parse_mode: 'Markdown',
+              reply_markup: keyboard,
+            });
+          } catch {
+            await ctx.reply('😔 Не удалось сохранить заметку.');
+          }
+          return;
+        }
+      }
+
+      // 6. Обычный AI flow — с полным контекстом (время, память, веб-поиск)
+
+      // Build memory context (graceful degradation)
+      let memoryContext = '';
+      try {
+        memoryContext = await memoryContextBuilder.buildContext(userId, telegramInfo);
+      } catch (memError) {
+        telegramLogger.warn({ error: memError, userId }, 'Failed to build memory context for voice');
+      }
+
+      // Умный контекст: время суток, день недели, имя
+      const timeContext = buildTimeContext(ctx.from?.first_name);
+      memoryContext = timeContext + (memoryContext ? '\n' + memoryContext : '');
+
+      // Прозрачный веб-поиск
+      const webSearchContext = await getSearchContext(transcribedText);
+
+      // Add user message to history
+      ctx.session.messageHistory.push({
+        role: 'user',
+        content: transcribedText,
+      });
 
       // Trim history if too long
       if (ctx.session.messageHistory.length > MAX_HISTORY_MESSAGES) {
         ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
       }
+
+      // Get AI response with full context
+      const fullContext = memoryContext + webSearchContext;
+      let aiResponse = await aiService.chat(ctx.session.messageHistory, 'telegram', fullContext);
+
+      // Если AI неуверен и поиск ещё не был сделан — пробуем найти ответ
+      if (!webSearchContext) {
+        const enhanced = await enhanceResponseIfNeeded(transcribedText, aiResponse.content);
+        if (enhanced.wasEnhanced) {
+          aiResponse = { ...aiResponse, content: enhanced.response };
+          telegramLogger.info({ userId }, 'Voice response enhanced with web search');
+        }
+      }
+
+      // Add assistant response to history
+      ctx.session.messageHistory.push({
+        role: 'assistant',
+        content: aiResponse.content,
+      });
+
+      // Update user profile stats (fire and forget)
+      userProfileRepo.updateOnMessage(userId, 'voice', aiResponse.tokens_used.total, telegramInfo).catch(() => {});
+
+      // Log AI response (fire and forget)
+      const responseTime = Date.now() - startTime;
+      userLogsRepo.add(userId, 'ai_response', aiResponse.content, {
+        chatId,
+        type: 'voice',
+        responseLength: aiResponse.content.length,
+      }, {
+        model: aiResponse.model,
+        tokensPrompt: aiResponse.tokens_used.prompt,
+        tokensCompletion: aiResponse.tokens_used.completion,
+        responseTimeMs: responseTime,
+      }).catch(() => {});
+
+      // Extract facts from conversation (async, don't wait)
+      memoryExtractor.extractFacts(userId, transcribedText, aiResponse.content).catch(() => {});
 
       // Save to database
       const userMsg: Message = {
@@ -1264,8 +1403,12 @@ const setupMessageHandlers = (bot: Bot<BotContext>): void => {
         transcription_length: transcribedText.length,
       });
 
-      // Отправляем только финальный ответ (без промежуточной транскрипции)
-      await sendLongMessage(ctx, aiResponse.content);
+      // Send response with inline buttons
+      const responseKeyboard = new InlineKeyboard()
+        .text('📌 В заметки', 'save_to_notes')
+        .text('🔊 Озвучить', 'read_aloud');
+
+      await sendLongMessage(ctx, aiResponse.content, responseKeyboard);
 
       telegramLogger.info(
         { userId, tokens: aiResponse.tokens_used.total },
@@ -1641,6 +1784,13 @@ const buildTimeContext = (firstName?: string): string => {
 };
 
 // --------------------------------------------
+// Escape Markdown special chars for Telegram
+// --------------------------------------------
+
+const escapeMarkdown = (text: string): string =>
+  text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
+
+// --------------------------------------------
 // Send Long Message (split by Telegram limit)
 // --------------------------------------------
 
@@ -1691,9 +1841,11 @@ const sendLongMessage = async (
 
   // Send all chunks (кнопки — только к последнему)
   for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    if (!chunk) continue;
     const isLast = i === chunks.length - 1;
     await ctx.reply(
-      chunks[i],
+      chunk,
       isLast && keyboard ? { reply_markup: keyboard } : undefined
     );
   }

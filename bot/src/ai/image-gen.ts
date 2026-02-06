@@ -2,7 +2,7 @@
  * Image Generation Service
  * 
  * Генерация изображений через Hugging Face Inference API (FLUX.1-schnell)
- * Бесплатно, с очередью.
+ * Бесплатно, через hf-inference провайдер.
  */
 
 import { InferenceClient } from '@huggingface/inference';
@@ -14,8 +14,16 @@ import { settingsRepo } from '../db/supabase.js';
 // --------------------------------------------
 
 const DEFAULT_MODEL = 'black-forest-labs/FLUX.1-schnell';
-const GENERATION_TIMEOUT_MS = 60_000; // 60 секунд (генерация может быть долгой)
+/** Таймаут генерации (ms) — FLUX.1-schnell обычно укладывается в 30с */
+const GENERATION_TIMEOUT_MS = 60_000;
+/** Кеш HF-токена чтобы не дёргать БД на каждый запрос */
 const HF_TOKEN_CACHE_TTL = 5 * 60 * 1000; // 5 минут
+/**
+ * ВАЖНО: provider ОБЯЗАТЕЛЬНО "hf-inference".
+ * Без этого библиотека v4.x автоматически выбирает провайдера "black-forest-labs"
+ * и отправляет HF-токен как ключ BFL API (api.us1.bfl.ai) → гарантированный 401.
+ */
+const HF_PROVIDER = 'hf-inference' as const;
 
 // Паттерны для детекции запроса на генерацию изображения
 const IMAGE_GEN_PATTERNS = [
@@ -138,16 +146,38 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
   aiLogger.info({ prompt, model: DEFAULT_MODEL }, 'Generating image via HF FLUX.1-schnell');
 
   try {
-    const imageBlob = await client.textToImage({
-      model: DEFAULT_MODEL,
-      inputs: prompt,
-      parameters: {
-        num_inference_steps: 4, // schnell = быстрая модель, 4 шагов достаточно
-      },
-    });
+    // AbortController для таймаута — защита от зависших запросов
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), GENERATION_TIMEOUT_MS);
 
-    const buffer = Buffer.from(await imageBlob.arrayBuffer());
+    let imageBlob: Blob;
+    try {
+      // InferenceClient не сохраняет overload-типы, поэтому cast необходим.
+      // По умолчанию (без outputType) textToImage возвращает Blob.
+      const result = await client.textToImage({
+        model: DEFAULT_MODEL,
+        inputs: prompt,
+        provider: HF_PROVIDER,
+        parameters: {
+          num_inference_steps: 4,
+        },
+      });
+      imageBlob = result as unknown as Blob;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    // Blob → Buffer (совместимо с Node.js 18+)
+    const arrayBuffer = await imageBlob.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
     const generationTimeMs = Date.now() - startTime;
+
+    if (buffer.length === 0) {
+      throw Object.assign(
+        new Error('Модель вернула пустое изображение. Попробуй другой промпт.'),
+        { code: 'HF_EMPTY_RESPONSE' }
+      );
+    }
 
     aiLogger.info(
       { 
@@ -165,35 +195,50 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
       generationTimeMs,
     };
   } catch (error: unknown) {
-    const err = error as { status?: number; message?: string };
+    const err = error as { status?: number; message?: string; name?: string };
     const generationTimeMs = Date.now() - startTime;
     
     aiLogger.error(
-      { error, model: DEFAULT_MODEL, timeMs: generationTimeMs },
+      { error: err.message, model: DEFAULT_MODEL, timeMs: generationTimeMs },
       'Image generation failed'
     );
 
-    if (err.status === 401) {
+    // Таймаут (AbortController)
+    if (err.name === 'AbortError') {
+      throw Object.assign(
+        new Error('Генерация заняла слишком долго. Попробуй более простой промпт.'),
+        { code: 'HF_TIMEOUT' }
+      );
+    }
+
+    if (err.status === 401 || err.message?.includes('401')) {
       throw Object.assign(
         new Error('Неверный HF_TOKEN. Обновите в админке → API Ключи.'),
         { code: 'HF_AUTH_ERROR' }
       );
     }
-    if (err.status === 429) {
+    if (err.status === 429 || err.message?.includes('429')) {
       throw Object.assign(
         new Error('Слишком много запросов к Hugging Face. Подожди минуту.'),
         { code: 'HF_RATE_LIMIT' }
       );
     }
-    if (err.status === 503) {
+    if (err.status === 503 || err.message?.includes('503')) {
       throw Object.assign(
         new Error('Модель загружается на сервере. Попробуй через 30 секунд.'),
         { code: 'HF_MODEL_LOADING' }
       );
     }
+
+    // Если ошибка уже наша — пробрасываем
+    if ((error as { code?: string }).code?.startsWith('HF_')) {
+      throw error;
+    }
     
     throw Object.assign(
-      new Error('Не удалось сгенерировать изображение. Попробуй позже.'),
+      new Error(
+        `Не удалось сгенерировать изображение: ${err.message || 'неизвестная ошибка'}. Попробуй позже.`
+      ),
       { code: 'HF_GENERATION_ERROR' }
     );
   }
