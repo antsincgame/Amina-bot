@@ -13,7 +13,7 @@ import { startReminderScheduler, stopReminderScheduler } from './reminders/remin
 import { startDigestScheduler, stopDigestScheduler } from './features/digest-scheduler.js';
 
 // --------------------------------------------
-// Application Entry Point
+// Application Entry Point (v1.0.1)
 // --------------------------------------------
 
 const app = Fastify({
