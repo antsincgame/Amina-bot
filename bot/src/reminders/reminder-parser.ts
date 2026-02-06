@@ -76,9 +76,9 @@ function extractTaskFromText(text: string): string {
 
 /**
  * Форматировать время для пользователя.
- * TZ=Europe/Moscow → toLocaleString уже в московском времени.
+ * TZ=Europe/Minsk → toLocaleString уже в минском времени (UTC+3).
  */
-function formatMoscowTime(date: Date): string {
+function formatMinskTime(date: Date): string {
   return date.toLocaleString('ru-RU', {
     hour: '2-digit',
     minute: '2-digit',
@@ -86,18 +86,18 @@ function formatMoscowTime(date: Date): string {
 }
 
 /**
- * Форматировать ISO 8601 с московским часовым поясом (+03:00).
- * Явно указываем timeZone: 'Europe/Moscow' для надёжности (не зависим от TZ env).
+ * Форматировать ISO 8601 с минским часовым поясом (+03:00).
+ * Явно указываем timeZone: 'Europe/Minsk' для надёжности (не зависим от TZ env).
  */
-function toMoscowISO(date: Date): string {
+function toMinskISO(date: Date): string {
   const fmt = new Intl.DateTimeFormat('sv-SE', {
-    timeZone: 'Europe/Moscow',
+    timeZone: 'Europe/Minsk',
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
     hour12: false,
   });
-  const moscowStr = fmt.format(date);
-  return moscowStr.replace(' ', 'T') + '+03:00';
+  const minskStr = fmt.format(date);
+  return minskStr.replace(' ', 'T') + '+03:00';
 }
 
 interface RegexTimeMatch {
@@ -162,16 +162,16 @@ function parseReminderRegex(text: string, now: Date): ExtractedReminder | null {
   if (task.length < 2) return null;
 
   const scheduledDate = new Date(now.getTime() + timeMatch.offsetMs);
-  const timeStr = formatMoscowTime(scheduledDate);
+  const timeStr = formatMinskTime(scheduledDate);
 
   aiLogger.info(
-    { task, offset: timeMatch.label, scheduledAt: toMoscowISO(scheduledDate) },
+    { task, offset: timeMatch.label, scheduledAt: toMinskISO(scheduledDate) },
     'Reminder parsed by regex (no AI needed)'
   );
 
   return {
     task,
-    scheduled_at: toMoscowISO(scheduledDate),
+    scheduled_at: toMinskISO(scheduledDate),
     reply: `Конечно! Напомню ${timeMatch.label}, в ${timeStr}. 📝`,
   };
 }
@@ -206,9 +206,9 @@ export async function extractReminder(
   // ========= ЭТАП 2: AI с retry (для сложных случаев) =========
   aiLogger.debug({ text }, 'Regex could not parse reminder, trying AI');
 
-  // TZ=Europe/Moscow → toLocaleString уже в московском времени
-  const moscowTime = now.toLocaleString('sv-SE').replace(' ', 'T') + '+03:00';
-  const moscowReadable = now.toLocaleString('ru-RU', {
+  // TZ=Europe/Minsk → toLocaleString уже в минском времени
+  const minskTime = now.toLocaleString('sv-SE').replace(' ', 'T') + '+03:00';
+  const minskReadable = now.toLocaleString('ru-RU', {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
@@ -219,11 +219,11 @@ export async function extractReminder(
 
   const systemPrompt = `Ты — парсер напоминаний. Твоя задача — извлечь из текста пользователя:
 1. task — что нужно напомнить (кратко, 1-2 предложения)
-2. scheduled_at — когда напомнить (ISO 8601, часовой пояс +03:00 Москва)
+2. scheduled_at — когда напомнить (ISO 8601, часовой пояс +03:00 Минск)
 3. reply — дружелюбный ответ пользователю с подтверждением
 
-Текущее время (Москва): ${moscowReadable}
-ISO: ${moscowTime}
+Текущее время (Минск): ${minskReadable}
+ISO: ${minskTime}
 
 Правила:
 - Если время не указано явно — используй разумное значение (утро=09:00, вечер=19:00, обед=13:00)
