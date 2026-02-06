@@ -102,6 +102,7 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
         telegram: { ready: true, engine: 'grammy' },
         ai: { ready: healthCache.checks['ai'] ?? false, engine: 'OpenRouter' },
         database: { ready: healthCache.checks['database'] ?? false, engine: 'Supabase' },
+        admin: { ready: true, engine: 'React' },
       },
       timestamp: new Date().toISOString(),
     };
