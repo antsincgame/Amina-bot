@@ -5,10 +5,13 @@
  * Сервер работает в TZ=Europe/Minsk — new Date() уже в минском времени.
  * 
  * Логика:
- * 1. Perplexity (sonar-reasoning-pro) ищет: погоду, новости города, новости Беларуси и мира
+ * 1. Perplexity ищет: погоду, новости ГОРОДА, новости БЕЛАРУСИ (4 отдельных запроса)
  * 2. Из БД: напоминания на сегодня, задачи
  * 3. Всё передаётся в основную LLM с промптом "обработай эмоционально"
  * 4. LLM формирует живой, авторский дайджест с комментариями
+ * 
+ * ВАЖНО: Новости СТРОГО по Беларуси. Мировые новости ИСКЛЮЧЕНЫ.
+ * Для этого: системный промпт Perplexity, белорусские СМИ, жёсткий LLM-промпт.
  */
 
 import type { Api, RawApi } from 'grammy';
@@ -227,14 +230,16 @@ async function webSearchWithRetry(
 
 /**
  * Собрать дайджест:
- * 1. Perplexity собирает сырые данные ПАРАЛЛЕЛЬНО (погода, новости города, мир)
+ * 1. Perplexity собирает БЕЛОРУССКИЕ данные ПАРАЛЛЕЛЬНО:
+ *    - Погода города
+ *    - Новости ГОРОДА (локальные)
+ *    - Новости БЕЛАРУСИ (экономика, политика, общество)
+ *    - Спорт/культура БЕЛАРУСИ
  * 2. БД: напоминания, задачи
- * 3. LLM формирует живой текст
+ * 3. LLM формирует живой, подробный текст
  * 
- * Улучшения:
- * - Увеличены токены для подробных ответов (forDigest: true)
- * - Повторные попытки при ошибках
- * - Лучшие промпты для поиска
+ * КЛЮЧЕВОЕ: Все запросы содержат белорусские СМИ и ЖЁСТКИЙ фильтр по стране.
+ * Мировые новости полностью исключены на ВСЕХ уровнях.
  */
 async function buildDigest(
   userId: string,
@@ -244,56 +249,85 @@ async function buildDigest(
   const rawData: string[] = [];
   const todayStr = new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
 
-  // --- Запускаем ВСЕ запросы параллельно ---
-  const [weatherResult, cityNewsResult, belarusNewsResult, remindersResult, todosResult] = 
+  // Белорусские СМИ для точности поиска
+  const bySources = 'сайт belta.by, ont.by, tvr.by, grodnonews.by, sb.by, minsknews.by';
+
+  // --- Запускаем ВСЕ запросы параллельно (4 поиска + 2 БД) ---
+  const [weatherResult, cityNewsResult, belarusNewsResult, belarusSportCultureResult, remindersResult, todosResult] = 
     await Promise.allSettled([
-      // 1. Погода — подробно
+      // 1. Погода — подробно с прогнозом
       webSearchWithRetry(
-        `Погода ${city} Беларусь сегодня ${todayStr}: точная температура сейчас, днём и ночью, осадки, ветер, влажность, давление. Прогноз на весь день.`
+        `Погода ${city} Беларусь сегодня ${todayStr}: точная температура сейчас утром днём вечером, осадки, ветер, влажность, давление, ощущается как. Подробный прогноз на весь день.`
       ),
-      // 2. Новости города — подробные, конкретные
+
+      // 2. МЕСТНЫЕ новости ГОРОДА — ключ к локальности: конкретные названия СМИ!
       webSearchWithRetry(
-        `Последние новости ${city} Беларусь ${todayStr}: основные события, происшествия, решения властей, жизнь города за последние 24 часа. Минимум 5-7 конкретных новостей с датами и деталями.`
+        `Новости ${city} Беларусь сегодня ${todayStr} site:${city === 'Гродно' ? 'grodnonews.by OR grodno.in OR newgrodno.by' : city === 'Минск' ? 'minsknews.by OR minsk-news.by' : 'belta.by'}: ` +
+        `местные события, происшествия, решения городских властей, транспорт, благоустройство, культурная жизнь ${city}. ` +
+        `Ищи ТОЛЬКО местные городские новости ${city}! Минимум 5 конкретных событий с датами. ` +
+        `НЕ включай мировые или российские новости — ТОЛЬКО ${city} и ${city === 'Гродно' ? 'Гродненская область' : city === 'Минск' ? 'Минск и область' : 'регион'}.`
       ),
-      // 3. Новости Беларуси (ТОЛЬКО Беларусь, без мировых)
+
+      // 3. Новости БЕЛАРУСИ — экономика, политика, общество
       webSearchWithRetry(
-        `Главные новости Беларуси ${todayStr}: экономика, политика, общество, спорт, культура за последние 24 часа. Только белорусские новости! 5-7 конкретных пунктов с деталями.`
+        `Внутренние новости Беларуси ${todayStr} (${bySources}): ` +
+        `белорусская экономика, решения правительства, законы, социальная политика, образование, здравоохранение, ` +
+        `инфраструктура, строительство, IT-сектор Беларуси, курс белорусского рубля, цены. ` +
+        `СТРОГО только внутренние белорусские новости! НЕ включай мировые, российские, украинские новости! ` +
+        `Минимум 5-7 пунктов о жизни внутри Беларуси с конкретными фактами и цифрами.`
       ),
-      // 4. Напоминания из БД
+
+      // 4. Спорт и культура БЕЛАРУСИ — отдельный запрос для полноты
+      webSearchWithRetry(
+        `Спорт культура Беларусь сегодня ${todayStr}: белорусские спортсмены, БАТЭ, Динамо Минск, ` +
+        `белорусский футбол хоккей биатлон, театры Беларуси, концерты, фестивали, выставки. ` +
+        `Только белорусский спорт и культура! Минимум 3-5 событий.`
+      ),
+
+      // 5. Напоминания из БД
       remindersRepo.getByUser(userId),
-      // 5. Задачи из БД
+      // 6. Задачи из БД
       todosRepo.getForDigest(userId),
     ]);
 
-  // Обрабатываем результаты
+  // Обрабатываем результаты поиска
   if (weatherResult.status === 'fulfilled' && weatherResult.value?.answer) {
-    rawData.push(`[ПОГОДА ${city}]\n${weatherResult.value.answer}`);
+    rawData.push(`[ПОГОДА ${city.toUpperCase()}]\n${weatherResult.value.answer}`);
   } else {
-    rawData.push(`[ПОГОДА ${city}]\nНе удалось получить данные о погоде`);
+    rawData.push(`[ПОГОДА ${city.toUpperCase()}]\nДанные о погоде временно недоступны`);
     if (weatherResult.status === 'rejected') {
-      appLogger.warn({ error: weatherResult.reason, city }, 'Digest: weather search failed after retries');
+      appLogger.warn({ error: weatherResult.reason, city }, 'Digest: weather search failed');
     }
   }
 
   if (cityNewsResult.status === 'fulfilled' && cityNewsResult.value?.answer) {
-    rawData.push(`[НОВОСТИ ${city.toUpperCase()}]\n${cityNewsResult.value.answer}`);
+    rawData.push(`[МЕСТНЫЕ НОВОСТИ ${city.toUpperCase()}]\n${cityNewsResult.value.answer}`);
   } else {
-    rawData.push(`[НОВОСТИ ${city.toUpperCase()}]\nНе удалось получить новости города`);
+    rawData.push(`[МЕСТНЫЕ НОВОСТИ ${city.toUpperCase()}]\nНе удалось получить местные новости`);
     if (cityNewsResult.status === 'rejected') {
-      appLogger.warn({ error: cityNewsResult.reason, city }, 'Digest: city news failed after retries');
+      appLogger.warn({ error: cityNewsResult.reason, city }, 'Digest: city news failed');
     }
   }
 
   if (belarusNewsResult.status === 'fulfilled' && belarusNewsResult.value?.answer) {
-    rawData.push(`[НОВОСТИ БЕЛАРУСИ]\n${belarusNewsResult.value.answer}`);
+    rawData.push(`[НОВОСТИ БЕЛАРУСИ — ЭКОНОМИКА, ПОЛИТИКА, ОБЩЕСТВО]\n${belarusNewsResult.value.answer}`);
   } else {
     rawData.push(`[НОВОСТИ БЕЛАРУСИ]\nНе удалось получить новости Беларуси`);
     if (belarusNewsResult.status === 'rejected') {
-      appLogger.warn({ error: belarusNewsResult.reason }, 'Digest: Belarus news failed after retries');
+      appLogger.warn({ error: belarusNewsResult.reason }, 'Digest: Belarus news failed');
     }
   }
 
-  // 4. Напоминания на сегодня
+  if (belarusSportCultureResult.status === 'fulfilled' && belarusSportCultureResult.value?.answer) {
+    rawData.push(`[СПОРТ И КУЛЬТУРА БЕЛАРУСИ]\n${belarusSportCultureResult.value.answer}`);
+  } else {
+    // Спорт/культура не критичны — не добавляем ошибку
+    if (belarusSportCultureResult.status === 'rejected') {
+      appLogger.warn({ error: belarusSportCultureResult.reason }, 'Digest: Belarus sport/culture failed');
+    }
+  }
+
+  // 5. Напоминания на сегодня
   if (remindersResult.status === 'fulfilled') {
     const reminders = remindersResult.value;
     const todayISO = new Date().toLocaleDateString('sv-SE');
@@ -310,7 +344,7 @@ async function buildDigest(
     }
   }
 
-  // 5. Активные задачи
+  // 6. Активные задачи
   if (todosResult.status === 'fulfilled') {
     const todos = todosResult.value;
     if (todos.length > 0) {
@@ -326,29 +360,41 @@ async function buildDigest(
   });
 
   const digestPrompt = `Ты — Amina, персональный ассистент. Сейчас ${todayDate}.
-Составь УТРЕННИЙ ДАЙДЖЕСТ для ${nameStr} из города ${city}, Беларусь.
+Составь ПОДРОБНЫЙ УТРЕННИЙ ДАЙДЖЕСТ для ${nameStr} из города ${city}, Беларусь.
 
-Вот данные из интернета и БД:
+Вот собранные данные:
 
 ${rawData.join('\n\n')}
 
 ---
 
-ЗАДАЧА: Живой, эмоциональный утренний дайджест ТОЛЬКО ПО БЕЛАРУСИ.
+ЗАДАЧА: Подробный, живой, эмоциональный утренний дайджест.
 
-ПРАВИЛА:
-1. Тёплое приветствие по имени
-2. Погода — с эмоциями и советом ("Бери зонт!" / "Идеально для прогулки!")
-3. Новости ${city} — главная часть! Прокомментируй каждую с эмоцией
-4. Новости Беларуси — кратко, с комментарием (ТОЛЬКО Беларусь, без мировых!)
-5. Напоминания/задачи — подбодри
-6. Позитивное завершение
-7. Эмодзи уместно, не перебарщивай
-8. Формат: Markdown для Telegram (*bold* заголовки)
-9. НЕ ПРИДУМЫВАЙ — только из данных выше
-10. Если данные не получены — честно скажи, не выдумывай
-11. Длина: 1500-3500 символов
-12. Фокус ТОЛЬКО на Беларуси — никаких мировых новостей!`;
+СТРУКТУРА ДАЙДЖЕСТА (ОБЯЗАТЕЛЬНАЯ):
+
+1. **Приветствие** — тёплое, по имени, с упоминанием дня недели и даты
+
+2. **Погода в ${city}** — подробно: температура (утро/день/вечер), осадки, ветер, давление, что надеть, совет
+
+3. **Новости ${city}** — ГЛАВНАЯ ЧАСТЬ дайджеста! Каждую новость пронумеруй и прокомментируй с эмоцией. Минимум 3-5 пунктов. Это МЕСТНЫЕ городские новости!
+
+4. **Новости Беларуси** — экономика, политика, общество, спорт, культура. Каждую с кратким комментарием. Минимум 5-7 пунктов.
+
+5. **Напоминания и задачи** — подбодри, дай совет по приоритетам
+
+6. **Настрой на день** — позитивное мотивирующее завершение
+
+ЖЁСТКИЕ ПРАВИЛА:
+- ЗАПРЕЩЕНО включать мировые новости (Россия, Украина, США, Европа, Ближний Восток)!
+- ЗАПРЕЩЕНО включать новости других стран!
+- Если в данных есть мировые новости — ПРОПУСТИ ИХ, не включай в дайджест!
+- ТОЛЬКО Беларусь и ${city}!
+- НЕ ПРИДУМЫВАЙ новости — только из данных выше
+- Если данных мало — честно скажи, не выдумывай
+- Эмодзи уместно, не перебарщивай
+- Формат: Markdown для Telegram (*bold* заголовки, _italic_ для деталей)
+- Длина: 2500-5000 символов — дайджест должен быть ПОДРОБНЫМ!
+- Каждая новость должна быть 2-3 предложения с комментарием`;
 
   try {
     const llmResponse = await aiService.chat(
@@ -361,7 +407,7 @@ ${rawData.join('\n\n')}
   } catch (error) {
     appLogger.error({ error, userId }, 'LLM failed to process digest, using raw data');
     
-    // Fallback: сырые данные
+    // Fallback: сырые данные с приветствием
     const greeting = getTimeGreeting(firstName);
     return `${greeting}\n\n${rawData.join('\n\n')}\n\n_/digest — настройки дайджеста_`;
   }
