@@ -9,6 +9,7 @@
 import { config } from '../config/index.js';
 import { settingsRepo } from '../db/supabase.js';
 import { telegramLogger } from '../config/logger.js';
+import { SingleCache } from '../utils/cache.js';
 
 // --------------------------------------------
 // Types
@@ -91,50 +92,44 @@ function getModelInfo(modelId: string): PerplexityModel | undefined {
 // API Key & Config Management
 // --------------------------------------------
 
-let cachedPerplexityKey: string | null = null;
-let cachedPerplexityModel: string | null = null;
-let cachedSearchMaxTokens: number | null = null;
-let keyCacheLoadedAt = 0;
-let modelCacheLoadedAt = 0;
-let tokensCacheLoadedAt = 0;
-const CACHE_TTL = 60 * 1000; // 1 минута
+// Кэши (SingleCache вместо ручных переменных)
+const perplexityKeyCache = new SingleCache<string>(60_000);
+const perplexityModelCache = new SingleCache<string>(60_000);
+const searchMaxTokensCache = new SingleCache<number>(60_000);
 
 async function getPerplexityApiKey(): Promise<string> {
   if (config.perplexity?.apiKey) return config.perplexity.apiKey;
-  const now = Date.now();
-  if (cachedPerplexityKey && now - keyCacheLoadedAt < CACHE_TTL) return cachedPerplexityKey;
+  const cached = perplexityKeyCache.get();
+  if (cached) return cached;
   try {
     const key = await settingsRepo.get('perplexity_api_key');
-    if (key) { cachedPerplexityKey = key; keyCacheLoadedAt = now; }
+    if (key) perplexityKeyCache.set(key);
     return key || '';
-  } catch { return cachedPerplexityKey || ''; }
+  } catch { return ''; }
 }
 
 async function getSelectedModel(): Promise<string> {
-  const now = Date.now();
-  if (cachedPerplexityModel && now - modelCacheLoadedAt < CACHE_TTL) return cachedPerplexityModel;
+  const cached = perplexityModelCache.get();
+  if (cached) return cached;
   try {
     const model = await settingsRepo.get('perplexity_model');
     const validModel = PERPLEXITY_MODELS.find(m => m.id === model);
-    cachedPerplexityModel = validModel ? validModel.id : getCheapestOnlineModel();
-    modelCacheLoadedAt = now;
-    return cachedPerplexityModel;
+    const result = validModel ? validModel.id : getCheapestOnlineModel();
+    perplexityModelCache.set(result);
+    return result;
   } catch { return getCheapestOnlineModel(); }
 }
 
-/**
- * Получить настраиваемый лимит токенов для поиска из админки
- */
 async function getSearchMaxTokens(): Promise<number> {
-  const now = Date.now();
-  if (cachedSearchMaxTokens !== null && now - tokensCacheLoadedAt < CACHE_TTL) return cachedSearchMaxTokens;
+  const cached = searchMaxTokensCache.get();
+  if (cached !== null) return cached;
   try {
     const val = await settingsRepo.get('web_search_max_tokens');
     const parsed = val ? parseInt(val, 10) : NaN;
-    cachedSearchMaxTokens = (!isNaN(parsed) && parsed >= 200 && parsed <= 8000) ? parsed : DEFAULT_SEARCH_MAX_TOKENS;
-    tokensCacheLoadedAt = now;
-    return cachedSearchMaxTokens;
-  } catch { return cachedSearchMaxTokens ?? DEFAULT_SEARCH_MAX_TOKENS; }
+    const result = (!isNaN(parsed) && parsed >= 200 && parsed <= 8000) ? parsed : DEFAULT_SEARCH_MAX_TOKENS;
+    searchMaxTokensCache.set(result);
+    return result;
+  } catch { return DEFAULT_SEARCH_MAX_TOKENS; }
 }
 
 // --------------------------------------------
@@ -660,12 +655,9 @@ export async function isWebSearchEnabled(): Promise<boolean> {
  * Очистить кэш API ключа, модели и токенов
  */
 export function clearPerplexityCache(): void {
-  cachedPerplexityKey = null;
-  cachedPerplexityModel = null;
-  cachedSearchMaxTokens = null;
-  keyCacheLoadedAt = 0;
-  modelCacheLoadedAt = 0;
-  tokensCacheLoadedAt = 0;
+  perplexityKeyCache.clear();
+  perplexityModelCache.clear();
+  searchMaxTokensCache.clear();
 }
 
 /**

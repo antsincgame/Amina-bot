@@ -17,11 +17,10 @@ import OpenAI from 'openai';
 import { config, getApiKeys } from '../config/index.js';
 import { settingsRepo } from '../db/supabase.js';
 import { aiLogger } from '../config/logger.js';
+import { SingleCache } from '../utils/cache.js';
 
 // Кэш настройки верификации
-let cachedVerifyEnabled: boolean | null = null;
-let verifyCacheLoadedAt = 0;
-const VERIFY_CACHE_TTL = 60 * 1000; // 1 минута
+const verifyEnabledCache = new SingleCache<boolean>(60_000);
 
 // Модели для верификации (дешёвые/быстрые)
 const VERIFY_MODELS = [
@@ -35,26 +34,21 @@ const VERIFY_MODELS = [
  * Проверяет, включена ли верификация ответов
  */
 async function isVerificationEnabled(): Promise<boolean> {
-  const now = Date.now();
-  if (cachedVerifyEnabled !== null && now - verifyCacheLoadedAt < VERIFY_CACHE_TTL) {
-    return cachedVerifyEnabled;
-  }
+  const cached = verifyEnabledCache.get();
+  if (cached !== null) return cached;
   try {
     const val = await settingsRepo.get('llm_verify_enabled');
-    cachedVerifyEnabled = val === 'true';
-    verifyCacheLoadedAt = now;
-    return cachedVerifyEnabled;
+    const enabled = val === 'true';
+    verifyEnabledCache.set(enabled);
+    return enabled;
   } catch {
-    return cachedVerifyEnabled ?? false;
+    return false;
   }
 }
 
-/**
- * Сбросить кэш верификации
- */
+/** Сбросить кэш верификации */
 export function clearVerifyCache(): void {
-  cachedVerifyEnabled = null;
-  verifyCacheLoadedAt = 0;
+  verifyEnabledCache.clear();
 }
 
 /**

@@ -1,0 +1,860 @@
+/**
+ * Telegram Message Handlers
+ * 
+ * Обработчики сообщений:
+ * - message:text  — текстовые сообщения + ReplyKeyboard кнопки
+ * - message:voice — голосовые сообщения  
+ * - message:photo — фотографии
+ * - message:document — документы (изображения)
+ * - message (catch-all) — неподдерживаемые типы
+ */
+
+import { Bot, InputFile, InlineKeyboard } from 'grammy';
+import type { BotContext, SessionData } from './bot.js';
+import { MAX_HISTORY_MESSAGES } from './bot.js';
+import { config } from '../config/index.js';
+import { telegramLogger } from '../config/logger.js';
+import { aiService } from '../ai/openrouter.js';
+import { processImageWithLLM, transcribeAudio } from '../ai/multimodal.js';
+import { getSearchContext, enhanceResponseIfNeeded, needsWebSearch, webSearch, isWebSearchEnabled, shouldForceWebSearch } from '../ai/websearch.js';
+import { conversationsRepo, analyticsRepo } from '../db/supabase.js';
+import { checkTelegramRateLimit } from '../utils/rate-limiter.js';
+import { getErrorCode } from '../utils/error-handler.js';
+import {
+  userProfileRepo,
+  userMemoryRepo,
+  userLogsRepo,
+  memoryExtractor,
+  memoryContextBuilder,
+  type TelegramUserInfo,
+} from '../memory/user-memory.js';
+import { detectReminderIntent, extractReminder } from '../reminders/reminder-parser.js';
+import { remindersRepo } from '../reminders/reminders-repo.js';
+import { detectImageGenIntent, extractImagePrompt, generateImage } from '../ai/image-gen.js';
+import { notesRepo } from '../features/notes-repo.js';
+import { todosRepo } from '../features/todos-repo.js';
+import { userPrefsRepo } from '../features/user-prefs-repo.js';
+import { textToSpeech, detectLanguage } from '../features/tts.js';
+import { verifyResponse } from '../ai/llm-verifier.js';
+import type { Message, AIMessage, AIResponse } from '../../../shared/types/index.js';
+import {
+  escapeMarkdown,
+  sendLongMessage,
+  buildTimeContext,
+  looksLikeSearchSimulation,
+  formatSearchError,
+} from './format.js';
+import {
+  buildMainMenu,
+  notesListKeyboard,
+  todoDoneKeyboard,
+  digestToggleKeyboard,
+  confirmClearKeyboard,
+  responseActionsKeyboard,
+} from './keyboards.js';
+
+// ============================================
+// Message Handlers Setup
+// ============================================
+
+export const setupMessageHandlers = (bot: Bot<BotContext>): void => {
+  // Text messages
+  bot.on('message:text', async (ctx) => handleTextMessage(ctx));
+
+  // Voice messages
+  bot.on('message:voice', async (ctx) => handleVoiceMessage(ctx));
+
+  // Photo messages
+  bot.on('message:photo', async (ctx) => handlePhotoMessage(ctx));
+
+  // Document/file messages (images sent as files)
+  bot.on('message:document', async (ctx) => handleDocumentMessage(ctx));
+
+  // Catch-all for unsupported message types
+  bot.on('message', async (ctx) => {
+    const msg = ctx.message;
+    if (!msg.text && !msg.voice && !msg.photo && !msg.document) {
+      await ctx.reply('🤔 Я понимаю текст, голосовые сообщения и изображения.');
+    }
+  });
+};
+
+// ============================================
+// Reply Keyboard Button Handlers
+// ============================================
+
+const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Record<string, () => Promise<void>> => ({
+  '🌐 Поиск': async () => {
+    await ctx.reply(
+      '🌐 *Поиск в интернете*\n\nНапиши запрос или: `/search запрос`\n\nПримеры: _погода_, _курс доллара_, _новости_',
+      { parse_mode: 'Markdown' }
+    );
+  },
+  '🎨 Картинка': async () => {
+    await ctx.reply(
+      '🎨 *Генерация картинки*\n\nНапиши что нарисовать или: `/imagine описание`\n\nПример: _Нарисуй кота в космосе_',
+      { parse_mode: 'Markdown' }
+    );
+  },
+  '📌 Заметки': async () => {
+    try {
+      const notes = await notesRepo.getByUser(userId);
+      if (notes.length === 0) {
+        await ctx.reply('📋 У тебя пока нет заметок.\n\nСоздай: `/note текст` или напиши _запомни ..._', { parse_mode: 'Markdown' });
+      } else {
+        const lines = notes.map((n, i) => `${i + 1}. ${n.content}`);
+        const keyboard = new InlineKeyboard().text('📌 Добавить', 'menu_note_help');
+        await ctx.reply(
+          `📋 *Заметки (${notes.length}):*\n\n${lines.join('\n')}\n\n_Удалить: /note\\_delete номер_`,
+          { parse_mode: 'Markdown', reply_markup: keyboard }
+        );
+      }
+    } catch { await ctx.reply('😔 Не удалось загрузить заметки.'); }
+  },
+  '✅ Задачи': async () => {
+    try {
+      const todos = await todosRepo.getActive(userId);
+      if (todos.length === 0) {
+        await ctx.reply('🎉 Все задачи выполнены!\n\nДобавь: `/todo текст`', { parse_mode: 'Markdown' });
+      } else {
+        const lines = todos.map((t, i) => `${i + 1}. ☐ ${t.task}`);
+        await ctx.reply(
+          `📋 *Задачи (${todos.length}):*\n\n${lines.join('\n')}\n\n_/done номер для выполнения_`,
+          { parse_mode: 'Markdown', reply_markup: todoDoneKeyboard(todos.length) }
+        );
+      }
+    } catch { await ctx.reply('😔 Не удалось загрузить задачи.'); }
+  },
+  '⏰ Напоминания': async () => {
+    try {
+      const reminders = await remindersRepo.getByUser(userId);
+      if (reminders.length === 0) {
+        await ctx.reply('⏰ Нет активных напоминаний.\n\nНапиши: _напомни через 2 часа ..._', { parse_mode: 'Markdown' });
+      } else {
+        const lines = reminders.map((r, i) => {
+          const d = new Date(r.scheduled_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+          return `${i + 1}. ${r.task} — ⏰ ${d}`;
+        });
+        await ctx.reply(`⏰ *Напоминания (${reminders.length}):*\n\n${lines.join('\n')}\n\n_/remind\\_cancel номер_`, { parse_mode: 'Markdown' });
+      }
+    } catch { await ctx.reply('😔 Не удалось загрузить напоминания.'); }
+  },
+  '☀️ Дайджест': async () => {
+    const prefs = await userPrefsRepo.get(userId);
+    const status = prefs?.digest_enabled ? '✅ Включён' : '❌ Выключен';
+    await ctx.reply(
+      `☀️ *Дайджест:* ${status}\n\nВремя: ${prefs?.digest_hour ?? 10}:00 | Город: ${prefs?.digest_city ?? 'Минск'}`,
+      { parse_mode: 'Markdown', reply_markup: digestToggleKeyboard(prefs?.digest_enabled ?? false) }
+    );
+  },
+  '📋 Меню': async () => {
+    await ctx.reply('🎛 *Меню Amina* — выбери действие:', { parse_mode: 'Markdown', reply_markup: buildMainMenu() });
+  },
+  '🧹 Очистить': async () => {
+    await ctx.reply('🧹 *Очистить историю?*', { parse_mode: 'Markdown', reply_markup: confirmClearKeyboard() });
+  },
+});
+
+// ============================================
+// Auto-detection Helpers
+// ============================================
+
+/** Обрабатывает автодетекции (напоминания, картинки, TTS, заметки). Возвращает true если обработано. */
+const handleAutoDetections = async (
+  ctx: BotContext,
+  text: string,
+  userId: string,
+  chatId: number,
+): Promise<boolean> => {
+  // === Напоминания ===
+  if (detectReminderIntent(text)) {
+    try {
+      const extracted = await extractReminder(text, new Date());
+      if (extracted) {
+        await remindersRepo.create(userId, chatId, extracted.task, extracted.scheduled_at);
+        await ensureConversation(ctx, userId, chatId);
+
+        const nowISO = new Date().toISOString();
+        await conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'user', content: text, timestamp: nowISO });
+        await conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'assistant', content: extracted.reply, timestamp: nowISO });
+        ctx.session.messageHistory.push({ role: 'user', content: text }, { role: 'assistant', content: extracted.reply });
+
+        await ctx.reply(extracted.reply);
+        telegramLogger.info({ userId, task: extracted.task, scheduledAt: extracted.scheduled_at }, 'Reminder created');
+        return true;
+      }
+      telegramLogger.info({ userId }, 'Reminder detected but AI could not parse details');
+      await ctx.reply('⏰ Похоже, ты хочешь поставить напоминание, но я не смогла разобрать детали.\n\nПопробуй написать чётче, например:\n«Напомни через 2 часа позвонить маме»');
+      return true;
+    } catch (reminderError) {
+      telegramLogger.warn({ error: reminderError, userId }, 'Reminder extraction failed');
+      await ctx.reply('⚠️ Не удалось создать напоминание — AI временно недоступен.\n\nПопробуй ещё раз через минуту.');
+      return true;
+    }
+  }
+
+  // === Генерация изображения ===
+  if (detectImageGenIntent(text)) {
+    const imgPrompt = extractImagePrompt(text);
+    if (imgPrompt) {
+      telegramLogger.info({ userId, prompt: imgPrompt }, 'Image gen auto-detected');
+      await ctx.replyWithChatAction('upload_photo');
+      try {
+        const result = await generateImage(imgPrompt);
+        const timeSeconds = (result.generationTimeMs / 1000).toFixed(1);
+        const cleanPrompt = imgPrompt.replace(/, high quality.*$/, '');
+        await ctx.replyWithPhoto(
+          new InputFile(result.image, 'generated.png'),
+          { caption: `🎨 ${escapeMarkdown(cleanPrompt)}\n⏱ ${timeSeconds}с | FLUX.1-schnell` }
+        );
+        analyticsRepo.log('message_received', 'telegram', { userId, event: 'image_generated', prompt: imgPrompt, model: result.model, timeMs: result.generationTimeMs }).catch(() => {});
+        return true;
+      } catch (error: unknown) {
+        const err = error as { message?: string };
+        telegramLogger.error({ error, userId }, 'Auto image gen failed');
+        await ctx.reply(`😔 ${err.message || 'Не удалось создать изображение.'}`);
+        return true;
+      }
+    }
+  }
+
+  // === TTS: "скажи голосом...", "озвучь..." ===
+  const ttsMatch = text.match(/^(скажи голосом|озвучь|произнеси|read aloud)\s+(.+)/i);
+  if (ttsMatch) {
+    const ttsText = ttsMatch[2]?.trim();
+    if (ttsText) {
+      await ctx.replyWithChatAction('record_voice');
+      try {
+        const lang = detectLanguage(ttsText);
+        const audio = await textToSpeech(ttsText, lang);
+        if (audio) await ctx.replyWithVoice(new InputFile(audio, 'voice.mp3'));
+        else await ctx.reply('😔 Не удалось сгенерировать аудио. Попробуй позже.');
+      } catch {
+        await ctx.reply('😔 Ошибка генерации голоса.');
+      }
+      return true;
+    }
+  }
+
+  // === Заметки: "запомни ...", "запиши ..." ===
+  const noteMatch = text.match(/^(запомни|запиши|сохрани заметку)\s+(.+)/i);
+  if (noteMatch) {
+    const noteContent = noteMatch[2]?.trim();
+    if (noteContent) {
+      try {
+        await notesRepo.create(userId, noteContent);
+        await ctx.reply(`📌 Сохранено!\n\n_${noteContent}_`, {
+          parse_mode: 'Markdown',
+          reply_markup: notesListKeyboard(),
+        });
+      } catch {
+        await ctx.reply('😔 Не удалось сохранить заметку.');
+      }
+      return true;
+    }
+  }
+
+  return false;
+};
+
+// ============================================
+// Conversation Helpers (DRY)
+// ============================================
+
+/** Создаёт/загружает conversation если ещё не инициализирован */
+const ensureConversation = async (ctx: BotContext, userId: string, chatId: number): Promise<void> => {
+  if (ctx.session.conversationId) return;
+
+  const conversation = await conversationsRepo.getOrCreate(
+    userId, 'telegram',
+    { telegram_chat_id: chatId, telegram_user_id: ctx.from?.id }
+  );
+  ctx.session.conversationId = conversation.id;
+  ctx.session.messageHistory = conversation.messages.map((m) => ({
+    role: m.role,
+    content: m.content,
+  }));
+  ctx.session.messageHistory = sanitizeMessageHistory(ctx.session.messageHistory);
+};
+
+/** Строит полный контекст (время + память + поиск) параллельно */
+const buildFullContext = async (
+  userId: string,
+  userText: string,
+  firstName?: string,
+  telegramInfo?: TelegramUserInfo,
+): Promise<{ memoryContext: string; webSearchContext: string }> => {
+  const timeContext = buildTimeContext(firstName);
+
+  const [memoryContextRaw, webSearchContext] = await Promise.all([
+    memoryContextBuilder.buildContext(userId, telegramInfo ?? ({} as TelegramUserInfo)).catch((err) => {
+      telegramLogger.warn({ error: err, userId }, 'Failed to build memory context');
+      return '';
+    }),
+    getSearchContext(userText).catch((err) => {
+      telegramLogger.warn({ error: err, userId }, 'Failed to get search context');
+      return '';
+    }),
+  ]);
+
+  const memoryContext = timeContext + (memoryContextRaw ? '\n' + memoryContextRaw : '');
+  return { memoryContext, webSearchContext };
+};
+
+/** Обрабатывает AI-ответ: верификация, защита от симуляции поиска */
+const processAIResponse = async (
+  response: AIResponse,
+  userMessage: string,
+  userId: string,
+  webSearchContext: string,
+): Promise<AIResponse> => {
+  // Верификация второй LLM
+  const verification = await verifyResponse(userMessage, response.content, webSearchContext).catch(err => {
+    telegramLogger.debug({ error: err }, 'Verification failed silently');
+    return null;
+  });
+
+  if (verification && !verification.isValid && !verification.skipped) {
+    telegramLogger.warn({
+      userId, reason: verification.reason, verifyTimeMs: verification.verifyTimeMs,
+      responseSnippet: response.content.substring(0, 80),
+    }, 'LLM verification flagged issues');
+    analyticsRepo.log('message_received', 'telegram', {
+      event: 'llm_verify_failed', reason: verification.reason, responseLength: response.content.length,
+    }, userId).catch(() => {});
+  }
+
+  // Защита от симуляции поиска
+  if (!webSearchContext && looksLikeSearchSimulation(response.content)) {
+    telegramLogger.warn({ userId, responseSnippet: response.content.substring(0, 100) }, 'LLM simulated search — replacing');
+    return {
+      ...response,
+      content: '😔 К сожалению, сейчас не удалось получить актуальные данные из интернета.\n\n' +
+        'Попробуй:\n• Через минуту повторить запрос\n• Использовать команду `/search` для явного поиска\n\n' +
+        '_Если проблема повторяется — обратитесь к администратору для проверки настроек поиска._',
+    };
+  }
+
+  return response;
+};
+
+/** Добавляет предупреждение LLM если поиск нужен, но данные не получены */
+const addSearchWarning = (fullContext: string, userMessage: string, webSearchContext: string, userId: string): string => {
+  if (!webSearchContext && needsWebSearch(userMessage)) {
+    telegramLogger.warn({ userId, query: userMessage.substring(0, 50) }, 'Search needed but no data — injected warning');
+    return fullContext + '\n\n⚠️ СИСТЕМНОЕ УВЕДОМЛЕНИЕ: Поиск в интернете был запрошен, но данные НЕ получены. ' +
+      'СТРОГО ЗАПРЕЩЕНО: НЕ симулируй поиск, НЕ пиши "Ищу...", "Поиск в интернете", "Сейчас найду". ' +
+      'Честно скажи пользователю что актуальные данные из интернета сейчас недоступны. ' +
+      'НЕ выдумывай даты, факты, новости — лучше скажи "не удалось получить данные".';
+  }
+  return fullContext;
+};
+
+/** Форматирует ошибку AI для пользователя */
+const formatAIError = (errorCode: string | undefined, errorMessage: string): string => {
+  if (errorCode === 'MODEL_NOT_FOUND' || errorMessage.includes('MODEL_NOT_FOUND'))
+    return '❌ Модель AI не найдена!\n\nТекущая модель не существует на OpenRouter.\nАдминистратор должен изменить модель в настройках:\nhttps://amina-admin.onrender.com/settings';
+  if (errorCode === 'AUTH_ERROR' || errorMessage.includes('AUTH_ERROR'))
+    return '🔑 Ошибка авторизации AI!\n\nНеверный API ключ OpenRouter.\nАдминистратор должен проверить настройки в Render.';
+  if (errorCode === 'RATE_LIMIT' || errorMessage.includes('429') || errorMessage.includes('rate limit'))
+    return '⏳ Слишком много запросов!\n\nЛимит OpenRouter превышен. Подожди минуту и попробуй снова.';
+  if (errorCode === 'PAYMENT_REQUIRED')
+    return '💳 Пополни баланс на OpenRouter или выбери бесплатную модель в админке.';
+  if (errorCode === 'ALL_MODELS_FAILED' || errorMessage.includes('ALL_MODELS_FAILED'))
+    return '🔄 Все бесплатные модели AI заняты.\n\nПопробуй через 30 секунд или напиши /start для сброса.';
+  if (errorCode === 'RACE_TIMEOUT' || errorMessage.includes('RACE_TIMEOUT'))
+    return '⏰ AI отвечает слишком долго.\n\nПопробуй ещё раз — может повезёт быстрее!';
+  if (errorCode === 'SERVER_ERROR' || errorMessage.includes('500') || errorMessage.includes('502'))
+    return '🔧 Сервер AI временно недоступен.\n\nПопробуй через несколько минут.';
+  return '😔 Извини, произошла ошибка. Попробуй ещё раз или напиши /clear для сброса диалога.';
+};
+
+// ============================================
+// Text Message Handler
+// ============================================
+
+const handleTextMessage = async (ctx: BotContext): Promise<void> => {
+  const userId = ctx.from?.id.toString() ?? 'unknown';
+  const chatId = ctx.chat?.id ?? 0;
+  const userMessage = ctx.message?.text ?? '';
+  const startTime = Date.now();
+
+  // === ReplyKeyboard кнопки ===
+  const buttonHandler = buildReplyButtonHandlers(ctx, userId)[userMessage];
+  if (buttonHandler) { await buttonHandler(); return; }
+
+  const telegramInfo: TelegramUserInfo = {
+    id: ctx.from?.id ?? 0,
+    username: ctx.from?.username,
+    first_name: ctx.from?.first_name,
+    last_name: ctx.from?.last_name,
+    language_code: ctx.from?.language_code,
+  };
+
+  telegramLogger.debug({ userId, chatId, messageLength: userMessage.length }, 'Text message received');
+
+  // Rate limit
+  const rateLimitResult = checkTelegramRateLimit(userId);
+  if (!rateLimitResult.allowed) {
+    telegramLogger.warn({ userId }, 'Rate limit exceeded');
+    await ctx.reply(rateLimitResult.message ?? '⏳ Слишком много сообщений. Подожди немного.');
+    return;
+  }
+
+  // Fire-and-forget analytics
+  analyticsRepo.log('message_received', 'telegram', { userId, chatId, messageLength: userMessage.length }).catch(() => {});
+  userLogsRepo.add(userId, 'message', userMessage, { chatId, messageLength: userMessage.length }).catch(() => {});
+
+  await ctx.replyWithChatAction('typing');
+
+  try {
+    // Auto-detections (reminders, images, TTS, notes)
+    if (await handleAutoDetections(ctx, userMessage, userId, chatId)) return;
+
+    // Direct web search (bypasses LLM for factual queries)
+    if (shouldForceWebSearch(userMessage) || needsWebSearch(userMessage)) {
+      const handled = await handleDirectWebSearch(ctx, userMessage, userId, chatId, startTime);
+      if (handled) return;
+    }
+
+    // Ensure conversation
+    await ensureConversation(ctx, userId, chatId);
+
+    // Build context in parallel
+    const { memoryContext, webSearchContext } = await buildFullContext(userId, userMessage, ctx.from?.first_name, telegramInfo);
+
+    // Add to history
+    ctx.session.messageHistory.push({ role: 'user', content: userMessage });
+    if (ctx.session.messageHistory.length > MAX_HISTORY_MESSAGES) {
+      ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
+    }
+
+    // Build full context with search warning
+    let fullContext = memoryContext + webSearchContext;
+    fullContext = addSearchWarning(fullContext, userMessage, webSearchContext, userId);
+
+    // Get AI response
+    let response = await aiService.chat(ctx.session.messageHistory, 'telegram', fullContext);
+
+    // Enhance with web search if AI is uncertain
+    if (!webSearchContext) {
+      const enhanced = await enhanceResponseIfNeeded(userMessage, response.content);
+      if (enhanced.wasEnhanced) {
+        response = { ...response, content: enhanced.response };
+        telegramLogger.info({ userId }, 'Response enhanced with web search');
+      }
+    }
+
+    // Verify & protect from search simulation
+    response = await processAIResponse(response, userMessage, userId, webSearchContext);
+
+    // Save to history (skip fake search responses)
+    if (!looksLikeSearchSimulation(response.content)) {
+      ctx.session.messageHistory.push({ role: 'assistant', content: response.content });
+    } else {
+      telegramLogger.warn({ userId }, 'Blocked search simulation from being saved to history');
+    }
+
+    // Send response IMMEDIATELY, before DB writes
+    await sendLongMessage(ctx, response.content, responseActionsKeyboard());
+
+    // Fire-and-forget DB writes
+    const responseTime = Date.now() - startTime;
+    userProfileRepo.updateOnMessage(userId, 'message', response.tokens_used.total, telegramInfo).catch(() => {});
+    userLogsRepo.add(userId, 'ai_response', response.content, { chatId, responseLength: response.content.length }, {
+      model: response.model, tokensPrompt: response.tokens_used.prompt, tokensCompletion: response.tokens_used.completion, responseTimeMs: responseTime,
+    }).catch(() => {});
+    memoryExtractor.extractFacts(userId, userMessage, response.content).catch(() => {});
+
+    const nowISO = new Date().toISOString();
+    Promise.all([
+      conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'user', content: userMessage, timestamp: nowISO }),
+      conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'assistant', content: response.content, timestamp: nowISO, metadata: { tokens_used: response.tokens_used.total, model: response.model } }),
+      analyticsRepo.log('ai_response', 'telegram', { userId, model: response.model, tokens: response.tokens_used.total }),
+    ]).catch((err) => { telegramLogger.warn({ error: err, userId }, 'Background DB writes failed'); });
+
+    telegramLogger.info({ userId, tokens: response.tokens_used.total, responseTimeMs: responseTime }, 'Response sent');
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorCode = getErrorCode(error);
+    telegramLogger.error({ error, userId, errorCode }, 'Failed to process message');
+    analyticsRepo.log('error', 'telegram', { userId, error: errorMessage, errorCode }).catch(() => {});
+    await ctx.reply(formatAIError(errorCode, errorMessage));
+  }
+};
+
+// ============================================
+// Voice Message Handler
+// ============================================
+
+const handleVoiceMessage = async (ctx: BotContext): Promise<void> => {
+  const userId = ctx.from?.id.toString() ?? 'unknown';
+  const chatId = ctx.chat?.id ?? 0;
+  const duration = ctx.message?.voice?.duration ?? 0;
+  const startTime = Date.now();
+
+  telegramLogger.info({ userId, duration }, 'Voice message received');
+
+  const rateLimitResult = checkTelegramRateLimit(userId);
+  if (!rateLimitResult.allowed) {
+    await ctx.reply(rateLimitResult.message ?? '⏳ Слишком много сообщений.');
+    return;
+  }
+
+  analyticsRepo.log('message_received', 'telegram', { userId, type: 'voice', duration }).catch(() => {});
+  await ctx.replyWithChatAction('typing');
+
+  try {
+    // Download voice file
+    const file = await ctx.getFile();
+    if (!file.file_path) throw Object.assign(new Error('Telegram не вернул путь к файлу'), { code: 'FILE_NOT_FOUND' });
+    const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
+
+    telegramLogger.debug({ filePath: file.file_path }, 'Downloading voice file');
+    const response = await fetch(fileUrl);
+    if (!response.ok) throw new Error(`Failed to download voice file: ${response.status}`);
+
+    const audioBuffer = await response.arrayBuffer();
+    const audioBase64 = Buffer.from(audioBuffer).toString('base64');
+
+    // Ensure conversation
+    await ensureConversation(ctx, userId, chatId);
+
+    // Transcribe
+    const transcription = await transcribeAudio(audioBase64, 'audio/ogg');
+    const transcribedText = transcription.text;
+    telegramLogger.debug({ userId, transcription: transcribedText.substring(0, 100) }, 'Voice transcribed');
+
+    const telegramInfo: TelegramUserInfo = {
+      id: ctx.from?.id ?? 0, username: ctx.from?.username,
+      first_name: ctx.from?.first_name, last_name: ctx.from?.last_name,
+      language_code: ctx.from?.language_code,
+    };
+
+    // Auto-detections
+    if (await handleAutoDetections(ctx, transcribedText, userId, chatId)) return;
+
+    // Direct web search
+    if (shouldForceWebSearch(transcribedText) || needsWebSearch(transcribedText)) {
+      const handled = await handleDirectWebSearch(ctx, transcribedText, userId, chatId, startTime);
+      if (handled) return;
+    }
+
+    // Build context
+    const { memoryContext, webSearchContext } = await buildFullContext(userId, transcribedText, ctx.from?.first_name, telegramInfo);
+
+    // Add to history
+    ctx.session.messageHistory.push({ role: 'user', content: transcribedText });
+    if (ctx.session.messageHistory.length > MAX_HISTORY_MESSAGES) {
+      ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
+    }
+
+    let fullContext = memoryContext + webSearchContext;
+    fullContext = addSearchWarning(fullContext, transcribedText, webSearchContext, userId);
+
+    let aiResponse = await aiService.chat(ctx.session.messageHistory, 'telegram', fullContext);
+
+    // Enhance if uncertain
+    if (!webSearchContext) {
+      const enhanced = await enhanceResponseIfNeeded(transcribedText, aiResponse.content);
+      if (enhanced.wasEnhanced) {
+        aiResponse = { ...aiResponse, content: enhanced.response };
+        telegramLogger.info({ userId }, 'Voice response enhanced with web search');
+      }
+    }
+
+    // Context poisoning protection
+    if (!looksLikeSearchSimulation(aiResponse.content)) {
+      ctx.session.messageHistory.push({ role: 'assistant', content: aiResponse.content });
+    } else {
+      telegramLogger.warn({ userId }, 'Voice: blocked search simulation from history');
+      aiResponse = { ...aiResponse, content: '😔 К сожалению, не удалось получить актуальные данные из интернета. Попробуй позже или используй /search.' };
+    }
+
+    // Send response
+    await sendLongMessage(ctx, aiResponse.content, responseActionsKeyboard());
+
+    // Fire-and-forget DB writes
+    const responseTime = Date.now() - startTime;
+    userProfileRepo.updateOnMessage(userId, 'voice', aiResponse.tokens_used.total, telegramInfo).catch(() => {});
+    userLogsRepo.add(userId, 'ai_response', aiResponse.content, { chatId, type: 'voice', responseLength: aiResponse.content.length }, {
+      model: aiResponse.model, tokensPrompt: aiResponse.tokens_used.prompt, tokensCompletion: aiResponse.tokens_used.completion, responseTimeMs: responseTime,
+    }).catch(() => {});
+    memoryExtractor.extractFacts(userId, transcribedText, aiResponse.content).catch(() => {});
+
+    const nowISO = new Date().toISOString();
+    Promise.all([
+      conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'user', content: transcribedText, timestamp: nowISO, metadata: { type: 'voice', voice_duration: duration } }),
+      conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'assistant', content: aiResponse.content, timestamp: nowISO, metadata: { tokens_used: aiResponse.tokens_used.total, model: aiResponse.model } }),
+      analyticsRepo.log('ai_response', 'telegram', { userId, type: 'voice', model: aiResponse.model, tokens: aiResponse.tokens_used.total }),
+    ]).catch((err) => { telegramLogger.warn({ error: err, userId }, 'Background voice DB writes failed'); });
+
+    telegramLogger.info({ userId, tokens: aiResponse.tokens_used.total, responseTimeMs: responseTime }, 'Voice response sent');
+  } catch (error) {
+    telegramLogger.error({ error, userId }, 'Failed to process voice message');
+    const errorCode = getErrorCode(error);
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    analyticsRepo.log('error', 'telegram', { userId, type: 'voice', error: errorMessage, errorCode }).catch(() => {});
+
+    let errorReply = '😔 Не удалось обработать голосовое сообщение. Попробуй ещё раз или отправь текст.';
+    if (errorCode === 'AUDIO_MODEL_NOT_FOUND') errorReply = '🔧 Audio модель не найдена.\n\nОбратитесь к администратору.';
+    else if (errorCode === 'AUDIO_NOT_SUPPORTED') errorReply = '🔧 Модель не поддерживает аудио.\n\nОбратитесь к администратору.';
+    else if (errorCode === 'AUTH_ERROR' || errorCode === 'GROQ_AUTH_ERROR') errorReply = '🔑 Ошибка авторизации API. Обратитесь к администратору.';
+    else if (errorCode === 'RATE_LIMIT') errorReply = '⏳ Слишком много запросов! Подожди минуту.';
+    else if (errorCode === 'ALL_MODELS_FAILED') errorReply = '🔄 Все модели AI заняты. Попробуй через 30 секунд.';
+    else if (errorCode === 'RACE_TIMEOUT') errorReply = '⏰ AI отвечает слишком долго. Попробуй ещё раз!';
+    else if (errorCode === 'SERVER_ERROR') errorReply = '🔧 Сервер AI временно недоступен.';
+    else if (errorCode === 'FILE_TOO_LARGE') errorReply = '📁 Голосовое сообщение слишком длинное.';
+
+    await ctx.reply(errorReply);
+  }
+};
+
+// ============================================
+// Photo Message Handler
+// ============================================
+
+const handlePhotoMessage = async (ctx: BotContext): Promise<void> => {
+  const userId = ctx.from?.id.toString() ?? 'unknown';
+  const chatId = ctx.chat?.id ?? 0;
+  const caption = ctx.message?.caption;
+
+  telegramLogger.info({ userId, hasCaption: !!caption }, 'Photo message received');
+
+  const rateLimitResult = checkTelegramRateLimit(userId);
+  if (!rateLimitResult.allowed) { await ctx.reply(rateLimitResult.message ?? '⏳ Слишком много сообщений.'); return; }
+
+  analyticsRepo.log('message_received', 'telegram', { userId, type: 'photo', hasCaption: !!caption }).catch(() => {});
+  await ctx.replyWithChatAction('typing');
+
+  try {
+    const photos = ctx.message?.photo ?? [];
+    const largestPhoto = photos[photos.length - 1];
+    if (!largestPhoto) throw new Error('No photo found in message');
+    const file = await ctx.api.getFile(largestPhoto.file_id);
+    if (!file.file_path) throw Object.assign(new Error('Telegram не вернул путь к файлу'), { code: 'FILE_NOT_FOUND' });
+
+    const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
+    const response = await fetch(fileUrl);
+    if (!response.ok) throw new Error(`Failed to download photo: ${response.status}`);
+
+    const imageBase64 = Buffer.from(await response.arrayBuffer()).toString('base64');
+    const mimeType = file.file_path?.endsWith('.png') ? 'image/png' : 'image/jpeg';
+
+    await ensureConversation(ctx, userId, chatId);
+
+    const aiResponse = await processImageWithLLM(imageBase64, mimeType, caption, ctx.session.messageHistory);
+    const userContent = caption ? `[Изображение с подписью: "${caption}"]` : '[Изображение]';
+
+    ctx.session.messageHistory.push({ role: 'user', content: userContent }, { role: 'assistant', content: aiResponse.content });
+    if (ctx.session.messageHistory.length > MAX_HISTORY_MESSAGES) {
+      ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
+    }
+
+    const nowISO = new Date().toISOString();
+    Promise.all([
+      conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'user', content: userContent, timestamp: nowISO, metadata: { type: 'photo', width: largestPhoto.width, height: largestPhoto.height } }),
+      conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'assistant', content: aiResponse.content, timestamp: nowISO, metadata: { tokens_used: aiResponse.tokens_used.total, model: aiResponse.model } }),
+      analyticsRepo.log('ai_response', 'telegram', { userId, type: 'photo', model: aiResponse.model, tokens: aiResponse.tokens_used.total }),
+    ]).catch(() => {});
+
+    await sendLongMessage(ctx, aiResponse.content);
+    telegramLogger.info({ userId, tokens: aiResponse.tokens_used.total }, 'Photo response sent');
+  } catch (error) {
+    telegramLogger.error({ error, userId }, 'Failed to process photo');
+    const errorCode = getErrorCode(error);
+    analyticsRepo.log('error', 'telegram', { userId, type: 'photo', error: error instanceof Error ? error.message : 'Unknown', errorCode }).catch(() => {});
+
+    let msg = '😔 Не удалось обработать изображение. Попробуй ещё раз.';
+    if (errorCode === 'VISION_MODEL_NOT_FOUND') msg = '🔧 Vision модель не найдена.\n\nВ админке выберите другую модель.';
+    else if (errorCode === 'VISION_SERVICE_UNAVAILABLE') msg = '⏳ Сервис анализа фото недоступен. Попробуй через минуту.';
+    else if (errorCode === 'AUTH_ERROR') msg = '🔑 Ошибка авторизации API.';
+    else if (errorCode === 'ALL_MODELS_FAILED') msg = '🔄 Все модели AI заняты. Через 30 сек.';
+    else if (errorCode === 'RATE_LIMIT') msg = '⏳ Слишком много запросов!';
+
+    await ctx.reply(msg);
+  }
+};
+
+// ============================================
+// Document (Image) Handler
+// ============================================
+
+const handleDocumentMessage = async (ctx: BotContext): Promise<void> => {
+  const userId = ctx.from?.id.toString() ?? 'unknown';
+  const document = ctx.message?.document;
+  if (!document) return;
+  const mimeType = document.mime_type ?? '';
+
+  if (!mimeType.startsWith('image/')) {
+    await ctx.reply('📄 Пока что я могу анализировать только изображения. Отправь фото или картинку.');
+    return;
+  }
+
+  telegramLogger.info({ userId, mimeType, fileName: document.file_name }, 'Document image received');
+
+  const rateLimitResult = checkTelegramRateLimit(userId);
+  if (!rateLimitResult.allowed) { await ctx.reply(rateLimitResult.message ?? '⏳ Слишком много сообщений.'); return; }
+
+  analyticsRepo.log('message_received', 'telegram', { userId, type: 'document_image', mimeType }).catch(() => {});
+  await ctx.replyWithChatAction('typing');
+
+  try {
+    const file = await ctx.getFile();
+    if (!file.file_path) throw Object.assign(new Error('Telegram не вернул путь к файлу'), { code: 'FILE_NOT_FOUND' });
+
+    const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
+    const response = await fetch(fileUrl);
+    if (!response.ok) throw new Error(`Failed to download document: ${response.status}`);
+
+    const imageBase64 = Buffer.from(await response.arrayBuffer()).toString('base64');
+    const caption = ctx.message?.caption;
+    const chatId = ctx.chat?.id ?? 0;
+
+    await ensureConversation(ctx, userId, chatId);
+
+    const aiResponse = await processImageWithLLM(imageBase64, mimeType, caption, ctx.session.messageHistory);
+    const userContent = caption ? `[Изображение "${document.file_name}" с подписью: "${caption}"]` : `[Изображение "${document.file_name}"]`;
+
+    ctx.session.messageHistory.push({ role: 'user', content: userContent }, { role: 'assistant', content: aiResponse.content });
+    if (ctx.session.messageHistory.length > MAX_HISTORY_MESSAGES) {
+      ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
+    }
+
+    const nowISO = new Date().toISOString();
+    Promise.all([
+      conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'user', content: userContent, timestamp: nowISO, metadata: { type: 'document_image', fileName: document.file_name } }),
+      conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'assistant', content: aiResponse.content, timestamp: nowISO, metadata: { tokens_used: aiResponse.tokens_used.total, model: aiResponse.model } }),
+      analyticsRepo.log('ai_response', 'telegram', { userId, type: 'document_image', model: aiResponse.model, tokens: aiResponse.tokens_used.total }),
+    ]).catch(() => {});
+
+    await sendLongMessage(ctx, aiResponse.content);
+    telegramLogger.info({ userId }, 'Document image response sent');
+  } catch (error) {
+    telegramLogger.error({ error, userId }, 'Failed to process document image');
+    analyticsRepo.log('error', 'telegram', { userId, type: 'document_image', error: error instanceof Error ? error.message : 'Unknown' }).catch(() => {});
+    await ctx.reply('😔 Не удалось обработать изображение. Попробуй ещё раз.');
+  }
+};
+
+// ============================================
+// Direct Web Search Handler
+// ============================================
+
+const handleDirectWebSearch = async (
+  ctx: BotContext,
+  userMessage: string,
+  userId: string,
+  chatId: number,
+  startTime: number,
+): Promise<boolean> => {
+  const searchEnabled = await isWebSearchEnabled();
+  if (!searchEnabled) {
+    telegramLogger.warn({ userId }, 'Web search disabled — skipping');
+    await ctx.reply('🔍 Поиск в интернете сейчас отключён.\n\n_Обратитесь к администратору._', { parse_mode: 'Markdown' });
+    return true;
+  }
+
+  await ctx.replyWithChatAction('typing');
+
+  try {
+    telegramLogger.info({ userId, query: userMessage.substring(0, 80) }, 'Direct web search started');
+    const searchResult = await webSearch(userMessage);
+    telegramLogger.info({ userId, model: searchResult.model, tokens: searchResult.tokens_used.total }, 'Direct web search succeeded');
+
+    // Format through LLM
+    const timeContext = buildTimeContext(ctx.from?.first_name);
+    const searchContext = `${timeContext}\n\n=== ДАННЫЕ ИЗ ИНТЕРНЕТА (${new Date().toLocaleDateString('ru-RU')}) ===\n${searchResult.answer}\n=== КОНЕЦ ДАННЫХ ===\n\n` +
+      `ИНСТРУКЦИЯ: Перескажи эти данные пользователю в своём стиле. Данные УЖЕ найдены — НЕ пиши "Ищу...", "Поиск...". Просто представь информацию красиво.`;
+
+    await ensureConversation(ctx, userId, chatId);
+    ctx.session.messageHistory.push({ role: 'user', content: userMessage });
+    if (ctx.session.messageHistory.length > MAX_HISTORY_MESSAGES) {
+      ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
+    }
+
+    await ctx.replyWithChatAction('typing');
+    const response = await aiService.chat(ctx.session.messageHistory, 'telegram', searchContext);
+
+    // If LLM still simulates search, use raw results
+    let finalContent = response.content;
+    if (looksLikeSearchSimulation(finalContent)) {
+      telegramLogger.warn({ userId }, 'LLM ignored search data — using raw results');
+      finalContent = searchResult.answer;
+      if (searchResult.citations.length > 0) {
+        finalContent += '\n\n📚 Источники:\n';
+        searchResult.citations.slice(0, 3).forEach((citation: string, index: number) => {
+          const shortUrl = citation.length > 60 ? citation.substring(0, 57) + '...' : citation;
+          finalContent += `${index + 1}. ${shortUrl}\n`;
+        });
+      }
+    }
+
+    ctx.session.messageHistory.push({ role: 'assistant', content: finalContent });
+
+    const searchKeyboard = new InlineKeyboard().text('📌 В заметки', 'save_to_notes').text('🔊 Озвучить', 'read_aloud');
+    await sendLongMessage(ctx, finalContent, searchKeyboard);
+
+    // Fire-and-forget analytics
+    const responseTime = Date.now() - startTime;
+    const telegramInfo: TelegramUserInfo = {
+      id: ctx.from?.id ?? 0, first_name: ctx.from?.first_name, last_name: ctx.from?.last_name,
+      username: ctx.from?.username, language_code: ctx.from?.language_code,
+    };
+    userProfileRepo.updateOnMessage(userId, 'message', response.tokens_used.total, telegramInfo).catch(() => {});
+    conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'user', content: userMessage, timestamp: new Date().toISOString() }).catch(() => {});
+    conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'assistant', content: finalContent, timestamp: new Date().toISOString() }).catch(() => {});
+    analyticsRepo.log('message_sent', 'telegram', { userId, model: response.model, tokens: response.tokens_used.total, responseTimeMs: responseTime, webSearch: true, webSearchModel: searchResult.model }).catch(() => {});
+
+    telegramLogger.info({ userId, responseTimeMs: responseTime, webSearchModel: searchResult.model }, 'Direct search response sent');
+    return true;
+  } catch (error) {
+    const err = error instanceof Error ? error : new Error(String(error));
+    const errCode = (error as { code?: string })?.code ?? 'UNKNOWN';
+    telegramLogger.error({ error: err.message, code: errCode, userId, query: userMessage.substring(0, 80) }, 'Direct web search FAILED');
+    await ctx.reply(formatSearchError(errCode), { parse_mode: 'Markdown' });
+    return true;
+  }
+};
+
+// ============================================
+// History Sanitization
+// ============================================
+
+/** Очищает историю от отравленных ответов и симуляций поиска */
+const sanitizeMessageHistory = (history: AIMessage[]): AIMessage[] => {
+  if (history.length === 0) return history;
+
+  // Remove search simulations
+  let cleaned = history.filter(m => !(m.role === 'assistant' && looksLikeSearchSimulation(m.content)));
+
+  // Detect context poisoning (same response 3+ times)
+  const assistantResponses = cleaned.filter(m => m.role === 'assistant');
+  const responseCounts = new Map<string, number>();
+  for (const msg of assistantResponses) {
+    const key = msg.content.substring(0, 100);
+    responseCounts.set(key, (responseCounts.get(key) || 0) + 1);
+  }
+
+  const poisonedPrefixes = new Set<string>();
+  for (const [prefix, count] of responseCounts) {
+    if (count >= 3) poisonedPrefixes.add(prefix);
+  }
+
+  if (poisonedPrefixes.size > 0) {
+    telegramLogger.warn({ poisonedCount: poisonedPrefixes.size, historyBefore: cleaned.length }, 'Context poisoning detected');
+    const seen = new Set<string>();
+    cleaned = cleaned.filter(m => {
+      if (m.role !== 'assistant') return true;
+      const prefix = m.content.substring(0, 100);
+      if (poisonedPrefixes.has(prefix)) {
+        if (seen.has(prefix)) return false;
+        seen.add(prefix);
+      }
+      return true;
+    });
+    telegramLogger.info({ historyAfter: cleaned.length }, 'History sanitized');
+  }
+
+  return cleaned;
+};

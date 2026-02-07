@@ -136,34 +136,26 @@ export type Config = typeof config;
 // Dynamic API Keys (from database with env fallback)
 // --------------------------------------------
 
-// Кэш для API ключей из БД
-let cachedApiKeys: {
-  openrouter: string;
-  groq: string;
-  loadedAt: number;
-} | null = null;
+// Кэш для API ключей из БД (SingleCache не используем — здесь ленивый импорт и struct)
+import { SingleCache } from '../utils/cache.js';
 
-const API_KEYS_CACHE_TTL = 60 * 1000; // 1 минута
+const apiKeysCache = new SingleCache<{ openrouter: string; groq: string }>(60_000);
 
 /**
  * Получить API ключи (приоритет: env → БД)
- * Используется для динамической загрузки ключей из админки
  */
 export async function getApiKeys(): Promise<{ openrouter: string; groq: string }> {
   // Если в env уже заданы ключи — используем их
   if (config.ai.apiKey && config.groq.apiKey) {
-    return {
-      openrouter: config.ai.apiKey,
-      groq: config.groq.apiKey,
-    };
+    return { openrouter: config.ai.apiKey, groq: config.groq.apiKey };
   }
 
   // Проверяем кэш
-  const now = Date.now();
-  if (cachedApiKeys && now - cachedApiKeys.loadedAt < API_KEYS_CACHE_TTL) {
+  const cached = apiKeysCache.get();
+  if (cached) {
     return {
-      openrouter: cachedApiKeys.openrouter || config.ai.apiKey,
-      groq: cachedApiKeys.groq || config.groq.apiKey,
+      openrouter: cached.openrouter || config.ai.apiKey,
+      groq: cached.groq || config.groq.apiKey,
     };
   }
 
@@ -171,29 +163,23 @@ export async function getApiKeys(): Promise<{ openrouter: string; groq: string }
   try {
     const { settingsRepo } = await import('../db/supabase.js');
     const keys = await settingsRepo.getMany(['openrouter_api_key', 'groq_api_key']);
-    
-    cachedApiKeys = {
+
+    const result = {
       openrouter: keys['openrouter_api_key'] || '',
       groq: keys['groq_api_key'] || '',
-      loadedAt: now,
     };
+    apiKeysCache.set(result);
 
     return {
-      openrouter: cachedApiKeys.openrouter || config.ai.apiKey,
-      groq: cachedApiKeys.groq || config.groq.apiKey,
+      openrouter: result.openrouter || config.ai.apiKey,
+      groq: result.groq || config.groq.apiKey,
     };
   } catch {
-    // Если БД недоступна — используем env
-    return {
-      openrouter: config.ai.apiKey,
-      groq: config.groq.apiKey,
-    };
+    return { openrouter: config.ai.apiKey, groq: config.groq.apiKey };
   }
 }
 
-/**
- * Сбросить кэш API ключей (вызывать после обновления в админке)
- */
+/** Сбросить кэш API ключей (вызывать после обновления в админке) */
 export function clearApiKeysCache(): void {
-  cachedApiKeys = null;
+  apiKeysCache.clear();
 }

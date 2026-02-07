@@ -10,6 +10,7 @@ import { aiLogger } from '../config/logger.js';
 import { settingsRepo } from '../db/supabase.js';
 import { AppError } from '../utils/error-handler.js';
 import type { AIResponse } from '../../../shared/types/index.js';
+import { SingleCache } from '../utils/cache.js';
 
 // --------------------------------------------
 // Types
@@ -37,19 +38,14 @@ const STATIC_FREE_VISION_MODELS = [
 ];
 
 // Кэш динамических бесплатных vision моделей
-let cachedFreeVisionModels: Array<{ id: string; name: string; description: string }> | null = null;
-let visionModelsCacheTime: number = 0;
-const VISION_MODELS_CACHE_TTL = 5 * 60 * 1000; // 5 минут
+const visionModelsCache = new SingleCache<Array<{ id: string; name: string; description: string }>>(5 * 60 * 1000);
 
 /**
  * Динамически получает список БЕСПЛАТНЫХ vision моделей от OpenRouter
  */
 async function fetchFreeVisionModels(): Promise<Array<{ id: string; name: string; description: string }>> {
-  const now = Date.now();
-  
-  if (cachedFreeVisionModels && (now - visionModelsCacheTime) < VISION_MODELS_CACHE_TTL) {
-    return cachedFreeVisionModels;
-  }
+  const cached = visionModelsCache.get();
+  if (cached) return cached;
 
   try {
     const keys = await getApiKeys();
@@ -91,8 +87,7 @@ async function fetchFreeVisionModels(): Promise<Array<{ id: string; name: string
       }));
 
     if (freeVision.length > 0) {
-      cachedFreeVisionModels = freeVision;
-      visionModelsCacheTime = now;
+      visionModelsCache.set(freeVision);
       aiLogger.info({ count: freeVision.length }, '🆓👁️ Fetched free vision models');
       return freeVision;
     }
@@ -106,8 +101,7 @@ async function fetchFreeVisionModels(): Promise<Array<{ id: string; name: string
 
 /** Принудительно обновить кэш vision моделей */
 export async function refreshFreeVisionModelsCache(): Promise<Array<{ id: string; name: string; description: string }>> {
-  cachedFreeVisionModels = null;
-  visionModelsCacheTime = 0;
+  visionModelsCache.clear();
   return await fetchFreeVisionModels();
 }
 

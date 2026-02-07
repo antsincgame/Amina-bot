@@ -4,12 +4,12 @@ import { aiLogger } from '../config/logger.js';
 import { settingsRepo, promptsRepo } from '../db/supabase.js';
 import type { AIResponse, AIMessage } from '../../../shared/types/index.js';
 import { AppError } from '../utils/error-handler.js';
+import { SingleCache } from '../utils/cache.js';
 
 // --------------------------------------------
 // Динамический поиск бесплатных моделей через OpenRouter API
 // --------------------------------------------
 
-// Статический fallback (если API недоступен)
 const STATIC_FREE_MODELS = [
   'meta-llama/llama-3.2-3b-instruct:free',
   'mistralai/mistral-7b-instruct:free',
@@ -20,22 +20,15 @@ const STATIC_FREE_MODELS = [
   'openchat/openchat-7b:free',
 ];
 
-// Кэш динамических бесплатных моделей
-let cachedFreeModels: string[] | null = null;
-let freeModelsCacheTime: number = 0;
-const FREE_MODELS_CACHE_TTL = 5 * 60 * 1000; // 5 минут
+const freeModelsCache = new SingleCache<string[]>(5 * 60 * 1000); // 5 минут
 
 /**
  * Динамически получает список бесплатных моделей от OpenRouter
  * Кэширует на 5 минут для оптимизации
  */
 async function fetchFreeModels(): Promise<string[]> {
-  const now = Date.now();
-  
-  // Возвращаем кэш если свежий
-  if (cachedFreeModels && (now - freeModelsCacheTime) < FREE_MODELS_CACHE_TTL) {
-    return cachedFreeModels;
-  }
+  const cached = freeModelsCache.get();
+  if (cached) return cached;
   
   try {
     const keys = await getApiKeys();
@@ -77,8 +70,7 @@ async function fetchFreeModels(): Promise<string[]> {
       .slice(0, 15); // Максимум 15 моделей для гонки
     
     if (freeModels.length > 0) {
-      cachedFreeModels = freeModels;
-      freeModelsCacheTime = now;
+      freeModelsCache.set(freeModels);
       aiLogger.info({ count: freeModels.length }, '🆓 Fetched free models from OpenRouter');
       return freeModels;
     }
@@ -607,7 +599,7 @@ export async function getFallbackStatus(): Promise<{
 }> {
   const currentModel = await settingsRepo.get('openrouter_model');
   const models = await getFreeModels();
-  const cacheAge = cachedFreeModels ? Math.round((Date.now() - freeModelsCacheTime) / 1000) : -1;
+  const cacheAge = freeModelsCache.age();
   
   return {
     currentModel: currentModel || 'meta-llama/llama-3.2-3b-instruct:free',
@@ -623,7 +615,6 @@ export async function getFallbackStatus(): Promise<{
  * Принудительно обновить кэш бесплатных моделей
  */
 export async function refreshFreeModelsCache(): Promise<string[]> {
-  // Загружаем сначала, обновляем кеш атомарно
-  const freshModels = await fetchFreeModels();
-  return freshModels;
+  freeModelsCache.clear();
+  return await fetchFreeModels();
 }
