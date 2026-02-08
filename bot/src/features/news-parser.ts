@@ -291,7 +291,35 @@ async function tryRssFeed(siteUrl: string): Promise<ParsedHeadline[] | null> {
 export async function parseNewsFromSite(siteUrl: string): Promise<ParsedHeadline[]> {
   const origin = new URL(siteUrl).origin;
 
-  // ===== Шаг 1: Попробовать RSS фид =====
+  // ===== Шаг 0: Проверить, является ли сам URL RSS-фидом =====
+  // (например https://vc.ru/rss/ai — URL уже указывает на фид, а не на HTML-страницу)
+  try {
+    const directResponse = await fetchWithTimeout(siteUrl, 8000);
+    if (directResponse.ok) {
+      const contentType = directResponse.headers.get('content-type') ?? '';
+      const bodyText = await directResponse.text();
+      const isRss = contentType.includes('xml') || contentType.includes('rss') || contentType.includes('atom') ||
+        bodyText.trimStart().startsWith('<?xml') || bodyText.trimStart().startsWith('<rss') || bodyText.trimStart().startsWith('<feed');
+      
+      if (isRss) {
+        const headlines = parseRssFeed(bodyText, origin);
+        if (headlines.length > 0) {
+          appLogger.info({ siteUrl, count: headlines.length }, 'Direct RSS feed parsed from URL');
+          return headlines;
+        }
+      }
+      
+      // Если это НЕ RSS, bodyText содержит HTML — сохраним для дальнейшего парсинга
+      if (!isRss) {
+        // Переиспользуем загруженный HTML вместо повторной загрузки
+        return parseHtmlContent(bodyText, siteUrl, origin);
+      }
+    }
+  } catch (err) {
+    appLogger.debug({ error: err, siteUrl }, 'Direct URL fetch failed, trying RSS paths');
+  }
+
+  // ===== Шаг 1: Попробовать стандартные RSS пути =====
   try {
     const rssHeadlines = await tryRssFeed(siteUrl);
     if (rssHeadlines && rssHeadlines.length > 0) {
@@ -301,7 +329,7 @@ export async function parseNewsFromSite(siteUrl: string): Promise<ParsedHeadline
     appLogger.debug({ error: err, siteUrl }, 'RSS feed attempt failed, trying HTML');
   }
 
-  // ===== Шаг 2: HTML парсинг =====
+  // ===== Шаг 2: Загрузить HTML и парсить =====
   let html: string;
   try {
     const response = await fetchWithTimeout(siteUrl);
@@ -326,13 +354,13 @@ export async function parseNewsFromSite(siteUrl: string): Promise<ParsedHeadline
     if (rssLink) {
       const feedUrl = normalizeUrl(rssLink, origin);
       if (feedUrl) {
-        const response = await fetchWithTimeout(feedUrl, 5000);
-        if (response.ok) {
-          const feedXml = await response.text();
-          const headlines = parseRssFeed(feedXml, origin);
-          if (headlines.length > 0) {
-            appLogger.info({ feedUrl, count: headlines.length }, 'RSS autodiscovery feed parsed');
-            return headlines;
+        const rssResponse = await fetchWithTimeout(feedUrl, 5000);
+        if (rssResponse.ok) {
+          const feedXml = await rssResponse.text();
+          const rssHeadlines = parseRssFeed(feedXml, origin);
+          if (rssHeadlines.length > 0) {
+            appLogger.info({ feedUrl, count: rssHeadlines.length }, 'RSS autodiscovery feed parsed');
+            return rssHeadlines;
           }
         }
       }
@@ -341,7 +369,14 @@ export async function parseNewsFromSite(siteUrl: string): Promise<ParsedHeadline
     // Продолжаем HTML парсинг
   }
 
-  // ===== Шаг 3: Парсинг HTML структуры =====
+  return parseHtmlContent(html, siteUrl, origin);
+}
+
+/**
+ * Парсинг заголовков из HTML-контента
+ */
+function parseHtmlContent(html: string, siteUrl: string, origin: string): ParsedHeadline[] {
+  // ===== Парсинг HTML структуры =====
   const $ = load(html);
 
   // Убираем навигацию, футер, скрипты, стили, рекламу
@@ -379,8 +414,6 @@ export async function parseNewsFromSite(siteUrl: string): Promise<ParsedHeadline
   });
 
   // --- Стратегия C: Standalone h2/h3 без ссылки → ищем ближайшую ссылку ---
-  // Паттерн grodnonews.by / newgrodno.by: <h2>Заголовок</h2> ... <a href="...">Категория</a>
-  // или: <a href="..."><h2>...</h2></a> уже поймано в B
   $('h2, h3').each((_i: number, _el: AnyNode) => {
     if (headlines.length >= MAX_HEADLINES_PER_SITE) return;
     const $heading = $(_el);
@@ -392,7 +425,7 @@ export async function parseNewsFromSite(siteUrl: string): Promise<ParsedHeadline
 
     // Уже нашли через стратегию A/B?
     const innerLink = $heading.find('a').attr('href');
-    if (innerLink) return; // уже обработано
+    if (innerLink) return;
 
     // Ищем ссылку: ближайший родительский <a>
     const parentLink = $heading.closest('a').attr('href');
@@ -406,7 +439,7 @@ export async function parseNewsFromSite(siteUrl: string): Promise<ParsedHeadline
       return;
     }
 
-    // Ищем ссылку в соседних элементах (prev/next siblings, parent container)
+    // Ищем ссылку в соседних элементах
     const $parent = $heading.parent();
     const siblingLink = $parent.find('a').filter((_: number, a: AnyNode) => {
       const href = $(a).attr('href');
@@ -425,7 +458,7 @@ export async function parseNewsFromSite(siteUrl: string): Promise<ParsedHeadline
       return;
     }
 
-    // Проверяем родителя родителя (wrapper -> card -> link)
+    // Проверяем родителя родителя
     const $grandParent = $parent.parent();
     const gpLink = $grandParent.find('a').filter((_: number, a: AnyNode) => {
       const href = $(a).attr('href');
@@ -445,7 +478,6 @@ export async function parseNewsFromSite(siteUrl: string): Promise<ParsedHeadline
   });
 
   // --- Стратегия D: Все ссылки с «статейным» URL и длинным текстом ---
-  // Универсальный fallback — ловит новости на любых сайтах с SSR
   if (headlines.length < 5) {
     $('a[href]').each((_i: number, _el: AnyNode) => {
       if (headlines.length >= MAX_HEADLINES_PER_SITE) return;
@@ -453,14 +485,12 @@ export async function parseNewsFromSite(siteUrl: string): Promise<ParsedHeadline
       const title = cleanTitle($el.text());
       const href = $el.attr('href') ?? '';
 
-      // Текст должен быть достаточно длинным (похож на заголовок)
       if (!title || title.length < 25 || title.length > MAX_TITLE_LENGTH) return;
       if (isSkipText(title)) return;
 
       const url = normalizeUrl(href, origin);
       if (!url || seenUrls.has(url)) return;
 
-      // URL должен быть «статейным»
       if (!isArticleUrl(url, origin)) return;
 
       if (addHeadline(headlines, seenTitles, title, url)) {

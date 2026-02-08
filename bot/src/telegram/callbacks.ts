@@ -225,7 +225,7 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
       await sendDigestNow(
         { api: ctx.api }, userId, chatId,
         prefs.first_name || ctx.from?.first_name || null,
-        prefs.digest_city || 'Минск'
+        prefs.digest_city || 'Гродно'
       );
     } catch (err) {
       telegramLogger.warn({ error: err, userId }, 'Failed to send digest now (callback)');
@@ -251,7 +251,7 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
       const prefs = await userPrefsRepo.get(userId);
       const status = prefs?.digest_enabled ? '✅ Включён' : '❌ Выключен';
       const hour = prefs?.digest_hour ?? 10;
-      const city = prefs?.digest_city ?? 'Минск';
+      const city = prefs?.digest_city ?? 'Гродно';
 
       await ctx.reply(
         `☀️ *Утренний дайджест*\n\nСтатус: ${status}\nВремя: ${hour}:00 по Минску\nГород: ${city}\n\n📰 Включает: погоду, новости, напоминания и задачи`,

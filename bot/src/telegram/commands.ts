@@ -111,31 +111,23 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
   // /clear
   bot.command('clear', async (ctx) => {
     const userId = ctx.from?.id.toString() ?? 'unknown';
-    const chatId = ctx.chat?.id ?? 0;
     
-    // Очищаем сессию (контекст для AI)
+    // 1. Очищаем историю сообщений в сессии (главный контекст для AI)
     ctx.session.messageHistory = [];
-    const oldConvId = ctx.session.conversationId;
-    ctx.session.conversationId = null; // ВАЖНО: сбрасываем ID, чтобы создался новый диалог
-
-    try {
-      // Если был старый диалог — очищаем его сообщения в БД (но сохраняем саму запись)
-      if (oldConvId) {
-        await conversationsRepo.clearMessages(oldConvId);
-        telegramLogger.info({ userId, conversationId: oldConvId }, 'Conversation messages cleared in DB');
+    
+    // 2. Очищаем messages в БД конверсации (чтобы при перезапуске бота не загрузились старые)
+    // НЕ обнуляем conversationId — иначе ensureConversation загрузит messages обратно из БД!
+    const convId = ctx.session.conversationId;
+    if (convId) {
+      try {
+        await conversationsRepo.clearMessages(convId);
+        telegramLogger.info({ userId, conversationId: convId }, 'Conversation messages cleared in DB');
+      } catch (error) {
+        telegramLogger.error({ error, userId }, 'Failed to clear conversation messages in DB');
       }
-      
-      // Создаём новый диалог для чистого старта
-      const newConversation = await conversationsRepo.getOrCreate(
-        userId, 'telegram',
-        { telegram_chat_id: chatId, telegram_user_id: ctx.from?.id }
-      );
-      ctx.session.conversationId = newConversation.id;
-      telegramLogger.info({ userId, newConvId: newConversation.id }, 'New conversation created after clear');
-    } catch (error) {
-      telegramLogger.error({ error, userId }, 'Failed to clear/recreate conversation');
     }
 
+    telegramLogger.info({ userId, hadConvId: !!convId }, 'Chat history cleared by user');
     await ctx.reply('✅ История диалога очищена. Начнём сначала!');
   });
 
@@ -456,7 +448,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
           await sendDigestNow(
             { api: ctx.api }, userId, chatId,
             prefs.first_name || ctx.from?.first_name || null,
-            prefs.digest_city || 'Минск'
+            prefs.digest_city || 'Гродно'
           );
         } catch (digestError) {
           telegramLogger.error({ error: digestError, userId }, 'Digest now failed');

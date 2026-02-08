@@ -153,7 +153,7 @@ const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Record<strin
     const prefs = await userPrefsRepo.get(userId);
     const status = prefs?.digest_enabled ? '✅ Включён' : '❌ Выключен';
     await ctx.reply(
-      `☀️ *Дайджест:* ${status}\n\nВремя: ${prefs?.digest_hour ?? 10}:00 | Город: ${prefs?.digest_city ?? 'Минск'}`,
+      `☀️ *Дайджест:* ${status}\n\nВремя: ${prefs?.digest_hour ?? 10}:00 | Город: ${prefs?.digest_city ?? 'Гродно'}`,
       { parse_mode: 'Markdown', reply_markup: digestToggleKeyboard(prefs?.digest_enabled ?? false) }
     );
   },

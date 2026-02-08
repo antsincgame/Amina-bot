@@ -37,7 +37,7 @@ export const userPrefsRepo = {
           chat_id: chatId,
           first_name: firstName ?? null,
           digest_hour: 10,
-          digest_city: 'Минск',
+          digest_city: 'Гродно',
         },
         { onConflict: 'user_id', ignoreDuplicates: false }
       )
