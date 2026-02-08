@@ -133,77 +133,94 @@ export function detectImageGenIntent(text: string): boolean {
   return IMAGE_GEN_PATTERNS.some(pattern => pattern.test(text.trim()));
 }
 
-// Модели для LLM-классификации (бесплатные, быстрые)
-const CLASSIFY_MODELS = [
-  'meta-llama/llama-3.2-3b-instruct:free',
-  'mistralai/mistral-7b-instruct:free',
-  'google/gemma-2-9b-it:free',
+// =============================================
+// Groq-классификатор намерения на картинку
+// =============================================
+
+/** Groq API endpoint (OpenAI-compatible) */
+const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+/** Модели Groq для классификации (быстрые, бесплатные) */
+const GROQ_CLASSIFY_MODELS = [
+  'llama-3.1-8b-instant',    // ~100ms, 30 RPM free
+  'gemma2-9b-it',            // ~200ms, 30 RPM free
+  'llama-3.3-70b-versatile', // ~500ms, smart fallback
 ];
 
-// Быстрый пре-фильтр: слова-маркеры (нечёткие), чтобы не вызывать LLM на каждом сообщении
-const IMAGE_HINT_WORDS = /(?:рисун|картин|изображен|нарисуй|нарисова|рисуй|рисовать|генерир|генераци|сгенер|imagine|draw|paint|picture|image|photo|арт|иллюстрац|фото|покажи|визуализ|пикч|портрет|скетч|пейзаж|аниме|стиль|коллаж|обои|аватар|мем|комикс|создай.*картин|сделай.*картин|хочу.*картин)/i;
-
 /**
- * LLM-классификация: является ли текст запросом на генерацию изображения.
+ * Groq-классификация: является ли текст запросом на генерацию изображения.
+ * 
  * Используется как fallback когда regex не сработал.
- * Сначала проверяет наличие слов-маркеров, затем вызывает LLM.
- * Возвращает промпт для генерации или null если не запрос на картинку.
+ * Groq отвечает за ~100-300ms — почти незаметно для пользователя.
+ * БЕЗ пре-фильтра — Groq достаточно быстрый чтобы проверять каждое сообщение.
+ * 
+ * Возвращает промпт для генерации (на английском) или null.
  */
-export async function detectImageIntentLLM(text: string): Promise<string | null> {
-  // Быстрый пре-фильтр: если нет ни одного слова-маркера — не тратим LLM
-  if (!IMAGE_HINT_WORDS.test(text)) {
-    return null;
-  }
+export async function classifyImageIntentGroq(text: string): Promise<string | null> {
+  // Слишком короткие сообщения — точно не запрос на картинку
+  if (text.trim().length < 4) return null;
 
   try {
     const keys = await getApiKeys();
-    if (!keys.openrouter) return null;
+    if (!keys.groq) {
+      aiLogger.debug('Groq API key not configured, skipping image intent classification');
+      return null;
+    }
 
-    const classifyPrompt = `Определи, просит ли пользователь СОЗДАТЬ/НАРИСОВАТЬ/СГЕНЕРИРОВАТЬ изображение или картинку.
+    const classifyPrompt = `Определи, просит ли пользователь СОЗДАТЬ/НАРИСОВАТЬ/СГЕНЕРИРОВАТЬ изображение, картинку, арт, фото.
 
-Сообщение: "${text.substring(0, 300)}"
+Сообщение пользователя: "${text.substring(0, 400)}"
 
-Если пользователь хочет КАРТИНКУ — ответь JSON: {"image": true, "prompt": "описание для генерации на английском"}
+ВАЖНО: Если пользователь хочет КАРТИНКУ (в любой формулировке) — ответь JSON:
+{"image": true, "prompt": "English description for image generation"}
+
 Если НЕ хочет картинку — ответь JSON: {"image": false}
 
-Примеры запросов на картинку:
-- "нарисуй кота" → {"image": true, "prompt": "cat"}
-- "хочу картинку с закатом" → {"image": true, "prompt": "sunset landscape"}
-- "мир это матрица, покажи" → {"image": true, "prompt": "matrix digital world, green code"}
-- "сделай арт киберпанк города" → {"image": true, "prompt": "cyberpunk city art"}
-- "можешь нарисовать единорога?" → {"image": true, "prompt": "unicorn, magical"}
+Примеры ЗАПРОСОВ на картинку:
+- "нарисуй кота" → {"image": true, "prompt": "cat, cute, detailed"}
+- "хочу картинку с закатом" → {"image": true, "prompt": "beautiful sunset landscape"}
+- "мир это матрица нарисуй" → {"image": true, "prompt": "matrix digital world, green code rain, futuristic"}
+- "покажи мне как выглядит киберпанк город" → {"image": true, "prompt": "cyberpunk city at night, neon lights, futuristic"}
+- "можешь нарисовать единорога" → {"image": true, "prompt": "unicorn, magical, fantasy art"}
+- "сделай картинку космоса" → {"image": true, "prompt": "outer space, stars, galaxies, nebula"}
+- "нарисовала бы ты мне котика" → {"image": true, "prompt": "cute kitten, adorable"}
+- "а изобрази-ка мне дракона" → {"image": true, "prompt": "dragon, fantasy, epic"}
 
 НЕ запросы на картинку:
 - "расскажи о картинах Моне" → {"image": false}
-- "что такое матрица?" → {"image": false}
+- "что такое матрица" → {"image": false}
+- "привет как дела" → {"image": false}
+- "какая погода" → {"image": false}
 
-Ответь ТОЛЬКО JSON, без текста.`;
+Ответь СТРОГО одним JSON без текста.`;
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
 
     try {
-      for (const model of CLASSIFY_MODELS) {
+      for (const model of GROQ_CLASSIFY_MODELS) {
         try {
-          const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          const response = await fetch(GROQ_API_URL, {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${keys.openrouter}`,
+              'Authorization': `Bearer ${keys.groq}`,
               'Content-Type': 'application/json',
             },
             signal: controller.signal,
             body: JSON.stringify({
               model,
               messages: [
-                { role: 'system', content: 'Ты — классификатор намерений. Отвечай ТОЛЬКО JSON.' },
+                { role: 'system', content: 'You are an intent classifier. Respond with JSON only. No extra text.' },
                 { role: 'user', content: classifyPrompt },
               ],
               max_tokens: 150,
-              temperature: 0.1,
+              temperature: 0.05,
             }),
           });
 
-          if (!response.ok) continue;
+          if (!response.ok) {
+            aiLogger.debug({ model, status: response.status }, 'Groq classify: model failed, trying next');
+            continue;
+          }
 
           const data = await response.json() as {
             choices?: Array<{ message?: { content?: string } }>;
@@ -212,13 +229,19 @@ export async function detectImageIntentLLM(text: string): Promise<string | null>
           if (!content) continue;
 
           // Извлекаем JSON из ответа
-          const jsonMatch = content.match(/\{[\s\S]*\}/);
-          if (!jsonMatch) continue;
+          const jsonMatch = content.match(/\{[\s\S]*?\}/);
+          if (!jsonMatch) {
+            aiLogger.debug({ model, raw: content.substring(0, 100) }, 'Groq classify: no JSON in response');
+            continue;
+          }
 
           const parsed = JSON.parse(jsonMatch[0]) as { image?: boolean; prompt?: string };
-          
+
           if (parsed.image && parsed.prompt) {
-            aiLogger.info({ model, text: text.substring(0, 60), prompt: parsed.prompt }, 'LLM detected image intent');
+            aiLogger.info(
+              { model, text: text.substring(0, 80), prompt: parsed.prompt },
+              '🎨 Groq detected image intent!'
+            );
             let prompt = parsed.prompt.trim();
             if (prompt.length > 0 && prompt.length < 100) {
               prompt += QUALITY_SUFFIX;
@@ -226,28 +249,38 @@ export async function detectImageIntentLLM(text: string): Promise<string | null>
             return prompt;
           }
 
-          // LLM сказала "не картинка" — доверяем
-          aiLogger.debug({ model, text: text.substring(0, 60) }, 'LLM: not an image request');
+          // Groq сказала "не картинка" — доверяем
+          aiLogger.debug({ model, text: text.substring(0, 60) }, 'Groq: not an image request');
           return null;
         } catch (modelError) {
-          const err = modelError as { name?: string };
+          const err = modelError as { name?: string; message?: string };
           if (err.name === 'AbortError') {
-            aiLogger.warn({ text: text.substring(0, 60) }, 'LLM image intent detection timed out');
+            aiLogger.warn({ text: text.substring(0, 60) }, 'Groq image classify timed out');
             return null;
           }
-          // Попробуем следующую модель
+          aiLogger.debug({ model, error: err.message }, 'Groq classify model error, trying next');
           continue;
         }
       }
 
+      aiLogger.warn('All Groq classify models failed');
       return null;
     } finally {
       clearTimeout(timeoutId);
     }
   } catch (error) {
-    aiLogger.warn({ error }, 'LLM image intent detection failed');
+    aiLogger.warn({ error }, 'Groq image intent classification failed');
     return null;
   }
+}
+
+/**
+ * Проверяет, содержит ли ОТВЕТ AI паттерны, указывающие на нераспознанный запрос на картинку.
+ * Используется как post-AI safety net: если AI говорит о картинках/imagine — значит
+ * пользователь хотел картинку, но pre-AI детекция не сработала.
+ */
+export function isAIResponseAboutImages(aiResponseText: string): boolean {
+  return /(?:не умею создавать картин|\/imagine\s|хочешь картинку|генераци\w* изображен|нарисую.*напиши|используй команду.*imagine|отдельная система генерации|не могу создавать картинки|не умею рисовать|не могу рисовать|я не создаю изображен)/i.test(aiResponseText);
 }
 
 /**

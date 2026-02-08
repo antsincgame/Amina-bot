@@ -30,7 +30,7 @@ import {
 } from '../memory/user-memory.js';
 import { detectReminderIntent, extractReminder } from '../reminders/reminder-parser.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';
-import { detectImageGenIntent, extractImagePrompt, generateImage, detectImageIntentLLM } from '../ai/image-gen.js';
+import { detectImageGenIntent, extractImagePrompt, generateImage, classifyImageIntentGroq, isAIResponseAboutImages } from '../ai/image-gen.js';
 import { notesRepo } from '../features/notes-repo.js';
 import { todosRepo } from '../features/todos-repo.js';
 import { userPrefsRepo } from '../features/user-prefs-repo.js';
@@ -204,12 +204,13 @@ const handleAutoDetections = async (
     }
   }
 
-  // Шаг 2: LLM-классификация как fallback (если regex не сработал)
+  // Шаг 2: Groq-классификация как fallback (если regex не сработал)
+  // Groq отвечает за ~100-300ms — почти незаметно для пользователя
   if (!imgPrompt) {
-    const llmPrompt = await detectImageIntentLLM(text);
-    if (llmPrompt) {
-      imgPrompt = llmPrompt;
-      telegramLogger.info({ userId, prompt: imgPrompt, method: 'llm' }, 'Image gen detected (LLM fallback)');
+    const groqPrompt = await classifyImageIntentGroq(text);
+    if (groqPrompt) {
+      imgPrompt = groqPrompt;
+      telegramLogger.info({ userId, prompt: imgPrompt, method: 'groq' }, 'Image gen detected (Groq classifier)');
     }
   }
 
@@ -386,6 +387,59 @@ const formatAIError = (errorCode: string | undefined, errorMessage: string): str
 };
 
 // ============================================
+// Post-AI Image Interception (safety net)
+// ============================================
+
+/**
+ * Если основная AI ответила "я не умею создавать картинки" или подобное —
+ * значит пользователь хотел картинку, но pre-AI детекция (regex + Groq) не сработала.
+ * Перехватываем ответ и генерируем картинку вместо отправки отказа.
+ */
+const tryPostAIImageInterception = async (
+  ctx: BotContext,
+  aiResponseText: string,
+  originalUserText: string,
+  userId: string,
+): Promise<boolean> => {
+  if (!isAIResponseAboutImages(aiResponseText)) return false;
+
+  telegramLogger.info(
+    { userId, aiSnippet: aiResponseText.substring(0, 80), userText: originalUserText.substring(0, 80) },
+    '🎨 Post-AI interception: AI mentioned images, attempting Groq classify + generate'
+  );
+
+  try {
+    // Используем Groq для извлечения промпта из оригинального сообщения
+    const imgPrompt = await classifyImageIntentGroq(originalUserText);
+    if (!imgPrompt) {
+      telegramLogger.debug({ userId }, 'Post-AI interception: Groq did not confirm image intent');
+      return false;
+    }
+
+    await ctx.replyWithChatAction('upload_photo');
+    const result = await generateImage(imgPrompt);
+    const timeSeconds = (result.generationTimeMs / 1000).toFixed(1);
+    const cleanPrompt = imgPrompt.replace(/, high quality.*$/, '');
+    await ctx.replyWithPhoto(
+      new InputFile(result.image, 'generated.png'),
+      { caption: `🎨 ${escapeMarkdown(cleanPrompt)}\n⏱ ${timeSeconds}с | FLUX.1-schnell` }
+    );
+    analyticsRepo.log('message_received', 'telegram', {
+      userId, event: 'image_generated_postai', prompt: imgPrompt,
+      model: result.model, timeMs: result.generationTimeMs,
+    }).catch(() => {});
+
+    telegramLogger.info({ userId, prompt: imgPrompt, method: 'post-ai-interception' }, 'Image generated via post-AI interception');
+    return true;
+  } catch (error: unknown) {
+    const err = error as { message?: string };
+    telegramLogger.error({ error, userId }, 'Post-AI image interception failed');
+    await ctx.reply(`😔 ${err.message || 'Не удалось создать изображение.'}`);
+    return true; // Считаем обработанным — не отправляем оригинальный отказ AI
+  }
+};
+
+// ============================================
 // Text Message Handler
 // ============================================
 
@@ -469,6 +523,12 @@ const handleTextMessage = async (ctx: BotContext): Promise<void> => {
       ctx.session.messageHistory.push({ role: 'assistant', content: response.content });
     } else {
       telegramLogger.warn({ userId }, 'Blocked search simulation from being saved to history');
+    }
+
+    // === POST-AI IMAGE INTERCEPTION ===
+    // Если AI ответила про картинки — перехватываем и генерируем вместо отправки отказа
+    if (await tryPostAIImageInterception(ctx, response.content, userMessage, userId)) {
+      return; // Картинка отправлена, не отправляем текстовый ответ AI
     }
 
     // Send response IMMEDIATELY, before DB writes
@@ -585,6 +645,11 @@ const handleVoiceMessage = async (ctx: BotContext): Promise<void> => {
     } else {
       telegramLogger.warn({ userId }, 'Voice: blocked search simulation from history');
       aiResponse = { ...aiResponse, content: '😔 К сожалению, не удалось получить актуальные данные из интернета. Попробуй позже или используй /search.' };
+    }
+
+    // === POST-AI IMAGE INTERCEPTION (VOICE) ===
+    if (await tryPostAIImageInterception(ctx, aiResponse.content, transcribedText, userId)) {
+      return;
     }
 
     // Send response
