@@ -403,7 +403,7 @@ const AI_ERROR_MESSAGES: Record<string, string> = {
   SERVER_ERROR: '🔧 Сервер AI временно недоступен.\n\nПопробуй через несколько минут.',
 };
 
-const AI_ERROR_DEFAULT = '😔 Извини, произошла ошибка. Попробуй ещё раз или напиши /clear для сброса диалога.';
+const AI_ERROR_DEFAULT = '😔 Извини, произошла ошибка. Попробуй ещё раз.';
 
 /** Форматирует ошибку AI для пользователя */
 const formatAIError = (errorCode: string | undefined, errorMessage: string): string => {

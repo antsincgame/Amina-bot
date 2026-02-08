@@ -315,7 +315,7 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
       `/search \\_запрос\\_ — поиск\n` +
       `/note \\_текст\\_ — заметка\n/notes — список\n` +
       `/todo \\_текст\\_ — задача\n/todos — список\n/done \\_номер\\_ — выполнить\n` +
-      `/reminders — напоминания\n/digest — дайджест\n/clear — очистить\n\n` +
+      `/reminders — напоминания\n/digest — дайджест\n\n` +
       `*💡 Без команд:*\n` +
       `• _Нарисуй кота_ — картинка\n• _Напомни через час_ — напоминание\n• _Запомни: пароль 123_ — заметка\n• _Курс доллара_ — автопоиск`,
       { parse_mode: 'Markdown', reply_markup: buildMainMenu() }
