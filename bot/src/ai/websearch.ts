@@ -287,6 +287,26 @@ const QUERY_ENHANCERS: QueryType[] = [
       const cityPart = city ? ` в ${city} и регионе` : '';
       const isYesterday = /вчера/i.test(q);
       const timePart = isYesterday ? 'за вчера' : `за сегодня (${dateStr})`;
+      
+      // Извлекаем тему: "новости про ИИ" → "ИИ", "новости о вайбкодинге" → "вайбкодинге"
+      // Ищем: "про/о/об/по/на тему" + текст ИЛИ тему после "новости" если нет города
+      const topicMatch = q.match(/(?:про|о|об|по теме|на тему|по)\s+(.+?)(?:\s*за\s|\s*в\s+[А-ЯЁ]|\s*$)/i);
+      
+      // Также ловим конструкции типа "новости ИИ", "последние новости AI"
+      const topicAfterNewsMatch = !topicMatch 
+        ? q.match(/новост\S*\s+(?:про\s+|о\s+|об\s+)?(.+?)(?:\s+за\s|\s+сегодня|\s+вчера|\s*$)/i)
+        : null;
+      
+      const topic = topicMatch?.[1]?.trim() || topicAfterNewsMatch?.[1]?.trim() || '';
+      
+      // Фильтруем "мусорные" темы (предлоги, местоимения)
+      const isValidTopic = topic.length > 1 && !/^(за|в|на|по|с|к|у|и|или|из|от)$/i.test(topic);
+      const topicPart = isValidTopic ? ` по теме: ${topic}` : '';
+      
+      if (topicPart) {
+        return `Последние новости и события${topicPart} ${timePart}. Найди конкретные свежие материалы именно по этой теме. Минимум 5 пунктов с подробностями.`;
+      }
+      
       return `Последние новости и события${cityPart} ${timePart}. Дай подробную сводку: основные события, происшествия, погода, важные решения. Минимум 5 пунктов.`;
     },
   },

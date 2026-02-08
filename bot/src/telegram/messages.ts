@@ -371,9 +371,8 @@ const processAIResponse = async (
     telegramLogger.warn({ userId, responseSnippet: response.content.substring(0, 100) }, 'LLM simulated search — replacing');
     return {
       ...response,
-      content: '😔 К сожалению, сейчас не удалось получить актуальные данные из интернета.\n\n' +
-        'Попробуй:\n• Через минуту повторить запрос\n• Использовать команду `/search` для явного поиска\n\n' +
-        '_Если проблема повторяется — обратитесь к администратору для проверки настроек поиска._',
+      content: '🔍 Поиск временно не вернул результатов.\n\n' +
+        'Попробуй:\n• Нажать кнопку **🌐 Поиск** и написать запрос\n• Или команду `/search твой запрос`\n• Через минуту повторить',
     };
   }
 
@@ -384,10 +383,11 @@ const processAIResponse = async (
 const addSearchWarning = (fullContext: string, userMessage: string, webSearchContext: string, userId: string): string => {
   if (!webSearchContext && needsWebSearch(userMessage)) {
     telegramLogger.warn({ userId, query: userMessage.substring(0, 50) }, 'Search needed but no data — injected warning');
-    return fullContext + '\n\n⚠️ СИСТЕМНОЕ УВЕДОМЛЕНИЕ: Поиск в интернете был запрошен, но данные НЕ получены. ' +
+    return fullContext + '\n\n⚠️ СИСТЕМНОЕ УВЕДОМЛЕНИЕ: Автоматический поиск был запрошен, но данные временно НЕ получены. ' +
       'СТРОГО ЗАПРЕЩЕНО: НЕ симулируй поиск, НЕ пиши "Ищу...", "Поиск в интернете", "Сейчас найду". ' +
-      'Честно скажи пользователю что актуальные данные из интернета сейчас недоступны. ' +
-      'НЕ выдумывай даты, факты, новости — лучше скажи "не удалось получить данные".';
+      'НЕ говори "я не умею искать" — у тебя ЕСТЬ поиск, просто сейчас он не вернул данные. ' +
+      'Предложи пользователю: нажать кнопку 🌐 Поиск или использовать /search для явного поиска по теме. ' +
+      'НЕ выдумывай даты, факты, новости — если данных нет, так и скажи.';
   }
   return fullContext;
 };
