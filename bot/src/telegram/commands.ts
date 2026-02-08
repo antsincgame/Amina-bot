@@ -19,6 +19,7 @@ import { notesRepo } from '../features/notes-repo.js';
 import { todosRepo } from '../features/todos-repo.js';
 import { userPrefsRepo } from '../features/user-prefs-repo.js';
 import { sendDigestNow } from '../features/digest-scheduler.js';
+import { parseAllConfiguredSites, getConfiguredSites } from '../features/news-parser.js';
 import { escapeMarkdown, escapeHtml, sendLongMessage } from './format.js';
 import {
   buildMainMenu,
@@ -492,6 +493,62 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     } catch (error) {
       telegramLogger.error({ error, userId }, 'Digest command failed');
       await ctx.reply('😔 Ошибка при работе с дайджестом.');
+    }
+  });
+
+  // /test_parser — проверить парсинг новостей (только для разработки/отладки)
+  bot.command('test_parser', async (ctx) => {
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    
+    try {
+      await ctx.reply('🔍 Запускаю парсинг всех настроенных сайтов...');
+      await ctx.replyWithChatAction('typing');
+
+      const sites = await getConfiguredSites();
+      const enabledSites = sites.filter(s => s.enabled);
+
+      if (enabledSites.length === 0) {
+        await ctx.reply('❌ Нет активных новостных сайтов. Настройте их в админке.');
+        return;
+      }
+
+      await ctx.reply(`📋 Активных сайтов: ${enabledSites.length}\n${enabledSites.map(s => `• ${s.name}`).join('\n')}`);
+
+      const startTime = Date.now();
+      const headlines = await parseAllConfiguredSites();
+      const parseTimeMs = Date.now() - startTime;
+
+      if (headlines.length === 0) {
+        await ctx.reply(`❌ Не удалось спарсить заголовки ни с одного сайта.\nВремя: ${parseTimeMs}ms`);
+        return;
+      }
+
+      // Группируем по источникам
+      const bySource: Record<string, typeof headlines> = {};
+      headlines.forEach(h => {
+        if (!bySource[h.source]) bySource[h.source] = [];
+        bySource[h.source]!.push(h);
+      });
+
+      let report = `✅ *Результаты парсинга* (${parseTimeMs}ms)\n\n`;
+      report += `Всего заголовков: *${headlines.length}*\n\n`;
+
+      for (const [source, items] of Object.entries(bySource)) {
+        report += `📰 *${source}* (${items.length})\n`;
+        items.slice(0, 3).forEach((h, i) => {
+          const short = h.title.length > 60 ? h.title.slice(0, 60) + '...' : h.title;
+          report += `${i + 1}. ${escapeMarkdown(short)}\n`;
+        });
+        if (items.length > 3) {
+          report += `   _... и ещё ${items.length - 3}_\n`;
+        }
+        report += '\n';
+      }
+
+      await sendLongMessage(ctx, report);
+    } catch (error) {
+      telegramLogger.error({ error, userId }, 'Test parser command failed');
+      await ctx.reply(`😔 Ошибка парсинга: ${error instanceof Error ? error.message : 'Unknown'}`);
     }
   });
 };

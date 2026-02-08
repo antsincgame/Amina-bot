@@ -306,6 +306,27 @@ async function buildDigest(
     appLogger.warn({ error: parsedHeadlinesResult.reason }, 'Digest: news parser failed');
   }
 
+  // ФИЛЬТРАЦИЯ: убираем заголовки с упоминанием Минска, если город НЕ Минск
+  if (city !== 'Минск') {
+    const originalCount = parsedHeadlines.length;
+    parsedHeadlines = parsedHeadlines.filter(h => {
+      const titleLower = h.title.toLowerCase();
+      const urlLower = h.url.toLowerCase();
+      // Исключаем если заголовок/URL содержит "минск", "minsk", "minsknews"
+      return !(
+        titleLower.includes('минск') ||
+        titleLower.includes('minsk') ||
+        urlLower.includes('minsk')
+      );
+    });
+    if (originalCount !== parsedHeadlines.length) {
+      appLogger.info(
+        { city, filtered: originalCount - parsedHeadlines.length, remaining: parsedHeadlines.length },
+        'Digest: filtered out Minsk news'
+      );
+    }
+  }
+
   if (parsedHeadlines.length > 0) {
     // Формат: каждый заголовок с ссылкой и источником
     const headlineLines = parsedHeadlines.map(h =>
