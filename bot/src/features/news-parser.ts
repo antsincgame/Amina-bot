@@ -43,7 +43,7 @@ const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 // RSS фид стандартные пути (порядок по популярности)
-const RSS_PATHS = ['/feed', '/rss', '/rss.xml', '/feed/rss', '/atom.xml', '/feed/atom', '/index.xml'];
+const RSS_PATHS = ['/feed', '/rss', '/rss.xml', '/feed/rss', '/atom.xml', '/feed/atom', '/index.xml', '/rss/all', '/rss/new'];
 
 // Паттерны URL, характерные для новостных статей
 const ARTICLE_URL_PATTERNS = [
@@ -57,6 +57,19 @@ const ARTICLE_URL_PATTERNS = [
   /\/kultura\//, // /kultura/
   /\/ekonomika\//, // /ekonomika/
   /\.html$/,  // article.html
+  /\/\w+\/\d{5,}-/, // vc.ru-style: /ai/123456-article-slug
+  /\/\w+\/\d{5,}$/, // vc.ru-style: /ai/123456 (без slug)
+];
+
+// Паттерны URL, которые указывают что ссылка — прямой RSS фид
+const DIRECT_FEED_PATTERNS = [
+  /\/rss\/?$/i,
+  /\/rss\/\w+\/?$/i,
+  /\/feed\/?$/i,
+  /\/feed\/\w+\/?$/i,
+  /\/atom\.xml$/i,
+  /\/rss\.xml$/i,
+  /\/index\.xml$/i,
 ];
 
 // Тексты/паттерны для фильтрации не-новостных ссылок
@@ -142,8 +155,9 @@ function cleanTitle(text: string): string {
 function isArticleUrl(url: string, siteOrigin: string): boolean {
   try {
     const parsed = new URL(url);
+    const originHost = new URL(siteOrigin).hostname.replace(/^www\./, '');
     // Должен быть тот же домен (или субдомен)
-    if (!parsed.hostname.endsWith(new URL(siteOrigin).hostname.replace(/^www\./, ''))) return false;
+    if (!parsed.hostname.endsWith(originHost)) return false;
     // Путь должен иметь глубину >= 2 сегментов
     const segments = parsed.pathname.split('/').filter(Boolean);
     if (segments.length < 2) return false;
@@ -283,6 +297,75 @@ async function tryRssFeed(siteUrl: string): Promise<ParsedHeadline[] | null> {
   return null;
 }
 
+/**
+ * Проверить, является ли URL прямой ссылкой на RSS/Atom фид
+ */
+function isDirectFeedUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return DIRECT_FEED_PATTERNS.some(p => p.test(parsed.pathname));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Попытка скачать и спарсить URL как прямой RSS/Atom фид
+ */
+async function tryDirectFeed(feedUrl: string): Promise<ParsedHeadline[] | null> {
+  try {
+    const response = await fetchWithTimeout(feedUrl, 8000);
+    if (!response.ok) return null;
+
+    const contentType = response.headers.get('content-type') ?? '';
+    const text = await response.text();
+
+    // Проверяем что это XML/RSS
+    if (
+      contentType.includes('xml') ||
+      contentType.includes('rss') ||
+      contentType.includes('atom') ||
+      contentType.includes('text/plain') ||
+      text.trimStart().startsWith('<?xml') ||
+      text.includes('<rss') ||
+      text.includes('<feed')
+    ) {
+      const headlines = parseRssFeed(text, feedUrl);
+      if (headlines.length > 0) {
+        appLogger.info({ feedUrl, count: headlines.length }, 'Direct RSS feed parsed successfully');
+        return headlines;
+      }
+    }
+
+    // Некоторые сайты (vc.ru) отдают JSON-фид или HTML вместо RSS
+    // Пробуем JSON Feed: { "version": "...", "items": [...] }
+    if (contentType.includes('json') || text.trimStart().startsWith('{')) {
+      try {
+        const json = JSON.parse(text) as { items?: Array<{ title?: string; url?: string; external_url?: string }> };
+        if (json.items && Array.isArray(json.items)) {
+          const headlines: ParsedHeadline[] = [];
+          const seenTitles = new Set<string>();
+          for (const item of json.items) {
+            if (headlines.length >= MAX_HEADLINES_PER_SITE) break;
+            const title = cleanTitle(item.title ?? '');
+            const url = item.url ?? item.external_url ?? '';
+            if (url) addHeadline(headlines, seenTitles, title, url);
+          }
+          if (headlines.length > 0) {
+            appLogger.info({ feedUrl, count: headlines.length }, 'JSON Feed parsed successfully');
+            return headlines;
+          }
+        }
+      } catch {
+        // не JSON — пропускаем
+      }
+    }
+  } catch (err) {
+    appLogger.debug({ error: err, feedUrl }, 'Direct feed fetch failed');
+  }
+  return null;
+}
+
 // ===== HTML парсинг (основной) =====
 
 /**
@@ -292,31 +375,42 @@ export async function parseNewsFromSite(siteUrl: string): Promise<ParsedHeadline
   const origin = new URL(siteUrl).origin;
 
   // ===== Шаг 0: Проверить, является ли сам URL RSS-фидом =====
-  // (например https://vc.ru/rss/ai — URL уже указывает на фид, а не на HTML-страницу)
-  try {
-    const directResponse = await fetchWithTimeout(siteUrl, 8000);
-    if (directResponse.ok) {
-      const contentType = directResponse.headers.get('content-type') ?? '';
-      const bodyText = await directResponse.text();
-      const isRss = contentType.includes('xml') || contentType.includes('rss') || contentType.includes('atom') ||
-        bodyText.trimStart().startsWith('<?xml') || bodyText.trimStart().startsWith('<rss') || bodyText.trimStart().startsWith('<feed');
-      
-      if (isRss) {
-        const headlines = parseRssFeed(bodyText, origin);
-        if (headlines.length > 0) {
-          appLogger.info({ siteUrl, count: headlines.length }, 'Direct RSS feed parsed from URL');
-          return headlines;
+  // Быстрая проверка по URL паттерну (https://vc.ru/rss, /feed, etc.)
+  if (isDirectFeedUrl(siteUrl)) {
+    appLogger.info({ siteUrl }, 'URL looks like direct RSS feed, trying direct parse');
+    const directHeadlines = await tryDirectFeed(siteUrl);
+    if (directHeadlines && directHeadlines.length > 0) {
+      return directHeadlines;
+    }
+    appLogger.warn({ siteUrl }, 'Direct RSS feed URL returned no headlines, trying standard paths');
+  }
+
+  // Если URL не распознан как RSS — загружаем и проверяем содержимое
+  if (!isDirectFeedUrl(siteUrl)) {
+    try {
+      const directResponse = await fetchWithTimeout(siteUrl, 8000);
+      if (directResponse.ok) {
+        const contentType = directResponse.headers.get('content-type') ?? '';
+        const bodyText = await directResponse.text();
+        const isRss = contentType.includes('xml') || contentType.includes('rss') || contentType.includes('atom') ||
+          bodyText.trimStart().startsWith('<?xml') || bodyText.trimStart().startsWith('<rss') || bodyText.trimStart().startsWith('<feed');
+        
+        if (isRss) {
+          const headlines = parseRssFeed(bodyText, origin);
+          if (headlines.length > 0) {
+            appLogger.info({ siteUrl, count: headlines.length }, 'Direct RSS feed parsed from URL');
+            return headlines;
+          }
+        }
+        
+        // Если это НЕ RSS — переиспользуем загруженный HTML
+        if (!isRss) {
+          return parseHtmlContent(bodyText, siteUrl, origin);
         }
       }
-      
-      // Если это НЕ RSS, bodyText содержит HTML — сохраним для дальнейшего парсинга
-      if (!isRss) {
-        // Переиспользуем загруженный HTML вместо повторной загрузки
-        return parseHtmlContent(bodyText, siteUrl, origin);
-      }
+    } catch (err) {
+      appLogger.debug({ error: err, siteUrl }, 'Direct URL fetch failed, trying RSS paths');
     }
-  } catch (err) {
-    appLogger.debug({ error: err, siteUrl }, 'Direct URL fetch failed, trying RSS paths');
   }
 
   // ===== Шаг 1: Попробовать стандартные RSS пути =====

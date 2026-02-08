@@ -112,22 +112,23 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
   bot.command('clear', async (ctx) => {
     const userId = ctx.from?.id.toString() ?? 'unknown';
     
-    // 1. Очищаем историю сообщений в сессии (главный контекст для AI)
+    // Полная очистка сессии (контекст для AI)
+    const oldConvId = ctx.session.conversationId;
     ctx.session.messageHistory = [];
-    
-    // 2. Очищаем messages в БД конверсации (чтобы при перезапуске бота не загрузились старые)
-    // НЕ обнуляем conversationId — иначе ensureConversation загрузит messages обратно из БД!
-    const convId = ctx.session.conversationId;
-    if (convId) {
-      try {
-        await conversationsRepo.clearMessages(convId);
-        telegramLogger.info({ userId, conversationId: convId }, 'Conversation messages cleared in DB');
-      } catch (error) {
-        telegramLogger.error({ error, userId }, 'Failed to clear conversation messages in DB');
+    ctx.session.conversationId = null; // Сбрасываем — ensureConversation создаст/загрузит при следующем сообщении
+    ctx.session.awaitingImagePrompt = false;
+
+    try {
+      // Если был старый диалог — очищаем его сообщения в БД (но сохраняем саму запись)
+      if (oldConvId) {
+        await conversationsRepo.clearMessages(oldConvId);
+        telegramLogger.info({ userId, conversationId: oldConvId }, 'Conversation messages cleared in DB');
       }
+    } catch (error) {
+      telegramLogger.error({ error, userId }, 'Failed to clear conversation');
     }
 
-    telegramLogger.info({ userId, hadConvId: !!convId }, 'Chat history cleared by user');
+    telegramLogger.info({ userId, hadConvId: !!oldConvId }, 'Chat history cleared by user');
     await ctx.reply('✅ История диалога очищена. Начнём сначала!');
   });
 

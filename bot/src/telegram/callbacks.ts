@@ -326,20 +326,24 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
   bot.callbackQuery('confirm_clear', async (ctx) => {
     const userId = ctx.from?.id.toString() ?? 'unknown';
     const chatId = ctx.chat?.id ?? 0;
+    
+    // Полная очистка — как в /clear команде
+    const oldConvId = ctx.session.conversationId;
     ctx.session.messageHistory = [];
+    ctx.session.conversationId = null; // ВАЖНО: сбрасываем ID для создания нового диалога
+    ctx.session.awaitingImagePrompt = false;
+
     try {
-      if (!ctx.session.conversationId) {
-        const conversation = await conversationsRepo.getOrCreate(
-          userId, 'telegram', { telegram_chat_id: chatId, telegram_user_id: ctx.from?.id }
-        );
-        ctx.session.conversationId = conversation.id;
+      // Очищаем сообщения в старом диалоге (данные остаются в Supabase)
+      if (oldConvId) {
+        await conversationsRepo.clearMessages(oldConvId);
+        telegramLogger.info({ userId, conversationId: oldConvId }, 'Conversation messages cleared (callback)');
       }
-      await conversationsRepo.clearMessages(ctx.session.conversationId);
     } catch (err) {
-      telegramLogger.warn({ error: err, userId }, 'Failed to clear conversation history');
+      telegramLogger.warn({ error: err, userId }, 'Failed to clear conversation history (callback)');
     }
     await ctx.answerCallbackQuery({ text: '✅ История очищена!' });
-    await ctx.editMessageText('🧹 История диалога очищена. Начнём сначала!');
+    await ctx.editMessageText('✅ История диалога очищена. Начнём сначала!');
   });
 
   bot.callbackQuery('cancel_clear', async (ctx) => {

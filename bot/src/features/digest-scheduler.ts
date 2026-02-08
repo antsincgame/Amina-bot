@@ -250,8 +250,17 @@ async function buildDigest(
   const rawData: string[] = [];
   const todayStr = new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
 
-  // Белорусские СМИ для точности поиска (без minsknews — фокус на Гродно)
-  const bySources = 'сайт belta.by, ont.by, tvr.by, grodnonews.by, sb.by';
+  // Белорусские СМИ — ИСКЛЮЧАЕМ минск-ориентированные если город не Минск
+  const isGrodno = city.toLowerCase().includes('гродно') || city.toLowerCase().includes('grodno');
+  const isMinsk = city.toLowerCase().includes('минск') || city.toLowerCase().includes('minsk');
+  const bySources = isMinsk
+    ? 'сайт belta.by, ont.by, tvr.by, sb.by, minsknews.by'
+    : 'сайт belta.by, ont.by, tvr.by, sb.by' + (isGrodno ? ', grodnonews.by, newgrodno.by' : '');
+
+  // Фильтр упоминания Минска для не-минских городов
+  const minskFilter = !isMinsk
+    ? ` СТРОГО ЗАПРЕЩЕНО включать новости про Минск, минские события, минский транспорт! Только общебелорусские новости без привязки к Минску!`
+    : '';
 
   // --- Запускаем ВСЕ запросы параллельно ---
   // Парсер городских новостей ЗАМЕНЯЕТ Perplexity для местных новостей.
@@ -270,18 +279,18 @@ async function buildDigest(
       webSearchWithRetry(
         `Внутренние новости Беларуси ${todayStr} (${bySources}): ` +
         `белорусская экономика, решения правительства, законы, социальная политика, образование, здравоохранение, ` +
-        `инфраструктура, строительство, IT-сектор Беларуси, курс белорусского рубля, цены, ` +
-        `Гродненская область, регионы Беларуси. ` +
-        `СТРОГО только внутренние белорусские новости! НЕ включай мировые, российские, украинские новости! ` +
-        `НЕ включай новости Минска — фокус на общебелорусские и региональные события! ` +
+        `инфраструктура, строительство, IT-сектор Беларуси, курс белорусского рубля, цены` +
+        (isGrodno ? `, Гродненская область, регионы Беларуси` : '') + `. ` +
+        `СТРОГО только внутренние белорусские новости! НЕ включай мировые, российские, украинские новости!${minskFilter} ` +
         `Минимум 5-7 пунктов о жизни внутри Беларуси с конкретными фактами и цифрами.`
       ),
 
       // 4. Спорт и культура БЕЛАРУСИ — отдельный запрос для полноты
       webSearchWithRetry(
-        `Спорт культура Беларусь ${city} сегодня ${todayStr}: белорусские спортсмены, Неман Гродно, ` +
-        `белорусский футбол хоккей биатлон, театры Беларуси, концерты, фестивали, выставки в ${city} и Беларуси. ` +
-        `Только белорусский спорт и культура! Минимум 3-5 событий.`
+        `Спорт культура Беларусь ${city} сегодня ${todayStr}: белорусские спортсмены, ` +
+        (isGrodno ? 'Неман Гродно, ' : '') +
+        `БАТЭ, белорусский футбол хоккей биатлон, театры Беларуси, концерты, фестивали, выставки в ${city} и Беларуси. ` +
+        `Только белорусский спорт и культура!${minskFilter} Минимум 3-5 событий.`
       ),
 
       // 5. Напоминания из БД
@@ -358,7 +367,20 @@ async function buildDigest(
   }
 
   if (belarusNewsResult.status === 'fulfilled' && belarusNewsResult.value?.answer) {
-    rawData.push(`[НОВОСТИ БЕЛАРУСИ — ЭКОНОМИКА, ПОЛИТИКА, ОБЩЕСТВО]\n${belarusNewsResult.value.answer}`);
+    let belarusNews = belarusNewsResult.value.answer;
+    // Фильтрация: убираем предложения с упоминанием Минска если город НЕ Минск
+    if (!isMinsk) {
+      const sentences = belarusNews.split(/(?<=[.!?])\s+/);
+      const filtered = sentences.filter(s => {
+        const lower = s.toLowerCase();
+        return !lower.includes('минск') && !lower.includes('minsk');
+      });
+      if (filtered.length < sentences.length) {
+        appLogger.info({ filtered: sentences.length - filtered.length }, 'Digest: filtered Minsk from Belarus news');
+        belarusNews = filtered.join(' ');
+      }
+    }
+    rawData.push(`[НОВОСТИ БЕЛАРУСИ — ЭКОНОМИКА, ПОЛИТИКА, ОБЩЕСТВО]\n${belarusNews}`);
   } else {
     rawData.push(`[НОВОСТИ БЕЛАРУСИ]\nНе удалось получить новости Беларуси`);
     if (belarusNewsResult.status === 'rejected') {
@@ -367,7 +389,21 @@ async function buildDigest(
   }
 
   if (belarusSportCultureResult.status === 'fulfilled' && belarusSportCultureResult.value?.answer) {
-    rawData.push(`[СПОРТ И КУЛЬТУРА БЕЛАРУСИ]\n${belarusSportCultureResult.value.answer}`);
+    let sportCulture = belarusSportCultureResult.value.answer;
+    // Фильтрация Минска из спорта/культуры
+    if (!isMinsk) {
+      const sentences = sportCulture.split(/(?<=[.!?])\s+/);
+      const filtered = sentences.filter(s => {
+        const lower = s.toLowerCase();
+        return !lower.includes('минск') && !lower.includes('minsk');
+      });
+      if (filtered.length < sentences.length) {
+        sportCulture = filtered.join(' ');
+      }
+    }
+    if (sportCulture.trim()) {
+      rawData.push(`[СПОРТ И КУЛЬТУРА БЕЛАРУСИ]\n${sportCulture}`);
+    }
   } else {
     // Спорт/культура не критичны — не добавляем ошибку
     if (belarusSportCultureResult.status === 'rejected') {
@@ -438,10 +474,13 @@ ${rawData.join('\n\n')}
 ЖЁСТКИЕ ПРАВИЛА:
 - ЗАПРЕЩЕНО включать мировые ПОЛИТИЧЕСКИЕ новости (Россия, Украина, США, Европа, Ближний Восток)!
 - ЗАПРЕЩЕНО включать новости о войнах, конфликтах, катастрофах в других странах!
-- ЗАПРЕЩЕНО включать новости Минска (происшествия, события, транспорт Минска) — НЕ УПОМИНАЙ Минск!
-- Если в данных есть мировые политические новости или новости Минска — ПРОПУСТИ ИХ, не включай в дайджест!
+- Если в данных есть мировые политические новости — ПРОПУСТИ ИХ, не включай в дайджест!
 - Новости технологий/AI с vc.ru — МОЖНО включать (это отдельный раздел)
-- ТОЛЬКО Беларусь (общенациональные) + ${city} (городские) + AI/технологии!
+- ТОЛЬКО Беларусь (общенациональные) + ${city} (городские) + AI/технологии!${!isMinsk ? `
+- ⚠️ АБСОЛЮТНЫЙ ЗАПРЕТ НА МИНСК! НЕ включай новости Минска, минские события, минский транспорт, происшествия в Минске!
+- Если новость привязана к Минску (минский троллейбус, Ботанический сад Минска, минские улицы) — ПРОПУСТИ ЕЁ!
+- Заголовок секции "Новости ${city}", НЕ "Новости Минска"!
+- Упоминание "Минск" в дайджесте = ОШИБКА!` : ''}
 - НЕ ПРИДУМЫВАЙ новости — только из данных выше
 - Если данных мало — честно скажи, не выдумывай
 - Эмодзи уместно, не перебарщивай
