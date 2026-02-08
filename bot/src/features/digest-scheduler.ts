@@ -14,11 +14,12 @@
  * Для этого: системный промпт Perplexity, белорусские СМИ, жёсткий LLM-промпт.
  */
 
-import type { Api, RawApi } from 'grammy';
+import { InlineKeyboard, type Api, type RawApi } from 'grammy';
 import { userPrefsRepo } from './user-prefs-repo.js';
 import { todosRepo } from './todos-repo.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';
 import { webSearch } from '../ai/websearch.js';
+import { inlineCitations } from '../telegram/format.js';
 import { parseAllConfiguredSites, type ParsedHeadline } from './news-parser.js';
 import { aiService } from '../ai/openrouter.js';
 import { appLogger } from '../config/logger.js';
@@ -72,8 +73,13 @@ export function stopDigestScheduler(): void {
   appLogger.info('Digest scheduler stopped');
 }
 
+/** Кнопка озвучки для дайджеста */
+const digestReadAloudKeyboard = () =>
+  new InlineKeyboard().text('🔊 Озвучить', 'read_aloud');
+
 /**
- * Отправить длинное сообщение, разбивая на части при необходимости
+ * Отправить длинное сообщение, разбивая на части при необходимости.
+ * К каждому чанку добавляется кнопка "Озвучить".
  */
 async function sendLongMessage(
   bot: BotLike,
@@ -82,15 +88,15 @@ async function sendLongMessage(
   parseMode?: 'Markdown' | 'HTML'
 ): Promise<void> {
   const MAX_LENGTH = 4096;
+  const keyboard = digestReadAloudKeyboard();
   
   // Если текст короткий — отправляем одним сообщением
   if (text.length <= MAX_LENGTH) {
     try {
-      await bot.api.sendMessage(chatId, text, { parse_mode: parseMode });
+      await bot.api.sendMessage(chatId, text, { parse_mode: parseMode, reply_markup: keyboard });
     } catch {
-      // Fallback: без форматирования
       const plainText = text.replace(/[*_`~[\]()]/g, '');
-      await bot.api.sendMessage(chatId, plainText);
+      await bot.api.sendMessage(chatId, plainText, { reply_markup: keyboard });
     }
     return;
   }
@@ -98,34 +104,30 @@ async function sendLongMessage(
   // Разбиваем на части по абзацам
   const paragraphs = text.split('\n\n');
   let chunk = '';
+  const chunks: string[] = [];
   
   for (const para of paragraphs) {
     if (chunk.length + para.length + 2 > MAX_LENGTH) {
       if (chunk) {
-        try {
-          await bot.api.sendMessage(chatId, chunk.trim(), { parse_mode: parseMode });
-        } catch {
-          const plainChunk = chunk.trim().replace(/[*_`~[\]()]/g, '');
-          await bot.api.sendMessage(chatId, plainChunk);
-        }
+        chunks.push(chunk.trim());
         chunk = '';
       }
-      // Если один абзац длиннее лимита — обрезаем
       if (para.length > MAX_LENGTH) {
         const plainPara = para.replace(/[*_`~[\]()]/g, '').substring(0, MAX_LENGTH);
-        await bot.api.sendMessage(chatId, plainPara);
+        chunks.push(plainPara);
         continue;
       }
     }
     chunk += (chunk ? '\n\n' : '') + para;
   }
+  if (chunk.trim()) chunks.push(chunk.trim());
   
-  if (chunk.trim()) {
+  for (const c of chunks) {
     try {
-      await bot.api.sendMessage(chatId, chunk.trim(), { parse_mode: parseMode });
+      await bot.api.sendMessage(chatId, c, { parse_mode: parseMode, reply_markup: keyboard });
     } catch {
-      const plainChunk = chunk.trim().replace(/[*_`~[\]()]/g, '');
-      await bot.api.sendMessage(chatId, plainChunk);
+      const plain = c.replace(/[*_`~[\]()]/g, '');
+      await bot.api.sendMessage(chatId, plain, { reply_markup: keyboard });
     }
   }
 }
@@ -205,23 +207,30 @@ async function processDigests(bot: BotLike): Promise<void> {
 // --------------------------------------------
 
 /**
- * Поиск с повторной попыткой при ошибке
+ * Результат поиска с citations
+ */
+interface DigestSearchResult {
+  answer: string;
+  citations: string[];
+}
+
+/**
+ * Поиск с повторной попыткой при ошибке. Сохраняет citations.
  */
 async function webSearchWithRetry(
   query: string,
   retries = 2
-): Promise<{ answer: string } | null> {
+): Promise<DigestSearchResult | null> {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const result = await webSearch(query, { forDigest: true });
       if (result.answer && result.answer.length > 30) {
-        return result;
+        return { answer: result.answer, citations: result.citations ?? [] };
       }
       appLogger.warn({ query: query.substring(0, 50), attempt, answerLength: result.answer?.length ?? 0 }, 'Digest: search returned weak result');
     } catch (error) {
       appLogger.warn({ error, query: query.substring(0, 50), attempt }, `Digest: search attempt ${attempt} failed`);
       if (attempt < retries) {
-        // Пауза перед повтором (1.5 сек)
         await new Promise(resolve => setTimeout(resolve, 1500));
       }
     }
@@ -299,9 +308,13 @@ async function buildDigest(
       todosRepo.getForDigest(userId),
     ]);
 
+  // Собираем ВСЕ citations из всех поисковых запросов
+  const allCitations: string[] = [];
+
   // Обрабатываем результаты поиска
   if (weatherResult.status === 'fulfilled' && weatherResult.value?.answer) {
     rawData.push(`[ПОГОДА ${city.toUpperCase()}]\n${weatherResult.value.answer}`);
+    allCitations.push(...(weatherResult.value.citations ?? []));
   } else {
     rawData.push(`[ПОГОДА ${city.toUpperCase()}]\nДанные о погоде временно недоступны`);
     if (weatherResult.status === 'rejected') {
@@ -323,9 +336,10 @@ async function buildDigest(
     parsedHeadlines = parsedHeadlines.filter(h => {
       const titleLower = h.title.toLowerCase();
       const urlLower = h.url.toLowerCase();
-      // Исключаем если заголовок/URL содержит "минск", "minsk", "minsknews"
+      // Исключаем если заголовок/URL содержит "минск", "minsk", "минчан", "минский"
       return !(
         titleLower.includes('минск') ||
+        titleLower.includes('минчан') ||
         titleLower.includes('minsk') ||
         urlLower.includes('minsk')
       );
@@ -367,12 +381,14 @@ async function buildDigest(
 
   if (belarusNewsResult.status === 'fulfilled' && belarusNewsResult.value?.answer) {
     let belarusNews = belarusNewsResult.value.answer;
+    allCitations.push(...(belarusNewsResult.value.citations ?? []));
     // Фильтрация: убираем предложения с упоминанием Минска если город НЕ Минск
     if (!isMinsk) {
       const sentences = belarusNews.split(/(?<=[.!?])\s+/);
       const filtered = sentences.filter(s => {
         const lower = s.toLowerCase();
-        return !lower.includes('минск') && !lower.includes('minsk');
+        // Расширенный фильтр: "мнс минска", "минский район", etc.
+        return !lower.includes('минск') && !lower.includes('minsk') && !lower.includes('минчан');
       });
       if (filtered.length < sentences.length) {
         appLogger.info({ filtered: sentences.length - filtered.length }, 'Digest: filtered Minsk from Belarus news');
@@ -384,17 +400,17 @@ async function buildDigest(
     }
   } else if (belarusNewsResult.status === 'rejected') {
     appLogger.warn({ error: belarusNewsResult.reason }, 'Digest: Belarus news failed');
-    // НЕ добавляем пустой блок — LLM просто пропустит раздел
   }
 
   if (belarusSportCultureResult.status === 'fulfilled' && belarusSportCultureResult.value?.answer) {
     let sportCulture = belarusSportCultureResult.value.answer;
+    allCitations.push(...(belarusSportCultureResult.value.citations ?? []));
     // Фильтрация Минска из спорта/культуры
     if (!isMinsk) {
       const sentences = sportCulture.split(/(?<=[.!?])\s+/);
       const filtered = sentences.filter(s => {
         const lower = s.toLowerCase();
-        return !lower.includes('минск') && !lower.includes('minsk');
+        return !lower.includes('минск') && !lower.includes('minsk') && !lower.includes('минчан');
       });
       if (filtered.length < sentences.length) {
         sportCulture = filtered.join(' ');
@@ -433,6 +449,12 @@ async function buildDigest(
     }
   }
 
+  // Дедупликация citations и формирование карты
+  const uniqueCitations = [...new Set(allCitations)];
+  const citationsBlock = uniqueCitations.length > 0
+    ? `\n\nКАРТА ИСТОЧНИКОВ (для ссылок [N]):\n${uniqueCitations.map((url, i) => `[${i + 1}] ${url}`).join('\n')}`
+    : '';
+
   // --- LLM обработка ---
   const nameStr = firstName || 'друг';
   const todayDate = new Date().toLocaleDateString('ru-RU', {
@@ -444,7 +466,7 @@ async function buildDigest(
 
 Вот собранные данные:
 
-${rawData.join('\n\n')}
+${rawData.join('\n\n')}${citationsBlock}
 
 ---
 
@@ -462,13 +484,15 @@ ${rawData.join('\n\n')}
    Если данных по городу нет — ПРОПУСТИ этот раздел целиком.
 
 4. **Новости Беларуси** — экономика, политика, общество, спорт, культура. Каждую с кратким комментарием.
+   ОБЯЗАТЕЛЬНО: после каждой новости ставь ссылку на источник в формате [N] — число из КАРТЫ ИСТОЧНИКОВ выше.
+   Пример: "Зарплаты бюджетников вырастут на 5% [3]" — где [3] это ссылка из карты.
    Если данных нет — ПРОПУСТИ этот раздел целиком. НЕ ИЗВИНЯЙСЯ!
 
-5. **Технологии и AI** — если среди данных есть новости с vc.ru или про AI/технологии, выдели их в отдельный блок. Если нет — пропусти.
+5. **Технологии и AI** — если среди данных есть новости с vc.ru или про AI/технологии, выдели их в отдельный блок. Тоже с [N] ссылками. Если нет — пропусти.
 
 6. **Напоминания и задачи** — если есть в данных, подбодри и дай совет по приоритетам
 
-7. **Настрой на день** — позитивное мотивирующее завершение
+7. **Настрой на день** — позитивное мотивирующее завершение (КОРОТКО, 1-2 предложения)
 
 ЖЁСТКИЕ ПРАВИЛА:
 - ЗАПРЕЩЕНО писать "к сожалению, данных нет", "не удалось найти новости", "нет свежих новостей" — просто ПРОПУСТИ пустой раздел!
@@ -476,18 +500,21 @@ ${rawData.join('\n\n')}
 - ЗАПРЕЩЕНО включать новости о войнах, конфликтах, катастрофах в других странах!
 - ЗАПРЕЩЕНО включать новости Минска (происшествия, события, транспорт Минска) — НЕ УПОМИНАЙ Минск!
 - Если в данных есть мировые новости или новости Минска — ПРОПУСТИ ИХ молча!
+- ЗАПРЕЩЕНО упоминать МНС Минска, минский район, минчан, минские события — ЭТО Минск!
 - Новости технологий/AI с vc.ru — МОЖНО включать (это отдельный раздел)
 - ТОЛЬКО Беларусь (общенациональные) + ${city} (городские) + AI/технологии!${!isMinsk ? `
 - ⚠️ АБСОЛЮТНЫЙ ЗАПРЕТ НА МИНСК! НЕ включай новости Минска, минские события, минский транспорт, происшествия в Минске!
-- Если новость привязана к Минску (минский троллейбус, Ботанический сад Минска, минские улицы) — ПРОПУСТИ ЕЁ!
+- Если новость привязана к Минску (минский троллейбус, Ботанический сад Минска, минские улицы, МНС Минска) — ПРОПУСТИ ЕЁ!
 - Заголовок секции "Новости ${city}", НЕ "Новости Минска"!
-- Упоминание "Минск" в дайджесте = ОШИБКА!` : ''}
+- Упоминание "Минск", "минский", "минчан" в дайджесте = ОШИБКА!` : ''}
 - НЕ ПРИДУМЫВАЙ новости — только из данных выше
 - НЕ ВЫДУМЫВАЙ и НЕ ИЗВИНЯЙСЯ за отсутствие данных — просто пропускай!
+- ОБЯЗАТЕЛЬНО ставь ссылки [N] после каждого факта/новости (N = номер из КАРТЫ ИСТОЧНИКОВ)
 - Эмодзи уместно, не перебарщивай
 - Формат: Markdown для Telegram (*bold* заголовки, _italic_ для деталей)
 - Длина: столько, сколько есть контента. Не растягивай искусственно.
-- Каждая новость должна быть 2-3 предложения с комментарием`;
+- Каждая новость должна быть 2-3 предложения с комментарием
+- НЕ добавляй в конце инструкции вроде "/digest", "/digest now" — дайджест завершается разделом "Настрой на день"`;
 
   try {
     const llmResponse = await aiService.chat(
@@ -495,14 +522,19 @@ ${rawData.join('\n\n')}
       'telegram'
     );
     
-    const keyboard = '📋 /digest | 🔄 /digest now';
-    return llmResponse.content + `\n\n_${keyboard}_`;
+    // Пост-обработка: заменяем [N] на кликабельные Markdown-ссылки
+    let finalDigest = llmResponse.content;
+    if (uniqueCitations.length > 0) {
+      finalDigest = inlineCitations(finalDigest, uniqueCitations);
+    }
+    
+    return finalDigest;
   } catch (error) {
     appLogger.error({ error, userId }, 'LLM failed to process digest, using raw data');
     
     // Fallback: сырые данные с приветствием
     const greeting = getTimeGreeting(firstName);
-    return `${greeting}\n\n${rawData.join('\n\n')}\n\n_/digest — настройки дайджеста_`;
+    return `${greeting}\n\n${rawData.join('\n\n')}`;
   }
 }
 
