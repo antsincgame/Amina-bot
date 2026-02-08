@@ -309,8 +309,18 @@ export const aiService = {
 
     // Build system prompt with memory context
     let systemPrompt = aiConfig.systemPrompt;
+    
+    // === ЗАЩИТА: всегда инжектить search-инструкции поверх ЛЮБОГО промпта ===
+    // Если промпт из БД не содержит правильных инструкций — добавляем принудительно
+    if (!systemPrompt.includes('У тебя ЕСТЬ доступ к интернету')) {
+      systemPrompt += '\n\nПОИСК В ИНТЕРНЕТЕ: У тебя ЕСТЬ доступ к интернету через автоматическую систему поиска. ' +
+        'НЕ говори "я не умею искать", "нет доступа к интернету" — это НЕПРАВДА! ' +
+        'Если в контексте есть "=== ДАННЫЕ ИЗ ИНТЕРНЕТА ===" — используй их. ' +
+        'Если данных нет — предложи кнопку 🌐 Поиск или /search.';
+    }
+    
     if (userMemoryContext) {
-      systemPrompt = `${userMemoryContext}\n\n${aiConfig.systemPrompt}`;
+      systemPrompt = `${userMemoryContext}\n\n${systemPrompt}`;
     }
 
     // Add system prompt
