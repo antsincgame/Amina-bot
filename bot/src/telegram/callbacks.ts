@@ -18,6 +18,7 @@ import { userPrefsRepo } from '../features/user-prefs-repo.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';
 import { textToSpeech, detectLanguage } from '../features/tts.js';
 import { sendDigestNow, getDigestFullText } from '../features/digest-scheduler.js';
+import { getFullText } from './format.js';
 import {
   buildMainMenu,
   todoDoneKeyboard,
@@ -375,6 +376,50 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
     } catch (err) {
       telegramLogger.warn({ error: err, digestId }, 'TTS digest generation failed');
       await ctx.reply('😔 Ошибка генерации голоса для дайджеста.');
+    }
+  });
+
+  // Озвучка ПОЛНОГО текста любого длинного сообщения (поиск, AI-ответ и т.п.)
+  bot.callbackQuery(/^read_aloud_full:(.+)$/, async (ctx) => {
+    const textId = ctx.match![1];
+    const fullText = getFullText(textId!);
+
+    if (!fullText) {
+      // Fallback: озвучиваем текст текущего сообщения
+      const messageText = ctx.callbackQuery.message?.text;
+      if (!messageText) {
+        await ctx.answerCallbackQuery({ text: '⏱ Текст устарел, попробуйте заново' });
+        return;
+      }
+      await ctx.answerCallbackQuery({ text: '🔊 Генерирую аудио...' });
+      try {
+        const lang = detectLanguage(messageText);
+        const audio = await textToSpeech(messageText, lang);
+        if (audio) {
+          await ctx.replyWithVoice(new InputFile(audio, 'voice.mp3'));
+        } else {
+          await ctx.reply('😔 Не удалось сгенерировать аудио.');
+        }
+      } catch (err) {
+        telegramLogger.warn({ error: err }, 'TTS fallback generation failed');
+        await ctx.reply('😔 Ошибка генерации голоса.');
+      }
+      return;
+    }
+
+    await ctx.answerCallbackQuery({ text: '🔊 Озвучиваю полный ответ...' });
+
+    try {
+      const lang = detectLanguage(fullText);
+      const audio = await textToSpeech(fullText, lang);
+      if (audio) {
+        await ctx.replyWithVoice(new InputFile(audio, 'voice.mp3'));
+      } else {
+        await ctx.reply('😔 Не удалось сгенерировать аудио.');
+      }
+    } catch (err) {
+      telegramLogger.warn({ error: err, textId }, 'TTS full text generation failed');
+      await ctx.reply('😔 Ошибка генерации голоса.');
     }
   });
 };

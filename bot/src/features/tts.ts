@@ -346,6 +346,11 @@ function stripFormatting(text: string): string {
   // Убираем секцию "Источники" / "📚 Источники:" в конце (если осталась)
   clean = clean.replace(/\n*📚\s*Источники?:[\s\S]*$/i, '');
   clean = clean.replace(/\n*Источники?:\s*\n[\s\S]*$/i, '');
+  // Вариант: "Источники:" без эмодзи
+  clean = clean.replace(/\n*### 📚\s*Источники?:[\s\S]*$/i, '');
+
+  // Строки "Хочешь узнать больше..." в конце — не озвучивать
+  clean = clean.replace(/\n*Хочешь узнать больше[\s\S]*$/i, '');
 
   // Код блоки
   clean = clean.replace(/```[\s\S]*?```/g, ' код пропущен ');
@@ -354,11 +359,21 @@ function stripFormatting(text: string): string {
   // Markdown-ссылки [текст](url) → текст
   clean = clean.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
 
+  // Перплексити-формат: текст1 (https://...)(https://...) → текст
+  // Суперскрипт-цифры перед URL в скобках: "уведомлении1 (https://...)"
+  clean = clean.replace(/(\S)\d{1,2}\s*\(https?:\/\/[^)]+\)(?:\(https?:\/\/[^)]+\))*/g, '$1');
+
   // Citation маркеры [1], [2], [1][3] и т.п. — убираем полностью
   clean = clean.replace(/\[(\d+)\]/g, '');
 
-  // Голые URL (http/https)
+  // Оставшиеся голые URL в скобках: (https://...)
+  clean = clean.replace(/\(https?:\/\/[^)]+\)/g, '');
+
+  // Голые URL без скобок (http/https)
   clean = clean.replace(/https?:\/\/[^\s)>\]]+/g, '');
+
+  // Нумерация строк формата "1. https://..." — полностью убрать
+  clean = clean.replace(/^\d+\.\s*https?:\/\/\S+\s*$/gm, '');
 
   // Markdown форматирование
   clean = clean.replace(/\*\*(.+?)\*\*/g, '$1');
@@ -379,11 +394,14 @@ function stripFormatting(text: string): string {
   clean = clean.replace(/\[источник:\s*[^\]]*\]/gi, '');
   clean = clean.replace(/\(источник:\s*[^)]*\)/gi, '');
 
-  // Строки вида "---" (горизонтальные разделители) → пауза
+  // Пустые скобки () которые остались после удаления URL
+  clean = clean.replace(/\(\s*\)/g, '');
+
+  // Строки вида "---" (горизонтальные разделители)
   clean = clean.replace(/^-{3,}$/gm, '');
 
   // Эмодзи в начале строк
-  clean = clean.replace(/^[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}✅☀️📋🔄🤖⏰🌟📰🌤🌆🌙💡📌]\s*/gmu, '');
+  clean = clean.replace(/^[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}✅☀️📋🔄🤖⏰🌟📰🌤🌆🌙💡📌🏛️🥩💰🏥🎾⚽]\s*/gmu, '');
 
   // Множественные пробелы и пустые строки
   clean = clean.replace(/\n{3,}/g, '\n\n');

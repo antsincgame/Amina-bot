@@ -145,9 +145,41 @@ export const splitIntoChunks = (text: string): string[] => {
   return chunks;
 };
 
+// ---- Кэш полного текста для озвучки (все длинные сообщения) ----
+const fullTextCache = new Map<string, { text: string; createdAt: number }>();
+const FULL_TEXT_CACHE_TTL_MS = 30 * 60 * 1000; // 30 минут
+let nextFullTextId = 1;
+
+/** Сохранить полный текст сообщения и вернуть ID для озвучки */
+export function cacheFullText(text: string): string {
+  const now = Date.now();
+  // Очистка устаревших записей
+  for (const [key, val] of fullTextCache) {
+    if (now - val.createdAt > FULL_TEXT_CACHE_TTL_MS) fullTextCache.delete(key);
+  }
+  const id = String(nextFullTextId++);
+  fullTextCache.set(id, { text, createdAt: now });
+  return id;
+}
+
+/** Получить полный текст по ID */
+export function getFullText(id: string): string | null {
+  const entry = fullTextCache.get(id);
+  if (!entry) return null;
+  if (Date.now() - entry.createdAt > FULL_TEXT_CACHE_TTL_MS) {
+    fullTextCache.delete(id);
+    return null;
+  }
+  return entry.text;
+}
+
 /**
  * Отправляет длинное сообщение, разбивая на чанки.
  * Конвертирует Markdown → HTML, при ошибке fallback на plain text.
+ * 
+ * Если сообщение разбивается на несколько чанков И есть keyboard с кнопкой озвучки,
+ * полный текст кэшируется и кнопка заменяется на read_aloud_full:ID
+ * для озвучки ВСЕГО текста целиком.
  */
 export const sendLongMessage = async (
   ctx: Context,
@@ -156,14 +188,38 @@ export const sendLongMessage = async (
 ): Promise<void> => {
   const htmlText = markdownToTelegramHtml(text);
   const chunks = splitIntoChunks(htmlText);
+  const isMultiChunk = chunks.length > 1;
+
+  // Для многочастных сообщений: кэшируем полный текст и подменяем кнопку озвучки
+  let effectiveKeyboard = keyboard;
+  if (isMultiChunk && keyboard) {
+    const fullTextId = cacheFullText(text);
+    // Создаём новую клавиатуру, заменяя read_aloud на read_aloud_full:ID
+    const { InlineKeyboard: IK } = await import('grammy');
+    effectiveKeyboard = new IK();
+    // Копируем кнопки, заменяя callback_data 'read_aloud' → 'read_aloud_full:ID'
+    const rawRows = (keyboard as unknown as { inline_keyboard: Array<Array<{ text: string; callback_data?: string }>> }).inline_keyboard;
+    if (rawRows) {
+      for (const row of rawRows) {
+        for (const btn of row) {
+          if (btn.callback_data === 'read_aloud') {
+            effectiveKeyboard.text(btn.text, `read_aloud_full:${fullTextId}`);
+          } else if (btn.callback_data) {
+            effectiveKeyboard.text(btn.text, btn.callback_data);
+          }
+        }
+        effectiveKeyboard.row();
+      }
+    }
+  }
 
   for (let i = 0; i < chunks.length; i++) {
     const chunk = chunks[i];
     if (!chunk) continue;
     const isLast = i === chunks.length - 1;
     const options: Record<string, unknown> = {};
-    if (isLast && keyboard) {
-      options.reply_markup = keyboard;
+    if (isLast && effectiveKeyboard) {
+      options.reply_markup = effectiveKeyboard;
     }
 
     try {
