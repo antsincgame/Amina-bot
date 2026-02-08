@@ -247,7 +247,6 @@ const start = async (): Promise<void> => {
       { command: 'done', description: '✔️ Выполнить задачу' },
       { command: 'reminders', description: '⏰ Мои напоминания' },
       { command: 'digest', description: '☀️ Утренний дайджест' },
-      { command: 'clear', description: '🧹 Очистить историю' },
       { command: 'help', description: '📋 Справка по боту' },
     ]);
     appLogger.info('📋 Bot menu commands registered');
