@@ -28,6 +28,7 @@ import {
   notesActionsKeyboard,
   remindersRefreshKeyboard,
 } from './keyboards.js';
+import { escapeHtml } from './format.js';
 
 export const setupCallbacks = (bot: Bot<BotContext>): void => {
   // ====== ЗАМЕТКИ ======
@@ -35,18 +36,22 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
   bot.callbackQuery('notes_list', async (ctx) => {
     await ctx.answerCallbackQuery();
     const userId = ctx.from?.id.toString() ?? 'unknown';
-    const notes = await notesRepo.getByUser(userId);
+    try {
+      const notes = await notesRepo.getByUser(userId);
 
-    if (notes.length === 0) {
-      await ctx.editMessageText('📋 У тебя пока нет заметок.');
-      return;
+      if (notes.length === 0) {
+        await ctx.editMessageText('📋 У тебя пока нет заметок.');
+        return;
+      }
+
+      const lines = notes.map((n, i) => `${i + 1}. ${escapeHtml(n.content)}`);
+      await ctx.editMessageText(
+        `📋 <b>Заметки (${notes.length}):</b>\n\n${lines.join('\n')}`,
+        { parse_mode: 'HTML' }
+      );
+    } catch {
+      await ctx.editMessageText('😔 Не удалось загрузить заметки.');
     }
-
-    const lines = notes.map((n, i) => `${i + 1}. ${n.content}`);
-    await ctx.editMessageText(
-      `📋 *Заметки (${notes.length}):*\n\n${lines.join('\n')}`,
-      { parse_mode: 'Markdown' }
-    );
   });
 
   bot.callbackQuery('save_to_notes', async (ctx) => {
@@ -59,7 +64,20 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
     }
 
     try {
-      const content = messageText.slice(0, 500);
+      // Извлекаем полезный контент — убираем служебные фразы AI
+      let content = messageText;
+      // Если AI ответил "Запомнила! Заметка создана: "текст"" — извлекаем текст
+      const aiNoteMatch = content.match(/[Зз]аметка создана[:\s]*["«](.+?)["»]/s);
+      if (aiNoteMatch?.[1]) {
+        content = aiNoteMatch[1];
+      }
+      content = content.slice(0, 500).trim();
+
+      if (!content) {
+        await ctx.answerCallbackQuery({ text: '❌ Нечего сохранять' });
+        return;
+      }
+
       await notesRepo.create(userId, content);
       await ctx.answerCallbackQuery({ text: '📌 Сохранено в заметки!' });
     } catch {
@@ -78,11 +96,11 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
       } else {
         const lines = notes.map((n, i) => {
           const date = new Date(n.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
-          return `${i + 1}. ${n.content}\n   _${date}_`;
+          return `${i + 1}. ${escapeHtml(n.content)}\n   <i>${date}</i>`;
         });
         await ctx.reply(
-          `📋 *Заметки (${notes.length}):*\n\n${lines.join('\n\n')}\n\n_Удалить: /note\\_delete номер_`,
-          { parse_mode: 'Markdown', reply_markup: notesActionsKeyboard() }
+          `📋 <b>Заметки (${notes.length}):</b>\n\n${lines.join('\n\n')}\n\n<i>Удалить: /note_delete номер</i>`,
+          { parse_mode: 'HTML', reply_markup: notesActionsKeyboard() }
         );
       }
     } catch {
@@ -93,8 +111,8 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
   bot.callbackQuery('menu_note_help', async (ctx) => {
     await ctx.answerCallbackQuery();
     await ctx.reply(
-      '📌 *Как создать заметку:*\n\n• Напиши: _запомни купить молоко_\n• Или команда: `/note Текст заметки`\n\nПросмотр: /notes\nУдаление: `/note_delete 1`',
-      { parse_mode: 'Markdown' }
+      '📌 <b>Как создать заметку:</b>\n\n• Напиши: <i>запомни купить молоко</i>\n• Или команда: /note Текст заметки\n\nПросмотр: /notes\nУдаление: /note_delete 1',
+      { parse_mode: 'HTML' }
     );
   });
 

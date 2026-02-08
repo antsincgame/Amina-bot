@@ -39,6 +39,7 @@ import { verifyResponse } from '../ai/llm-verifier.js';
 import type { Message, AIMessage, AIResponse } from '../../../shared/types/index.js';
 import {
   escapeMarkdown,
+  escapeHtml,
   sendLongMessage,
   buildTimeContext,
   looksLikeSearchSimulation,
@@ -100,13 +101,13 @@ const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Record<strin
     try {
       const notes = await notesRepo.getByUser(userId);
       if (notes.length === 0) {
-        await ctx.reply('📋 У тебя пока нет заметок.\n\nСоздай: `/note текст` или напиши _запомни ..._', { parse_mode: 'Markdown' });
+        await ctx.reply('📋 У тебя пока нет заметок.\n\nСоздай: /note текст или напиши "запомни ..."');
       } else {
-        const lines = notes.map((n, i) => `${i + 1}. ${n.content}`);
+        const lines = notes.map((n, i) => `${i + 1}. ${escapeHtml(n.content)}`);
         const keyboard = new InlineKeyboard().text('📌 Добавить', 'menu_note_help');
         await ctx.reply(
-          `📋 *Заметки (${notes.length}):*\n\n${lines.join('\n')}\n\n_Удалить: /note\\_delete номер_`,
-          { parse_mode: 'Markdown', reply_markup: keyboard }
+          `📋 <b>Заметки (${notes.length}):</b>\n\n${lines.join('\n')}\n\n<i>Удалить: /note_delete номер</i>`,
+          { parse_mode: 'HTML', reply_markup: keyboard }
         );
       }
     } catch { await ctx.reply('😔 Не удалось загрузить заметки.'); }
@@ -236,15 +237,15 @@ const handleAutoDetections = async (
     }
   }
 
-  // === Заметки: "запомни ...", "запиши ..." ===
-  const noteMatch = text.match(/^(запомни|запиши|сохрани заметку)\s+(.+)/i);
+  // === Заметки: "запомни ...", "запиши ...", "заметка: ..." ===
+  const noteMatch = text.match(/^(запомни|запомнить|запиши|записать|сохрани заметку|сохрани|заметка|заметь|запомни пожалуйста|запиши пожалуйста)[:\s]+(.+)/i);
   if (noteMatch) {
     const noteContent = noteMatch[2]?.trim();
-    if (noteContent) {
+    if (noteContent && noteContent.length > 1) {
       try {
         await notesRepo.create(userId, noteContent);
-        await ctx.reply(`📌 Сохранено!\n\n_${noteContent}_`, {
-          parse_mode: 'Markdown',
+        await ctx.reply(`📌 Сохранено!\n\n<i>${escapeHtml(noteContent)}</i>`, {
+          parse_mode: 'HTML',
           reply_markup: notesListKeyboard(),
         });
       } catch {

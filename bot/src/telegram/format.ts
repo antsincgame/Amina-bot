@@ -28,6 +28,10 @@ const WEEKDAYS_RU = ['воскресенье', 'понедельник', 'вто
 export const escapeMarkdown = (text: string): string =>
   text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
 
+/** Экранирование HTML-сущностей для safe text внутри Telegram HTML */
+export const escapeHtml = (text: string): string =>
+  text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
 /**
  * Конвертирует стандартный Markdown из LLM в Telegram HTML.
  * Telegram HTML поддерживает: <b>, <i>, <code>, <pre>, <a>, <s>.

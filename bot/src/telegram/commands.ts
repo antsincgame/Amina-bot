@@ -19,7 +19,7 @@ import { notesRepo } from '../features/notes-repo.js';
 import { todosRepo } from '../features/todos-repo.js';
 import { userPrefsRepo } from '../features/user-prefs-repo.js';
 import { sendDigestNow } from '../features/digest-scheduler.js';
-import { escapeMarkdown, sendLongMessage } from './format.js';
+import { escapeMarkdown, escapeHtml, sendLongMessage } from './format.js';
 import {
   buildMainMenu,
   buildReplyKeyboard,
@@ -280,14 +280,14 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     const content = ctx.match?.trim();
 
     if (!content) {
-      await ctx.reply('📌 Чтобы сохранить заметку:\n\n`/note Текст заметки`\n\nПример: `/note Купить молоко и хлеб`', { parse_mode: 'Markdown' });
+      await ctx.reply('📌 Чтобы сохранить заметку:\n\n/note Текст заметки\n\nПример: /note Купить молоко и хлеб');
       return;
     }
 
     try {
       const note = await notesRepo.create(userId, content);
-      await ctx.reply(`📌 Заметка сохранена!\n\n_${content}_`, {
-        parse_mode: 'Markdown',
+      await ctx.reply(`📌 Заметка сохранена!\n\n<i>${escapeHtml(content)}</i>`, {
+        parse_mode: 'HTML',
         reply_markup: notesListKeyboard(),
       });
       telegramLogger.info({ userId, noteId: note.id }, 'Note created');
@@ -303,21 +303,32 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     try {
       const notes = await notesRepo.getByUser(userId);
       if (notes.length === 0) {
-        await ctx.reply('📋 У тебя пока нет заметок.\n\nСоздай: `/note текст`', { parse_mode: 'Markdown' });
+        await ctx.reply('📋 У тебя пока нет заметок.\n\nСоздай: /note текст');
         return;
       }
 
       const lines = notes.map((n, i) => {
         const date = new Date(n.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
-        return `${i + 1}. ${n.content}\n   _${date}_`;
+        return `${i + 1}. ${escapeHtml(n.content)}\n   <i>${date}</i>`;
       });
 
       await ctx.reply(
-        `📋 *Заметки (${notes.length}):*\n\n${lines.join('\n\n')}\n\n_Удалить: /note\\_delete номер_`,
-        { parse_mode: 'Markdown' }
+        `📋 <b>Заметки (${notes.length}):</b>\n\n${lines.join('\n\n')}\n\n<i>Удалить: /note_delete номер</i>`,
+        { parse_mode: 'HTML' }
       );
     } catch {
-      await ctx.reply('😔 Не удалось загрузить заметки.');
+      // Fallback без форматирования
+      try {
+        const notes = await notesRepo.getByUser(userId);
+        if (notes.length === 0) {
+          await ctx.reply('📋 У тебя пока нет заметок. Создай: /note текст');
+        } else {
+          const lines = notes.map((n, i) => `${i + 1}. ${n.content}`);
+          await ctx.reply(`📋 Заметки (${notes.length}):\n\n${lines.join('\n')}\n\nУдалить: /note_delete номер`);
+        }
+      } catch {
+        await ctx.reply('😔 Не удалось загрузить заметки.');
+      }
     }
   });
 
@@ -328,14 +339,18 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     const index = parseInt(indexStr || '', 10);
 
     if (!indexStr || isNaN(index) || index < 1) {
-      await ctx.reply('❌ Укажи номер заметки: `/note_delete 1`', { parse_mode: 'Markdown' });
+      await ctx.reply('❌ Укажи номер заметки: /note_delete 1');
       return;
     }
 
     try {
       const deleted = await notesRepo.deleteByIndex(userId, index);
-      if (deleted) await ctx.reply(`🗑 Заметка удалена: "${deleted.content}"`);
-      else await ctx.reply('❌ Заметка с таким номером не найдена.');
+      if (deleted) {
+        const preview = deleted.content.length > 100 ? deleted.content.slice(0, 100) + '...' : deleted.content;
+        await ctx.reply(`🗑 Заметка удалена: "${preview}"`);
+      } else {
+        await ctx.reply('❌ Заметка с таким номером не найдена.');
+      }
     } catch {
       await ctx.reply('😔 Ошибка при удалении заметки.');
     }
