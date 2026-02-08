@@ -17,7 +17,7 @@ import { todosRepo } from '../features/todos-repo.js';
 import { userPrefsRepo } from '../features/user-prefs-repo.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';
 import { textToSpeech, detectLanguage } from '../features/tts.js';
-import { sendDigestNow } from '../features/digest-scheduler.js';
+import { sendDigestNow, getDigestFullText } from '../features/digest-scheduler.js';
 import {
   buildMainMenu,
   todoDoneKeyboard,
@@ -349,6 +349,32 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
     } catch (err) {
       telegramLogger.warn({ error: err }, 'TTS generation failed (callback)');
       await ctx.reply('😔 Ошибка генерации голоса.');
+    }
+  });
+
+  // Озвучка ПОЛНОГО дайджеста (все части целиком)
+  bot.callbackQuery(/^read_aloud_digest:(.+)$/, async (ctx) => {
+    const digestId = ctx.match![1];
+    const fullText = getDigestFullText(digestId!);
+
+    if (!fullText) {
+      await ctx.answerCallbackQuery({ text: '⏱ Дайджест устарел, запросите новый через /digest now' });
+      return;
+    }
+
+    await ctx.answerCallbackQuery({ text: '🔊 Озвучиваю весь дайджест...' });
+
+    try {
+      const lang = detectLanguage(fullText);
+      const audio = await textToSpeech(fullText, lang);
+      if (audio) {
+        await ctx.replyWithVoice(new InputFile(audio, 'voice.mp3'));
+      } else {
+        await ctx.reply('😔 Не удалось сгенерировать аудио дайджеста.');
+      }
+    } catch (err) {
+      telegramLogger.warn({ error: err, digestId }, 'TTS digest generation failed');
+      await ctx.reply('😔 Ошибка генерации голоса для дайджеста.');
     }
   });
 };

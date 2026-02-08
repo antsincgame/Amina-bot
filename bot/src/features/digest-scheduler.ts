@@ -73,13 +73,38 @@ export function stopDigestScheduler(): void {
   appLogger.info('Digest scheduler stopped');
 }
 
-/** Кнопка озвучки для дайджеста */
-const digestReadAloudKeyboard = () =>
-  new InlineKeyboard().text('🔊 Озвучить', 'read_aloud');
+// ---- Кэш полных текстов дайджестов для озвучки ----
+const digestFullTextCache = new Map<string, { text: string; createdAt: number }>();
+const DIGEST_CACHE_TTL_MS = 30 * 60 * 1000; // 30 минут
+let nextDigestId = 1;
+
+/** Сохранить полный текст дайджеста и вернуть ID */
+function cacheDigestText(text: string): string {
+  // Очистка устаревших записей
+  const now = Date.now();
+  for (const [key, val] of digestFullTextCache) {
+    if (now - val.createdAt > DIGEST_CACHE_TTL_MS) digestFullTextCache.delete(key);
+  }
+  const id = String(nextDigestId++);
+  digestFullTextCache.set(id, { text, createdAt: now });
+  return id;
+}
+
+/** Получить полный текст дайджеста по ID */
+export function getDigestFullText(id: string): string | null {
+  const entry = digestFullTextCache.get(id);
+  if (!entry) return null;
+  if (Date.now() - entry.createdAt > DIGEST_CACHE_TTL_MS) {
+    digestFullTextCache.delete(id);
+    return null;
+  }
+  return entry.text;
+}
 
 /**
  * Отправить длинное сообщение, разбивая на части при необходимости.
- * К каждому чанку добавляется кнопка "Озвучить".
+ * Кнопка "Озвучить весь дайджест" ставится ТОЛЬКО на последнем сообщении.
+ * Она озвучивает ВЕСЬ текст целиком, а не только один чанк.
  */
 async function sendLongMessage(
   bot: BotLike,
@@ -88,7 +113,10 @@ async function sendLongMessage(
   parseMode?: 'Markdown' | 'HTML'
 ): Promise<void> {
   const MAX_LENGTH = 4096;
-  const keyboard = digestReadAloudKeyboard();
+  
+  // Кэшируем полный текст и создаём кнопку с ID
+  const digestId = cacheDigestText(text);
+  const keyboard = new InlineKeyboard().text('🔊 Озвучить дайджест', `read_aloud_digest:${digestId}`);
   
   // Если текст короткий — отправляем одним сообщением
   if (text.length <= MAX_LENGTH) {
@@ -122,12 +150,17 @@ async function sendLongMessage(
   }
   if (chunk.trim()) chunks.push(chunk.trim());
   
-  for (const c of chunks) {
+  // Отправляем все чанки: без кнопки, КРОМЕ последнего — с кнопкой озвучки
+  for (let i = 0; i < chunks.length; i++) {
+    const isLast = i === chunks.length - 1;
+    const opts: Record<string, unknown> = { parse_mode: parseMode };
+    if (isLast) opts.reply_markup = keyboard;
+    
     try {
-      await bot.api.sendMessage(chatId, c, { parse_mode: parseMode, reply_markup: keyboard });
+      await bot.api.sendMessage(chatId, chunks[i]!, opts);
     } catch {
-      const plain = c.replace(/[*_`~[\]()]/g, '');
-      await bot.api.sendMessage(chatId, plain, { reply_markup: keyboard });
+      const plain = chunks[i]!.replace(/[*_`~[\]()]/g, '');
+      await bot.api.sendMessage(chatId, plain, isLast ? { reply_markup: keyboard } : {});
     }
   }
 }
