@@ -123,6 +123,7 @@ export interface ImageGenResult {
   image: Buffer;
   model: string;
   prompt: string;
+  translatedPrompt: string;
   generationTimeMs: number;
 }
 
@@ -335,14 +336,111 @@ export function extractImagePrompt(text: string): string {
   return prompt;
 }
 
+// --------------------------------------------
+// Prompt Translation (Russian → English via Groq)
+// --------------------------------------------
+
+/** Проверка: содержит ли текст кириллицу */
+function hasCyrillic(text: string): boolean {
+  return /[а-яёА-ЯЁ]/.test(text);
+}
+
 /**
- * Генерирует изображение по текстовому описанию
+ * Переводит промпт на английский через Groq LLM.
+ * Если промпт уже на английском — возвращает как есть.
+ * При ошибке — возвращает оригинал (лучше русский промпт, чем ничего).
+ */
+async function translatePromptToEnglish(prompt: string): Promise<string> {
+  // Уже на английском — не трогаем
+  if (!hasCyrillic(prompt)) {
+    aiLogger.debug({ prompt: prompt.substring(0, 60) }, 'Prompt already in English, skipping translation');
+    return prompt;
+  }
+
+  try {
+    const keys = await getApiKeys();
+    if (!keys.groq) {
+      aiLogger.debug('Groq not configured, skipping prompt translation');
+      return prompt;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+    try {
+      const response = await fetch(GROQ_API_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${keys.groq}`,
+          'Content-Type': 'application/json',
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: 'llama-3.1-8b-instant',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are a prompt translator for AI image generation. Translate the user\'s image description from Russian to English. Output ONLY the English translation, nothing else. Make it vivid and descriptive for best image generation results. Keep it concise (under 200 chars). Do NOT add quotes or explanations.',
+            },
+            {
+              role: 'user',
+              content: prompt,
+            },
+          ],
+          max_tokens: 150,
+          temperature: 0.3,
+        }),
+      });
+
+      if (!response.ok) {
+        aiLogger.warn({ status: response.status }, 'Groq translation request failed');
+        return prompt;
+      }
+
+      const data = await response.json() as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      const translated = data.choices?.[0]?.message?.content?.trim();
+
+      if (translated && translated.length > 3) {
+        aiLogger.info(
+          { original: prompt.substring(0, 60), translated: translated.substring(0, 80) },
+          '🌐 Prompt translated to English for image gen'
+        );
+        return translated;
+      }
+
+      return prompt;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  } catch (error) {
+    const err = error as { name?: string };
+    if (err.name === 'AbortError') {
+      aiLogger.warn('Prompt translation timed out, using original');
+    } else {
+      aiLogger.warn({ error }, 'Prompt translation failed, using original');
+    }
+    return prompt;
+  }
+}
+
+// --------------------------------------------
+// Image Generation
+// --------------------------------------------
+
+/**
+ * Генерирует изображение по текстовому описанию.
+ * Автоматически переводит русский промпт на английский для лучшего результата.
  */
 export async function generateImage(prompt: string): Promise<ImageGenResult> {
   const client = await getClient();
   const startTime = Date.now();
 
-  aiLogger.info({ prompt, model: DEFAULT_MODEL }, 'Generating image via HF FLUX.1-schnell');
+  // Переводим промпт на английский если он на русском
+  const translatedPrompt = await translatePromptToEnglish(prompt);
+
+  aiLogger.info({ originalPrompt: prompt, translatedPrompt, model: DEFAULT_MODEL }, 'Generating image via HF FLUX.1-schnell');
 
   // Таймаут с корректной очисткой — предотвращает утечку таймера
   let genTimeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -362,7 +460,7 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
     const imageBlob = await Promise.race([
       client.textToImage({
         model: DEFAULT_MODEL,
-        inputs: prompt,
+        inputs: translatedPrompt,
         provider: HF_PROVIDER,
         parameters: {
           num_inference_steps: 4,
@@ -395,7 +493,8 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
     return {
       image: buffer,
       model: DEFAULT_MODEL,
-      prompt,
+      prompt: prompt, // оригинальный промпт для отображения пользователю
+      translatedPrompt, // английский промпт, отправленный в модель
       generationTimeMs,
     };
   } catch (error: unknown) {
