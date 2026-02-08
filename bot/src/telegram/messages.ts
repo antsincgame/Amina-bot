@@ -448,9 +448,10 @@ const processMessageThroughAI = async (
   // Ensure conversation
   await ensureConversation(ctx, userId, chatId);
 
-  // Определяем — здоровалась ли Амина сегодня
+  // Определяем — здоровалась ли Амина сегодня (из БД, не session)
   const todayStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-  const alreadyGreetedToday = ctx.session.lastGreetingDate === todayStr;
+  const lastGreetingDate = await userProfileRepo.getLastGreetingDate(userId);
+  const alreadyGreetedToday = lastGreetingDate === todayStr;
 
   // Build context in parallel
   const { memoryContext, webSearchContext } = await buildFullContext(userId, userText, telegramInfo.first_name, telegramInfo, alreadyGreetedToday);
@@ -496,9 +497,9 @@ const processMessageThroughAI = async (
   // Send response
   await sendLongMessage(ctx, aiResponse.content, responseActionsKeyboard());
 
-  // Трекаем приветствие: если ответ начинается с приветствия — запоминаем дату
+  // Трекаем приветствие: если ответ начинается с приветствия — запоминаем в БД
   if (!alreadyGreetedToday && /^(привет|здравствуй|добр(ое|ый|ая)\s+(утр|день|вечер|ноч)|хай|салют|приветств)/i.test(aiResponse.content.trim())) {
-    ctx.session.lastGreetingDate = todayStr;
+    userProfileRepo.setLastGreetingDate(userId, todayStr).catch(() => {});
   }
 
   // Fire-and-forget DB writes
@@ -747,30 +748,22 @@ const handleVoiceMessage = async (ctx: BotContext): Promise<void> => {
     const audioBuffer = Buffer.from(audioArrayBuffer);
     const audioBase64 = audioBuffer.toString('base64');
     
-    // Fire-and-forget: сохраняем голосовое в Storage (не блокирует транскрипцию)
+    // Запускаем загрузку в Storage и транскрипцию ПАРАЛЛЕЛЬНО
     const voiceFilePath = `${userId}/${Date.now()}_${file.file_unique_id}.ogg`;
-    let voiceRecordId: string | null = null;
-    voiceMessagesRepo.upload(audioBuffer, voiceFilePath, userId, duration, file.file_unique_id)
-      .then(record => { voiceRecordId = record?.id ?? null; })
-      .catch(err => telegramLogger.warn({ error: err, userId }, 'Voice storage upload failed (non-critical)'));
+    const uploadPromise = voiceMessagesRepo.upload(audioBuffer, voiceFilePath, userId, duration, file.file_unique_id)
+      .catch(err => { telegramLogger.warn({ error: err, userId }, 'Voice storage upload failed (non-critical)'); return null; });
 
     const transcription = await transcribeAudio(audioBase64, 'audio/ogg');
     const transcribedText = transcription.text;
     telegramLogger.debug({ userId, transcription: transcribedText.substring(0, 100) }, 'Voice transcribed');
     
-    // Обновляем транскрипцию в записи (fire-and-forget)
-    if (voiceRecordId) {
-      voiceMessagesRepo.updateTranscription(voiceRecordId, transcribedText)
-        .catch(err => telegramLogger.warn({ error: err }, 'Failed to update voice transcription'));
-    } else {
-      // Если upload ещё не завершён — подождём немного и попробуем
-      setTimeout(async () => {
-        if (voiceRecordId) {
-          voiceMessagesRepo.updateTranscription(voiceRecordId, transcribedText)
-            .catch(() => {});
-        }
-      }, 3000);
-    }
+    // Дожидаемся upload и обновляем транскрипцию (fire-and-forget)
+    uploadPromise.then(record => {
+      if (record?.id) {
+        voiceMessagesRepo.updateTranscription(record.id, transcribedText)
+          .catch(err => telegramLogger.warn({ error: err }, 'Failed to update voice transcription'));
+      }
+    }).catch(() => {});
 
     const telegramInfo: TelegramUserInfo = {
       id: ctx.from?.id ?? 0, username: ctx.from?.username,

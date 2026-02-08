@@ -64,12 +64,34 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
     }
 
     try {
-      // Извлекаем полезный контент — убираем служебные фразы AI
+      // Очищаем текст от служебного мусора перед сохранением
       let content = messageText;
+
+      // 1. Извлекаем из AI-формата заметки
       const aiNoteMatch = content.match(/[Зз]аметка создана[:\s]*["«](.+?)["»]/s);
       if (aiNoteMatch?.[1]) {
         content = aiNoteMatch[1];
       }
+
+      // 2. Убираем секцию "📚 Источники:" и всё после неё
+      content = content.replace(/\n*📚\s*Источники?:[\s\S]*$/i, '');
+      content = content.replace(/\n*Источники?:\s*\n[\s\S]*$/i, '');
+
+      // 3. Убираем служебные фразы бота (поиск, ожидание)
+      content = content.replace(/^(Конечно!?\s*)?Сейчас\s+(я\s+)?найду.*?\n*/i, '');
+      content = content.replace(/^🔍?\s*Ищу\.{0,3}\s*\n*/gm, '');
+      content = content.replace(/\(Поиск в интернете\)\s*/gi, '');
+
+      // 4. Убираем голые URL и citation маркеры
+      content = content.replace(/\[(\d+)\]/g, '');
+      content = content.replace(/https?:\/\/[^\s)>\]]+/g, '');
+
+      // 5. Убираем "Хочешь узнать больше..." в конце
+      content = content.replace(/\n*Хочешь узнать больше[\s\S]*$/i, '');
+
+      // 6. Убираем пустые строки и лишние пробелы
+      content = content.replace(/\n{3,}/g, '\n\n').trim();
+
       content = content.slice(0, 500).trim();
 
       if (!content) {

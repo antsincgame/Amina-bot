@@ -1195,7 +1195,10 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
                 return reply.code(400).send({ success: false, error: 'Each site must have a url' });
               }
               try {
-                new URL(site.url);
+                const parsed = new URL(site.url);
+                if (!['http:', 'https:'].includes(parsed.protocol)) {
+                  return reply.code(400).send({ success: false, error: `Unsupported protocol in URL: ${site.url}` });
+                }
               } catch {
                 return reply.code(400).send({ success: false, error: `Invalid URL: ${site.url}` });
               }
@@ -1236,7 +1239,10 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
             }
 
             try {
-              new URL(url);
+              const parsed = new URL(url);
+              if (!['http:', 'https:'].includes(parsed.protocol)) {
+                return reply.code(400).send({ success: false, error: 'Only http/https URLs are supported' });
+              }
             } catch {
               return reply.code(400).send({ success: false, error: 'Invalid URL format' });
             }

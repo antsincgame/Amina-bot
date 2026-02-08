@@ -251,6 +251,48 @@ export const userProfileRepo = {
   },
 
   /**
+   * Получить дату последнего приветствия (из preferences JSONB)
+   */
+  async getLastGreetingDate(userId: string): Promise<string | null> {
+    if (!(await checkTablesExist())) return null;
+    try {
+      const { data } = await getSupabase()
+        .from('user_profiles')
+        .select('preferences')
+        .eq('user_id', userId)
+        .single();
+      return (data?.preferences as Record<string, unknown>)?.last_greeting_date as string | null ?? null;
+    } catch {
+      return null;
+    }
+  },
+
+  /**
+   * Установить дату последнего приветствия (в preferences JSONB)
+   */
+  async setLastGreetingDate(userId: string, date: string): Promise<void> {
+    if (!(await checkTablesExist())) return;
+    try {
+      // Получаем текущий preferences
+      const { data } = await getSupabase()
+        .from('user_profiles')
+        .select('preferences')
+        .eq('user_id', userId)
+        .single();
+      
+      const prefs = (data?.preferences as Record<string, unknown>) ?? {};
+      prefs.last_greeting_date = date;
+
+      await getSupabase()
+        .from('user_profiles')
+        .update({ preferences: prefs })
+        .eq('user_id', userId);
+    } catch (error) {
+      dbLogger.warn({ error, userId }, 'Failed to set last greeting date');
+    }
+  },
+
+  /**
    * Получить статистику пользователя
    */
   async getStats(userId: string): Promise<Record<string, unknown>> {

@@ -80,10 +80,15 @@ let nextDigestId = 1;
 
 /** Сохранить полный текст дайджеста и вернуть ID */
 function cacheDigestText(text: string): string {
-  // Очистка устаревших записей
   const now = Date.now();
+  // Очистка устаревших записей
   for (const [key, val] of digestFullTextCache) {
     if (now - val.createdAt > DIGEST_CACHE_TTL_MS) digestFullTextCache.delete(key);
+  }
+  // Ограничение размера: максимум 50 записей
+  if (digestFullTextCache.size >= 50) {
+    const oldestKey = digestFullTextCache.keys().next().value;
+    if (oldestKey) digestFullTextCache.delete(oldestKey);
   }
   const id = String(nextDigestId++);
   digestFullTextCache.set(id, { text, createdAt: now });

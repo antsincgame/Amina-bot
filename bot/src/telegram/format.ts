@@ -148,6 +148,7 @@ export const splitIntoChunks = (text: string): string[] => {
 // ---- Кэш полного текста для озвучки (все длинные сообщения) ----
 const fullTextCache = new Map<string, { text: string; createdAt: number }>();
 const FULL_TEXT_CACHE_TTL_MS = 30 * 60 * 1000; // 30 минут
+const MAX_CACHE_SIZE = 100; // Максимум 100 записей
 let nextFullTextId = 1;
 
 /** Сохранить полный текст сообщения и вернуть ID для озвучки */
@@ -156,6 +157,11 @@ export function cacheFullText(text: string): string {
   // Очистка устаревших записей
   for (const [key, val] of fullTextCache) {
     if (now - val.createdAt > FULL_TEXT_CACHE_TTL_MS) fullTextCache.delete(key);
+  }
+  // Ограничение размера: удаляем старейшие если превышен лимит
+  if (fullTextCache.size >= MAX_CACHE_SIZE) {
+    const oldestKey = fullTextCache.keys().next().value;
+    if (oldestKey) fullTextCache.delete(oldestKey);
   }
   const id = String(nextFullTextId++);
   fullTextCache.set(id, { text, createdAt: now });
