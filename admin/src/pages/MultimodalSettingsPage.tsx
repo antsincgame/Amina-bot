@@ -4,7 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { settingsApi } from '../api/supabase';
-import { Save, Loader2, RefreshCw, Eye, Mic, CheckCircle, AlertCircle, Sparkles, MessageSquare, Download } from 'lucide-react';
+import { Save, Loader2, RefreshCw, Eye, Mic, CheckCircle, AlertCircle, Sparkles, MessageSquare, Download, Volume2, Key } from 'lucide-react';
 
 // Bot API URL
 const BOT_URL = import.meta.env.VITE_BOT_URL || 'https://amina-bot.onrender.com';
@@ -15,9 +15,36 @@ const settingsSchema = z.object({
   vision_model: z.string().min(1),
   vision_prompt: z.string().min(10).max(500),
   vision_max_tokens: z.number().min(100).max(4096),
+  tts_provider: z.string(),
+  openai_tts_voice: z.string(),
+  openai_tts_model: z.string(),
+  voice_speaker: z.string(),
+  openai_api_key: z.string().optional(),
 });
 
 type SettingsForm = z.infer<typeof settingsSchema>;
+
+// TTS провайдеры
+const TTS_PROVIDERS = [
+  { id: 'edge', name: 'Microsoft Edge TTS', description: 'Бесплатно, нейронный голос. Хорошее качество.', badge: 'БЕСПЛАТНО', badgeColor: 'badge-success' },
+  { id: 'openai', name: 'OpenAI TTS HD', description: 'Максимально натуральный голос. ~$0.015 за 1000 символов.', badge: 'ПРЕМИУМ', badgeColor: 'text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full text-xs font-medium' },
+];
+
+// OpenAI голоса
+const OPENAI_VOICES = [
+  { id: 'nova', name: 'Nova', description: 'Тёплый, дружелюбный — идеально для ассистента' },
+  { id: 'alloy', name: 'Alloy', description: 'Нейтральный, сбалансированный' },
+  { id: 'shimmer', name: 'Shimmer', description: 'Яркий, оптимистичный' },
+  { id: 'echo', name: 'Echo', description: 'Спокойный, глубокий' },
+  { id: 'fable', name: 'Fable', description: 'Выразительный, артистичный' },
+  { id: 'onyx', name: 'Onyx', description: 'Глубокий, авторитетный' },
+];
+
+// Edge голоса
+const EDGE_VOICES = [
+  { id: 'svetlana', name: 'Светлана', description: 'Женский русский голос' },
+  { id: 'dmitry', name: 'Дмитрий', description: 'Мужской русский голос' },
+];
 
 const DEFAULT_VISION_PROMPT = 'Опиши подробно что изображено на этой картинке. Обрати внимание на детали, цвета, объекты и их расположение.';
 const DEFAULT_VISION_MAX_TOKENS = 1024;
@@ -110,6 +137,11 @@ const MultimodalSettingsPage = () => {
       vision_model: DEFAULT_VISION_MODEL,
       vision_prompt: DEFAULT_VISION_PROMPT,
       vision_max_tokens: DEFAULT_VISION_MAX_TOKENS,
+      tts_provider: 'edge',
+      openai_tts_voice: 'nova',
+      openai_tts_model: 'tts-1-hd',
+      voice_speaker: 'svetlana',
+      openai_api_key: '',
     },
   });
 
@@ -129,19 +161,33 @@ const MultimodalSettingsPage = () => {
         vision_model: map['vision_model'] || DEFAULT_VISION_MODEL,
         vision_prompt: map['vision_prompt'] || DEFAULT_VISION_PROMPT,
         vision_max_tokens: parseInt(map['vision_max_tokens'] || String(DEFAULT_VISION_MAX_TOKENS), 10),
+        tts_provider: map['tts_provider'] || 'edge',
+        openai_tts_voice: map['openai_tts_voice'] || 'nova',
+        openai_tts_model: map['openai_tts_model'] || 'tts-1-hd',
+        voice_speaker: map['voice_speaker'] || 'svetlana',
+        openai_api_key: map['openai_api_key'] || '',
       });
     }
   }, [settings, reset]);
 
   const onSubmit = (data: SettingsForm) => {
-    saveSettings({
+    const toSave: Record<string, string> = {
       audio_model: data.audio_model,
       audio_model_override: '',
       vision_model: data.vision_model,
       vision_model_override: '',
       vision_prompt: data.vision_prompt,
       vision_max_tokens: String(data.vision_max_tokens),
-    });
+      tts_provider: data.tts_provider,
+      openai_tts_voice: data.openai_tts_voice,
+      openai_tts_model: data.openai_tts_model,
+      voice_speaker: data.voice_speaker,
+    };
+    // Сохраняем OpenAI ключ только если он заполнен
+    if (data.openai_api_key) {
+      toSave.openai_api_key = data.openai_api_key;
+    }
+    saveSettings(toSave);
   };
 
   if (isLoading) {
@@ -210,8 +256,146 @@ const MultimodalSettingsPage = () => {
           </div>
         </div>
 
-        {/* ============ VISION ============ */}
+        {/* ============ TTS (ОЗВУЧКА) ============ */}
         <div className="card animate-fade-in-up stagger-2">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="p-2.5 bg-gradient-to-br from-emerald-500 to-teal-500 rounded-xl shadow-lg shadow-emerald-500/25">
+              <Volume2 className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-white">Озвучка ответов (TTS)</h2>
+              <p className="text-sm text-white/50">Текст в речь — голосовые ответы бота</p>
+            </div>
+          </div>
+
+          {/* Выбор провайдера */}
+          <div className="space-y-3 mb-6">
+            <label className="label">Движок озвучки</label>
+            {TTS_PROVIDERS.map((provider) => (
+              <label key={provider.id} className={`block p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                watch('tts_provider') === provider.id
+                  ? 'border-emerald-500 bg-emerald-500/10' 
+                  : 'border-white/10 hover:border-white/20 bg-white/5'
+              }`}>
+                <div className="flex items-start gap-3">
+                  <input
+                    type="radio"
+                    value={provider.id}
+                    {...register('tts_provider')}
+                    className="mt-1 accent-emerald-500"
+                  />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-white">{provider.name}</span>
+                      <span className={provider.badgeColor}>{provider.badge}</span>
+                    </div>
+                    <p className="text-sm text-white/60 mt-1">{provider.description}</p>
+                  </div>
+                </div>
+              </label>
+            ))}
+          </div>
+
+          {/* OpenAI настройки */}
+          {watch('tts_provider') === 'openai' && (
+            <div className="border-t border-white/10 pt-6 space-y-4">
+              {/* API ключ */}
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <Key className="w-4 h-4 text-amber-400" />
+                  <label className="label">OpenAI API Key</label>
+                </div>
+                <input
+                  type="password"
+                  {...register('openai_api_key')}
+                  placeholder="sk-..."
+                  className="input w-full font-mono text-sm"
+                />
+                <p className="text-white/40 text-xs mt-1">
+                  Отдельный ключ от{' '}
+                  <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" className="text-emerald-400 hover:underline">
+                    platform.openai.com
+                  </a>
+                  {' '}(не OpenRouter)
+                </p>
+              </div>
+
+              {/* Модель */}
+              <div>
+                <label className="label mb-2">Модель</label>
+                <div className="flex gap-3">
+                  <label className={`flex-1 p-3 rounded-xl border-2 cursor-pointer text-center transition-all ${
+                    watch('openai_tts_model') === 'tts-1-hd'
+                      ? 'border-emerald-500 bg-emerald-500/10'
+                      : 'border-white/10 hover:border-white/20 bg-white/5'
+                  }`}>
+                    <input type="radio" value="tts-1-hd" {...register('openai_tts_model')} className="sr-only" />
+                    <span className="font-medium text-white text-sm">TTS-1-HD</span>
+                    <p className="text-xs text-white/50 mt-1">Максимальное качество</p>
+                  </label>
+                  <label className={`flex-1 p-3 rounded-xl border-2 cursor-pointer text-center transition-all ${
+                    watch('openai_tts_model') === 'tts-1'
+                      ? 'border-emerald-500 bg-emerald-500/10'
+                      : 'border-white/10 hover:border-white/20 bg-white/5'
+                  }`}>
+                    <input type="radio" value="tts-1" {...register('openai_tts_model')} className="sr-only" />
+                    <span className="font-medium text-white text-sm">TTS-1</span>
+                    <p className="text-xs text-white/50 mt-1">Быстрее, дешевле</p>
+                  </label>
+                </div>
+              </div>
+
+              {/* Голос OpenAI */}
+              <div>
+                <label className="label mb-2">Голос</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {OPENAI_VOICES.map((voice) => (
+                    <label key={voice.id} className={`p-3 rounded-xl border-2 cursor-pointer transition-all ${
+                      watch('openai_tts_voice') === voice.id
+                        ? 'border-emerald-500 bg-emerald-500/10'
+                        : 'border-white/10 hover:border-white/20 bg-white/5'
+                    }`}>
+                      <div className="flex items-start gap-2">
+                        <input type="radio" value={voice.id} {...register('openai_tts_voice')} className="mt-0.5 accent-emerald-500" />
+                        <div>
+                          <span className="font-medium text-white text-sm">{voice.name}</span>
+                          <p className="text-xs text-white/50">{voice.description}</p>
+                        </div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Edge настройки */}
+          {watch('tts_provider') === 'edge' && (
+            <div className="border-t border-white/10 pt-6">
+              <label className="label mb-2">Голос Edge TTS</label>
+              <div className="space-y-2">
+                {EDGE_VOICES.map((voice) => (
+                  <label key={voice.id} className={`block p-3 rounded-xl border-2 cursor-pointer transition-all ${
+                    watch('voice_speaker') === voice.id
+                      ? 'border-emerald-500 bg-emerald-500/10'
+                      : 'border-white/10 hover:border-white/20 bg-white/5'
+                  }`}>
+                    <div className="flex items-center gap-3">
+                      <input type="radio" value={voice.id} {...register('voice_speaker')} className="accent-emerald-500" />
+                      <div>
+                        <span className="font-medium text-white">{voice.name}</span>
+                        <span className="text-white/50 text-sm ml-2">— {voice.description}</span>
+                      </div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* ============ VISION ============ */}
+        <div className="card animate-fade-in-up stagger-3">
           <div className="flex items-center gap-3 mb-6">
             <div className="p-2.5 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl shadow-lg shadow-purple-500/25">
               <Eye className="w-6 h-6 text-white" />
@@ -339,7 +523,7 @@ const MultimodalSettingsPage = () => {
         </div>
 
         {/* ============ HOW IT WORKS ============ */}
-        <div className="card-info animate-fade-in-up stagger-3">
+        <div className="card-info animate-fade-in-up stagger-4">
           <h3 className="font-semibold text-white mb-4">Как это работает</h3>
           <div className="space-y-4 text-sm">
             <div className="flex items-start gap-3">
@@ -365,13 +549,24 @@ const MultimodalSettingsPage = () => {
               </div>
             </div>
             <div className="flex items-start gap-3">
+              <div className="p-1.5 bg-emerald-500/20 rounded-lg">
+                <Volume2 className="w-4 h-4 text-emerald-400" />
+              </div>
+              <div>
+                <p className="font-medium text-white">Озвучка (TTS)</p>
+                <p className="text-white/60">
+                  Ответ бота → OpenAI TTS HD (натуральный голос) или Edge TTS (бесплатно) → Голосовое сообщение
+                </p>
+              </div>
+            </div>
+            <div className="flex items-start gap-3">
               <div className="p-1.5 bg-amber-500/20 rounded-lg">
                 <RefreshCw className="w-4 h-4 text-amber-400" />
               </div>
               <div>
                 <p className="font-medium text-white">Авто-fallback</p>
                 <p className="text-white/60">
-                  Если vision модель упала → обновление списка → гонка всех бесплатных → победитель становится основной моделью. Прозрачно для пользователя.
+                  Если основной движок TTS или vision упал → автоматический переход на запасной вариант. Прозрачно для пользователя.
                 </p>
               </div>
             </div>
@@ -379,7 +574,7 @@ const MultimodalSettingsPage = () => {
         </div>
 
         {/* ============ SAVE ============ */}
-        <div className="flex items-center justify-between animate-fade-in-up stagger-4">
+        <div className="flex items-center justify-between animate-fade-in-up stagger-5">
           {saveMessage && (
             <div className={`flex items-center gap-2 text-sm ${
               saveMessage.includes('сохранены') ? 'text-emerald-400' : 'text-red-400'
@@ -406,6 +601,11 @@ const MultimodalSettingsPage = () => {
                     vision_model: map['vision_model'] || DEFAULT_VISION_MODEL,
                     vision_prompt: map['vision_prompt'] || DEFAULT_VISION_PROMPT,
                     vision_max_tokens: parseInt(map['vision_max_tokens'] || String(DEFAULT_VISION_MAX_TOKENS), 10),
+                    tts_provider: map['tts_provider'] || 'edge',
+                    openai_tts_voice: map['openai_tts_voice'] || 'nova',
+                    openai_tts_model: map['openai_tts_model'] || 'tts-1-hd',
+                    voice_speaker: map['voice_speaker'] || 'svetlana',
+                    openai_api_key: map['openai_api_key'] || '',
                   });
                 }
               }}

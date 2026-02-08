@@ -11,6 +11,7 @@ import { getSearchModelInfo, getAvailableModels, isWebSearchEnabled, clearPerple
 import { userProfileRepo, userMemoryRepo, userLogsRepo } from '../memory/user-memory.js';
 import { config, clearApiKeysCache } from '../config/index.js';
 import { getConfiguredSites, saveConfiguredSites, parseNewsFromSite } from '../features/news-parser.js';
+import { invalidateTTSConfig } from '../features/tts.js';
 import type { Message, Conversation, LogLevel } from '../../../shared/types/index.js';
 
 // --------------------------------------------
@@ -302,6 +303,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
             clearApiKeysCache();
             clearPerplexityCache();
             settingsRepo.invalidateCache?.();
+            invalidateTTSConfig();
 
             aiLogger.info({ keys: Object.keys(settings) }, 'Settings updated via API (caches invalidated)');
 
