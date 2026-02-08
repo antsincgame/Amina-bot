@@ -327,6 +327,7 @@ const buildFullContext = async (
   userText: string,
   firstName?: string,
   telegramInfo?: TelegramUserInfo,
+  alreadyGreetedToday?: boolean,
 ): Promise<{ memoryContext: string; webSearchContext: string }> => {
   const timeContext = buildTimeContext(firstName);
 
@@ -341,7 +342,13 @@ const buildFullContext = async (
     }),
   ]);
 
-  const memoryContext = timeContext + (memoryContextRaw ? '\n' + memoryContextRaw : '');
+  let memoryContext = timeContext + (memoryContextRaw ? '\n' + memoryContextRaw : '');
+  
+  // Антиповтор приветствия: если сегодня уже здоровалась — запрет
+  if (alreadyGreetedToday) {
+    memoryContext += '\n[ПРИВЕТСТВИЕ: ты уже здоровалась с пользователем сегодня. НЕ здоровайся повторно — не пиши "Привет", "Здравствуй", "Доброе утро/день/вечер" и т.п. в начале ответа. Сразу отвечай по существу.]';
+  }
+  
   return { memoryContext, webSearchContext };
 };
 
@@ -440,8 +447,12 @@ const processMessageThroughAI = async (
   // Ensure conversation
   await ensureConversation(ctx, userId, chatId);
 
+  // Определяем — здоровалась ли Амина сегодня
+  const todayStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const alreadyGreetedToday = ctx.session.lastGreetingDate === todayStr;
+
   // Build context in parallel
-  const { memoryContext, webSearchContext } = await buildFullContext(userId, userText, telegramInfo.first_name, telegramInfo);
+  const { memoryContext, webSearchContext } = await buildFullContext(userId, userText, telegramInfo.first_name, telegramInfo, alreadyGreetedToday);
 
   // Add to history
   ctx.session.messageHistory.push({ role: 'user', content: userText });
@@ -483,6 +494,11 @@ const processMessageThroughAI = async (
 
   // Send response
   await sendLongMessage(ctx, aiResponse.content, responseActionsKeyboard());
+
+  // Трекаем приветствие: если ответ начинается с приветствия — запоминаем дату
+  if (!alreadyGreetedToday && /^(привет|здравствуй|добр(ое|ый|ая)\s+(утр|день|вечер|ноч)|хай|салют|приветств)/i.test(aiResponse.content.trim())) {
+    ctx.session.lastGreetingDate = todayStr;
+  }
 
   // Fire-and-forget DB writes
   const responseTime = Date.now() - startTime;

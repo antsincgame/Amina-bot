@@ -29,6 +29,8 @@ export interface SessionData {
   awaitingTodoTask?: boolean;
   awaitingNoteContent?: boolean;
   awaitingSearchQuery?: boolean;
+  /** Дата последнего приветствия (YYYY-MM-DD) чтобы не здороваться повторно за день */
+  lastGreetingDate?: string;
 }
 
 export type BotContext = Context & SessionFlavor<SessionData>;
