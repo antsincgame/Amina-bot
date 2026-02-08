@@ -10,6 +10,7 @@ import PromptsPage from './pages/PromptsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import LogsPage from './pages/LogsPage';
 import UsersPage from './pages/UsersPage';
+import NewsSourcesPage from './pages/NewsSourcesPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 // Protected Route wrapper
@@ -52,6 +53,7 @@ const App = () => {
           <Route path="multimodal" element={<MultimodalSettingsPage />} />
           <Route path="api-keys" element={<ApiKeysPage />} />
           <Route path="prompts" element={<PromptsPage />} />
+          <Route path="news-sources" element={<NewsSourcesPage />} />
           <Route path="analytics" element={<AnalyticsPage />} />
           <Route path="logs" element={<LogsPage />} />
         </Route>

@@ -12,6 +12,7 @@ import {
   Users,
   Key,
   Sparkles,
+  Newspaper,
 } from 'lucide-react';
 
 const Layout = () => {
@@ -30,6 +31,7 @@ const Layout = () => {
     { to: '/settings', icon: Settings, label: 'Настройки AI' },
     { to: '/multimodal', icon: Mic, label: 'Голос и Фото' },
     { to: '/prompts', icon: MessageSquare, label: 'Промпты' },
+    { to: '/news-sources', icon: Newspaper, label: 'Источники' },
     { to: '/analytics', icon: BarChart3, label: 'Аналитика' },
     { to: '/logs', icon: AlertCircle, label: 'Логи' },
   ];

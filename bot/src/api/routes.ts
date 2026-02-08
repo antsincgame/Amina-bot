@@ -10,6 +10,7 @@ import { getAllAudioModels, getFreeVisionModels, refreshFreeVisionModelsCache, g
 import { getSearchModelInfo, getAvailableModels, isWebSearchEnabled, clearPerplexityCache } from '../ai/websearch.js';
 import { userProfileRepo, userMemoryRepo, userLogsRepo } from '../memory/user-memory.js';
 import { config, clearApiKeysCache } from '../config/index.js';
+import { getConfiguredSites, saveConfiguredSites, parseNewsFromSite } from '../features/news-parser.js';
 import type { Message, Conversation, LogLevel } from '../../../shared/types/index.js';
 
 // --------------------------------------------
@@ -1148,6 +1149,119 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
             });
           }
         }
+      );
+      // ====== NEWS SOURCES (для дайджеста) ======
+
+      /**
+       * GET /api/news-sites
+       * Получить список настроенных новостных сайтов
+       */
+      apiServer.get('/news-sites', async (_request: FastifyRequest, reply: FastifyReply) => {
+        try {
+          const sites = await getConfiguredSites();
+          return reply.code(200).send({ success: true, data: sites });
+        } catch (error) {
+          aiLogger.error({ error }, 'Get news sites error');
+          return reply.code(500).send({ success: false, error: 'Failed to fetch news sites' });
+        }
+      });
+
+      /**
+       * POST /api/news-sites
+       * Сохранить список новостных сайтов
+       */
+      apiServer.post(
+        '/news-sites',
+        async (
+          request: FastifyRequest<{ Body: Array<{ name: string; url: string; enabled: boolean }> }>,
+          reply: FastifyReply,
+        ) => {
+          try {
+            const sites = request.body;
+            if (!Array.isArray(sites)) {
+              return reply.code(400).send({ success: false, error: 'Body must be an array of sites' });
+            }
+
+            // Базовая валидация
+            for (const site of sites) {
+              if (!site.name || typeof site.name !== 'string') {
+                return reply.code(400).send({ success: false, error: 'Each site must have a name' });
+              }
+              if (!site.url || typeof site.url !== 'string') {
+                return reply.code(400).send({ success: false, error: 'Each site must have a url' });
+              }
+              try {
+                new URL(site.url);
+              } catch {
+                return reply.code(400).send({ success: false, error: `Invalid URL: ${site.url}` });
+              }
+            }
+
+            const normalized = sites.map(s => ({
+              name: s.name.trim(),
+              url: s.url.trim(),
+              enabled: s.enabled !== false,
+            }));
+
+            await saveConfiguredSites(normalized);
+            settingsRepo.invalidateCache?.();
+
+            aiLogger.info({ count: normalized.length }, 'News sites updated');
+            return reply.code(200).send({ success: true, message: 'News sites saved', data: normalized });
+          } catch (error) {
+            aiLogger.error({ error }, 'Save news sites error');
+            return reply.code(500).send({ success: false, error: 'Failed to save news sites' });
+          }
+        },
+      );
+
+      /**
+       * POST /api/news-sites/test
+       * Тестовый парсинг одного сайта — для предпросмотра в админке
+       */
+      apiServer.post(
+        '/news-sites/test',
+        async (
+          request: FastifyRequest<{ Body: { url: string } }>,
+          reply: FastifyReply,
+        ) => {
+          try {
+            const { url } = request.body as { url: string };
+            if (!url) {
+              return reply.code(400).send({ success: false, error: 'URL is required' });
+            }
+
+            try {
+              new URL(url);
+            } catch {
+              return reply.code(400).send({ success: false, error: 'Invalid URL format' });
+            }
+
+            const startTime = Date.now();
+            const headlines = await parseNewsFromSite(url);
+            const parseTimeMs = Date.now() - startTime;
+
+            aiLogger.info({ url, headlinesFound: headlines.length, parseTimeMs }, 'News site test parse');
+
+            return reply.code(200).send({
+              success: true,
+              data: {
+                url,
+                headlines,
+                count: headlines.length,
+                parseTimeMs,
+              },
+            });
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : 'Unknown error';
+            aiLogger.warn({ error: msg, url: (request.body as { url?: string })?.url }, 'News site test parse failed');
+            return reply.code(200).send({
+              success: false,
+              error: msg,
+              data: { url: (request.body as { url?: string })?.url, headlines: [], count: 0 },
+            });
+          }
+        },
       );
     },
     { prefix: '/api' }

@@ -266,3 +266,51 @@ export const statusApi = {
     };
   },
 };
+
+// News Sources API (для дайджеста — парсинг новостей с сайтов)
+export interface NewsSite {
+  name: string;
+  url: string;
+  enabled: boolean;
+}
+
+export interface ParsedHeadline {
+  title: string;
+  url: string;
+  source: string;
+}
+
+export const newsSourcesApi = {
+  async getAll(): Promise<NewsSite[]> {
+    const response = await fetch(`${BOT_URL}/api/news-sites`);
+    if (!response.ok) throw new Error('Failed to fetch news sites');
+    const result = await response.json();
+    return result.data ?? [];
+  },
+
+  async save(sites: NewsSite[]): Promise<void> {
+    const response = await fetch(`${BOT_URL}/api/news-sites`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sites),
+    });
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
+      throw new Error(error.error || 'Failed to save news sites');
+    }
+  },
+
+  async testParse(url: string): Promise<{
+    success: boolean;
+    error?: string;
+    data: { url: string; headlines: ParsedHeadline[]; count: number; parseTimeMs?: number };
+  }> {
+    const response = await fetch(`${BOT_URL}/api/news-sites/test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    if (!response.ok) throw new Error('Failed to test parse');
+    return response.json();
+  },
+};

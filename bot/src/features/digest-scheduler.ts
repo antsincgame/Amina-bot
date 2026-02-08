@@ -19,6 +19,7 @@ import { userPrefsRepo } from './user-prefs-repo.js';
 import { todosRepo } from './todos-repo.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';
 import { webSearch } from '../ai/websearch.js';
+import { parseAllConfiguredSites, type ParsedHeadline } from './news-parser.js';
 import { aiService } from '../ai/openrouter.js';
 import { appLogger } from '../config/logger.js';
 
@@ -252,23 +253,20 @@ async function buildDigest(
   // Белорусские СМИ для точности поиска
   const bySources = 'сайт belta.by, ont.by, tvr.by, grodnonews.by, sb.by, minsknews.by';
 
-  // --- Запускаем ВСЕ запросы параллельно (4 поиска + 2 БД) ---
-  const [weatherResult, cityNewsResult, belarusNewsResult, belarusSportCultureResult, remindersResult, todosResult] = 
+  // --- Запускаем ВСЕ запросы параллельно ---
+  // Парсер городских новостей ЗАМЕНЯЕТ Perplexity для местных новостей.
+  // Perplexity остаётся для общих новостей Беларуси, погоды и спорта/культуры.
+  const [weatherResult, parsedHeadlinesResult, belarusNewsResult, belarusSportCultureResult, remindersResult, todosResult] = 
     await Promise.allSettled([
       // 1. Погода — подробно с прогнозом
       webSearchWithRetry(
         `Погода ${city} Беларусь сегодня ${todayStr}: точная температура сейчас утром днём вечером, осадки, ветер, влажность, давление, ощущается как. Подробный прогноз на весь день.`
       ),
 
-      // 2. МЕСТНЫЕ новости ГОРОДА — ключ к локальности: конкретные названия СМИ!
-      webSearchWithRetry(
-        `Новости ${city} Беларусь сегодня ${todayStr} site:${city === 'Гродно' ? 'grodnonews.by OR grodno.in OR newgrodno.by' : city === 'Минск' ? 'minsknews.by OR minsk-news.by' : 'belta.by'}: ` +
-        `местные события, происшествия, решения городских властей, транспорт, благоустройство, культурная жизнь ${city}. ` +
-        `Ищи ТОЛЬКО местные городские новости ${city}! Минимум 5 конкретных событий с датами. ` +
-        `НЕ включай мировые или российские новости — ТОЛЬКО ${city} и ${city === 'Гродно' ? 'Гродненская область' : city === 'Минск' ? 'Минск и область' : 'регион'}.`
-      ),
+      // 2. ПАРСИНГ ЗАГОЛОВКОВ с настроенных новостных сайтов
+      parseAllConfiguredSites(),
 
-      // 3. Новости БЕЛАРУСИ — экономика, политика, общество
+      // 3. Новости БЕЛАРУСИ — экономика, политика, общество (Perplexity)
       webSearchWithRetry(
         `Внутренние новости Беларуси ${todayStr} (${bySources}): ` +
         `белорусская экономика, решения правительства, законы, социальная политика, образование, здравоохранение, ` +
@@ -300,12 +298,39 @@ async function buildDigest(
     }
   }
 
-  if (cityNewsResult.status === 'fulfilled' && cityNewsResult.value?.answer) {
-    rawData.push(`[МЕСТНЫЕ НОВОСТИ ${city.toUpperCase()}]\n${cityNewsResult.value.answer}`);
+  // ГОРОДСКИЕ НОВОСТИ — из парсера настроенных сайтов
+  let parsedHeadlines: ParsedHeadline[] = [];
+  if (parsedHeadlinesResult.status === 'fulfilled') {
+    parsedHeadlines = parsedHeadlinesResult.value;
   } else {
-    rawData.push(`[МЕСТНЫЕ НОВОСТИ ${city.toUpperCase()}]\nНе удалось получить местные новости`);
-    if (cityNewsResult.status === 'rejected') {
-      appLogger.warn({ error: cityNewsResult.reason, city }, 'Digest: city news failed');
+    appLogger.warn({ error: parsedHeadlinesResult.reason }, 'Digest: news parser failed');
+  }
+
+  if (parsedHeadlines.length > 0) {
+    // Формат: каждый заголовок с ссылкой и источником
+    const headlineLines = parsedHeadlines.map(h =>
+      `- ${h.title} (ссылка: ${h.url}) [источник: ${h.source}]`
+    );
+    rawData.push(
+      `[МЕСТНЫЕ НОВОСТИ — ЗАГОЛОВКИ С НОВОСТНЫХ САЙТОВ ${city.toUpperCase()}]\n` +
+      `Ниже — актуальные заголовки новостей, спарсенные с местных новостных сайтов.\n` +
+      `Для каждой новости ОБЯЗАТЕЛЬНО сохрани ссылку в формате Markdown: [заголовок](url)\n\n` +
+      headlineLines.join('\n')
+    );
+    appLogger.info({ count: parsedHeadlines.length, city }, 'Digest: using parsed headlines for city news');
+  } else {
+    // FALLBACK: если парсер не дал результатов — используем Perplexity как раньше
+    appLogger.info({ city }, 'Digest: no parsed headlines, falling back to Perplexity for city news');
+    const fallbackResult = await webSearchWithRetry(
+      `Новости ${city} Беларусь сегодня ${todayStr} site:${city === 'Гродно' ? 'grodnonews.by OR grodno.in OR newgrodno.by' : city === 'Минск' ? 'minsknews.by OR minsk-news.by' : 'belta.by'}: ` +
+      `местные события, происшествия, решения городских властей, транспорт, благоустройство, культурная жизнь ${city}. ` +
+      `Ищи ТОЛЬКО местные городские новости ${city}! Минимум 5 конкретных событий с датами. ` +
+      `НЕ включай мировые или российские новости — ТОЛЬКО ${city}.`
+    );
+    if (fallbackResult?.answer) {
+      rawData.push(`[МЕСТНЫЕ НОВОСТИ ${city.toUpperCase()}]\n${fallbackResult.answer}`);
+    } else {
+      rawData.push(`[МЕСТНЫЕ НОВОСТИ ${city.toUpperCase()}]\nНе удалось получить местные новости`);
     }
   }
 
@@ -376,7 +401,8 @@ ${rawData.join('\n\n')}
 
 2. **Погода в ${city}** — подробно: температура (утро/день/вечер), осадки, ветер, давление, что надеть, совет
 
-3. **Новости ${city}** — ГЛАВНАЯ ЧАСТЬ дайджеста! Каждую новость пронумеруй и прокомментируй с эмоцией. Минимум 3-5 пунктов. Это МЕСТНЫЕ городские новости!
+3. **Новости ${city}** — ГЛАВНАЯ ЧАСТЬ дайджеста! Каждую новость пронумеруй и прокомментируй с эмоцией (1-2 предложения авторского комментария). Минимум 3-5 пунктов. Это МЕСТНЫЕ городские новости!
+   ВАЖНО: Если в данных есть заголовки со ссылками — ОБЯЗАТЕЛЬНО оформи каждую новость как кликабельную Markdown-ссылку: [заголовок](url). НЕ теряй ссылки!
 
 4. **Новости Беларуси** — экономика, политика, общество, спорт, культура. Каждую с кратким комментарием. Минимум 5-7 пунктов.
 
