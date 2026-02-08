@@ -342,28 +342,54 @@ function splitTextIntoChunks(text: string, maxChunkSize: number): string[] {
  */
 function stripFormatting(text: string): string {
   let clean = text;
+
+  // Убираем секцию "Источники" / "📚 Источники:" в конце (если осталась)
+  clean = clean.replace(/\n*📚\s*Источники?:[\s\S]*$/i, '');
+  clean = clean.replace(/\n*Источники?:\s*\n[\s\S]*$/i, '');
+
   // Код блоки
   clean = clean.replace(/```[\s\S]*?```/g, ' код пропущен ');
   clean = clean.replace(/`([^`]+)`/g, '$1');
-  // Markdown
+
+  // Markdown-ссылки [текст](url) → текст
+  clean = clean.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+
+  // Citation маркеры [1], [2], [1][3] и т.п. — убираем полностью
+  clean = clean.replace(/\[(\d+)\]/g, '');
+
+  // Голые URL (http/https)
+  clean = clean.replace(/https?:\/\/[^\s)>\]]+/g, '');
+
+  // Markdown форматирование
   clean = clean.replace(/\*\*(.+?)\*\*/g, '$1');
   clean = clean.replace(/\*(.+?)\*/g, '$1');
   clean = clean.replace(/__(.+?)__/g, '$1');
   clean = clean.replace(/_(.+?)_/g, '$1');
   clean = clean.replace(/~~(.+?)~~/g, '$1');
   clean = clean.replace(/^#{1,6}\s+/gm, '');
-  // Ссылки
-  clean = clean.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+
   // HTML
   clean = clean.replace(/<[^>]+>/g, '');
   clean = clean.replace(/&amp;/g, '&');
   clean = clean.replace(/&lt;/g, '<');
   clean = clean.replace(/&gt;/g, '>');
+
+  // Оставшиеся скобки от ссылок: "(ссылка: )" и "[источник: ...]"
+  clean = clean.replace(/\(ссылка:\s*\)/gi, '');
+  clean = clean.replace(/\[источник:\s*[^\]]*\]/gi, '');
+  clean = clean.replace(/\(источник:\s*[^)]*\)/gi, '');
+
+  // Строки вида "---" (горизонтальные разделители) → пауза
+  clean = clean.replace(/^-{3,}$/gm, '');
+
   // Эмодзи в начале строк
-  clean = clean.replace(/^[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}✅☀️📋🔄]\s*/gmu, '');
-  // Множественные пробелы
+  clean = clean.replace(/^[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}✅☀️📋🔄🤖⏰🌟📰🌤🌆🌙💡📌]\s*/gmu, '');
+
+  // Множественные пробелы и пустые строки
   clean = clean.replace(/\n{3,}/g, '\n\n');
-  clean = clean.replace(/\s{2,}/g, ' ');
+  clean = clean.replace(/[ \t]{2,}/g, ' ');
+  clean = clean.replace(/^\s+$/gm, '');
+
   return clean.trim();
 }
 
