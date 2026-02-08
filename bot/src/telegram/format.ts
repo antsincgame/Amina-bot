@@ -205,6 +205,36 @@ export const buildTimeContext = (firstName?: string): string => {
 };
 
 // ============================================
+// Citation Inlining — [1] → clickable links
+// ============================================
+
+/**
+ * Заменяет ссылки вида [1], [2][3] на кликабельные Markdown-ссылки.
+ * Perplexity возвращает [N] как ссылки на citations[] массив.
+ * 
+ * Пример: "Новость о ИИ[1][3]" + citations = ["https://a.com", ..., "https://c.com"]
+ *  → "Новость о ИИ [📎](https://a.com) [📎](https://c.com)"
+ */
+export const inlineCitations = (text: string, citations: string[]): string => {
+  if (!citations || citations.length === 0) return text;
+  
+  // Заменяем [N] на кликабельные ссылки
+  let result = text.replace(/\[(\d+)\]/g, (match, numStr: string) => {
+    const index = parseInt(numStr, 10) - 1; // citations 0-based, references 1-based
+    if (index >= 0 && index < citations.length) {
+      const url = citations[index]!;
+      return `[${numStr}](${url})`;
+    }
+    return match; // Если номер вне диапазона — оставляем как есть
+  });
+  
+  // Убираем раздел "📚 Источники:" если он есть — ссылки уже инлайн
+  result = result.replace(/\n*📚\s*Источники:[\s\S]*$/, '');
+  
+  return result;
+};
+
+// ============================================
 // Search Simulation Detection
 // ============================================
 

@@ -565,13 +565,17 @@ export async function searchAndFormat(query: string): Promise<string> {
   
   let formattedResponse = result.answer;
   
-  // Добавляем источники если есть (без Markdown — sendLongMessage сконвертирует)
+  // Инлайн citations: [1] → кликабельная Markdown-ссылка
   if (result.citations.length > 0) {
-    formattedResponse += '\n\n📚 Источники:\n';
-    result.citations.slice(0, 3).forEach((citation, index) => {
-      const shortUrl = citation.length > 60 ? citation.substring(0, 57) + '...' : citation;
-      formattedResponse += `${index + 1}. ${shortUrl}\n`;
+    formattedResponse = formattedResponse.replace(/\[(\d+)\]/g, (match, numStr: string) => {
+      const index = parseInt(numStr, 10) - 1;
+      if (index >= 0 && index < result.citations.length) {
+        return `[${numStr}](${result.citations[index]!})`;
+      }
+      return match;
     });
+    // Убираем дублирующий раздел "📚 Источники:" если Perplexity добавил
+    formattedResponse = formattedResponse.replace(/\n*📚\s*Источники:[\s\S]*$/, '');
   }
   
   return formattedResponse;
@@ -591,20 +595,21 @@ export async function getSearchContext(query: string): Promise<string> {
   try {
     const result = await webSearch(query);
     
-    const citationsList = result.citations.length > 0
-      ? `\nИсточники: ${result.citations.slice(0, 5).join(', ')}`
+    // Карта ссылок для LLM
+    const citationsMap = result.citations.length > 0
+      ? `\n\nКАРТА ИСТОЧНИКОВ:\n${result.citations.map((url, i) => `[${i + 1}] ${url}`).join('\n')}`
       : '';
 
     return `\n\n=== ДАННЫЕ ИЗ ИНТЕРНЕТА (${new Date().toLocaleDateString('ru-RU')}) ===
-${result.answer}${citationsList}
+${result.answer}${citationsMap}
 === КОНЕЦ ДАННЫХ ===
 
 ИНСТРУКЦИЯ ПО ДАННЫМ ИЗ ИНТЕРНЕТА:
 - Данные УЖЕ найдены — используй их НАПРЯМУЮ в ответе
 - ЗАПРЕЩЕНО: "Ищу...", "Поиск...", "Сейчас найду" — поиск ЗАВЕРШЁН
+- Сохраняй ссылки [N] на источники — они будут автоматически превращены в кликабельные
 - Цифры (цены, курсы, температура) — приводи ТОЧНО из данных
 - Перескажи живо, эмоционально, своими словами
-- НЕ упоминай источники если не просили
 - Если данные содержат числа — обязательно включи их в ответ`;
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);

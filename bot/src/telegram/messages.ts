@@ -45,6 +45,7 @@ import {
   buildTimeContext,
   looksLikeSearchSimulation,
   looksLikeSearchRefusal,
+  inlineCitations,
   formatSearchError,
 } from './format.js';
 import {
@@ -914,16 +915,23 @@ const handleDirectWebSearch = async (
     const searchResult = await webSearch(userMessage);
     telegramLogger.info({ userId, model: searchResult.model, tokens: searchResult.tokens_used.total }, 'Direct web search succeeded');
 
-    // Format through LLM — с УСИЛЕННЫМИ инструкциями
+    // Format through LLM — с УСИЛЕННЫМИ инструкциями + citations map
     const timeContext = buildTimeContext(ctx.from?.first_name);
-    const searchContext = `${timeContext}\n\n=== ДАННЫЕ ИЗ ИНТЕРНЕТА (${new Date().toLocaleDateString('ru-RU')}) ===\n${searchResult.answer}\n=== КОНЕЦ ДАННЫХ ===\n\n` +
+    
+    // Передаём карту ссылок чтобы LLM мог вставлять [N] → кликабельные ссылки
+    const citationsMap = searchResult.citations.length > 0
+      ? `\n\nКАРТА ИСТОЧНИКОВ (используй номера [N] в тексте):\n${searchResult.citations.map((url, i) => `[${i + 1}] ${url}`).join('\n')}`
+      : '';
+    
+    const searchContext = `${timeContext}\n\n=== ДАННЫЕ ИЗ ИНТЕРНЕТА (${new Date().toLocaleDateString('ru-RU')}) ===\n${searchResult.answer}${citationsMap}\n=== КОНЕЦ ДАННЫХ ===\n\n` +
       `КРИТИЧЕСКАЯ ИНСТРУКЦИЯ (ОБЯЗАТЕЛЬНО ВЫПОЛНИ):\n` +
       `1. Данные из интернета УЖЕ НАЙДЕНЫ и предоставлены выше — ИСПОЛЬЗУЙ ИХ!\n` +
       `2. Перескажи эти данные пользователю красиво, структурированно, своими словами.\n` +
-      `3. АБСОЛЮТНО ЗАПРЕЩЕНО: писать "не могу искать", "нет доступа к интернету", "не удалось найти" — данные ЕСТЬ выше!\n` +
-      `4. АБСОЛЮТНО ЗАПРЕЩЕНО: писать "Ищу...", "Поиск...", "Сейчас найду..."\n` +
-      `5. АБСОЛЮТНО ЗАПРЕЩЕНО: игнорировать данные и предлагать пользователю искать самостоятельно.\n` +
-      `6. Просто возьми данные из блока "=== ДАННЫЕ ИЗ ИНТЕРНЕТА ===" и представь их.`;
+      `3. Для КАЖДОГО пункта новости/факта сохраняй ссылку [N] на источник — пользователь должен видеть откуда информация.\n` +
+      `4. АБСОЛЮТНО ЗАПРЕЩЕНО: писать "не могу искать", "нет доступа к интернету", "не удалось найти" — данные ЕСТЬ выше!\n` +
+      `5. АБСОЛЮТНО ЗАПРЕЩЕНО: писать "Ищу...", "Поиск...", "Сейчас найду..."\n` +
+      `6. АБСОЛЮТНО ЗАПРЕЩЕНО: игнорировать данные и предлагать пользователю искать самостоятельно.\n` +
+      `7. Просто возьми данные из блока "=== ДАННЫЕ ИЗ ИНТЕРНЕТА ===" и представь их.`;
 
     await ensureConversation(ctx, userId, chatId);
     ctx.session.messageHistory.push({ role: 'user', content: userMessage });
@@ -940,13 +948,11 @@ const handleDirectWebSearch = async (
     if (llmRefusedSearch) {
       telegramLogger.warn({ userId, reason: looksLikeSearchSimulation(finalContent) ? 'simulation' : 'refusal' }, 'LLM ignored/refused search data — using raw results');
       finalContent = searchResult.answer;
-      if (searchResult.citations.length > 0) {
-        finalContent += '\n\n📚 Источники:\n';
-        searchResult.citations.slice(0, 3).forEach((citation: string, index: number) => {
-          const shortUrl = citation.length > 60 ? citation.substring(0, 57) + '...' : citation;
-          finalContent += `${index + 1}. ${shortUrl}\n`;
-        });
-      }
+    }
+    
+    // Инлайн citations: [1] → кликабельная ссылка на источник
+    if (searchResult.citations.length > 0) {
+      finalContent = inlineCitations(finalContent, searchResult.citations);
     }
 
     ctx.session.messageHistory.push({ role: 'assistant', content: finalContent });
