@@ -314,3 +314,77 @@ export const newsSourcesApi = {
     return response.json();
   },
 };
+
+// Voice Messages API
+export interface VoiceMessage {
+  id: string;
+  user_id: string;
+  file_path: string;
+  duration: number;
+  file_size: number;
+  transcription: string | null;
+  telegram_file_id: string | null;
+  created_at: string;
+  username?: string;
+  first_name?: string;
+}
+
+export interface VoiceMessagesStats {
+  totalCount: number;
+  totalSize: number;
+  totalDuration: number;
+  byUser: { user_id: string; count: number; totalDuration: number }[];
+}
+
+export const voiceMessagesApi = {
+  async list(params: {
+    userId?: string;
+    dateFrom?: string;
+    dateTo?: string;
+    limit?: number;
+    offset?: number;
+  } = {}): Promise<{ data: VoiceMessage[]; total: number }> {
+    const searchParams = new URLSearchParams();
+    if (params.userId) searchParams.set('userId', params.userId);
+    if (params.dateFrom) searchParams.set('dateFrom', params.dateFrom);
+    if (params.dateTo) searchParams.set('dateTo', params.dateTo);
+    if (params.limit) searchParams.set('limit', String(params.limit));
+    if (params.offset) searchParams.set('offset', String(params.offset));
+
+    const response = await fetch(`${BOT_URL}/api/voice-messages?${searchParams}`);
+    if (!response.ok) throw new Error('Failed to fetch voice messages');
+    const result = await response.json();
+    return { data: result.data ?? [], total: result.total ?? 0 };
+  },
+
+  async stats(): Promise<VoiceMessagesStats> {
+    const response = await fetch(`${BOT_URL}/api/voice-messages/stats`);
+    if (!response.ok) throw new Error('Failed to fetch voice stats');
+    const result = await response.json();
+    return result.data;
+  },
+
+  async getDownloadUrl(id: string): Promise<string> {
+    const response = await fetch(`${BOT_URL}/api/voice-messages/${id}/download`);
+    if (!response.ok) throw new Error('Failed to get download URL');
+    const result = await response.json();
+    return result.data.url;
+  },
+
+  async downloadArchive(params: {
+    userId?: string;
+    dateFrom?: string;
+    dateTo?: string;
+  } = {}): Promise<Blob> {
+    const response = await fetch(`${BOT_URL}/api/voice-messages/archive`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({ error: 'Archive failed' }));
+      throw new Error(err.error || 'Failed to create archive');
+    }
+    return response.blob();
+  },
+};

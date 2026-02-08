@@ -37,6 +37,7 @@ import { userPrefsRepo } from '../features/user-prefs-repo.js';
 import { textToSpeech, detectLanguage } from '../features/tts.js';
 import { sendDigestNow } from '../features/digest-scheduler.js';
 import { verifyResponse } from '../ai/llm-verifier.js';
+import { voiceMessagesRepo } from '../features/voice-messages-repo.js';
 import type { AIMessage, AIResponse } from '../../../shared/types/index.js';
 import {
   escapeMarkdown,
@@ -742,10 +743,34 @@ const handleVoiceMessage = async (ctx: BotContext): Promise<void> => {
     const response = await fetch(fileUrl);
     if (!response.ok) throw new Error(`Failed to download voice file: ${response.status}`);
 
-    const audioBase64 = Buffer.from(await response.arrayBuffer()).toString('base64');
+    const audioArrayBuffer = await response.arrayBuffer();
+    const audioBuffer = Buffer.from(audioArrayBuffer);
+    const audioBase64 = audioBuffer.toString('base64');
+    
+    // Fire-and-forget: сохраняем голосовое в Storage (не блокирует транскрипцию)
+    const voiceFilePath = `${userId}/${Date.now()}_${file.file_unique_id}.ogg`;
+    let voiceRecordId: string | null = null;
+    voiceMessagesRepo.upload(audioBuffer, voiceFilePath, userId, duration, file.file_unique_id)
+      .then(record => { voiceRecordId = record?.id ?? null; })
+      .catch(err => telegramLogger.warn({ error: err, userId }, 'Voice storage upload failed (non-critical)'));
+
     const transcription = await transcribeAudio(audioBase64, 'audio/ogg');
     const transcribedText = transcription.text;
     telegramLogger.debug({ userId, transcription: transcribedText.substring(0, 100) }, 'Voice transcribed');
+    
+    // Обновляем транскрипцию в записи (fire-and-forget)
+    if (voiceRecordId) {
+      voiceMessagesRepo.updateTranscription(voiceRecordId, transcribedText)
+        .catch(err => telegramLogger.warn({ error: err }, 'Failed to update voice transcription'));
+    } else {
+      // Если upload ещё не завершён — подождём немного и попробуем
+      setTimeout(async () => {
+        if (voiceRecordId) {
+          voiceMessagesRepo.updateTranscription(voiceRecordId, transcribedText)
+            .catch(() => {});
+        }
+      }, 3000);
+    }
 
     const telegramInfo: TelegramUserInfo = {
       id: ctx.from?.id ?? 0, username: ctx.from?.username,

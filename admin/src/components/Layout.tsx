@@ -9,6 +9,7 @@ import {
   Bot,
   AlertCircle,
   Mic,
+  AudioLines,
   Users,
   Key,
   Sparkles,
@@ -32,6 +33,7 @@ const Layout = () => {
     { to: '/multimodal', icon: Mic, label: 'Голос и Фото' },
     { to: '/prompts', icon: MessageSquare, label: 'Промпты' },
     { to: '/news-sources', icon: Newspaper, label: 'Источники' },
+    { to: '/voice-messages', icon: AudioLines, label: 'Голосовые' },
     { to: '/analytics', icon: BarChart3, label: 'Аналитика' },
     { to: '/logs', icon: AlertCircle, label: 'Логи' },
   ];

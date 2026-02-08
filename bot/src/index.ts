@@ -11,6 +11,7 @@ import { registerApiRoutes } from './api/routes.js';
 import { stopCleanupInterval } from './utils/rate-limiter.js';
 import { startReminderScheduler, stopReminderScheduler } from './reminders/reminder-scheduler.js';
 import { startDigestScheduler, stopDigestScheduler } from './features/digest-scheduler.js';
+import { ensureVoiceMessagesInfra } from './features/voice-messages-repo.js';
 
 // --------------------------------------------
 // Application Entry Point (v1.0.1)
@@ -234,6 +235,10 @@ const start = async (): Promise<void> => {
     // Start digest scheduler
     startDigestScheduler(bot);
     appLogger.info('☀️ Digest scheduler started');
+
+    // Init voice messages infrastructure (bucket + table check)
+    ensureVoiceMessagesInfra().catch(err => appLogger.warn({ error: err }, 'Voice messages infra init failed (non-critical)'));
+    appLogger.info('🎤 Voice messages storage initialized');
 
     // Register bot menu commands in Telegram UI (после старта бота)
     await bot.api.setMyCommands([
