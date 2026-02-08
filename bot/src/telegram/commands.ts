@@ -245,16 +245,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     const query = ctx.message?.text?.replace(/^\/search\s*/i, '').trim();
 
     if (!query) {
-      await ctx.reply(
-        '🔍 **Поиск в интернете**\n\n' +
-        'Использование: `/search запрос`\n\n' +
-        'Примеры:\n' +
-        '• `/search погода в Москве`\n' +
-        '• `/search курс доллара`\n' +
-        '• `/search новости технологий`\n\n' +
-        '_Обычно я сам ищу информацию когда нужно — просто спроси!_',
-        { parse_mode: 'Markdown' }
-      );
+      await ctx.reply('🔍 *Что найти в интернете?*', { parse_mode: 'Markdown' });
+      ctx.session.awaitingSearchQuery = true;
       return;
     }
 
@@ -285,7 +277,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     const content = ctx.match?.trim();
 
     if (!content) {
-      await ctx.reply('📌 Чтобы сохранить заметку:\n\n/note Текст заметки\n\nПример: /note Купить молоко и хлеб');
+      await ctx.reply('📌 *Что запомнить?*', { parse_mode: 'Markdown' });
+      ctx.session.awaitingNoteContent = true;
       return;
     }
 
@@ -372,7 +365,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     const task = ctx.match?.trim();
 
     if (!task) {
-      await ctx.reply('✅ Чтобы добавить задачу:\n\n`/todo Текст задачи`\n\nПример: `/todo Сделать отчёт`', { parse_mode: 'Markdown' });
+      await ctx.reply('✅ *Какую задачу добавить?*', { parse_mode: 'Markdown' });
+      ctx.session.awaitingTodoTask = true;
       return;
     }
 

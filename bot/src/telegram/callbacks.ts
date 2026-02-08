@@ -5,14 +5,13 @@
  * - Заметки: notes_list, save_to_notes, menu_notes, menu_note_help
  * - Задачи: todos_list, todo_done_N, menu_todos, menu_todo_help
  * - Дайджест: digest_toggle, digest_now, digest_city_help, digest_time_help, menu_digest
- * - Меню: menu_search, menu_imagine, menu_voice, menu_clear, menu_help, show_menu
- * - Действия: read_aloud, confirm_clear, cancel_clear, menu_reminders
+ * - Меню: menu_search, menu_imagine, menu_voice, menu_help, show_menu
+ * - Действия: read_aloud, menu_reminders
  */
 
 import { Bot, InputFile, InlineKeyboard } from 'grammy';
 import type { BotContext } from './bot.js';
 import { telegramLogger } from '../config/logger.js';
-import { conversationsRepo } from '../db/supabase.js';
 import { notesRepo } from '../features/notes-repo.js';
 import { todosRepo } from '../features/todos-repo.js';
 import { userPrefsRepo } from '../features/user-prefs-repo.js';
@@ -24,7 +23,6 @@ import {
   todoDoneKeyboard,
   digestToggleKeyboard,
   digestControlsKeyboard,
-  confirmClearKeyboard,
   notesActionsKeyboard,
   remindersRefreshKeyboard,
 } from './keyboards.js';
@@ -112,10 +110,8 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
 
   bot.callbackQuery('menu_note_help', async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply(
-      '📌 <b>Как создать заметку:</b>\n\n• Напиши: <i>запомни купить молоко</i>\n• Или команда: /note Текст заметки\n\nПросмотр: /notes\nУдаление: /note_delete 1',
-      { parse_mode: 'HTML' }
-    );
+    await ctx.reply('📌 *Что запомнить?*', { parse_mode: 'Markdown' });
+    ctx.session.awaitingNoteContent = true;
   });
 
   // ====== ЗАДАЧИ ======
@@ -189,10 +185,8 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
 
   bot.callbackQuery('menu_todo_help', async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply(
-      '✅ *Как добавить задачу:*\n\nКоманда: `/todo Сделать отчёт`\n\nВыполнить: `/done 1`\nСписок: /todos',
-      { parse_mode: 'Markdown' }
-    );
+    await ctx.reply('✅ *Какую задачу добавить?*', { parse_mode: 'Markdown' });
+    ctx.session.awaitingTodoTask = true;
   });
 
   // ====== ДАЙДЖЕСТ ======
@@ -267,18 +261,14 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
 
   bot.callbackQuery('menu_search', async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply(
-      '🌐 *Поиск в интернете*\n\nНапиши запрос или используй команду:\n`/search курс доллара`\n\nПримеры:\n• _Погода в Минске_\n• _Новости технологий_\n• _Цена биткоина_\n\n💡 Я автоматически ищу в сети когда нужно — просто спроси!',
-      { parse_mode: 'Markdown' }
-    );
+    await ctx.reply('🔍 *Что найти в интернете?*', { parse_mode: 'Markdown' });
+    ctx.session.awaitingSearchQuery = true;
   });
 
   bot.callbackQuery('menu_imagine', async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply(
-      '🎨 *Генерация картинок*\n\nНапиши что нарисовать или используй команду:\n`/imagine кот в космосе`\n\nПримеры:\n• _Нарисуй закат над горами_\n• _Сгенерируй логотип для кафе_\n\n⏱ Генерация занимает 10-30 секунд',
-      { parse_mode: 'Markdown' }
-    );
+    await ctx.reply('🎨 *Что нарисовать?*', { parse_mode: 'Markdown' });
+    ctx.session.awaitingImagePrompt = true;
   });
 
   bot.callbackQuery('menu_reminders', async (ctx) => {
@@ -313,42 +303,6 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
       '🔊 *Голосовые функции*\n\n*Отправь мне:*\n🎤 Голосовое сообщение — я расшифрую и отвечу\n\n*Попроси:*\n• _Скажи голосом привет мир_\n• _Озвучь стихотворение_\n\nТакже можно озвучить любой мой ответ кнопкой 🔊 под сообщением!',
       { parse_mode: 'Markdown' }
     );
-  });
-
-  bot.callbackQuery('menu_clear', async (ctx) => {
-    await ctx.answerCallbackQuery();
-    await ctx.reply(
-      '🧹 *Очистить историю диалога?*\n\n_Все предыдущие сообщения будут забыты._',
-      { parse_mode: 'Markdown', reply_markup: confirmClearKeyboard() }
-    );
-  });
-
-  bot.callbackQuery('confirm_clear', async (ctx) => {
-    const userId = ctx.from?.id.toString() ?? 'unknown';
-    const chatId = ctx.chat?.id ?? 0;
-    
-    // Полная очистка — как в /clear команде
-    const oldConvId = ctx.session.conversationId;
-    ctx.session.messageHistory = [];
-    ctx.session.conversationId = null; // ВАЖНО: сбрасываем ID для создания нового диалога
-    ctx.session.awaitingImagePrompt = false;
-
-    try {
-      // Очищаем сообщения в старом диалоге (данные остаются в Supabase)
-      if (oldConvId) {
-        await conversationsRepo.clearMessages(oldConvId);
-        telegramLogger.info({ userId, conversationId: oldConvId }, 'Conversation messages cleared (callback)');
-      }
-    } catch (err) {
-      telegramLogger.warn({ error: err, userId }, 'Failed to clear conversation history (callback)');
-    }
-    await ctx.answerCallbackQuery({ text: '✅ История очищена!' });
-    await ctx.editMessageText('✅ История диалога очищена. Начнём сначала!');
-  });
-
-  bot.callbackQuery('cancel_clear', async (ctx) => {
-    await ctx.answerCallbackQuery({ text: '↩️ Отменено' });
-    await ctx.editMessageText('↩️ Очистка отменена.');
   });
 
   bot.callbackQuery('menu_help', async (ctx) => {

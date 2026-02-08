@@ -16,7 +16,7 @@ import { config } from '../config/index.js';
 import { telegramLogger } from '../config/logger.js';
 import { aiService } from '../ai/openrouter.js';
 import { processImageWithLLM, transcribeAudio } from '../ai/multimodal.js';
-import { getSearchContext, enhanceResponseIfNeeded, needsWebSearch, webSearch, isWebSearchEnabled, shouldForceWebSearch } from '../ai/websearch.js';
+import { getSearchContext, enhanceResponseIfNeeded, needsWebSearch, webSearch, isWebSearchEnabled, shouldForceWebSearch, searchAndFormat } from '../ai/websearch.js';
 import { conversationsRepo, analyticsRepo } from '../db/supabase.js';
 import { checkTelegramRateLimit } from '../utils/rate-limiter.js';
 import { getErrorCode } from '../utils/error-handler.js';
@@ -35,6 +35,7 @@ import { notesRepo } from '../features/notes-repo.js';
 import { todosRepo } from '../features/todos-repo.js';
 import { userPrefsRepo } from '../features/user-prefs-repo.js';
 import { textToSpeech, detectLanguage } from '../features/tts.js';
+import { sendDigestNow } from '../features/digest-scheduler.js';
 import { verifyResponse } from '../ai/llm-verifier.js';
 import type { AIMessage, AIResponse } from '../../../shared/types/index.js';
 import {
@@ -48,9 +49,9 @@ import {
 import {
   buildMainMenu,
   notesListKeyboard,
+  todosListKeyboard,
   todoDoneKeyboard,
   digestToggleKeyboard,
-  confirmClearKeyboard,
   responseActionsKeyboard,
 } from './keyboards.js';
 
@@ -86,22 +87,19 @@ export const setupMessageHandlers = (bot: Bot<BotContext>): void => {
 
 const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Record<string, () => Promise<void>> => ({
   '🌐 Поиск': async () => {
-    await ctx.reply(
-      '🌐 *Поиск в интернете*\n\nНапиши запрос или: `/search запрос`\n\nПримеры: _погода_, _курс доллара_, _новости_',
-      { parse_mode: 'Markdown' }
-    );
+    await ctx.reply('🔍 *Что найти в интернете?*', { parse_mode: 'Markdown' });
+    ctx.session.awaitingSearchQuery = true;
   },
   '🎨 Картинка': async () => {
-    await ctx.reply(
-      '🎨 *Генерация картинки*\n\nНапиши что нарисовать или: `/imagine описание`\n\nПример: _Нарисуй кота в космосе_',
-      { parse_mode: 'Markdown' }
-    );
+    await ctx.reply('🎨 *Что нарисовать?*', { parse_mode: 'Markdown' });
+    ctx.session.awaitingImagePrompt = true;
   },
   '📌 Заметки': async () => {
     try {
       const notes = await notesRepo.getByUser(userId);
       if (notes.length === 0) {
-        await ctx.reply('📋 У тебя пока нет заметок.\n\nСоздай: /note текст или напиши "запомни ..."');
+        await ctx.reply('📋 *Что запомнить?*', { parse_mode: 'Markdown' });
+        ctx.session.awaitingNoteContent = true;
       } else {
         const lines = notes.map((n, i) => `${i + 1}. ${escapeHtml(n.content)}`);
         const keyboard = new InlineKeyboard().text('📌 Добавить', 'menu_note_help');
@@ -119,12 +117,15 @@ const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Record<strin
     try {
       const todos = await todosRepo.getActive(userId);
       if (todos.length === 0) {
-        await ctx.reply('🎉 Все задачи выполнены!\n\nДобавь: `/todo текст`', { parse_mode: 'Markdown' });
+        await ctx.reply('✅ *Какую задачу добавить?*', { parse_mode: 'Markdown' });
+        ctx.session.awaitingTodoTask = true;
       } else {
         const lines = todos.map((t, i) => `${i + 1}. ☐ ${t.task}`);
+        const keyboard = todoDoneKeyboard(todos.length);
+        keyboard.row().text('➕ Добавить', 'menu_todo_help');
         await ctx.reply(
-          `📋 *Задачи (${todos.length}):*\n\n${lines.join('\n')}\n\n_/done номер для выполнения_`,
-          { parse_mode: 'Markdown', reply_markup: todoDoneKeyboard(todos.length) }
+          `📋 *Задачи (${todos.length}):*\n\n${lines.join('\n')}`,
+          { parse_mode: 'Markdown', reply_markup: keyboard }
         );
       }
     } catch (err) {
@@ -157,11 +158,24 @@ const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Record<strin
       { parse_mode: 'Markdown', reply_markup: digestToggleKeyboard(prefs?.digest_enabled ?? false) }
     );
   },
+  '📰 Дайджест сейчас': async () => {
+    const chatId = ctx.chat?.id ?? 0;
+    const prefs = await userPrefsRepo.getOrCreate(userId, chatId, ctx.from?.first_name);
+    await ctx.reply('☀️ Собираю дайджест... Это может занять 15-30 секунд.');
+    await ctx.replyWithChatAction('typing');
+    try {
+      await sendDigestNow(
+        { api: ctx.api }, userId, chatId,
+        prefs.first_name || ctx.from?.first_name || null,
+        prefs.digest_city || 'Гродно'
+      );
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Digest now failed via button');
+      await ctx.reply('😔 Не удалось собрать дайджест. Попробуй позже.');
+    }
+  },
   '📋 Меню': async () => {
     await ctx.reply('🎛 *Меню Amina* — выбери действие:', { parse_mode: 'Markdown', reply_markup: buildMainMenu() });
-  },
-  '🧹 Очистить': async () => {
-    await ctx.reply('🧹 *Очистить историю?*', { parse_mode: 'Markdown', reply_markup: confirmClearKeyboard() });
   },
 });
 
@@ -575,6 +589,56 @@ const handleTextMessage = async (ctx: BotContext): Promise<void> => {
       telegramLogger.error({ error, userId, prompt: userMessage }, 'Image generation failed');
       await ctx.reply(`😔 ${errorMsg}`);
       analyticsRepo.log('error', 'telegram', { userId, error: errorMsg }).catch(() => {});
+    }
+    return;
+  }
+
+  // === Ожидание задачи для /todo ===
+  if (ctx.session.awaitingTodoTask) {
+    ctx.session.awaitingTodoTask = false;
+    try {
+      await todosRepo.create(userId, userMessage);
+      await ctx.reply(`✅ Задача добавлена!\n\n☐ _${escapeMarkdown(userMessage)}_`, {
+        parse_mode: 'Markdown',
+        reply_markup: todosListKeyboard(),
+      });
+      telegramLogger.info({ userId, task: userMessage }, 'Todo created via awaiting');
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Не удалось добавить задачу.';
+      await ctx.reply(`😔 ${errorMsg}`);
+    }
+    return;
+  }
+
+  // === Ожидание заметки для /note ===
+  if (ctx.session.awaitingNoteContent) {
+    ctx.session.awaitingNoteContent = false;
+    try {
+      await notesRepo.create(userId, userMessage);
+      await ctx.reply(`📌 Заметка сохранена!\n\n<i>${escapeHtml(userMessage)}</i>`, {
+        parse_mode: 'HTML',
+        reply_markup: notesListKeyboard(),
+      });
+      telegramLogger.info({ userId }, 'Note created via awaiting');
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Не удалось сохранить заметку.';
+      await ctx.reply(`😔 ${errorMsg}`);
+    }
+    return;
+  }
+
+  // === Ожидание поискового запроса для /search ===
+  if (ctx.session.awaitingSearchQuery) {
+    ctx.session.awaitingSearchQuery = false;
+    telegramLogger.info({ userId, query: userMessage }, 'Search requested via awaiting');
+    await ctx.replyWithChatAction('typing');
+    try {
+      const result = await searchAndFormat(userMessage);
+      await sendLongMessage(ctx, result);
+    } catch (error) {
+      const errorCode = getErrorCode(error);
+      telegramLogger.warn({ error, errorCode, userId }, 'Awaiting search failed');
+      await ctx.reply('😔 Не удалось найти информацию. Попробуй переформулировать.');
     }
     return;
   }

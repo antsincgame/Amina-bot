@@ -24,8 +24,8 @@ export const buildMainMenu = (): InlineKeyboard => {
     .text('⏰ Напоминания', 'menu_reminders')
     .text('☀️ Дайджест', 'menu_digest')
     .row()
+    .text('📰 Дайджест сейчас', 'digest_now')
     .text('🔊 Голос', 'menu_voice')
-    .text('🧹 Очистить', 'menu_clear')
     .row()
     .text('📋 Все команды', 'menu_help');
 };
@@ -37,7 +37,7 @@ export const buildReplyKeyboard = (): Keyboard => {
     .row()
     .text('✅ Задачи').text('⏰ Напоминания').text('☀️ Дайджест')
     .row()
-    .text('📋 Меню').text('🧹 Очистить')
+    .text('📰 Дайджест сейчас').text('📋 Меню')
     .resized()
     .persistent();
 };
@@ -76,12 +76,6 @@ export const digestControlsKeyboard = (enabled: boolean): InlineKeyboard =>
 /** Кнопка вкл/выкл дайджеста */
 export const digestToggleKeyboard = (enabled: boolean): InlineKeyboard =>
   new InlineKeyboard().text(enabled ? '🔕 Выключить' : '🔔 Включить', 'digest_toggle');
-
-/** Кнопки подтверждения очистки */
-export const confirmClearKeyboard = (): InlineKeyboard =>
-  new InlineKeyboard()
-    .text('✅ Да, очистить', 'confirm_clear')
-    .text('❌ Отмена', 'cancel_clear');
 
 /** Кнопки под ответом AI (сохранить/озвучить/меню) */
 export const responseActionsKeyboard = (): InlineKeyboard =>
