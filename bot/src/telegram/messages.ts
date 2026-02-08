@@ -10,7 +10,7 @@
  */
 
 import { Bot, InputFile, InlineKeyboard } from 'grammy';
-import type { BotContext, SessionData } from './bot.js';
+import type { BotContext } from './bot.js';
 import { MAX_HISTORY_MESSAGES } from './bot.js';
 import { config } from '../config/index.js';
 import { telegramLogger } from '../config/logger.js';
@@ -36,7 +36,7 @@ import { todosRepo } from '../features/todos-repo.js';
 import { userPrefsRepo } from '../features/user-prefs-repo.js';
 import { textToSpeech, detectLanguage } from '../features/tts.js';
 import { verifyResponse } from '../ai/llm-verifier.js';
-import type { Message, AIMessage, AIResponse } from '../../../shared/types/index.js';
+import type { AIMessage, AIResponse } from '../../../shared/types/index.js';
 import {
   escapeMarkdown,
   escapeHtml,
@@ -110,7 +110,10 @@ const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Record<strin
           { parse_mode: 'HTML', reply_markup: keyboard }
         );
       }
-    } catch { await ctx.reply('😔 Не удалось загрузить заметки.'); }
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to load notes via button');
+      await ctx.reply('😔 Не удалось загрузить заметки.');
+    }
   },
   '✅ Задачи': async () => {
     try {
@@ -124,7 +127,10 @@ const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Record<strin
           { parse_mode: 'Markdown', reply_markup: todoDoneKeyboard(todos.length) }
         );
       }
-    } catch { await ctx.reply('😔 Не удалось загрузить задачи.'); }
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to load todos via button');
+      await ctx.reply('😔 Не удалось загрузить задачи.');
+    }
   },
   '⏰ Напоминания': async () => {
     try {
@@ -138,7 +144,10 @@ const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Record<strin
         });
         await ctx.reply(`⏰ *Напоминания (${reminders.length}):*\n\n${lines.join('\n')}\n\n_/remind\\_cancel номер_`, { parse_mode: 'Markdown' });
       }
-    } catch { await ctx.reply('😔 Не удалось загрузить напоминания.'); }
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to load reminders via button');
+      await ctx.reply('😔 Не удалось загрузить напоминания.');
+    }
   },
   '☀️ Дайджест': async () => {
     const prefs = await userPrefsRepo.get(userId);
@@ -246,7 +255,8 @@ const handleAutoDetections = async (
         const audio = await textToSpeech(ttsText, lang);
         if (audio) await ctx.replyWithVoice(new InputFile(audio, 'voice.mp3'));
         else await ctx.reply('😔 Не удалось сгенерировать аудио. Попробуй позже.');
-      } catch {
+      } catch (err) {
+        telegramLogger.warn({ error: err, userId }, 'TTS generation failed');
         await ctx.reply('😔 Ошибка генерации голоса.');
       }
       return true;
@@ -264,7 +274,8 @@ const handleAutoDetections = async (
           parse_mode: 'HTML',
           reply_markup: notesListKeyboard(),
         });
-      } catch {
+      } catch (err) {
+        telegramLogger.warn({ error: err, userId }, 'Failed to save note via auto-detect');
         await ctx.reply('😔 Не удалось сохранить заметку.');
       }
       return true;
@@ -367,23 +378,115 @@ const addSearchWarning = (fullContext: string, userMessage: string, webSearchCon
   return fullContext;
 };
 
+/** Маппинг кодов ошибок → сообщения для пользователя */
+const AI_ERROR_MESSAGES: Record<string, string> = {
+  MODEL_NOT_FOUND: '❌ Модель AI не найдена!\n\nТекущая модель не существует на OpenRouter.\nАдминистратор должен изменить модель в настройках:\nhttps://amina-admin.onrender.com/settings',
+  AUTH_ERROR: '🔑 Ошибка авторизации AI!\n\nНеверный API ключ OpenRouter.\nАдминистратор должен проверить настройки в Render.',
+  RATE_LIMIT: '⏳ Слишком много запросов!\n\nЛимит OpenRouter превышен. Подожди минуту и попробуй снова.',
+  PAYMENT_REQUIRED: '💳 Пополни баланс на OpenRouter или выбери бесплатную модель в админке.',
+  ALL_MODELS_FAILED: '🔄 Все бесплатные модели AI заняты.\n\nПопробуй через 30 секунд или напиши /start для сброса.',
+  RACE_TIMEOUT: '⏰ AI отвечает слишком долго.\n\nПопробуй ещё раз — может повезёт быстрее!',
+  SERVER_ERROR: '🔧 Сервер AI временно недоступен.\n\nПопробуй через несколько минут.',
+};
+
+const AI_ERROR_DEFAULT = '😔 Извини, произошла ошибка. Попробуй ещё раз или напиши /clear для сброса диалога.';
+
 /** Форматирует ошибку AI для пользователя */
 const formatAIError = (errorCode: string | undefined, errorMessage: string): string => {
-  if (errorCode === 'MODEL_NOT_FOUND' || errorMessage.includes('MODEL_NOT_FOUND'))
-    return '❌ Модель AI не найдена!\n\nТекущая модель не существует на OpenRouter.\nАдминистратор должен изменить модель в настройках:\nhttps://amina-admin.onrender.com/settings';
-  if (errorCode === 'AUTH_ERROR' || errorMessage.includes('AUTH_ERROR'))
-    return '🔑 Ошибка авторизации AI!\n\nНеверный API ключ OpenRouter.\nАдминистратор должен проверить настройки в Render.';
-  if (errorCode === 'RATE_LIMIT' || errorMessage.includes('429') || errorMessage.includes('rate limit'))
-    return '⏳ Слишком много запросов!\n\nЛимит OpenRouter превышен. Подожди минуту и попробуй снова.';
-  if (errorCode === 'PAYMENT_REQUIRED')
-    return '💳 Пополни баланс на OpenRouter или выбери бесплатную модель в админке.';
-  if (errorCode === 'ALL_MODELS_FAILED' || errorMessage.includes('ALL_MODELS_FAILED'))
-    return '🔄 Все бесплатные модели AI заняты.\n\nПопробуй через 30 секунд или напиши /start для сброса.';
-  if (errorCode === 'RACE_TIMEOUT' || errorMessage.includes('RACE_TIMEOUT'))
-    return '⏰ AI отвечает слишком долго.\n\nПопробуй ещё раз — может повезёт быстрее!';
-  if (errorCode === 'SERVER_ERROR' || errorMessage.includes('500') || errorMessage.includes('502'))
-    return '🔧 Сервер AI временно недоступен.\n\nПопробуй через несколько минут.';
-  return '😔 Извини, произошла ошибка. Попробуй ещё раз или напиши /clear для сброса диалога.';
+  if (errorCode && AI_ERROR_MESSAGES[errorCode]) return AI_ERROR_MESSAGES[errorCode];
+  // Fallback: ищем код в тексте ошибки
+  for (const [code, msg] of Object.entries(AI_ERROR_MESSAGES)) {
+    if (errorMessage.includes(code)) return msg;
+  }
+  if (errorMessage.includes('429') || errorMessage.includes('rate limit')) return AI_ERROR_MESSAGES.RATE_LIMIT ?? AI_ERROR_DEFAULT;
+  if (errorMessage.includes('500') || errorMessage.includes('502')) return AI_ERROR_MESSAGES.SERVER_ERROR ?? AI_ERROR_DEFAULT;
+  return AI_ERROR_DEFAULT;
+};
+
+// ============================================
+// Shared AI Response Pipeline (DRY)
+// ============================================
+
+/**
+ * Общий пайплайн обработки сообщения через AI.
+ * Используется и для текста, и для голоса — устраняет ~80% дублирования.
+ */
+const processMessageThroughAI = async (
+  ctx: BotContext,
+  userText: string,
+  userId: string,
+  chatId: number,
+  startTime: number,
+  telegramInfo: TelegramUserInfo,
+  messageType: 'message' | 'voice',
+  extraMetadata?: Record<string, unknown>,
+): Promise<void> => {
+  // Ensure conversation
+  await ensureConversation(ctx, userId, chatId);
+
+  // Build context in parallel
+  const { memoryContext, webSearchContext } = await buildFullContext(userId, userText, telegramInfo.first_name, telegramInfo);
+
+  // Add to history
+  ctx.session.messageHistory.push({ role: 'user', content: userText });
+  if (ctx.session.messageHistory.length > MAX_HISTORY_MESSAGES) {
+    ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
+  }
+
+  // Build full context with search warning
+  let fullContext = memoryContext + webSearchContext;
+  fullContext = addSearchWarning(fullContext, userText, webSearchContext, userId);
+
+  // Get AI response
+  let aiResponse = await aiService.chat(ctx.session.messageHistory, 'telegram', fullContext);
+
+  // Enhance with web search if AI is uncertain
+  if (!webSearchContext) {
+    const enhanced = await enhanceResponseIfNeeded(userText, aiResponse.content);
+    if (enhanced.wasEnhanced) {
+      aiResponse = { ...aiResponse, content: enhanced.response };
+      telegramLogger.info({ userId }, `${messageType}: response enhanced with web search`);
+    }
+  }
+
+  // Verify & protect from search simulation (text messages get full verification)
+  if (messageType === 'message') {
+    aiResponse = await processAIResponse(aiResponse, userText, userId, webSearchContext);
+  }
+
+  // Save to history (skip fake search responses)
+  if (!looksLikeSearchSimulation(aiResponse.content)) {
+    ctx.session.messageHistory.push({ role: 'assistant', content: aiResponse.content });
+  } else {
+    telegramLogger.warn({ userId }, `${messageType}: blocked search simulation from history`);
+    aiResponse = { ...aiResponse, content: '😔 К сожалению, не удалось получить актуальные данные из интернета. Попробуй позже или используй /search.' };
+  }
+
+  // Post-AI image interception
+  if (await tryPostAIImageInterception(ctx, aiResponse.content, userText, userId)) return;
+
+  // Send response
+  await sendLongMessage(ctx, aiResponse.content, responseActionsKeyboard());
+
+  // Fire-and-forget DB writes
+  const responseTime = Date.now() - startTime;
+  const convId = ctx.session.conversationId;
+  userProfileRepo.updateOnMessage(userId, messageType, aiResponse.tokens_used.total, telegramInfo).catch(() => {});
+  userLogsRepo.add(userId, 'ai_response', aiResponse.content, { chatId, type: messageType, responseLength: aiResponse.content.length }, {
+    model: aiResponse.model, tokensPrompt: aiResponse.tokens_used.prompt, tokensCompletion: aiResponse.tokens_used.completion, responseTimeMs: responseTime,
+  }).catch(() => {});
+  memoryExtractor.extractFacts(userId, userText, aiResponse.content).catch(() => {});
+
+  if (convId) {
+    const nowISO = new Date().toISOString();
+    Promise.all([
+      conversationsRepo.addMessage(convId, { role: 'user', content: userText, timestamp: nowISO, metadata: extraMetadata }),
+      conversationsRepo.addMessage(convId, { role: 'assistant', content: aiResponse.content, timestamp: nowISO, metadata: { tokens_used: aiResponse.tokens_used.total, model: aiResponse.model } }),
+      analyticsRepo.log('ai_response', 'telegram', { userId, type: messageType, model: aiResponse.model, tokens: aiResponse.tokens_used.total }),
+    ]).catch((err) => { telegramLogger.warn({ error: err, userId }, `Background ${messageType} DB writes failed`); });
+  }
+
+  telegramLogger.info({ userId, tokens: aiResponse.tokens_used.total, responseTimeMs: responseTime }, `${messageType} response sent`);
 };
 
 // ============================================
@@ -454,16 +557,13 @@ const handleTextMessage = async (ctx: BotContext): Promise<void> => {
   if (buttonHandler) { await buttonHandler(); return; }
 
   const telegramInfo: TelegramUserInfo = {
-    id: ctx.from?.id ?? 0,
-    username: ctx.from?.username,
-    first_name: ctx.from?.first_name,
-    last_name: ctx.from?.last_name,
+    id: ctx.from?.id ?? 0, username: ctx.from?.username,
+    first_name: ctx.from?.first_name, last_name: ctx.from?.last_name,
     language_code: ctx.from?.language_code,
   };
 
   telegramLogger.debug({ userId, chatId, messageLength: userMessage.length }, 'Text message received');
 
-  // Rate limit
   const rateLimitResult = checkTelegramRateLimit(userId);
   if (!rateLimitResult.allowed) {
     telegramLogger.warn({ userId }, 'Rate limit exceeded');
@@ -471,97 +571,44 @@ const handleTextMessage = async (ctx: BotContext): Promise<void> => {
     return;
   }
 
-  // Fire-and-forget analytics
   analyticsRepo.log('message_received', 'telegram', { userId, chatId, messageLength: userMessage.length }).catch(() => {});
   userLogsRepo.add(userId, 'message', userMessage, { chatId, messageLength: userMessage.length }).catch(() => {});
-
   await ctx.replyWithChatAction('typing');
 
   try {
-    // Auto-detections (reminders, images, TTS, notes)
     if (await handleAutoDetections(ctx, userMessage, userId, chatId)) return;
 
-    // Direct web search (bypasses LLM for factual queries)
     if (shouldForceWebSearch(userMessage) || needsWebSearch(userMessage)) {
       const handled = await handleDirectWebSearch(ctx, userMessage, userId, chatId, startTime);
       if (handled) return;
     }
 
-    // Ensure conversation
-    await ensureConversation(ctx, userId, chatId);
-
-    // Build context in parallel
-    const { memoryContext, webSearchContext } = await buildFullContext(userId, userMessage, ctx.from?.first_name, telegramInfo);
-
-    // Add to history
-    ctx.session.messageHistory.push({ role: 'user', content: userMessage });
-    if (ctx.session.messageHistory.length > MAX_HISTORY_MESSAGES) {
-      ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
-    }
-
-    // Build full context with search warning
-    let fullContext = memoryContext + webSearchContext;
-    fullContext = addSearchWarning(fullContext, userMessage, webSearchContext, userId);
-
-    // Get AI response
-    let response = await aiService.chat(ctx.session.messageHistory, 'telegram', fullContext);
-
-    // Enhance with web search if AI is uncertain
-    if (!webSearchContext) {
-      const enhanced = await enhanceResponseIfNeeded(userMessage, response.content);
-      if (enhanced.wasEnhanced) {
-        response = { ...response, content: enhanced.response };
-        telegramLogger.info({ userId }, 'Response enhanced with web search');
-      }
-    }
-
-    // Verify & protect from search simulation
-    response = await processAIResponse(response, userMessage, userId, webSearchContext);
-
-    // Save to history (skip fake search responses)
-    if (!looksLikeSearchSimulation(response.content)) {
-      ctx.session.messageHistory.push({ role: 'assistant', content: response.content });
-    } else {
-      telegramLogger.warn({ userId }, 'Blocked search simulation from being saved to history');
-    }
-
-    // === POST-AI IMAGE INTERCEPTION ===
-    // Если AI ответила про картинки — перехватываем и генерируем вместо отправки отказа
-    if (await tryPostAIImageInterception(ctx, response.content, userMessage, userId)) {
-      return; // Картинка отправлена, не отправляем текстовый ответ AI
-    }
-
-    // Send response IMMEDIATELY, before DB writes
-    await sendLongMessage(ctx, response.content, responseActionsKeyboard());
-
-    // Fire-and-forget DB writes
-    const responseTime = Date.now() - startTime;
-    userProfileRepo.updateOnMessage(userId, 'message', response.tokens_used.total, telegramInfo).catch(() => {});
-    userLogsRepo.add(userId, 'ai_response', response.content, { chatId, responseLength: response.content.length }, {
-      model: response.model, tokensPrompt: response.tokens_used.prompt, tokensCompletion: response.tokens_used.completion, responseTimeMs: responseTime,
-    }).catch(() => {});
-    memoryExtractor.extractFacts(userId, userMessage, response.content).catch(() => {});
-
-    const nowISO = new Date().toISOString();
-    Promise.all([
-      conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'user', content: userMessage, timestamp: nowISO }),
-      conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'assistant', content: response.content, timestamp: nowISO, metadata: { tokens_used: response.tokens_used.total, model: response.model } }),
-      analyticsRepo.log('ai_response', 'telegram', { userId, model: response.model, tokens: response.tokens_used.total }),
-    ]).catch((err) => { telegramLogger.warn({ error: err, userId }, 'Background DB writes failed'); });
-
-    telegramLogger.info({ userId, tokens: response.tokens_used.total, responseTimeMs: responseTime }, 'Response sent');
+    await processMessageThroughAI(ctx, userMessage, userId, chatId, startTime, telegramInfo, 'message');
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
     const errorCode = getErrorCode(error);
     telegramLogger.error({ error, userId, errorCode }, 'Failed to process message');
-    analyticsRepo.log('error', 'telegram', { userId, error: errorMessage, errorCode }).catch(() => {});
-    await ctx.reply(formatAIError(errorCode, errorMessage));
+    analyticsRepo.log('error', 'telegram', { userId, error: errorMsg, errorCode }).catch(() => {});
+    await ctx.reply(formatAIError(errorCode, errorMsg));
   }
 };
 
 // ============================================
 // Voice Message Handler
 // ============================================
+
+/** Маппинг кодов ошибок голоса → сообщения */
+const VOICE_ERROR_MESSAGES: Record<string, string> = {
+  AUDIO_MODEL_NOT_FOUND: '🔧 Audio модель не найдена.\n\nОбратитесь к администратору.',
+  AUDIO_NOT_SUPPORTED: '🔧 Модель не поддерживает аудио.\n\nОбратитесь к администратору.',
+  AUTH_ERROR: '🔑 Ошибка авторизации API. Обратитесь к администратору.',
+  GROQ_AUTH_ERROR: '🔑 Ошибка авторизации API. Обратитесь к администратору.',
+  RATE_LIMIT: '⏳ Слишком много запросов! Подожди минуту.',
+  ALL_MODELS_FAILED: '🔄 Все модели AI заняты. Попробуй через 30 секунд.',
+  RACE_TIMEOUT: '⏰ AI отвечает слишком долго. Попробуй ещё раз!',
+  SERVER_ERROR: '🔧 Сервер AI временно недоступен.',
+  FILE_TOO_LARGE: '📁 Голосовое сообщение слишком длинное.',
+};
 
 const handleVoiceMessage = async (ctx: BotContext): Promise<void> => {
   const userId = ctx.from?.id.toString() ?? 'unknown';
@@ -581,7 +628,7 @@ const handleVoiceMessage = async (ctx: BotContext): Promise<void> => {
   await ctx.replyWithChatAction('typing');
 
   try {
-    // Download voice file
+    // Download & transcribe voice
     const file = await ctx.getFile();
     if (!file.file_path) throw Object.assign(new Error('Telegram не вернул путь к файлу'), { code: 'FILE_NOT_FOUND' });
     const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
@@ -590,13 +637,7 @@ const handleVoiceMessage = async (ctx: BotContext): Promise<void> => {
     const response = await fetch(fileUrl);
     if (!response.ok) throw new Error(`Failed to download voice file: ${response.status}`);
 
-    const audioBuffer = await response.arrayBuffer();
-    const audioBase64 = Buffer.from(audioBuffer).toString('base64');
-
-    // Ensure conversation
-    await ensureConversation(ctx, userId, chatId);
-
-    // Transcribe
+    const audioBase64 = Buffer.from(await response.arrayBuffer()).toString('base64');
     const transcription = await transcribeAudio(audioBase64, 'audio/ogg');
     const transcribedText = transcription.text;
     telegramLogger.debug({ userId, transcription: transcribedText.substring(0, 100) }, 'Voice transcribed');
@@ -616,78 +657,14 @@ const handleVoiceMessage = async (ctx: BotContext): Promise<void> => {
       if (handled) return;
     }
 
-    // Build context
-    const { memoryContext, webSearchContext } = await buildFullContext(userId, transcribedText, ctx.from?.first_name, telegramInfo);
-
-    // Add to history
-    ctx.session.messageHistory.push({ role: 'user', content: transcribedText });
-    if (ctx.session.messageHistory.length > MAX_HISTORY_MESSAGES) {
-      ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
-    }
-
-    let fullContext = memoryContext + webSearchContext;
-    fullContext = addSearchWarning(fullContext, transcribedText, webSearchContext, userId);
-
-    let aiResponse = await aiService.chat(ctx.session.messageHistory, 'telegram', fullContext);
-
-    // Enhance if uncertain
-    if (!webSearchContext) {
-      const enhanced = await enhanceResponseIfNeeded(transcribedText, aiResponse.content);
-      if (enhanced.wasEnhanced) {
-        aiResponse = { ...aiResponse, content: enhanced.response };
-        telegramLogger.info({ userId }, 'Voice response enhanced with web search');
-      }
-    }
-
-    // Context poisoning protection
-    if (!looksLikeSearchSimulation(aiResponse.content)) {
-      ctx.session.messageHistory.push({ role: 'assistant', content: aiResponse.content });
-    } else {
-      telegramLogger.warn({ userId }, 'Voice: blocked search simulation from history');
-      aiResponse = { ...aiResponse, content: '😔 К сожалению, не удалось получить актуальные данные из интернета. Попробуй позже или используй /search.' };
-    }
-
-    // === POST-AI IMAGE INTERCEPTION (VOICE) ===
-    if (await tryPostAIImageInterception(ctx, aiResponse.content, transcribedText, userId)) {
-      return;
-    }
-
-    // Send response
-    await sendLongMessage(ctx, aiResponse.content, responseActionsKeyboard());
-
-    // Fire-and-forget DB writes
-    const responseTime = Date.now() - startTime;
-    userProfileRepo.updateOnMessage(userId, 'voice', aiResponse.tokens_used.total, telegramInfo).catch(() => {});
-    userLogsRepo.add(userId, 'ai_response', aiResponse.content, { chatId, type: 'voice', responseLength: aiResponse.content.length }, {
-      model: aiResponse.model, tokensPrompt: aiResponse.tokens_used.prompt, tokensCompletion: aiResponse.tokens_used.completion, responseTimeMs: responseTime,
-    }).catch(() => {});
-    memoryExtractor.extractFacts(userId, transcribedText, aiResponse.content).catch(() => {});
-
-    const nowISO = new Date().toISOString();
-    Promise.all([
-      conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'user', content: transcribedText, timestamp: nowISO, metadata: { type: 'voice', voice_duration: duration } }),
-      conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'assistant', content: aiResponse.content, timestamp: nowISO, metadata: { tokens_used: aiResponse.tokens_used.total, model: aiResponse.model } }),
-      analyticsRepo.log('ai_response', 'telegram', { userId, type: 'voice', model: aiResponse.model, tokens: aiResponse.tokens_used.total }),
-    ]).catch((err) => { telegramLogger.warn({ error: err, userId }, 'Background voice DB writes failed'); });
-
-    telegramLogger.info({ userId, tokens: aiResponse.tokens_used.total, responseTimeMs: responseTime }, 'Voice response sent');
+    // Use shared AI pipeline
+    await processMessageThroughAI(ctx, transcribedText, userId, chatId, startTime, telegramInfo, 'voice', { type: 'voice', voice_duration: duration });
   } catch (error) {
     telegramLogger.error({ error, userId }, 'Failed to process voice message');
     const errorCode = getErrorCode(error);
-    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-    analyticsRepo.log('error', 'telegram', { userId, type: 'voice', error: errorMessage, errorCode }).catch(() => {});
-
-    let errorReply = '😔 Не удалось обработать голосовое сообщение. Попробуй ещё раз или отправь текст.';
-    if (errorCode === 'AUDIO_MODEL_NOT_FOUND') errorReply = '🔧 Audio модель не найдена.\n\nОбратитесь к администратору.';
-    else if (errorCode === 'AUDIO_NOT_SUPPORTED') errorReply = '🔧 Модель не поддерживает аудио.\n\nОбратитесь к администратору.';
-    else if (errorCode === 'AUTH_ERROR' || errorCode === 'GROQ_AUTH_ERROR') errorReply = '🔑 Ошибка авторизации API. Обратитесь к администратору.';
-    else if (errorCode === 'RATE_LIMIT') errorReply = '⏳ Слишком много запросов! Подожди минуту.';
-    else if (errorCode === 'ALL_MODELS_FAILED') errorReply = '🔄 Все модели AI заняты. Попробуй через 30 секунд.';
-    else if (errorCode === 'RACE_TIMEOUT') errorReply = '⏰ AI отвечает слишком долго. Попробуй ещё раз!';
-    else if (errorCode === 'SERVER_ERROR') errorReply = '🔧 Сервер AI временно недоступен.';
-    else if (errorCode === 'FILE_TOO_LARGE') errorReply = '📁 Голосовое сообщение слишком длинное.';
-
-    await ctx.reply(errorReply);
+    const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+    analyticsRepo.log('error', 'telegram', { userId, type: 'voice', error: errorMsg, errorCode }).catch(() => {});
+    await ctx.reply(errorCode ? (VOICE_ERROR_MESSAGES[errorCode] ?? formatAIError(errorCode, errorMsg)) : formatAIError(errorCode, errorMsg));
   }
 };
 
@@ -732,12 +709,15 @@ const handlePhotoMessage = async (ctx: BotContext): Promise<void> => {
       ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
     }
 
-    const nowISO = new Date().toISOString();
-    Promise.all([
-      conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'user', content: userContent, timestamp: nowISO, metadata: { type: 'photo', width: largestPhoto.width, height: largestPhoto.height } }),
-      conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'assistant', content: aiResponse.content, timestamp: nowISO, metadata: { tokens_used: aiResponse.tokens_used.total, model: aiResponse.model } }),
-      analyticsRepo.log('ai_response', 'telegram', { userId, type: 'photo', model: aiResponse.model, tokens: aiResponse.tokens_used.total }),
-    ]).catch(() => {});
+    const convId = ctx.session.conversationId;
+    if (convId) {
+      const nowISO = new Date().toISOString();
+      Promise.all([
+        conversationsRepo.addMessage(convId, { role: 'user', content: userContent, timestamp: nowISO, metadata: { type: 'photo', width: largestPhoto.width, height: largestPhoto.height } }),
+        conversationsRepo.addMessage(convId, { role: 'assistant', content: aiResponse.content, timestamp: nowISO, metadata: { tokens_used: aiResponse.tokens_used.total, model: aiResponse.model } }),
+        analyticsRepo.log('ai_response', 'telegram', { userId, type: 'photo', model: aiResponse.model, tokens: aiResponse.tokens_used.total }),
+      ]).catch((err) => { telegramLogger.warn({ error: err, userId }, 'Background photo DB writes failed'); });
+    }
 
     await sendLongMessage(ctx, aiResponse.content);
     telegramLogger.info({ userId, tokens: aiResponse.tokens_used.total }, 'Photo response sent');
@@ -802,12 +782,15 @@ const handleDocumentMessage = async (ctx: BotContext): Promise<void> => {
       ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
     }
 
-    const nowISO = new Date().toISOString();
-    Promise.all([
-      conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'user', content: userContent, timestamp: nowISO, metadata: { type: 'document_image', fileName: document.file_name } }),
-      conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'assistant', content: aiResponse.content, timestamp: nowISO, metadata: { tokens_used: aiResponse.tokens_used.total, model: aiResponse.model } }),
-      analyticsRepo.log('ai_response', 'telegram', { userId, type: 'document_image', model: aiResponse.model, tokens: aiResponse.tokens_used.total }),
-    ]).catch(() => {});
+    const convId = ctx.session.conversationId;
+    if (convId) {
+      const nowISO = new Date().toISOString();
+      Promise.all([
+        conversationsRepo.addMessage(convId, { role: 'user', content: userContent, timestamp: nowISO, metadata: { type: 'document_image', fileName: document.file_name } }),
+        conversationsRepo.addMessage(convId, { role: 'assistant', content: aiResponse.content, timestamp: nowISO, metadata: { tokens_used: aiResponse.tokens_used.total, model: aiResponse.model } }),
+        analyticsRepo.log('ai_response', 'telegram', { userId, type: 'document_image', model: aiResponse.model, tokens: aiResponse.tokens_used.total }),
+      ]).catch((err) => { telegramLogger.warn({ error: err, userId }, 'Background document DB writes failed'); });
+    }
 
     await sendLongMessage(ctx, aiResponse.content);
     telegramLogger.info({ userId }, 'Document image response sent');
@@ -883,8 +866,12 @@ const handleDirectWebSearch = async (
       username: ctx.from?.username, language_code: ctx.from?.language_code,
     };
     userProfileRepo.updateOnMessage(userId, 'message', response.tokens_used.total, telegramInfo).catch(() => {});
-    conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'user', content: userMessage, timestamp: new Date().toISOString() }).catch(() => {});
-    conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'assistant', content: finalContent, timestamp: new Date().toISOString() }).catch(() => {});
+    const convId = ctx.session.conversationId;
+    if (convId) {
+      const nowISO = new Date().toISOString();
+      conversationsRepo.addMessage(convId, { role: 'user', content: userMessage, timestamp: nowISO }).catch((err) => { telegramLogger.warn({ error: err }, 'Search DB write failed'); });
+      conversationsRepo.addMessage(convId, { role: 'assistant', content: finalContent, timestamp: nowISO }).catch((err) => { telegramLogger.warn({ error: err }, 'Search DB write failed'); });
+    }
     analyticsRepo.log('message_sent', 'telegram', { userId, model: response.model, tokens: response.tokens_used.total, responseTimeMs: responseTime, webSearch: true, webSearchModel: searchResult.model }).catch(() => {});
 
     telegramLogger.info({ userId, responseTimeMs: responseTime, webSearchModel: searchResult.model }, 'Direct search response sent');

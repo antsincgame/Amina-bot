@@ -344,10 +344,12 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
 
   aiLogger.info({ prompt, model: DEFAULT_MODEL }, 'Generating image via HF FLUX.1-schnell');
 
+  // Таймаут с корректной очисткой — предотвращает утечку таймера
+  let genTimeoutId: ReturnType<typeof setTimeout> | undefined;
+
   try {
-    // Promise.race для таймаута — HF InferenceClient не поддерживает AbortSignal
     const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => {
+      genTimeoutId = setTimeout(() => {
         reject(Object.assign(
           new Error('Генерация заняла слишком долго. Попробуй более простой промпт.'),
           { code: 'HF_TIMEOUT', name: 'AbortError' }
@@ -443,6 +445,8 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
       ),
       { code: 'HF_GENERATION_ERROR' }
     );
+  } finally {
+    if (genTimeoutId) clearTimeout(genTimeoutId);
   }
 }
 

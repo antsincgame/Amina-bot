@@ -49,7 +49,8 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
         `📋 <b>Заметки (${notes.length}):</b>\n\n${lines.join('\n')}`,
         { parse_mode: 'HTML' }
       );
-    } catch {
+    } catch (err) {
+      telegramLogger.warn({ error: err }, 'Failed to load notes list (callback)');
       await ctx.editMessageText('😔 Не удалось загрузить заметки.');
     }
   });
@@ -66,7 +67,6 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
     try {
       // Извлекаем полезный контент — убираем служебные фразы AI
       let content = messageText;
-      // Если AI ответил "Запомнила! Заметка создана: "текст"" — извлекаем текст
       const aiNoteMatch = content.match(/[Зз]аметка создана[:\s]*["«](.+?)["»]/s);
       if (aiNoteMatch?.[1]) {
         content = aiNoteMatch[1];
@@ -80,7 +80,8 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
 
       await notesRepo.create(userId, content);
       await ctx.answerCallbackQuery({ text: '📌 Сохранено в заметки!' });
-    } catch {
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to save note (callback)');
       await ctx.answerCallbackQuery({ text: '❌ Не удалось сохранить' });
     }
   });
@@ -103,7 +104,8 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
           { parse_mode: 'HTML', reply_markup: notesActionsKeyboard() }
         );
       }
-    } catch {
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to load notes menu (callback)');
       await ctx.reply('😔 Не удалось загрузить заметки.');
     }
   });
@@ -156,7 +158,8 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
       } else {
         await ctx.answerCallbackQuery({ text: '❌ Задача не найдена' });
       }
-    } catch {
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to complete todo (callback)');
       await ctx.answerCallbackQuery({ text: '❌ Ошибка' });
     }
   });
@@ -178,7 +181,8 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
           { parse_mode: 'Markdown', reply_markup: keyboard }
         );
       }
-    } catch {
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to load todos menu (callback)');
       await ctx.reply('😔 Не удалось загрузить задачи.');
     }
   });
@@ -205,7 +209,8 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
         `☀️ *Утренний дайджест*\n\nСтатус: ${newState ? '✅ Включён' : '❌ Выключен'}`,
         { parse_mode: 'Markdown', reply_markup: digestToggleKeyboard(newState) }
       );
-    } catch {
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to toggle digest (callback)');
       await ctx.answerCallbackQuery({ text: '❌ Ошибка' });
     }
   });
@@ -222,7 +227,8 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
         prefs.first_name || ctx.from?.first_name || null,
         prefs.digest_city || 'Минск'
       );
-    } catch {
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to send digest now (callback)');
       await ctx.reply('😔 Не удалось собрать дайджест. Попробуй позже.');
     }
   });
@@ -251,7 +257,8 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
         `☀️ *Утренний дайджест*\n\nСтатус: ${status}\nВремя: ${hour}:00 по Минску\nГород: ${city}\n\n📰 Включает: погоду, новости, напоминания и задачи`,
         { parse_mode: 'Markdown', reply_markup: digestControlsKeyboard(prefs?.digest_enabled ?? false) }
       );
-    } catch {
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to load digest settings (callback)');
       await ctx.reply('😔 Ошибка загрузки настроек дайджеста.');
     }
   });
@@ -294,7 +301,8 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
           { parse_mode: 'Markdown', reply_markup: remindersRefreshKeyboard() }
         );
       }
-    } catch {
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to load reminders (callback)');
       await ctx.reply('😔 Не удалось загрузить напоминания.');
     }
   });
@@ -327,7 +335,9 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
         ctx.session.conversationId = conversation.id;
       }
       await conversationsRepo.clearMessages(ctx.session.conversationId);
-    } catch {}
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to clear conversation history');
+    }
     await ctx.answerCallbackQuery({ text: '✅ История очищена!' });
     await ctx.editMessageText('🧹 История диалога очищена. Начнём сначала!');
   });
@@ -378,7 +388,8 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
       } else {
         await ctx.reply('😔 Не удалось сгенерировать аудио.');
       }
-    } catch {
+    } catch (err) {
+      telegramLogger.warn({ error: err }, 'TTS generation failed (callback)');
       await ctx.reply('😔 Ошибка генерации голоса.');
     }
   });

@@ -40,7 +40,9 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
     try {
       await userPrefsRepo.getOrCreate(userId, ctx.chat.id, ctx.from?.first_name);
-    } catch { /* не критично */ }
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to init user prefs on /start');
+    }
 
     const name = ctx.from?.first_name || 'друг';
 
@@ -316,7 +318,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
         `📋 <b>Заметки (${notes.length}):</b>\n\n${lines.join('\n\n')}\n\n<i>Удалить: /note_delete номер</i>`,
         { parse_mode: 'HTML' }
       );
-    } catch {
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to render notes with HTML, trying plaintext');
       // Fallback без форматирования
       try {
         const notes = await notesRepo.getByUser(userId);
@@ -326,7 +329,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
           const lines = notes.map((n, i) => `${i + 1}. ${n.content}`);
           await ctx.reply(`📋 Заметки (${notes.length}):\n\n${lines.join('\n')}\n\nУдалить: /note_delete номер`);
         }
-      } catch {
+      } catch (err2) {
+        telegramLogger.error({ error: err2, userId }, 'Failed to load notes even in plaintext');
         await ctx.reply('😔 Не удалось загрузить заметки.');
       }
     }
@@ -351,7 +355,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
       } else {
         await ctx.reply('❌ Заметка с таким номером не найдена.');
       }
-    } catch {
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to delete note');
       await ctx.reply('😔 Ошибка при удалении заметки.');
     }
   });
@@ -395,7 +400,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
         `📋 *Задачи (${todos.length}):*\n\n${lines.join('\n')}\n\n_Нажми кнопку или: /done номер_`,
         { parse_mode: 'Markdown', reply_markup: todoDoneKeyboard(todos.length) }
       );
-    } catch {
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to load todos');
       await ctx.reply('😔 Не удалось загрузить задачи.');
     }
   });
@@ -415,7 +421,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
       const done = await todosRepo.markDone(userId, index);
       if (done) await ctx.reply(`🎉 Выполнено: ~~${done.task}~~`, { parse_mode: 'Markdown' });
       else await ctx.reply('❌ Задача с таким номером не найдена.');
-    } catch {
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to complete todo');
       await ctx.reply('😔 Ошибка при обновлении задачи.');
     }
   });
