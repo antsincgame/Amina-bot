@@ -83,10 +83,14 @@ const MultimodalSettingsPage = () => {
       setIsRefreshingVision(true);
       const endpoint = force ? '/api/models/vision/refresh' : '/api/models/vision';
       const method = force ? 'POST' : 'GET';
-      const response = await fetch(`${BOT_URL}${endpoint}`, { method });
+      const response = await fetch(`${BOT_URL}${endpoint}`, {
+        method,
+        headers: method === 'POST' ? { 'Content-Type': 'application/json' } : undefined,
+        body: method === 'POST' ? '{}' : undefined,
+      });
       if (response.ok) {
         const result = await response.json();
-        const models = force ? result.data?.models : result.data?.models;
+        const models = result.data?.models;
         if (models && models.length > 0) {
           setVisionModels(models);
           if (force) {
@@ -94,11 +98,19 @@ const MultimodalSettingsPage = () => {
             setTimeout(() => setRefreshMessage(''), 3000);
           }
         }
+      } else {
+        const errorText = await response.text();
+        console.error('Vision models fetch error:', response.status, errorText);
+        if (force) {
+          setRefreshMessage(`Ошибка ${response.status}: не удалось загрузить модели`);
+          setTimeout(() => setRefreshMessage(''), 5000);
+        }
       }
-    } catch {
+    } catch (err) {
       if (force) {
-        setRefreshMessage('Ошибка загрузки моделей');
-        setTimeout(() => setRefreshMessage(''), 3000);
+        const msg = err instanceof Error ? err.message : 'Неизвестная ошибка';
+        setRefreshMessage(`Ошибка загрузки моделей: ${msg}`);
+        setTimeout(() => setRefreshMessage(''), 5000);
       }
     } finally {
       setIsRefreshingVision(false);
