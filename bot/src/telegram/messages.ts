@@ -30,7 +30,7 @@ import {
 } from '../memory/user-memory.js';
 import { detectReminderIntent, extractReminder } from '../reminders/reminder-parser.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';
-import { detectImageGenIntent, extractImagePrompt, generateImage } from '../ai/image-gen.js';
+import { detectImageGenIntent, extractImagePrompt, generateImage, detectImageIntentLLM } from '../ai/image-gen.js';
 import { notesRepo } from '../features/notes-repo.js';
 import { todosRepo } from '../features/todos-repo.js';
 import { userPrefsRepo } from '../features/user-prefs-repo.js';
@@ -195,27 +195,42 @@ const handleAutoDetections = async (
   }
 
   // === Генерация изображения ===
+  // Шаг 1: быстрая regex-проверка
+  let imgPrompt: string | null = null;
   if (detectImageGenIntent(text)) {
-    const imgPrompt = extractImagePrompt(text);
+    imgPrompt = extractImagePrompt(text);
     if (imgPrompt) {
-      telegramLogger.info({ userId, prompt: imgPrompt }, 'Image gen auto-detected');
-      await ctx.replyWithChatAction('upload_photo');
-      try {
-        const result = await generateImage(imgPrompt);
-        const timeSeconds = (result.generationTimeMs / 1000).toFixed(1);
-        const cleanPrompt = imgPrompt.replace(/, high quality.*$/, '');
-        await ctx.replyWithPhoto(
-          new InputFile(result.image, 'generated.png'),
-          { caption: `🎨 ${escapeMarkdown(cleanPrompt)}\n⏱ ${timeSeconds}с | FLUX.1-schnell` }
-        );
-        analyticsRepo.log('message_received', 'telegram', { userId, event: 'image_generated', prompt: imgPrompt, model: result.model, timeMs: result.generationTimeMs }).catch(() => {});
-        return true;
-      } catch (error: unknown) {
-        const err = error as { message?: string };
-        telegramLogger.error({ error, userId }, 'Auto image gen failed');
-        await ctx.reply(`😔 ${err.message || 'Не удалось создать изображение.'}`);
-        return true;
-      }
+      telegramLogger.info({ userId, prompt: imgPrompt, method: 'regex' }, 'Image gen detected (regex)');
+    }
+  }
+
+  // Шаг 2: LLM-классификация как fallback (если regex не сработал)
+  if (!imgPrompt) {
+    const llmPrompt = await detectImageIntentLLM(text);
+    if (llmPrompt) {
+      imgPrompt = llmPrompt;
+      telegramLogger.info({ userId, prompt: imgPrompt, method: 'llm' }, 'Image gen detected (LLM fallback)');
+    }
+  }
+
+  // Генерируем картинку если намерение обнаружено
+  if (imgPrompt) {
+    await ctx.replyWithChatAction('upload_photo');
+    try {
+      const result = await generateImage(imgPrompt);
+      const timeSeconds = (result.generationTimeMs / 1000).toFixed(1);
+      const cleanPrompt = imgPrompt.replace(/, high quality.*$/, '');
+      await ctx.replyWithPhoto(
+        new InputFile(result.image, 'generated.png'),
+        { caption: `🎨 ${escapeMarkdown(cleanPrompt)}\n⏱ ${timeSeconds}с | FLUX.1-schnell` }
+      );
+      analyticsRepo.log('message_received', 'telegram', { userId, event: 'image_generated', prompt: imgPrompt, model: result.model, timeMs: result.generationTimeMs }).catch(() => {});
+      return true;
+    } catch (error: unknown) {
+      const err = error as { message?: string };
+      telegramLogger.error({ error, userId }, 'Auto image gen failed');
+      await ctx.reply(`😔 ${err.message || 'Не удалось создать изображение.'}`);
+      return true;
     }
   }
 

@@ -10,6 +10,7 @@
 import type { InferenceClient } from '@huggingface/inference';
 import { aiLogger } from '../config/logger.js';
 import { settingsRepo } from '../db/supabase.js';
+import { getApiKeys } from '../config/index.js';
 
 let InferenceClientClass: typeof import('@huggingface/inference').InferenceClient | null = null;
 
@@ -126,10 +127,127 @@ export interface ImageGenResult {
 }
 
 /**
- * Определяет, является ли сообщение запросом на генерацию изображения
+ * Определяет, является ли сообщение запросом на генерацию изображения (regex)
  */
 export function detectImageGenIntent(text: string): boolean {
   return IMAGE_GEN_PATTERNS.some(pattern => pattern.test(text.trim()));
+}
+
+// Модели для LLM-классификации (бесплатные, быстрые)
+const CLASSIFY_MODELS = [
+  'meta-llama/llama-3.2-3b-instruct:free',
+  'mistralai/mistral-7b-instruct:free',
+  'google/gemma-2-9b-it:free',
+];
+
+// Быстрый пре-фильтр: слова-маркеры (нечёткие), чтобы не вызывать LLM на каждом сообщении
+const IMAGE_HINT_WORDS = /(?:рисун|картин|изображен|нарисуй|нарисова|рисуй|рисовать|генерир|генераци|сгенер|imagine|draw|paint|picture|image|photo|арт|иллюстрац|фото|покажи|визуализ|пикч|портрет|скетч|пейзаж|аниме|стиль|коллаж|обои|аватар|мем|комикс|создай.*картин|сделай.*картин|хочу.*картин)/i;
+
+/**
+ * LLM-классификация: является ли текст запросом на генерацию изображения.
+ * Используется как fallback когда regex не сработал.
+ * Сначала проверяет наличие слов-маркеров, затем вызывает LLM.
+ * Возвращает промпт для генерации или null если не запрос на картинку.
+ */
+export async function detectImageIntentLLM(text: string): Promise<string | null> {
+  // Быстрый пре-фильтр: если нет ни одного слова-маркера — не тратим LLM
+  if (!IMAGE_HINT_WORDS.test(text)) {
+    return null;
+  }
+
+  try {
+    const keys = await getApiKeys();
+    if (!keys.openrouter) return null;
+
+    const classifyPrompt = `Определи, просит ли пользователь СОЗДАТЬ/НАРИСОВАТЬ/СГЕНЕРИРОВАТЬ изображение или картинку.
+
+Сообщение: "${text.substring(0, 300)}"
+
+Если пользователь хочет КАРТИНКУ — ответь JSON: {"image": true, "prompt": "описание для генерации на английском"}
+Если НЕ хочет картинку — ответь JSON: {"image": false}
+
+Примеры запросов на картинку:
+- "нарисуй кота" → {"image": true, "prompt": "cat"}
+- "хочу картинку с закатом" → {"image": true, "prompt": "sunset landscape"}
+- "мир это матрица, покажи" → {"image": true, "prompt": "matrix digital world, green code"}
+- "сделай арт киберпанк города" → {"image": true, "prompt": "cyberpunk city art"}
+- "можешь нарисовать единорога?" → {"image": true, "prompt": "unicorn, magical"}
+
+НЕ запросы на картинку:
+- "расскажи о картинах Моне" → {"image": false}
+- "что такое матрица?" → {"image": false}
+
+Ответь ТОЛЬКО JSON, без текста.`;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    try {
+      for (const model of CLASSIFY_MODELS) {
+        try {
+          const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${keys.openrouter}`,
+              'Content-Type': 'application/json',
+            },
+            signal: controller.signal,
+            body: JSON.stringify({
+              model,
+              messages: [
+                { role: 'system', content: 'Ты — классификатор намерений. Отвечай ТОЛЬКО JSON.' },
+                { role: 'user', content: classifyPrompt },
+              ],
+              max_tokens: 150,
+              temperature: 0.1,
+            }),
+          });
+
+          if (!response.ok) continue;
+
+          const data = await response.json() as {
+            choices?: Array<{ message?: { content?: string } }>;
+          };
+          const content = data.choices?.[0]?.message?.content?.trim();
+          if (!content) continue;
+
+          // Извлекаем JSON из ответа
+          const jsonMatch = content.match(/\{[\s\S]*\}/);
+          if (!jsonMatch) continue;
+
+          const parsed = JSON.parse(jsonMatch[0]) as { image?: boolean; prompt?: string };
+          
+          if (parsed.image && parsed.prompt) {
+            aiLogger.info({ model, text: text.substring(0, 60), prompt: parsed.prompt }, 'LLM detected image intent');
+            let prompt = parsed.prompt.trim();
+            if (prompt.length > 0 && prompt.length < 100) {
+              prompt += QUALITY_SUFFIX;
+            }
+            return prompt;
+          }
+
+          // LLM сказала "не картинка" — доверяем
+          aiLogger.debug({ model, text: text.substring(0, 60) }, 'LLM: not an image request');
+          return null;
+        } catch (modelError) {
+          const err = modelError as { name?: string };
+          if (err.name === 'AbortError') {
+            aiLogger.warn({ text: text.substring(0, 60) }, 'LLM image intent detection timed out');
+            return null;
+          }
+          // Попробуем следующую модель
+          continue;
+        }
+      }
+
+      return null;
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  } catch (error) {
+    aiLogger.warn({ error }, 'LLM image intent detection failed');
+    return null;
+  }
 }
 
 /**
