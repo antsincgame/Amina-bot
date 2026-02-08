@@ -112,23 +112,31 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
   bot.command('clear', async (ctx) => {
     const userId = ctx.from?.id.toString() ?? 'unknown';
     const chatId = ctx.chat?.id ?? 0;
+    
+    // Очищаем сессию (контекст для AI)
     ctx.session.messageHistory = [];
+    const oldConvId = ctx.session.conversationId;
+    ctx.session.conversationId = null; // ВАЖНО: сбрасываем ID, чтобы создался новый диалог
 
     try {
-      if (!ctx.session.conversationId) {
-        const conversation = await conversationsRepo.getOrCreate(
-          userId, 'telegram',
-          { telegram_chat_id: chatId, telegram_user_id: ctx.from?.id }
-        );
-        ctx.session.conversationId = conversation.id;
+      // Если был старый диалог — очищаем его сообщения в БД (но сохраняем саму запись)
+      if (oldConvId) {
+        await conversationsRepo.clearMessages(oldConvId);
+        telegramLogger.info({ userId, conversationId: oldConvId }, 'Conversation messages cleared in DB');
       }
-      await conversationsRepo.clearMessages(ctx.session.conversationId);
-      telegramLogger.info({ userId, conversationId: ctx.session.conversationId }, 'Conversation cleared in DB');
+      
+      // Создаём новый диалог для чистого старта
+      const newConversation = await conversationsRepo.getOrCreate(
+        userId, 'telegram',
+        { telegram_chat_id: chatId, telegram_user_id: ctx.from?.id }
+      );
+      ctx.session.conversationId = newConversation.id;
+      telegramLogger.info({ userId, newConvId: newConversation.id }, 'New conversation created after clear');
     } catch (error) {
-      telegramLogger.error({ error, userId }, 'Failed to clear messages in DB');
+      telegramLogger.error({ error, userId }, 'Failed to clear/recreate conversation');
     }
 
-    await ctx.reply('🧹 История диалога очищена. Начнём сначала!');
+    await ctx.reply('✅ История диалога очищена. Начнём сначала!');
   });
 
   // /reminders
@@ -202,14 +210,15 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     const userId = ctx.from?.id.toString() ?? 'unknown';
 
     if (!prompt) {
+      // Спрашиваем, что нарисовать
       await ctx.reply(
-        '🎨 Опиши, что нарисовать!\n\n' +
-        'Примеры:\n' +
-        '• `/imagine кот-астронавт в космосе`\n' +
-        '• `/imagine закат над горами в стиле Ван Гога`\n' +
-        '• `/imagine futuristic city at night`',
+        '🎨 *Что нарисовать?*\n\n' +
+        'Опиши изображение, которое хочешь создать.\n\n' +
+        '_Например: кот-астронавт в космосе, закат над горами в стиле Ван Гога_',
         { parse_mode: 'Markdown' }
       );
+      // Устанавливаем флаг ожидания описания для картинки
+      ctx.session.awaitingImagePrompt = true;
       return;
     }
 

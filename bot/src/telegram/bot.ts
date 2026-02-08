@@ -25,6 +25,7 @@ import type { AIMessage } from '../../../shared/types/index.js';
 export interface SessionData {
   conversationId: string | null;
   messageHistory: AIMessage[];
+  awaitingImagePrompt?: boolean; // флаг ожидания описания для /imagine
 }
 
 export type BotContext = Context & SessionFlavor<SessionData>;

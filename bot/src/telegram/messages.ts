@@ -556,6 +556,29 @@ const handleTextMessage = async (ctx: BotContext): Promise<void> => {
   const buttonHandler = buildReplyButtonHandlers(ctx, userId)[userMessage];
   if (buttonHandler) { await buttonHandler(); return; }
 
+  // === Ожидание описания для /imagine ===
+  if (ctx.session.awaitingImagePrompt) {
+    ctx.session.awaitingImagePrompt = false; // сбрасываем флаг
+    telegramLogger.info({ userId, prompt: userMessage }, 'Image generation requested (after /imagine)');
+    await ctx.reply('🎨 Генерирую изображение... Это может занять 10-30 секунд.');
+
+    try {
+      const result = await generateImage(userMessage);
+      await ctx.replyWithPhoto(new InputFile(result.image), {
+        caption: `🎨 *${result.prompt}*\n\n_Модель: ${result.model}_\n_Время: ${result.generationTimeMs}мс_`,
+        parse_mode: 'Markdown',
+      });
+      analyticsRepo.log('message_sent', 'telegram', { userId, type: 'image', model: result.model }).catch(() => {});
+      telegramLogger.info({ userId, prompt: userMessage, model: result.model }, 'Image generated successfully');
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Unknown error';
+      telegramLogger.error({ error, userId, prompt: userMessage }, 'Image generation failed');
+      await ctx.reply(`😔 ${errorMsg}`);
+      analyticsRepo.log('error', 'telegram', { userId, error: errorMsg }).catch(() => {});
+    }
+    return;
+  }
+
   const telegramInfo: TelegramUserInfo = {
     id: ctx.from?.id ?? 0, username: ctx.from?.username,
     first_name: ctx.from?.first_name, last_name: ctx.from?.last_name,
