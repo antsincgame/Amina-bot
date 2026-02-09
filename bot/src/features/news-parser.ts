@@ -29,6 +29,7 @@ export interface ParsedHeadline {
   title: string;
   url: string;
   source: string;
+  pubDate?: Date; // Дата публикации (из RSS/Atom)
 }
 
 // ===== Константы =====
@@ -38,6 +39,9 @@ const FETCH_TIMEOUT_MS = 10_000;
 const MAX_HEADLINES_PER_SITE = 15;
 const MIN_TITLE_LENGTH = 15;
 const MAX_TITLE_LENGTH = 300;
+
+// Максимальный возраст новости в часах (новости старше отфильтровываются)
+const MAX_NEWS_AGE_HOURS = 48;
 
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -176,6 +180,44 @@ function isSkipText(text: string): boolean {
 }
 
 /**
+ * Парсинг даты публикации из RSS/Atom
+ */
+function parsePubDate(dateStr: string): Date | undefined {
+  if (!dateStr || !dateStr.trim()) return undefined;
+  try {
+    const date = new Date(dateStr.trim());
+    if (isNaN(date.getTime())) return undefined;
+    return date;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Проверка: новость не старше MAX_NEWS_AGE_HOURS часов
+ */
+function isNewsRecent(pubDate: Date | undefined): boolean {
+  if (!pubDate) return true; // Если нет даты — пропускаем (не фильтруем)
+  const now = new Date();
+  const ageMs = now.getTime() - pubDate.getTime();
+  const ageHours = ageMs / (1000 * 60 * 60);
+  return ageHours <= MAX_NEWS_AGE_HOURS;
+}
+
+/**
+ * Нормализация заголовка для дедупликации
+ * Убирает пунктуацию, лишние пробелы, приводит к lowercase
+ */
+function normalizeTitle(title: string): string {
+  return title
+    .toLowerCase()
+    // Убираем всё кроме букв (включая кириллицу), цифр и пробелов
+    .replace(/[^a-zа-яёїіє0-9\s]/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
  * Добавление заголовка в массив (с дедупликацией)
  */
 function addHeadline(
@@ -183,16 +225,20 @@ function addHeadline(
   seenTitles: Set<string>,
   title: string,
   url: string,
+  pubDate?: Date,
 ): boolean {
   if (headlines.length >= MAX_HEADLINES_PER_SITE) return false;
   if (!title || title.length < MIN_TITLE_LENGTH || title.length > MAX_TITLE_LENGTH) return false;
   if (isSkipText(title)) return false;
+  
+  // Фильтрация по дате (если есть)
+  if (!isNewsRecent(pubDate)) return false;
 
-  const titleLower = title.toLowerCase();
-  if (seenTitles.has(titleLower)) return false;
+  const titleNormalized = normalizeTitle(title);
+  if (seenTitles.has(titleNormalized)) return false;
 
-  seenTitles.add(titleLower);
-  headlines.push({ title, url, source: '' });
+  seenTitles.add(titleNormalized);
+  headlines.push({ title, url, source: '', pubDate });
   return true;
 }
 
@@ -227,7 +273,7 @@ function parseRssFeed(xml: string, baseUrl: string): ParsedHeadline[] {
   const headlines: ParsedHeadline[] = [];
   const seenTitles = new Set<string>();
 
-  // RSS 2.0: <item><title>...</title><link>...</link></item>
+  // RSS 2.0: <item><title>...</title><link>...</link><pubDate>...</pubDate></item>
   $('item').each((_i: number, el: AnyNode) => {
     if (headlines.length >= MAX_HEADLINES_PER_SITE) return;
     const $item = $(el);
@@ -239,19 +285,31 @@ function parseRssFeed(xml: string, baseUrl: string): ParsedHeadline[] {
       link = $item.find('link').first().attr('href') ?? '';
     }
 
+    // Парсим дату публикации (RSS 2.0: pubDate, Dublin Core: dc:date)
+    const pubDateStr = $item.find('pubDate').first().text() 
+      || $item.find('dc\\:date').first().text()
+      || $item.find('date').first().text();
+    const pubDate = parsePubDate(pubDateStr);
+
     const url = normalizeUrl(link, baseUrl);
-    if (url) addHeadline(headlines, seenTitles, title, url);
+    if (url) addHeadline(headlines, seenTitles, title, url, pubDate);
   });
 
-  // Atom: <entry><title>...</title><link href="..."/></entry>
+  // Atom: <entry><title>...</title><link href="..."/><published>...</published></entry>
   if (headlines.length === 0) {
     $('entry').each((_i: number, el: AnyNode) => {
       if (headlines.length >= MAX_HEADLINES_PER_SITE) return;
       const $entry = $(el);
       const title = cleanTitle($entry.find('title').first().text());
       const link = $entry.find('link[href]').first().attr('href') ?? '';
+      
+      // Atom использует <published> или <updated>
+      const pubDateStr = $entry.find('published').first().text()
+        || $entry.find('updated').first().text();
+      const pubDate = parsePubDate(pubDateStr);
+      
       const url = normalizeUrl(link, baseUrl);
-      if (url) addHeadline(headlines, seenTitles, title, url);
+      if (url) addHeadline(headlines, seenTitles, title, url, pubDate);
     });
   }
 
@@ -602,6 +660,7 @@ function parseHtmlContent(html: string, siteUrl: string, origin: string): Parsed
 /**
  * Спарсить заголовки со ВСЕХ включённых сайтов (параллельно)
  * Возвращает массив заголовков с указанием источника.
+ * Выполняет дедупликацию между источниками по нормализованному заголовку и URL.
  */
 export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
   const sites = await getConfiguredSites();
@@ -622,12 +681,29 @@ export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
     }),
   );
 
+  // === Дедупликация между источниками ===
   const allHeadlines: ParsedHeadline[] = [];
+  const seenTitles = new Set<string>(); // Нормализованные заголовки
+  const seenUrls = new Set<string>();   // URL (для ловли разных заголовков на одну статью)
+  let duplicatesFiltered = 0;
 
   results.forEach((result, i) => {
     const site = enabledSites[i]!;
     if (result.status === 'fulfilled') {
-      allHeadlines.push(...result.value);
+      for (const headline of result.value) {
+        const titleNorm = normalizeTitle(headline.title);
+        const urlNorm = headline.url.toLowerCase();
+        
+        // Проверяем дубликаты по заголовку ИЛИ по URL
+        if (seenTitles.has(titleNorm) || seenUrls.has(urlNorm)) {
+          duplicatesFiltered++;
+          continue;
+        }
+        
+        seenTitles.add(titleNorm);
+        seenUrls.add(urlNorm);
+        allHeadlines.push(headline);
+      }
     } else {
       appLogger.warn(
         { error: result.reason, siteName: site.name, siteUrl: site.url },
@@ -635,6 +711,10 @@ export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
       );
     }
   });
+
+  if (duplicatesFiltered > 0) {
+    appLogger.info({ duplicatesFiltered }, 'Cross-source duplicates filtered');
+  }
 
   appLogger.info({ totalHeadlines: allHeadlines.length, sites: enabledSites.length }, 'News parsing complete');
   return allHeadlines;
