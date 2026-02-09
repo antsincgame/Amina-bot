@@ -306,7 +306,9 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
       const lines = notes.map((n, i) => {
         const date = new Date(n.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
-        return `${i + 1}. ${escapeHtml(n.content)}\n   <i>${date}</i>`;
+        // Усекаем длинные заметки при отображении (макс. 150 символов)
+        const preview = n.content.length > 150 ? n.content.slice(0, 150).trimEnd() + '…' : n.content;
+        return `${i + 1}. ${escapeHtml(preview)}\n   <i>${date}</i>`;
       });
 
       await ctx.reply(
@@ -321,7 +323,10 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
         if (notes.length === 0) {
           await ctx.reply('📋 У тебя пока нет заметок. Создай: /note текст');
         } else {
-          const lines = notes.map((n, i) => `${i + 1}. ${n.content}`);
+          const lines = notes.map((n, i) => {
+            const preview = n.content.length > 150 ? n.content.slice(0, 150).trimEnd() + '…' : n.content;
+            return `${i + 1}. ${preview}`;
+          });
           await ctx.reply(`📋 Заметки (${notes.length}):\n\n${lines.join('\n')}\n\nУдалить: /note_delete номер`);
         }
       } catch (err2) {

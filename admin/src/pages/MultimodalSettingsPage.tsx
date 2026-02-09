@@ -16,6 +16,12 @@ const settingsSchema = z.object({
   vision_prompt: z.string().min(10).max(500),
   vision_max_tokens: z.number().min(100).max(4096),
   tts_provider: z.string(),
+  // ElevenLabs
+  elevenlabs_api_key: z.string().optional(),
+  elevenlabs_voice_id: z.string().optional(),
+  elevenlabs_custom_voice_id: z.string().optional(),
+  elevenlabs_model_id: z.string().optional(),
+  // OpenAI
   openai_tts_voice: z.string(),
   openai_tts_model: z.string(),
   voice_speaker: z.string(),
@@ -28,6 +34,25 @@ type SettingsForm = z.infer<typeof settingsSchema>;
 const TTS_PROVIDERS = [
   { id: 'edge', name: 'Microsoft Edge TTS', description: 'Бесплатно, нейронный голос. Хорошее качество.', badge: 'БЕСПЛАТНО', badgeColor: 'badge-success' },
   { id: 'openai', name: 'OpenAI TTS HD', description: 'Максимально натуральный голос. ~$0.015 за 1000 символов.', badge: 'ПРЕМИУМ', badgeColor: 'text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full text-xs font-medium' },
+  { id: 'elevenlabs', name: 'ElevenLabs', description: 'Ультра-реалистичный мультиязычный голос. Лучшее качество для русского языка.', badge: 'ПРЕМИУМ+', badgeColor: 'text-fuchsia-400 bg-fuchsia-500/10 border border-fuchsia-500/20 px-2 py-0.5 rounded-full text-xs font-medium' },
+];
+
+// ElevenLabs голоса
+const ELEVENLABS_VOICES = [
+  { id: '21m00Tcm4TlvDq8ikWAM', name: 'Rachel', description: 'Тёплый женский — идеально для ассистента' },
+  { id: 'EXAVITQu4vr4xnSDxMaL', name: 'Bella', description: 'Мягкий женский голос' },
+  { id: 'MF3mGyEYCl7XYWbV9V6O', name: 'Elli', description: 'Молодой женский голос' },
+  { id: '29vD33N1CtxCmqQRPOHJ', name: 'Drew', description: 'Уверенный мужской голос' },
+  { id: 'ErXwobaYiN019PkySvjV', name: 'Antoni', description: 'Спокойный мужской голос' },
+  { id: 'TxGEqnHWrfWFTfGW9XjX', name: 'Josh', description: 'Глубокий мужской голос' },
+  { id: 'custom', name: 'Custom Voice', description: 'Свой голос — укажите Voice ID вручную' },
+];
+
+// ElevenLabs модели
+const ELEVENLABS_MODELS = [
+  { id: 'eleven_multilingual_v2', name: 'Multilingual V2', description: 'Лучшее качество, русский и 28 языков' },
+  { id: 'eleven_turbo_v2_5', name: 'Turbo V2.5', description: 'Быстрее, мультиязычный, дешевле' },
+  { id: 'eleven_flash_v2_5', name: 'Flash V2.5', description: 'Самый быстрый, низкая задержка' },
 ];
 
 // OpenAI голоса
@@ -150,6 +175,12 @@ const MultimodalSettingsPage = () => {
       vision_prompt: DEFAULT_VISION_PROMPT,
       vision_max_tokens: DEFAULT_VISION_MAX_TOKENS,
       tts_provider: 'edge',
+      // ElevenLabs
+      elevenlabs_api_key: '',
+      elevenlabs_voice_id: '21m00Tcm4TlvDq8ikWAM',
+      elevenlabs_custom_voice_id: '',
+      elevenlabs_model_id: 'eleven_multilingual_v2',
+      // OpenAI
       openai_tts_voice: 'nova',
       openai_tts_model: 'tts-1-hd',
       voice_speaker: 'svetlana',
@@ -174,6 +205,12 @@ const MultimodalSettingsPage = () => {
         vision_prompt: map['vision_prompt'] || DEFAULT_VISION_PROMPT,
         vision_max_tokens: parseInt(map['vision_max_tokens'] || String(DEFAULT_VISION_MAX_TOKENS), 10),
         tts_provider: map['tts_provider'] || 'edge',
+        // ElevenLabs
+        elevenlabs_api_key: map['elevenlabs_api_key'] || '',
+        elevenlabs_voice_id: map['elevenlabs_voice_id'] || '21m00Tcm4TlvDq8ikWAM',
+        elevenlabs_custom_voice_id: map['elevenlabs_custom_voice_id'] || '',
+        elevenlabs_model_id: map['elevenlabs_model_id'] || 'eleven_multilingual_v2',
+        // OpenAI
         openai_tts_voice: map['openai_tts_voice'] || 'nova',
         openai_tts_model: map['openai_tts_model'] || 'tts-1-hd',
         voice_speaker: map['voice_speaker'] || 'svetlana',
@@ -191,11 +228,20 @@ const MultimodalSettingsPage = () => {
       vision_prompt: data.vision_prompt,
       vision_max_tokens: String(data.vision_max_tokens),
       tts_provider: data.tts_provider,
+      // ElevenLabs
+      elevenlabs_voice_id: data.elevenlabs_voice_id === 'custom'
+        ? (data.elevenlabs_custom_voice_id || '21m00Tcm4TlvDq8ikWAM')
+        : (data.elevenlabs_voice_id || '21m00Tcm4TlvDq8ikWAM'),
+      elevenlabs_model_id: data.elevenlabs_model_id || 'eleven_multilingual_v2',
+      // OpenAI
       openai_tts_voice: data.openai_tts_voice,
       openai_tts_model: data.openai_tts_model,
       voice_speaker: data.voice_speaker,
     };
-    // Сохраняем OpenAI ключ только если он заполнен
+    // Сохраняем ключи только если заполнены
+    if (data.elevenlabs_api_key) {
+      toSave.elevenlabs_api_key = data.elevenlabs_api_key;
+    }
     if (data.openai_api_key) {
       toSave.openai_api_key = data.openai_api_key;
     }
@@ -404,6 +450,108 @@ const MultimodalSettingsPage = () => {
               </div>
             </div>
           )}
+
+          {/* ElevenLabs настройки */}
+          {watch('tts_provider') === 'elevenlabs' && (
+            <div className="border-t border-white/10 pt-6 space-y-4">
+              {/* API ключ */}
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <Key className="w-4 h-4 text-fuchsia-400" />
+                  <label className="label">ElevenLabs API Key</label>
+                </div>
+                <input
+                  type="password"
+                  {...register('elevenlabs_api_key')}
+                  placeholder="sk_..."
+                  className="input w-full font-mono text-sm"
+                />
+                <p className="text-white/40 text-xs mt-1">
+                  Ключ от{' '}
+                  <a href="https://elevenlabs.io/app/settings/api-keys" target="_blank" rel="noopener noreferrer" className="text-fuchsia-400 hover:underline">
+                    elevenlabs.io
+                  </a>
+                  . Free tier: 10 000 символов/мес.
+                </p>
+              </div>
+
+              {/* Модель */}
+              <div>
+                <label className="label mb-2">Модель</label>
+                <div className="space-y-2">
+                  {ELEVENLABS_MODELS.map((model) => (
+                    <label key={model.id} className={`block p-3 rounded-xl border-2 cursor-pointer transition-all ${
+                      watch('elevenlabs_model_id') === model.id
+                        ? 'border-fuchsia-500 bg-fuchsia-500/10'
+                        : 'border-white/10 hover:border-white/20 bg-white/5'
+                    }`}>
+                      <div className="flex items-start gap-2">
+                        <input type="radio" value={model.id} {...register('elevenlabs_model_id')} className="mt-0.5 accent-fuchsia-500" />
+                        <div>
+                          <span className="font-medium text-white text-sm">{model.name}</span>
+                          <p className="text-xs text-white/50">{model.description}</p>
+                        </div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Голос */}
+              <div>
+                <label className="label mb-2">Голос</label>
+                <div className="grid grid-cols-2 gap-2">
+                  {ELEVENLABS_VOICES.map((voice) => (
+                    <label key={voice.id} className={`p-3 rounded-xl border-2 cursor-pointer transition-all ${
+                      watch('elevenlabs_voice_id') === voice.id
+                        ? 'border-fuchsia-500 bg-fuchsia-500/10'
+                        : 'border-white/10 hover:border-white/20 bg-white/5'
+                    }`}>
+                      <div className="flex items-start gap-2">
+                        <input type="radio" value={voice.id} {...register('elevenlabs_voice_id')} className="mt-0.5 accent-fuchsia-500" />
+                        <div>
+                          <span className="font-medium text-white text-sm">{voice.name}</span>
+                          <p className="text-xs text-white/50">{voice.description}</p>
+                        </div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Custom Voice ID */}
+              {watch('elevenlabs_voice_id') === 'custom' && (
+                <div>
+                  <label className="label mb-2">Custom Voice ID</label>
+                  <input
+                    type="text"
+                    {...register('elevenlabs_custom_voice_id')}
+                    placeholder="Вставьте Voice ID из ElevenLabs..."
+                    className="input w-full font-mono text-sm"
+                  />
+                  <p className="text-white/40 text-xs mt-1">
+                    Voice ID можно найти в{' '}
+                    <a href="https://elevenlabs.io/app/voice-library" target="_blank" rel="noopener noreferrer" className="text-fuchsia-400 hover:underline">
+                      Voice Library
+                    </a>
+                    {' '}или{' '}
+                    <a href="https://elevenlabs.io/app/voice-lab" target="_blank" rel="noopener noreferrer" className="text-fuchsia-400 hover:underline">
+                      Voice Lab
+                    </a>
+                    {' '}(клонированные голоса).
+                  </p>
+                </div>
+              )}
+
+              {/* Info */}
+              <div className="p-3 rounded-lg bg-fuchsia-500/5 border border-fuchsia-500/10">
+                <p className="text-xs text-white/50">
+                  ElevenLabs предлагает ультра-реалистичные голоса с поддержкой русского языка через модель Multilingual V2.
+                  При недоступности ElevenLabs бот автоматически переключится на OpenAI TTS или Edge TTS.
+                </p>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ============ VISION ============ */}
@@ -567,7 +715,7 @@ const MultimodalSettingsPage = () => {
               <div>
                 <p className="font-medium text-white">Озвучка (TTS)</p>
                 <p className="text-white/60">
-                  Ответ бота → OpenAI TTS HD (натуральный голос) или Edge TTS (бесплатно) → Голосовое сообщение
+                  Ответ бота → ElevenLabs / OpenAI TTS HD / Edge TTS → Голосовое сообщение
                 </p>
               </div>
             </div>
@@ -614,6 +762,12 @@ const MultimodalSettingsPage = () => {
                     vision_prompt: map['vision_prompt'] || DEFAULT_VISION_PROMPT,
                     vision_max_tokens: parseInt(map['vision_max_tokens'] || String(DEFAULT_VISION_MAX_TOKENS), 10),
                     tts_provider: map['tts_provider'] || 'edge',
+                    // ElevenLabs
+                    elevenlabs_api_key: map['elevenlabs_api_key'] || '',
+                    elevenlabs_voice_id: map['elevenlabs_voice_id'] || '21m00Tcm4TlvDq8ikWAM',
+                    elevenlabs_custom_voice_id: map['elevenlabs_custom_voice_id'] || '',
+                    elevenlabs_model_id: map['elevenlabs_model_id'] || 'eleven_multilingual_v2',
+                    // OpenAI
                     openai_tts_voice: map['openai_tts_voice'] || 'nova',
                     openai_tts_model: map['openai_tts_model'] || 'tts-1-hd',
                     voice_speaker: map['voice_speaker'] || 'svetlana',

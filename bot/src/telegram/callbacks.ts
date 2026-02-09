@@ -43,7 +43,11 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
         return;
       }
 
-      const lines = notes.map((n, i) => `${i + 1}. ${escapeHtml(n.content)}`);
+      const lines = notes.map((n, i) => {
+        // Усекаем длинные заметки при отображении (макс. 120 символов)
+        const preview = n.content.length > 120 ? n.content.slice(0, 120).trimEnd() + '…' : n.content;
+        return `${i + 1}. ${escapeHtml(preview)}`;
+      });
       await ctx.editMessageText(
         `📋 <b>Заметки (${notes.length}):</b>\n\n${lines.join('\n')}`,
         { parse_mode: 'HTML' }
@@ -67,10 +71,16 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
       // Очищаем текст от служебного мусора перед сохранением
       let content = messageText;
 
-      // 1. Извлекаем из AI-формата заметки
-      const aiNoteMatch = content.match(/[Зз]аметка создана[:\s]*["«](.+?)["»]/s);
+      // 1. Извлекаем из AI-формата заметки (разные кавычки: "", «», '')
+      const aiNoteMatch = content.match(/[Зз]аметка\s+создана[:\s]*["«'"](.+?)["»'"]/s);
       if (aiNoteMatch?.[1]) {
         content = aiNoteMatch[1];
+      }
+
+      // 1b. Если AI-ответ о создании заметки ("Ты просил создать заметку X...") — извлекаем суть
+      const aiNoteRequestMatch = content.match(/(?:просил[аи]?\s+)?создать\s+заметку\s+["«'"](.+?)["»'"]/i);
+      if (aiNoteRequestMatch?.[1]) {
+        content = aiNoteRequestMatch[1];
       }
 
       // 2. Убираем секцию "📚 Источники:" и всё после неё
@@ -78,9 +88,20 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
       content = content.replace(/\n*Источники?:\s*\n[\s\S]*$/i, '');
 
       // 3. Убираем служебные фразы бота (поиск, ожидание)
-      content = content.replace(/^(Конечно!?\s*)?Сейчас\s+(я\s+)?найду.*?\n*/i, '');
-      content = content.replace(/^🔍?\s*Ищу\.{0,3}\s*\n*/gm, '');
+      // Фикс: .*? → .* для захвата всей строки; + Unicode-эллипсис "…" + "..."
+      content = content.replace(/^(Конечно!?\s*)?Сейчас\s+(я\s+)?найду[^\n]*\n*/i, '');
+      content = content.replace(/^(Конечно!?\s*)?Сейчас\s+(я\s+)?(поищу|найду|посмотрю)[^\n]*\n*/i, '');
+      content = content.replace(/^🔍?\s*Ищу[.…]{0,3}\s*\n*/gm, '');
       content = content.replace(/\(Поиск в интернете\)\s*/gi, '');
+
+      // 3b. Убираем приветствия из начала (мусор от AI)
+      content = content.replace(/^(привет[,!\s]?\s*(?:[а-яё]+[,!\s]?\s*)?(?:👋\s*)?[\n\r]*)/i, '');
+      content = content.replace(/^(здравствуй(?:те)?[,!\s]?\s*(?:[а-яё]+[,!\s]?\s*)?[\n\r]*)/i, '');
+
+      // 3c. Убираем AI-метаразговор ("Я готова помочь!", "Пожалуйста, уточни:")
+      content = content.replace(/\n*(?:Я\s+)?готов[аы]?\s+помочь[!.]*[\s\S]*/i, '');
+      content = content.replace(/\n*Пожалуйста,?\s+уточни[\s\S]*/i, '');
+      content = content.replace(/\n*Как только ты уточнишь[\s\S]*/i, '');
 
       // 4. Убираем голые URL и citation маркеры
       content = content.replace(/\[(\d+)\]/g, '');
@@ -88,10 +109,13 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
 
       // 5. Убираем "Хочешь узнать больше..." в конце
       content = content.replace(/\n*Хочешь узнать больше[\s\S]*$/i, '');
+      content = content.replace(/\n*Если (?:у тебя есть|хочешь)[\s\S]*$/i, '');
+      content = content.replace(/\n*Дай знать[\s\S]*$/i, '');
 
       // 6. Убираем пустые строки и лишние пробелы
       content = content.replace(/\n{3,}/g, '\n\n').trim();
 
+      // 7. Проверяем: если после очистки осталось < 3 символов или только мусор — отказываем
       content = content.slice(0, 500).trim();
 
       if (!content) {
@@ -118,7 +142,9 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
       } else {
         const lines = notes.map((n, i) => {
           const date = new Date(n.created_at).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' });
-          return `${i + 1}. ${escapeHtml(n.content)}\n   <i>${date}</i>`;
+          // Усекаем длинные заметки при отображении (макс. 150 символов)
+          const preview = n.content.length > 150 ? n.content.slice(0, 150).trimEnd() + '…' : n.content;
+          return `${i + 1}. ${escapeHtml(preview)}\n   <i>${date}</i>`;
         });
         await ctx.reply(
           `📋 <b>Заметки (${notes.length}):</b>\n\n${lines.join('\n\n')}\n\n<i>Удалить: /note_delete номер</i>`,

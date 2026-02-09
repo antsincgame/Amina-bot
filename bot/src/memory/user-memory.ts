@@ -71,10 +71,17 @@ export interface TelegramUserInfo {
 // --------------------------------------------
 
 // Flag to track if tables exist (avoid repeated error logs)
+// При false — повторная проверка через 60 секунд (сетевая ошибка ≠ таблицы нет)
 let tablesExist: boolean | null = null;
+let tablesExistCheckedAt = 0;
+const TABLES_CHECK_RETRY_MS = 60_000; // 60 секунд TTL для false
 
 async function checkTablesExist(): Promise<boolean> {
-  if (tablesExist !== null) return tablesExist;
+  if (tablesExist === true) return true;
+  // Если false — перепроверяем после TTL (мог быть временный сбой сети)
+  if (tablesExist === false && Date.now() - tablesExistCheckedAt < TABLES_CHECK_RETRY_MS) {
+    return false;
+  }
   
   try {
     const supabase = getSupabase();
@@ -84,12 +91,14 @@ async function checkTablesExist(): Promise<boolean> {
       .limit(1);
     
     tablesExist = !error || error.code !== '42P01'; // 42P01 = table does not exist
+    tablesExistCheckedAt = Date.now();
     if (!tablesExist) {
       dbLogger.warn('User memory tables not found. Run migration 004_user_memory.sql');
     }
     return tablesExist;
   } catch {
     tablesExist = false;
+    tablesExistCheckedAt = Date.now();
     return false;
   }
 }
@@ -269,24 +278,35 @@ export const userProfileRepo = {
 
   /**
    * Установить дату последнего приветствия (в preferences JSONB)
+   * Атомарная операция через SQL jsonb_set — без race condition
    */
   async setLastGreetingDate(userId: string, date: string): Promise<void> {
     if (!(await checkTablesExist())) return;
     try {
-      // Получаем текущий preferences
-      const { data } = await getSupabase()
-        .from('user_profiles')
-        .select('preferences')
-        .eq('user_id', userId)
-        .single();
-      
-      const prefs = (data?.preferences as Record<string, unknown>) ?? {};
-      prefs.last_greeting_date = date;
+      // Атомарный SQL: jsonb_set на preferences без read-modify-write
+      const { error } = await getSupabase().rpc('set_user_preference', {
+        p_user_id: userId,
+        p_key: 'last_greeting_date',
+        p_value: JSON.stringify(date),
+      });
 
-      await getSupabase()
-        .from('user_profiles')
-        .update({ preferences: prefs })
-        .eq('user_id', userId);
+      if (error) {
+        // Fallback: если RPC не существует — старый способ (read-modify-write)
+        dbLogger.debug({ error }, 'RPC set_user_preference not available, using fallback');
+        const { data } = await getSupabase()
+          .from('user_profiles')
+          .select('preferences')
+          .eq('user_id', userId)
+          .single();
+        
+        const prefs = (data?.preferences as Record<string, unknown>) ?? {};
+        prefs.last_greeting_date = date;
+
+        await getSupabase()
+          .from('user_profiles')
+          .update({ preferences: prefs })
+          .eq('user_id', userId);
+      }
     } catch (error) {
       dbLogger.warn({ error, userId }, 'Failed to set last greeting date');
     }

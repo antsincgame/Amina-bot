@@ -1,14 +1,17 @@
 /**
  * Text-to-Speech Service
  * 
- * Два движка:
- * 1. OpenAI TTS (tts-1-hd) — максимально естественный голос, платный ($0.015/1K символов)
- * 2. Edge TTS (Microsoft Neural) — бесплатный, качественный fallback
+ * Три движка:
+ * 1. ElevenLabs (eleven_multilingual_v2) — премиальный мультиязычный голос, лучшее качество
+ * 2. OpenAI TTS (tts-1-hd) — максимально естественный голос, платный ($0.015/1K символов)
+ * 3. Edge TTS (Microsoft Neural) — бесплатный, качественный fallback
  * 
- * Выбор движка: настройка `tts_provider` в админке ('openai' | 'edge')
+ * Выбор движка: настройка `tts_provider` в админке ('elevenlabs' | 'openai' | 'edge')
+ * Голос ElevenLabs: настройка `elevenlabs_voice_id` (ID голоса из библиотеки ElevenLabs)
  * Голос OpenAI: настройка `openai_tts_voice` ('nova' | 'alloy' | 'echo' | 'fable' | 'onyx' | 'shimmer')
  * Голос Edge: настройка `voice_speaker` ('svetlana' | 'dmitry')
  * 
+ * Цепочка fallback: ElevenLabs → OpenAI → Edge TTS
  * Поддержка длинных текстов — разбивает на чанки.
  */
 
@@ -19,23 +22,33 @@ import { appLogger } from '../config/logger.js';
 
 // ===== Типы =====
 
-type TTSProvider = 'openai' | 'edge';
+type TTSProvider = 'elevenlabs' | 'openai' | 'edge';
 type OpenAIVoice = 'nova' | 'alloy' | 'echo' | 'fable' | 'onyx' | 'shimmer';
 
 interface TTSConfig {
   provider: TTSProvider;
+  // ElevenLabs
+  elevenlabsApiKey: string | null;
+  elevenlabsVoiceId: string;
+  elevenlabsModelId: string;
+  // OpenAI
   openaiApiKey: string | null;
   openaiVoice: OpenAIVoice;
   openaiModel: string;
+  // Edge
   edgeVoice: string;
 }
 
 // ===== Константы =====
 
 const MAX_TEXT_LENGTH = 10_000;
-const OPENAI_CHUNK_SIZE = 4000;   // OpenAI лимит 4096 символов
-const EDGE_CHUNK_SIZE = 3000;     // Edge TTS чанк
+const ELEVENLABS_CHUNK_SIZE = 5000; // ElevenLabs лимит ~5000 символов
+const OPENAI_CHUNK_SIZE = 4000;     // OpenAI лимит 4096 символов
+const EDGE_CHUNK_SIZE = 3000;       // Edge TTS чанк
 const TTS_TIMEOUT_MS = 60_000;
+const ELEVENLABS_API_URL = 'https://api.elevenlabs.io/v1/text-to-speech';
+const ELEVENLABS_DEFAULT_VOICE = '21m00Tcm4TlvDq8ikWAM'; // Rachel
+const ELEVENLABS_DEFAULT_MODEL = 'eleven_multilingual_v2';
 
 // Edge TTS голоса
 const EDGE_VOICES: Record<string, string> = {
@@ -63,6 +76,9 @@ async function getTTSConfig(): Promise<TTSConfig> {
 
   const settings = await settingsRepo.getMany([
     'tts_provider',
+    'elevenlabs_api_key',
+    'elevenlabs_voice_id',
+    'elevenlabs_model_id',
     'openai_api_key',
     'openai_tts_voice',
     'openai_tts_model',
@@ -71,13 +87,23 @@ async function getTTSConfig(): Promise<TTSConfig> {
 
   const config: TTSConfig = {
     provider: (settings.tts_provider as TTSProvider) || 'edge',
+    // ElevenLabs
+    elevenlabsApiKey: settings.elevenlabs_api_key || null,
+    elevenlabsVoiceId: settings.elevenlabs_voice_id || ELEVENLABS_DEFAULT_VOICE,
+    elevenlabsModelId: settings.elevenlabs_model_id || ELEVENLABS_DEFAULT_MODEL,
+    // OpenAI
     openaiApiKey: settings.openai_api_key || null,
     openaiVoice: (settings.openai_tts_voice as OpenAIVoice) || 'nova',
     openaiModel: settings.openai_tts_model || 'tts-1-hd',
+    // Edge
     edgeVoice: EDGE_VOICES[settings.voice_speaker ?? 'svetlana'] ?? 'ru-RU-SvetlanaNeural',
   };
 
-  // Авто-определение: если ключ OpenAI есть и провайдер = openai → используем OpenAI
+  // Авто-fallback при отсутствии ключей
+  if (config.provider === 'elevenlabs' && !config.elevenlabsApiKey) {
+    appLogger.warn('TTS: ElevenLabs selected but no API key, falling back to OpenAI/Edge');
+    config.provider = config.openaiApiKey ? 'openai' : 'edge';
+  }
   if (config.provider === 'openai' && !config.openaiApiKey) {
     appLogger.warn('TTS: OpenAI selected but no API key, falling back to Edge');
     config.provider = 'edge';
@@ -112,8 +138,21 @@ export async function textToSpeech(
 
   const config = await getTTSConfig();
 
-  // Попытка с основным провайдером
-  if (config.provider === 'openai' && config.openaiApiKey) {
+  // === ElevenLabs (премиум) ===
+  if (config.provider === 'elevenlabs' && config.elevenlabsApiKey) {
+    try {
+      const result = await elevenlabsTTS(cleanText, config);
+      if (result) {
+        appLogger.info({ provider: 'elevenlabs', textLen: cleanText.length, audioBytes: result.length }, 'TTS: ElevenLabs success');
+        return result;
+      }
+    } catch (error) {
+      appLogger.warn({ error, textLen: cleanText.length }, 'TTS: ElevenLabs failed, falling back to OpenAI/Edge');
+    }
+  }
+
+  // === OpenAI TTS (премиум fallback) ===
+  if ((config.provider === 'openai' || config.provider === 'elevenlabs') && config.openaiApiKey) {
     try {
       const result = await openaiTTS(cleanText, config, lang);
       if (result) {
@@ -125,7 +164,7 @@ export async function textToSpeech(
     }
   }
 
-  // Edge TTS (основной или fallback)
+  // === Edge TTS (бесплатный fallback) ===
   try {
     const voice: string = lang === 'en'
       ? EDGE_VOICES_BY_LANG.en!
@@ -141,6 +180,101 @@ export async function textToSpeech(
   }
 
   return null;
+}
+
+// ===== ElevenLabs TTS =====
+
+/**
+ * Генерация через ElevenLabs API
+ * Качество: eleven_multilingual_v2 — лучший мультиязычный голос (русский, англ. и др.)
+ * Лимит: ~5000 символов на запрос
+ */
+async function elevenlabsTTS(
+  text: string,
+  config: TTSConfig,
+): Promise<Buffer | null> {
+  if (!config.elevenlabsApiKey) return null;
+
+  // Один чанк
+  if (text.length <= ELEVENLABS_CHUNK_SIZE) {
+    return await generateElevenLabsChunk(text, config);
+  }
+
+  // Разбивка на чанки для длинного текста
+  const chunks = splitTextIntoChunks(text, ELEVENLABS_CHUNK_SIZE);
+  appLogger.info(
+    { chunks: chunks.length, model: config.elevenlabsModelId, voice: config.elevenlabsVoiceId },
+    'TTS: ElevenLabs multi-chunk'
+  );
+
+  const audioBuffers: Buffer[] = [];
+  for (const chunk of chunks) {
+    const audio = await generateElevenLabsChunk(chunk, config);
+    if (audio) audioBuffers.push(audio);
+  }
+
+  return audioBuffers.length > 0 ? Buffer.concat(audioBuffers) : null;
+}
+
+async function generateElevenLabsChunk(
+  text: string,
+  config: TTSConfig,
+): Promise<Buffer | null> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), TTS_TIMEOUT_MS);
+
+  try {
+    const url = `${ELEVENLABS_API_URL}/${config.elevenlabsVoiceId}`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'xi-api-key': config.elevenlabsApiKey!,
+        'Content-Type': 'application/json',
+        'Accept': 'audio/mpeg',
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        text,
+        model_id: config.elevenlabsModelId,
+        voice_settings: {
+          stability: 0.5,
+          similarity_boost: 0.75,
+          style: 0.0,
+          use_speaker_boost: true,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text().catch(() => '');
+      appLogger.error(
+        { status: response.status, body: errorBody.substring(0, 200), textLen: text.length },
+        'TTS: ElevenLabs API error'
+      );
+      throw new Error(`ElevenLabs API returned ${response.status}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    if (buffer.length < 100) {
+      appLogger.warn({ textLen: text.length, audioBytes: buffer.length }, 'TTS: ElevenLabs returned too small audio');
+      return null;
+    }
+
+    return buffer;
+  } catch (error) {
+    const err = error as { name?: string; message?: string };
+    if (err.name === 'AbortError') {
+      appLogger.warn({ textLen: text.length }, 'TTS: ElevenLabs chunk timeout');
+    } else {
+      appLogger.error({ error: err.message, textLen: text.length }, 'TTS: ElevenLabs chunk failed');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 // ===== OpenAI TTS =====
