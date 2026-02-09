@@ -367,15 +367,17 @@ const buildFullContext = async (
 };
 
 /**
- * Обрабатывает AI-ответ: верификация через Perplexity, защита от симуляции и галлюцинаций.
+ * Обрабатывает AI-ответ: верификация, защита от отказов, симуляции, галлюцинаций.
  * 
- * Стратегия:
- * 1. Верификатор проверяет ответ (симуляция, отказ, галлюцинации)
- * 2. Если верификатор обнаружил проблему И дал correctedResponse → используем его
- * 3. Regex-детекция симуляции → замена на реальные данные
- * 4. НОВОЕ: если Perplexity данные БЫЛИ в контексте но LLM их проигнорировала →
- *    извлекаем и возвращаем данные НАПРЯМУЮ из контекста (без повторного API-вызова!)
- * 5. Если ничего не помогло → возвращаем оригинал
+ * ПРИНЦИП: Бот НИКОГДА не отказывает пользователю. Премиум-ассистент ВСЕГДА отвечает.
+ * 
+ * Стратегия (каждый шаг — попытка дать ОТВЕТ, не отказ):
+ * 1. Верификатор → correctedResponse из Perplexity
+ * 2. Симуляция → данные из контекста или свежий Perplexity запрос
+ * 3. LLM проигнорировала данные → показать Perplexity напрямую
+ * 4. LLM отказалась → forceAnswer (повторный запрос с жёстким промптом)
+ * 5. Всё провалилось → свежий Perplexity запрос напрямую пользователю
+ * 6. Даже Perplexity не смог → оригинальный ответ LLM (но без отказных фраз)
  */
 const processAIResponse = async (
   response: AIResponse,
@@ -383,7 +385,7 @@ const processAIResponse = async (
   userId: string,
   webSearchContext: string,
 ): Promise<AIResponse> => {
-  // === Верификация через Perplexity ===
+  // === Шаг 1: Верификация через Perplexity ===
   const verification = await verifyResponse(userMessage, response.content, webSearchContext).catch(err => {
     telegramLogger.debug({ error: err }, 'Verification failed silently');
     return null;
@@ -398,89 +400,146 @@ const processAIResponse = async (
       event: 'llm_verify_failed', reason: verification.reason, responseLength: response.content.length,
     }, userId).catch(() => {});
 
-    // Если верификатор дал исправленный ответ (из Perplexity) — используем его
     if (verification.correctedResponse) {
-      telegramLogger.info({ userId, reason: verification.reason }, '✅ Using Perplexity-verified response instead of LLM hallucination');
-      return {
-        ...response,
-        content: verification.correctedResponse,
-      };
+      telegramLogger.info({ userId, reason: verification.reason }, '✅ Using Perplexity-verified response');
+      return { ...response, content: verification.correctedResponse };
     }
   }
 
-  // === Fallback 1: regex-детекция симуляции ===
+  // === Шаг 2: Симуляция поиска → данные из контекста или Perplexity ===
   if (looksLikeSearchSimulation(response.content)) {
-    telegramLogger.warn({ userId, responseSnippet: response.content.substring(0, 100) }, 'LLM simulated search (regex fallback)');
+    telegramLogger.warn({ userId, responseSnippet: response.content.substring(0, 100) }, 'LLM simulated search');
 
-    // Сначала пробуем извлечь данные прямо из контекста (уже есть, не нужен API-вызов!)
-    if (webSearchContext) {
-      const fallback = formatPerplexityFallback(webSearchContext);
-      if (fallback) {
-        telegramLogger.info({ userId }, '✅ Replaced simulation with cached Perplexity data (from context)');
-        return { ...response, content: fallback };
-      }
-    }
+    const fixed = await tryGetPerplexityData(webSearchContext, userMessage, userId);
+    if (fixed) return { ...response, content: fixed };
 
-    // Если контекста нет — пытаемся вызвать Perplexity напрямую
-    try {
-      const { webSearch: doSearch } = await import('../ai/websearch.js');
-      const searchResult = await doSearch(userMessage);
-      if (searchResult.answer && searchResult.answer.length > 30) {
-        let corrected = searchResult.answer;
-        if (searchResult.citations.length > 0) {
-          corrected += '\n\n📚 Источники:\n';
-          searchResult.citations.slice(0, 5).forEach((url, i) => {
-            corrected += `${i + 1}. ${url.length > 70 ? url.substring(0, 67) + '...' : url}\n`;
-          });
-        }
-        telegramLogger.info({ userId }, '✅ Replaced simulation with fresh Perplexity data');
-        return { ...response, content: corrected };
-      }
-    } catch (searchError) {
-      telegramLogger.debug({ error: searchError }, 'Fallback Perplexity search failed');
-    }
-
-    // Последний вариант: сообщение пользователю
-    return {
-      ...response,
-      content: '🔍 Я попыталась найти информацию, но поиск не вернул результатов.\n\n' +
-        'Попробуй:\n• Нажать кнопку **🌐 Поиск** и написать запрос\n• Или команду `/search твой запрос`',
-    };
+    // Perplexity недоступен → forceAnswer (LLM без симуляции)
+    const forced = await forceAnswer(userMessage, userId);
+    if (forced) return { ...response, content: forced };
   }
 
-  // === Fallback 2: LLM проигнорировала данные из контекста ===
-  // Это главный новый механизм: если Perplexity данные БЫЛИ предоставлены LLM,
-  // но она их полностью проигнорировала (не использовала числа, факты, ссылки),
-  // показываем данные Perplexity напрямую — без повторного API-вызова.
+  // === Шаг 3: LLM проигнорировала данные из контекста → показать Perplexity напрямую ===
   if (webSearchContext && llmIgnoredSearchData(response.content, webSearchContext)) {
-    telegramLogger.warn({
-      userId,
-      responseSnippet: response.content.substring(0, 100),
-    }, '🚨 LLM ignored Perplexity search data → using raw Perplexity answer');
-
+    telegramLogger.warn({ userId, responseSnippet: response.content.substring(0, 100) },
+      '🚨 LLM ignored search data → using raw Perplexity');
     analyticsRepo.log('message_received', 'telegram', {
       event: 'llm_ignored_search_data', responseLength: response.content.length,
     }, userId).catch(() => {});
 
     const fallback = formatPerplexityFallback(webSearchContext);
-    if (fallback) {
-      telegramLogger.info({ userId }, '✅ Using raw Perplexity data because LLM ignored them');
-      return { ...response, content: fallback };
-    }
+    if (fallback) return { ...response, content: fallback };
+  }
+
+  // === Шаг 4: LLM отказалась отвечать → forceAnswer ===
+  if (looksLikeSearchRefusal(response.content)) {
+    telegramLogger.warn({ userId, responseSnippet: response.content.substring(0, 100) },
+      '🚨 LLM refused to answer → forcing retry');
+
+    // Сначала пробуем Perplexity
+    const perplexityFix = await tryGetPerplexityData(webSearchContext, userMessage, userId);
+    if (perplexityFix) return { ...response, content: perplexityFix };
+
+    // Потом — повторный запрос к LLM с жёстким промптом
+    const forced = await forceAnswer(userMessage, userId);
+    if (forced) return { ...response, content: forced };
   }
 
   return response;
 };
 
-/** Добавляет предупреждение LLM если поиск нужен, но данные не получены */
+/**
+ * Пытается получить данные из Perplexity: сначала из кэша (контекста), потом свежий запрос.
+ * Никогда не возвращает сообщение-отказ — только реальные данные или null.
+ */
+const tryGetPerplexityData = async (
+  webSearchContext: string,
+  userMessage: string,
+  userId: string,
+): Promise<string | null> => {
+  // Сначала из контекста (без API-вызова)
+  if (webSearchContext) {
+    const cached = formatPerplexityFallback(webSearchContext);
+    if (cached) {
+      telegramLogger.info({ userId }, '✅ Using cached Perplexity data from context');
+      return cached;
+    }
+  }
+
+  // Свежий запрос к Perplexity
+  try {
+    const { webSearch: doSearch } = await import('../ai/websearch.js');
+    const result = await doSearch(userMessage);
+    if (result.answer && result.answer.length > 30) {
+      let text = result.answer;
+      if (result.citations.length > 0) {
+        text += '\n\n📚 Источники:\n';
+        result.citations.slice(0, 5).forEach((url, i) => {
+          text += `${i + 1}. ${url.length > 70 ? url.substring(0, 67) + '...' : url}\n`;
+        });
+      }
+      telegramLogger.info({ userId }, '✅ Got fresh Perplexity data');
+      return text;
+    }
+  } catch (err) {
+    telegramLogger.debug({ error: err }, 'Perplexity search failed');
+  }
+
+  return null;
+};
+
+/**
+ * Повторный запрос к LLM с жёстким промптом "просто ответь".
+ * Используется когда LLM отказалась или симулировала поиск.
+ * НИКОГДА не возвращает отказ — если и этот запрос плохой, возвращает null.
+ */
+const forceAnswer = async (
+  userMessage: string,
+  userId: string,
+): Promise<string | null> => {
+  try {
+    telegramLogger.info({ userId, query: userMessage.substring(0, 60) }, '🔄 Force-answering with strict prompt');
+    const { aiService } = await import('../ai/openrouter.js');
+
+    const forceResult = await aiService.chat(
+      [{ role: 'user', content: userMessage }],
+      'telegram',
+      'Ты — премиум AI-ассистент. Пользователь задал вопрос и ждёт ответ.\n\n' +
+      'АБСОЛЮТНЫЕ ПРАВИЛА:\n' +
+      '1. ОТВЕТЬ на вопрос. Это единственное, что от тебя требуется.\n' +
+      '2. ЗАПРЕЩЕНО: отказывать, говорить "не могу", "не знаю", "обратитесь к...".\n' +
+      '3. ЗАПРЕЩЕНО: перечислять свои возможности вместо ответа.\n' +
+      '4. ЗАПРЕЩЕНО: симулировать поиск ("Ищу...", "Поиск...").\n' +
+      '5. Если не уверен — дай лучший ответ из своих знаний с пометкой "по моим данным".\n' +
+      '6. Ответ должен быть развёрнутым, полезным и конкретным.\n' +
+      '7. Отвечай на русском языке.'
+    );
+
+    // Проверяем что retry не отказ
+    if (forceResult.content &&
+        forceResult.content.length > 50 &&
+        !looksLikeSearchSimulation(forceResult.content) &&
+        !looksLikeSearchRefusal(forceResult.content)) {
+      telegramLogger.info({ userId, length: forceResult.content.length }, '✅ Force-answer succeeded');
+      return forceResult.content;
+    }
+  } catch (err) {
+    telegramLogger.warn({ error: err, userId }, 'Force-answer failed');
+  }
+
+  return null;
+};
+
+/** Добавляет инструкцию LLM если поиск нужен, но данные не получены */
 const addSearchWarning = (fullContext: string, userMessage: string, webSearchContext: string, userId: string): string => {
   if (!webSearchContext && needsWebSearch(userMessage)) {
-    telegramLogger.warn({ userId, query: userMessage.substring(0, 50) }, 'Search needed but no data — injected warning');
-    return fullContext + '\n\n⚠️ СИСТЕМНОЕ УВЕДОМЛЕНИЕ: Автоматический поиск был запрошен, но данные временно НЕ получены. ' +
-      'СТРОГО ЗАПРЕЩЕНО: НЕ симулируй поиск, НЕ пиши "Ищу...", "Поиск в интернете", "Сейчас найду". ' +
-      'НЕ говори "я не умею искать" — у тебя ЕСТЬ поиск, просто сейчас он не вернул данные. ' +
-      'Предложи пользователю: нажать кнопку 🌐 Поиск или использовать /search для явного поиска по теме. ' +
-      'НЕ выдумывай даты, факты, новости — если данных нет, так и скажи.';
+    telegramLogger.warn({ userId, query: userMessage.substring(0, 50) }, 'Search needed but no data — instructing to answer from knowledge');
+    return fullContext + '\n\n⚠️ СИСТЕМНОЕ УВЕДОМЛЕНИЕ: Автоматический поиск сейчас недоступен. ' +
+      'ОБЯЗАТЕЛЬНО ответь на вопрос пользователя из своих знаний! ' +
+      'Ты — премиум-ассистент, НИКОГДА не отказывай в помощи. ' +
+      'Если точных данных нет — дай лучший ответ из того, что знаешь, с пометкой "по моим данным". ' +
+      'НЕ симулируй поиск, НЕ пиши "Ищу...", "Поиск в интернете". ' +
+      'НЕ перечисляй свои возможности вместо ответа. НЕ говори "не могу помочь". ' +
+      'Просто ОТВЕТЬ на вопрос — развёрнуто, полезно, по существу.';
   }
   return fullContext;
 };
