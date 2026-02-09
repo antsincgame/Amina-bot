@@ -561,10 +561,10 @@ const processMessageThroughAI = async (
     }
   }
 
-  // Verify & protect from search simulation (text messages get full verification)
-  if (messageType === 'message') {
-    aiResponse = await processAIResponse(aiResponse, userText, userId, webSearchContext);
-  }
+  // Verify & protect from search simulation/refusal/ignorance
+  // Применяем ко ВСЕМ типам сообщений (text + voice), т.к. голосовые проходят
+  // тот же AI pipeline и бесплатные LLM отказывают одинаково для обоих типов
+  aiResponse = await processAIResponse(aiResponse, userText, userId, webSearchContext);
 
   // Save to history
   // Раньше здесь была двойная проверка looksLikeSearchSimulation которая могла
