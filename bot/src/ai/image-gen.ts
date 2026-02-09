@@ -337,7 +337,7 @@ export function extractImagePrompt(text: string): string {
 }
 
 // --------------------------------------------
-// Prompt Translation (Russian → English via Groq)
+// Prompt Translation (Russian → English via основная LLM)
 // --------------------------------------------
 
 /** Проверка: содержит ли текст кириллицу */
@@ -346,7 +346,7 @@ function hasCyrillic(text: string): boolean {
 }
 
 /**
- * Переводит промпт на английский через Groq LLM.
+ * Переводит промпт на английский через основную LLM (OpenRouter).
  * Если промпт уже на английском — возвращает как есть.
  * При ошибке — возвращает оригинал (лучше русский промпт, чем ничего).
  */
@@ -358,69 +358,32 @@ async function translatePromptToEnglish(prompt: string): Promise<string> {
   }
 
   try {
-    const keys = await getApiKeys();
-    if (!keys.groq) {
-      aiLogger.debug('Groq not configured, skipping prompt translation');
-      return prompt;
-    }
+    const { aiService } = await import('./openrouter.js');
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
-
-    try {
-      const response = await fetch(GROQ_API_URL, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${keys.groq}`,
-          'Content-Type': 'application/json',
+    const response = await aiService.chat(
+      [
+        {
+          role: 'user',
+          content: prompt,
         },
-        signal: controller.signal,
-        body: JSON.stringify({
-          model: 'llama-3.1-8b-instant',
-          messages: [
-            {
-              role: 'system',
-              content: 'You are a prompt translator for AI image generation. Translate the user\'s image description from Russian to English. Output ONLY the English translation, nothing else. Make it vivid and descriptive for best image generation results. Keep it concise (under 200 chars). Do NOT add quotes or explanations.',
-            },
-            {
-              role: 'user',
-              content: prompt,
-            },
-          ],
-          max_tokens: 150,
-          temperature: 0.3,
-        }),
-      });
+      ],
+      'telegram',
+      'You are a prompt translator for AI image generation. Translate the user\'s image description from Russian to English. Output ONLY the English translation, nothing else. Make it vivid and descriptive for best image generation results. Keep it concise (under 200 chars). Do NOT add quotes or explanations.',
+    );
 
-      if (!response.ok) {
-        aiLogger.warn({ status: response.status }, 'Groq translation request failed');
-        return prompt;
-      }
+    const translated = response.content?.trim();
 
-      const data = await response.json() as {
-        choices?: Array<{ message?: { content?: string } }>;
-      };
-      const translated = data.choices?.[0]?.message?.content?.trim();
-
-      if (translated && translated.length > 3) {
-        aiLogger.info(
-          { original: prompt.substring(0, 60), translated: translated.substring(0, 80) },
-          '🌐 Prompt translated to English for image gen'
-        );
-        return translated;
-      }
-
-      return prompt;
-    } finally {
-      clearTimeout(timeoutId);
+    if (translated && translated.length > 3 && translated.length < 500) {
+      aiLogger.info(
+        { original: prompt.substring(0, 60), translated: translated.substring(0, 80) },
+        '🌐 Prompt translated to English via main LLM'
+      );
+      return translated;
     }
+
+    return prompt;
   } catch (error) {
-    const err = error as { name?: string };
-    if (err.name === 'AbortError') {
-      aiLogger.warn('Prompt translation timed out, using original');
-    } else {
-      aiLogger.warn({ error }, 'Prompt translation failed, using original');
-    }
+    aiLogger.warn({ error: error instanceof Error ? error.message : String(error) }, 'Prompt translation failed, using original');
     return prompt;
   }
 }
