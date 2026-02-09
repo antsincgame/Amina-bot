@@ -1,59 +1,26 @@
 /**
- * LLM Response Verifier
+ * LLM Response Verifier — Перцептивная верификация через Perplexity
  * 
- * Вторая LLM проверяет ответ первой на:
- * - Фактическую корректность (не выдумал ли факты)
- * - Выполнение инструкций (ответил ли на вопрос)
- * - Отсутствие галлюцинаций (не симулирует ли поиск)
- * - Адекватность ответа
+ * Архитектура:
+ * 1. Основная LLM (OpenRouter) интерпретирует ВСЕ запросы пользователя
+ * 2. Верификатор (этот модуль) проверяет ответ на:
+ *    - Симуляцию поиска ("Ищу...", "Поиск в интернете")
+ *    - Фактические галлюцинации (выдуманные факты, даты, цифры)
+ *    - Отказ использовать предоставленные данные
+ * 3. При обнаружении проблем — заменяет ответ реальными данными из Perplexity
  * 
- * Прозрачно для пользователя: если ответ некорректен,
- * верификатор возвращает исправленную версию.
- * 
- * Стратегия: используем более дешёвую/быструю модель для верификации
+ * Всегда включён. Не использует бесплатные LLM для верификации —
+ * вместо этого использует Perplexity API для фактчекинга.
  */
 
-import OpenAI from 'openai';
-import { config, getApiKeys } from '../config/index.js';
-import { settingsRepo } from '../db/supabase.js';
-import { aiLogger } from '../config/logger.js';
-import { SingleCache } from '../utils/cache.js';
+import { telegramLogger, aiLogger } from '../config/logger.js';
+import { webSearch, needsWebSearch } from './websearch.js';
+import { looksLikeSearchSimulation, looksLikeSearchRefusal } from '../telegram/format.js';
 
-// Кэш настройки верификации
-const verifyEnabledCache = new SingleCache<boolean>(60_000);
+// ============================================
+// Types
+// ============================================
 
-// Модели для верификации (дешёвые/быстрые)
-const VERIFY_MODELS = [
-  'meta-llama/llama-3.2-3b-instruct:free',
-  'mistralai/mistral-7b-instruct:free',
-  'google/gemma-2-9b-it:free',
-  'qwen/qwen-2-7b-instruct:free',
-];
-
-/**
- * Проверяет, включена ли верификация ответов
- */
-async function isVerificationEnabled(): Promise<boolean> {
-  const cached = verifyEnabledCache.get();
-  if (cached !== null) return cached;
-  try {
-    const val = await settingsRepo.get('llm_verify_enabled');
-    const enabled = val === 'true';
-    verifyEnabledCache.set(enabled);
-    return enabled;
-  } catch {
-    return false;
-  }
-}
-
-/** Сбросить кэш верификации */
-export function clearVerifyCache(): void {
-  verifyEnabledCache.clear();
-}
-
-/**
- * Результат верификации
- */
 export interface VerifyResult {
   /** Оригинальный ответ прошёл проверку */
   isValid: boolean;
@@ -63,18 +30,44 @@ export interface VerifyResult {
   reason?: string;
   /** Время верификации (мс) */
   verifyTimeMs: number;
-  /** Верификация была пропущена (выключена / ошибка) */
+  /** Верификация была пропущена */
   skipped: boolean;
 }
 
+// ============================================
+// Hallucination Detection Patterns
+// ============================================
+
+/** Паттерны когда LLM выдумывает конкретные данные без источника */
+const HALLUCINATION_PATTERNS = [
+  // LLM придумывает "актуальные" данные о ценах/курсах
+  /(?:на данный момент|сейчас|сегодня|текущий|актуальный)\s*(?:курс|цена|стоимость)\s*[^.]*?\d+[\s,.]\d+/i,
+  // Придумывает погоду с точными цифрами
+  /(?:температура|сейчас|в данный момент)\s*(?:составляет|около|примерно)?\s*[+-]?\d+\s*°/i,
+  // Придумывает результаты матчей
+  /(?:счёт|результат)\s*(?:матча|игры)\s*[^.]*?\d+\s*[-:]\s*\d+/i,
+];
+
+/** Слова-маркеры что LLM не уверена но выдаёт за факт */
+const FAKE_CONFIDENCE_PATTERNS = [
+  /по последним данным(?!.*\[\d+\])/i,  // "по последним данным" без ссылки
+  /на момент написания(?!.*\[\d+\])/i,
+  /по состоянию на \d{1,2}\s+\w+\s+\d{4}/i,  // Конкретная дата "по состоянию на"
+  /согласно официальным данным(?!.*\[\d+\])/i,
+  /по информации\s+(?!из\s+интернета|из\s+поиска)/i,
+];
+
+// ============================================
+// Core Verification Logic
+// ============================================
+
 /**
- * Верифицирует ответ LLM через вторую модель
+ * Верифицирует ответ LLM.
  * 
- * Проверяет:
- * 1. Ответил ли на вопрос пользователя
- * 2. Нет ли выдуманных фактов/дат/цифр
- * 3. Не симулирует ли поиск в интернете
- * 4. Адекватен ли ответ
+ * Стратегия:
+ * 1. Детекция симуляции поиска → замена на реальный Perplexity-поиск
+ * 2. Детекция отказа использовать данные → замена на реальный поиск
+ * 3. Детекция галлюцинаций с фактами → фактчек через Perplexity
  * 
  * @param userMessage - Исходный вопрос пользователя
  * @param aiResponse - Ответ основной LLM
@@ -87,158 +80,188 @@ export async function verifyResponse(
   searchContext?: string
 ): Promise<VerifyResult> {
   const startTime = Date.now();
-  
-  // Проверяем, включена ли верификация
-  const enabled = await isVerificationEnabled();
-  if (!enabled) {
+
+  // Не верифицируем очень короткие ответы и бытовые сообщения
+  if (aiResponse.length < 30 || userMessage.length < 5) {
     return { isValid: true, verifyTimeMs: Date.now() - startTime, skipped: true };
   }
 
-  // Не верифицируем короткие / простые ответы
-  if (aiResponse.length < 50 || userMessage.length < 10) {
-    return { isValid: true, verifyTimeMs: Date.now() - startTime, skipped: true };
-  }
-
-  // Не верифицируем бытовые сообщения
-  if (/^(привет|здравствуй|ок|да|нет|спасибо|хорошо|ладно|пока)\s*[.!?]*$/i.test(userMessage.trim())) {
+  if (/^(привет|здравствуй|ок|да|нет|спасибо|хорошо|ладно|пока|ты как|как дела)\s*[.!?]*$/i.test(userMessage.trim())) {
     return { isValid: true, verifyTimeMs: Date.now() - startTime, skipped: true };
   }
 
   try {
-    const keys = await getApiKeys();
-    if (!keys.openrouter) {
-      return { isValid: true, verifyTimeMs: Date.now() - startTime, skipped: true };
-    }
+    // === Проверка 1: Симуляция поиска ===
+    if (looksLikeSearchSimulation(aiResponse)) {
+      aiLogger.warn(
+        { userMessage: userMessage.substring(0, 80), responseSnippet: aiResponse.substring(0, 100) },
+        '🚨 Verifier: search simulation detected → replacing with real search'
+      );
 
-    const verifyClient = new OpenAI({
-      apiKey: keys.openrouter,
-      baseURL: config.ai.baseUrl,
-      timeout: 15000, // 15 сек макс для верификации
-    });
-
-    const verifyPrompt = buildVerifyPrompt(userMessage, aiResponse, searchContext);
-
-    // Пробуем модели по очереди (берём первую доступную)
-    let verifyResult: string | null = null;
-    
-    for (const model of VERIFY_MODELS) {
-      try {
-        const response = await verifyClient.chat.completions.create({
-          model,
-          messages: [
-            { role: 'system', content: 'Ты — верификатор ответов AI. Отвечай ТОЛЬКО в формате JSON.' },
-            { role: 'user', content: verifyPrompt },
-          ],
-          max_tokens: 500,
-          temperature: 0.1,
-        });
-
-        const content = response.choices[0]?.message?.content;
-        if (content) {
-          verifyResult = content;
-          aiLogger.debug({ model, verifyTimeMs: Date.now() - startTime }, 'Verification completed');
-          break;
-        }
-      } catch (err) {
-        aiLogger.debug({ model, error: err instanceof Error ? err.message : String(err) }, 'Verify model failed');
-        continue;
+      const corrected = await replaceWithRealSearch(userMessage);
+      if (corrected) {
+        return {
+          isValid: false,
+          correctedResponse: corrected,
+          reason: 'LLM симулировала поиск — заменено на реальные данные из Perplexity',
+          verifyTimeMs: Date.now() - startTime,
+          skipped: false,
+        };
       }
     }
 
-    if (!verifyResult) {
-      aiLogger.warn('All verify models failed, skipping verification');
-      return { isValid: true, verifyTimeMs: Date.now() - startTime, skipped: true };
+    // === Проверка 2: Отказ использовать предоставленные данные ===
+    if (searchContext && looksLikeSearchRefusal(aiResponse)) {
+      aiLogger.warn(
+        { userMessage: userMessage.substring(0, 80), responseSnippet: aiResponse.substring(0, 100) },
+        '🚨 Verifier: search refusal detected → replacing with real search'
+      );
+
+      const corrected = await replaceWithRealSearch(userMessage);
+      if (corrected) {
+        return {
+          isValid: false,
+          correctedResponse: corrected,
+          reason: 'LLM отказалась использовать данные поиска — заменено на реальные данные',
+          verifyTimeMs: Date.now() - startTime,
+          skipped: false,
+        };
+      }
     }
 
-    // Парсим JSON ответ верификатора
-    return parseVerifyResult(verifyResult, aiResponse, Date.now() - startTime);
+    // === Проверка 3: Фактические галлюцинации ===
+    // Только для информационных запросов где нужен поиск
+    if (needsWebSearch(userMessage) && !searchContext) {
+      const hasHallucination = detectFactualHallucination(aiResponse);
+      if (hasHallucination) {
+        aiLogger.warn(
+          { userMessage: userMessage.substring(0, 80), reason: hasHallucination },
+          '🚨 Verifier: factual hallucination detected → fact-checking via Perplexity'
+        );
+
+        const factChecked = await factCheckViaPerplexity(userMessage, aiResponse);
+        if (factChecked) {
+          return {
+            isValid: false,
+            correctedResponse: factChecked,
+            reason: `Обнаружена галлюцинация (${hasHallucination}) — проверено через Perplexity`,
+            verifyTimeMs: Date.now() - startTime,
+            skipped: false,
+          };
+        }
+      }
+    }
+
+    return { isValid: true, verifyTimeMs: Date.now() - startTime, skipped: false };
   } catch (error) {
-    aiLogger.warn({ error: error instanceof Error ? error.message : String(error) }, 'Verification error, accepting original');
+    aiLogger.warn(
+      { error: error instanceof Error ? error.message : String(error) },
+      'Verification error, accepting original response'
+    );
     return { isValid: true, verifyTimeMs: Date.now() - startTime, skipped: true };
   }
 }
 
-/**
- * Строит промпт для верификатора
- */
-function buildVerifyPrompt(userMessage: string, aiResponse: string, searchContext?: string): string {
-  const searchInfo = searchContext 
-    ? `\n\nДанные из интернета были предоставлены:\n${searchContext.substring(0, 500)}...`
-    : '\n\nДанные из интернета НЕ были предоставлены.';
-
-  return `Проверь ответ AI-ассистента на корректность.
-
-ВОПРОС ПОЛЬЗОВАТЕЛЯ:
-"${userMessage.substring(0, 300)}"
-
-ОТВЕТ AI:
-"${aiResponse.substring(0, 1000)}"
-${searchInfo}
-
-ПРОВЕРЬ:
-1. Ответил ли AI на вопрос пользователя? (не ушёл ли в сторону)
-2. Нет ли ВЫДУМАННЫХ фактов, дат, цифр? (галлюцинации)
-3. Не симулирует ли AI поиск в интернете? ("Ищу...", "Поиск в интернете", "Сейчас найду")
-4. Адекватен ли ответ? (нет бреда, повторений, мусора)
-5. Если были данные из интернета — использовал ли AI их корректно?
-
-Ответь СТРОГО в формате JSON:
-{
-  "valid": true/false,
-  "issues": ["список проблем если есть"],
-  "severity": "none" | "minor" | "major" | "critical"
-}
-
-Если valid=true — просто {"valid": true, "issues": [], "severity": "none"}
-Отвечай ТОЛЬКО JSON, без текста до и после.`;
-}
+// ============================================
+// Detection Helpers
+// ============================================
 
 /**
- * Парсит результат верификации
+ * Обнаруживает фактические галлюцинации в ответе LLM.
+ * Возвращает описание проблемы или null если всё ок.
  */
-function parseVerifyResult(
-  rawResult: string,
-  originalResponse: string,
-  verifyTimeMs: number
-): VerifyResult {
-  try {
-    // Извлекаем JSON из ответа (может быть обёрнут в ```json ... ```)
-    const jsonMatch = rawResult.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      return { isValid: true, verifyTimeMs, skipped: false };
+export function detectFactualHallucination(response: string): string | null {
+  // Проверяем паттерны галлюцинаций
+  for (const pattern of HALLUCINATION_PATTERNS) {
+    if (pattern.test(response)) {
+      return `hallucinated_data: ${pattern.source.substring(0, 60)}`;
     }
-
-    const parsed = JSON.parse(jsonMatch[0]) as {
-      valid?: boolean;
-      issues?: string[];
-      severity?: string;
-    };
-
-    const isValid = parsed.valid !== false;
-    const issues = parsed.issues ?? [];
-    const severity = parsed.severity ?? 'none';
-
-    if (isValid || severity === 'none' || severity === 'minor') {
-      return { isValid: true, verifyTimeMs, skipped: false };
-    }
-
-    // Серьёзные проблемы (major/critical) — логируем но НЕ заменяем ответ
-    // (замена может быть хуже оригинала, вместо этого логируем предупреждение)
-    aiLogger.warn({ 
-      issues, 
-      severity,
-      responseSnippet: originalResponse.substring(0, 100),
-      verifyTimeMs 
-    }, 'LLM verification found issues');
-
-    return {
-      isValid: false,
-      reason: issues.join('; '),
-      verifyTimeMs,
-      skipped: false,
-    };
-  } catch (parseError) {
-    aiLogger.debug({ error: parseError, rawResult: rawResult.substring(0, 200) }, 'Failed to parse verify result');
-    return { isValid: true, verifyTimeMs, skipped: false };
   }
+
+  // Проверяем фейковую уверенность
+  for (const pattern of FAKE_CONFIDENCE_PATTERNS) {
+    if (pattern.test(response)) {
+      return `fake_confidence: ${pattern.source.substring(0, 60)}`;
+    }
+  }
+
+  return null;
+}
+
+// ============================================
+// Correction Helpers
+// ============================================
+
+/**
+ * Заменяет симулированный/отказный ответ на реальные данные из Perplexity.
+ * Вызывает Perplexity напрямую и возвращает форматированный результат.
+ */
+async function replaceWithRealSearch(userMessage: string): Promise<string | null> {
+  try {
+    const searchResult = await webSearch(userMessage);
+
+    if (searchResult.answer && searchResult.answer.length > 30) {
+      let result = searchResult.answer;
+
+      // Добавляем источники если есть
+      if (searchResult.citations.length > 0) {
+        result += '\n\n📚 Источники:\n';
+        searchResult.citations.slice(0, 5).forEach((url, i) => {
+          result += `${i + 1}. ${url.length > 70 ? url.substring(0, 67) + '...' : url}\n`;
+        });
+      }
+
+      telegramLogger.info(
+        { resultLength: result.length, citations: searchResult.citations.length },
+        '✅ Verifier: replaced simulation with real Perplexity data'
+      );
+
+      return result;
+    }
+  } catch (error) {
+    aiLogger.warn({ error: error instanceof Error ? error.message : String(error) }, 'Verifier: Perplexity search failed');
+  }
+
+  return null;
+}
+
+/**
+ * Фактчек ответа LLM через Perplexity.
+ * Задаёт тот же вопрос Perplexity и возвращает проверенный ответ.
+ */
+async function factCheckViaPerplexity(userMessage: string, _aiResponse: string): Promise<string | null> {
+  try {
+    const searchResult = await webSearch(userMessage);
+
+    if (searchResult.answer && searchResult.answer.length > 50) {
+      let result = searchResult.answer;
+
+      if (searchResult.citations.length > 0) {
+        result += '\n\n📚 Источники:\n';
+        searchResult.citations.slice(0, 5).forEach((url, i) => {
+          result += `${i + 1}. ${url.length > 70 ? url.substring(0, 67) + '...' : url}\n`;
+        });
+      }
+
+      telegramLogger.info(
+        { resultLength: result.length },
+        '✅ Verifier: fact-checked via Perplexity, using verified answer'
+      );
+
+      return result;
+    }
+  } catch (error) {
+    aiLogger.warn({ error: error instanceof Error ? error.message : String(error) }, 'Verifier: fact-check Perplexity search failed');
+  }
+
+  return null;
+}
+
+// ============================================
+// Legacy exports (для обратной совместимости)
+// ============================================
+
+/** @deprecated Верификация теперь всегда включена */
+export function clearVerifyCache(): void {
+  // no-op — верификация всегда включена
 }

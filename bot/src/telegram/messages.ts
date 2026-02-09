@@ -364,14 +364,22 @@ const buildFullContext = async (
   return { memoryContext, webSearchContext };
 };
 
-/** Обрабатывает AI-ответ: верификация, защита от симуляции поиска */
+/**
+ * Обрабатывает AI-ответ: верификация через Perplexity, защита от симуляции и галлюцинаций.
+ * 
+ * Стратегия:
+ * 1. Верификатор проверяет ответ (симуляция, отказ, галлюцинации)
+ * 2. Если верификатор обнаружил проблему И дал correctedResponse → используем его
+ * 3. Если correctedResponse нет → проверяем regex-паттерны как fallback
+ * 4. Если ничего не помогло → возвращаем оригинал
+ */
 const processAIResponse = async (
   response: AIResponse,
   userMessage: string,
   userId: string,
   webSearchContext: string,
 ): Promise<AIResponse> => {
-  // Верификация второй LLM
+  // === Верификация через Perplexity ===
   const verification = await verifyResponse(userMessage, response.content, webSearchContext).catch(err => {
     telegramLogger.debug({ error: err }, 'Verification failed silently');
     return null;
@@ -381,19 +389,49 @@ const processAIResponse = async (
     telegramLogger.warn({
       userId, reason: verification.reason, verifyTimeMs: verification.verifyTimeMs,
       responseSnippet: response.content.substring(0, 80),
-    }, 'LLM verification flagged issues');
+    }, '🚨 Verifier flagged response');
     analyticsRepo.log('message_received', 'telegram', {
       event: 'llm_verify_failed', reason: verification.reason, responseLength: response.content.length,
     }, userId).catch(() => {});
+
+    // Если верификатор дал исправленный ответ (из Perplexity) — используем его
+    if (verification.correctedResponse) {
+      telegramLogger.info({ userId, reason: verification.reason }, '✅ Using Perplexity-verified response instead of LLM hallucination');
+      return {
+        ...response,
+        content: verification.correctedResponse,
+      };
+    }
   }
 
-  // Защита от симуляции поиска
-  if (!webSearchContext && looksLikeSearchSimulation(response.content)) {
-    telegramLogger.warn({ userId, responseSnippet: response.content.substring(0, 100) }, 'LLM simulated search — replacing');
+  // === Fallback: regex-детекция симуляции (если верификатор не сработал) ===
+  if (looksLikeSearchSimulation(response.content)) {
+    telegramLogger.warn({ userId, responseSnippet: response.content.substring(0, 100) }, 'LLM simulated search (regex fallback)');
+
+    // Пытаемся заменить на реальный Perplexity-поиск
+    try {
+      const { webSearch: doSearch } = await import('../ai/websearch.js');
+      const searchResult = await doSearch(userMessage);
+      if (searchResult.answer && searchResult.answer.length > 30) {
+        let corrected = searchResult.answer;
+        if (searchResult.citations.length > 0) {
+          corrected += '\n\n📚 Источники:\n';
+          searchResult.citations.slice(0, 5).forEach((url, i) => {
+            corrected += `${i + 1}. ${url.length > 70 ? url.substring(0, 67) + '...' : url}\n`;
+          });
+        }
+        telegramLogger.info({ userId }, '✅ Replaced simulation with real Perplexity data (regex fallback)');
+        return { ...response, content: corrected };
+      }
+    } catch (searchError) {
+      telegramLogger.debug({ error: searchError }, 'Fallback Perplexity search failed');
+    }
+
+    // Последний вариант: сообщение пользователю
     return {
       ...response,
-      content: '🔍 Поиск временно не вернул результатов.\n\n' +
-        'Попробуй:\n• Нажать кнопку **🌐 Поиск** и написать запрос\n• Или команду `/search твой запрос`\n• Через минуту повторить',
+      content: '🔍 Я попыталась найти информацию, но поиск не вернул результатов.\n\n' +
+        'Попробуй:\n• Нажать кнопку **🌐 Поиск** и написать запрос\n• Или команду `/search твой запрос`',
     };
   }
 
