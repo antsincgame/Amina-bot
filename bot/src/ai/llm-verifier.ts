@@ -110,10 +110,13 @@ export async function verifyResponse(
       }
     }
 
-    // === Проверка 2: Отказ использовать предоставленные данные ===
-    if (searchContext && looksLikeSearchRefusal(aiResponse)) {
+    // === Проверка 2: Отказ использовать данные / отказ от поиска ===
+    // Проверяем ВСЕГДА (не только при наличии searchContext) — LLM может отказать
+    // и когда данные были предоставлены, и когда она должна была использовать свои знания
+    if (looksLikeSearchRefusal(aiResponse)) {
+      const hasSearchData = !!searchContext;
       aiLogger.warn(
-        { userMessage: userMessage.substring(0, 80), responseSnippet: aiResponse.substring(0, 100) },
+        { userMessage: userMessage.substring(0, 80), responseSnippet: aiResponse.substring(0, 100), hasSearchData },
         '🚨 Verifier: search refusal detected → replacing with real search'
       );
 
@@ -122,7 +125,9 @@ export async function verifyResponse(
         return {
           isValid: false,
           correctedResponse: corrected,
-          reason: 'LLM отказалась использовать данные поиска — заменено на реальные данные',
+          reason: hasSearchData
+            ? 'LLM отказалась использовать данные поиска — заменено на реальные данные'
+            : 'LLM отказалась отвечать на информационный запрос — данные получены из Perplexity',
           verifyTimeMs: Date.now() - startTime,
           skipped: false,
         };

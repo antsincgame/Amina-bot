@@ -339,19 +339,58 @@ export const looksLikeSearchSimulation = (text: string): boolean => {
  * и говорит пользователю "не могу искать" / "нет доступа"
  */
 const SEARCH_REFUSAL_PATTERNS = [
+  // Прямые отказы
   /не могу выполнить поиск/i,
   /не могу искать/i,
-  /нет доступа к.*интернет/i,
-  /не имею доступа.*интернет/i,
   /не умею искать/i,
-  /не могу.*актуальн.*данн/i,
-  /у меня нет.*доступа.*новым данным/i,
-  /не могу.*получить.*актуальн/i,
   /не имею возможности.*поиск/i,
   /я не могу.*найти.*интернет/i,
   /к сожалению.*не могу.*поиск/i,
+
+  // Отказы через "нет доступа"
+  /нет доступа к.*интернет/i,
+  /не имею доступа.*интернет/i,
+  /у меня нет.*доступа.*(?:новым|актуальн|свежим)/i,
+  /нет доступа.*(?:к\s+)?(?:сети|данным|информации)/i,
+
+  // Отказы через "не могу + актуальность"
+  /не могу.*(?:актуальн|свежи|реальн).*данн/i,
+  /не могу.*получить.*(?:актуальн|свежи|реальн)/i,
+  /не (?:могу|в\s*состоянии).*предоставить.*(?:актуальн|точн|свежи)/i,
+
+  // "Нет данных / информации" — мягкие отказы
+  /(?:у меня|я)\s+не\s+(?:обладаю|располагаю|владею).*(?:данн|информац|сведен)/i,
+  /(?:у меня|мне)\s+(?:нет|недоступн).*(?:актуальн|свежи|новейш).*(?:данн|информац)/i,
+  /не\s+(?:располагаю|обладаю)\s+(?:актуальн|свежи)/i,
+
+  // "Мои данные устарели / ограничены"
+  /мои\s+(?:данные|знания|сведения).*(?:устарел|ограничен|обрыва)/i,
+  /информация.*(?:может быть|вероятно)\s+(?:устарел|неточн)/i,
+  /данные.*(?:обучен|тренировк).*(?:закончил|ограничен)/i,
+
+  // "Рекомендую проверить / обратитесь к"
+  /рекомендую.*(?:проверить|обратиться|посетить|уточнить).*(?:сайт|источник|поисков)/i,
+  /(?:для|за)\s+(?:актуальн|точн|свежи).*(?:обратитесь|проверьте|посетите|уточните)/i,
+  /(?:лучше|советую).*(?:проверить|уточнить).*(?:в\s+интернет|на\s+сайт|в\s+поисков)/i,
+
+  // "На момент обучения / по состоянию на"
+  /на\s+момент\s+(?:моего\s+)?обучения/i,
+  /по\s+состоянию\s+на\s+\d/i,
+  /мои\s+(?:данные|знания)\s+(?:актуальны|обновлены)\s+до/i,
+
+  // "Не могу ответить точно / не знаю актуального"
+  /не\s+(?:знаю|могу\s+сказать)\s+(?:точн|актуальн)/i,
+  /затрудняюсь\s+(?:ответить|предоставить|назвать)/i,
+
+  // "Предлагаю воспользоваться / можете найти"
+  /предлагаю\s+(?:воспользоваться|обратиться|использовать)/i,
+  /можете\s+(?:найти|узнать|проверить).*(?:на\s+сайт|в\s+интернет|в\s+поисков|через\s+Google)/i,
+
+  // English refusals
   /i cannot.*search/i,
   /i don't have.*access.*internet/i,
+  /i (?:can't|cannot|don't).*(?:browse|access).*(?:web|internet|real.?time)/i,
+  /my (?:knowledge|data|training).*(?:cutoff|limited|outdated)/i,
 ];
 
 /**
@@ -361,6 +400,133 @@ const SEARCH_REFUSAL_PATTERNS = [
 export const looksLikeSearchRefusal = (text: string): boolean => {
   return SEARCH_REFUSAL_PATTERNS.some(p => p.test(text));
 };
+
+// ============================================
+// Search Data Extraction & Ignore Detection
+// ============================================
+
+/**
+ * Извлекает сырой ответ Perplexity из webSearchContext.
+ * webSearchContext имеет формат:
+ *   === ДАННЫЕ ИЗ ИНТЕРНЕТА (date) ===
+ *   {ответ Perplexity}
+ *   КАРТА ИСТОЧНИКОВ: ...
+ *   === КОНЕЦ ДАННЫХ ===
+ *   ИНСТРУКЦИЯ ПО ДАННЫМ ИЗ ИНТЕРНЕТА: ...
+ */
+export function extractPerplexityAnswer(webSearchContext: string): string | null {
+  if (!webSearchContext) return null;
+
+  // Извлекаем текст между маркерами
+  const startMarker = /=== ДАННЫЕ ИЗ ИНТЕРНЕТА.*?===\n?/;
+  const endMarker = /\n*(?:КАРТА ИСТОЧНИКОВ:|=== КОНЕЦ ДАННЫХ ===)/;
+
+  const startMatch = startMarker.exec(webSearchContext);
+  if (!startMatch) return null;
+
+  const afterStart = webSearchContext.substring(startMatch.index + startMatch[0].length);
+  const endMatch = endMarker.exec(afterStart);
+  
+  const answer = endMatch ? afterStart.substring(0, endMatch.index).trim() : afterStart.trim();
+  return answer.length > 20 ? answer : null;
+}
+
+/**
+ * Извлекает ссылки-источники из webSearchContext.
+ */
+export function extractPerplexityCitations(webSearchContext: string): string[] {
+  if (!webSearchContext) return [];
+  const citations: string[] = [];
+  const citationRegex = /\[(\d+)\]\s+(https?:\/\/\S+)/g;
+  let match;
+  while ((match = citationRegex.exec(webSearchContext)) !== null) {
+    citations.push(match[2]!);
+  }
+  return citations;
+}
+
+/**
+ * Определяет, проигнорировала ли LLM предоставленные данные из интернета.
+ * 
+ * Стратегия: вместо поиска конкретных паттернов отказа (их слишком много),
+ * проверяем ПОЗИТИВНЫЙ сигнал — использовала ли LLM хоть какие-то факты из данных.
+ * 
+ * Если данные из Perplexity содержали числа (цены, курсы, температуры),
+ * но в ответе LLM НИ ОДНОГО числа из данных нет — значит она их проигнорировала.
+ */
+export function llmIgnoredSearchData(aiResponse: string, webSearchContext: string): boolean {
+  if (!webSearchContext) return false;
+
+  const perplexityAnswer = extractPerplexityAnswer(webSearchContext);
+  if (!perplexityAnswer) return false;
+
+  // === Быстрая проверка: если ответ — прямой отказ или симуляция, сразу true ===
+  if (looksLikeSearchRefusal(aiResponse) || looksLikeSearchSimulation(aiResponse)) {
+    return true;
+  }
+
+  // === Проверка по числам: извлекаем числа из Perplexity ответа ===
+  // Если Perplexity дал конкретные числа (цены, курсы, даты), а LLM их не использовала
+  const numbersInPerplexity = extractSignificantNumbers(perplexityAnswer);
+  if (numbersInPerplexity.length > 0) {
+    const numbersInResponse = extractSignificantNumbers(aiResponse);
+    // Если хотя бы одно значимое число из Perplexity есть в ответе — LLM использовала данные
+    const hasOverlap = numbersInPerplexity.some(n => numbersInResponse.includes(n));
+    if (!hasOverlap) {
+      return true;  // Ни одного числа из Perplexity — проигнорировала
+    }
+  }
+
+  // === Проверка по ключевым словам: если ответ подозрительно общий ===
+  // Короткий ответ при длинных данных — подозрительно
+  if (aiResponse.length < 150 && perplexityAnswer.length > 300) {
+    // Проверяем — содержит ли ответ хоть что-то конкретное
+    const hasConcreteInfo = /\d/.test(aiResponse) || /https?:\/\//.test(aiResponse);
+    if (!hasConcreteInfo) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/** Извлекает значимые числа (> 1 символа) из текста, нормализуя разделители */
+function extractSignificantNumbers(text: string): string[] {
+  // Ищем числа с разделителями: "2,87", "2.87", "1200", "48%"
+  const numberPattern = /\d[\d.,\s]*\d/g;
+  const numbers: string[] = [];
+  let match;
+  while ((match = numberPattern.exec(text)) !== null) {
+    // Нормализуем: убираем пробелы, заменяем запятые на точки
+    const normalized = match[0].replace(/\s/g, '').replace(/,/g, '.');
+    if (normalized.length >= 2) {
+      numbers.push(normalized);
+    }
+  }
+  return numbers;
+}
+
+/**
+ * Форматирует извлечённые данные Perplexity для показа пользователю.
+ * Используется когда LLM проигнорировала данные — показываем напрямую.
+ */
+export function formatPerplexityFallback(webSearchContext: string): string | null {
+  const answer = extractPerplexityAnswer(webSearchContext);
+  if (!answer) return null;
+
+  let result = answer;
+
+  // Добавляем источники
+  const citations = extractPerplexityCitations(webSearchContext);
+  if (citations.length > 0) {
+    result += '\n\n📚 Источники:\n';
+    citations.slice(0, 5).forEach((url, i) => {
+      result += `${i + 1}. ${url.length > 70 ? url.substring(0, 67) + '...' : url}\n`;
+    });
+  }
+
+  return result;
+}
 
 // ============================================
 // Error Messages

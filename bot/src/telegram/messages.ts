@@ -46,6 +46,8 @@ import {
   buildTimeContext,
   looksLikeSearchSimulation,
   looksLikeSearchRefusal,
+  llmIgnoredSearchData,
+  formatPerplexityFallback,
   inlineCitations,
   formatSearchError,
 } from './format.js';
@@ -370,8 +372,10 @@ const buildFullContext = async (
  * Стратегия:
  * 1. Верификатор проверяет ответ (симуляция, отказ, галлюцинации)
  * 2. Если верификатор обнаружил проблему И дал correctedResponse → используем его
- * 3. Если correctedResponse нет → проверяем regex-паттерны как fallback
- * 4. Если ничего не помогло → возвращаем оригинал
+ * 3. Regex-детекция симуляции → замена на реальные данные
+ * 4. НОВОЕ: если Perplexity данные БЫЛИ в контексте но LLM их проигнорировала →
+ *    извлекаем и возвращаем данные НАПРЯМУЮ из контекста (без повторного API-вызова!)
+ * 5. Если ничего не помогло → возвращаем оригинал
  */
 const processAIResponse = async (
   response: AIResponse,
@@ -404,11 +408,20 @@ const processAIResponse = async (
     }
   }
 
-  // === Fallback: regex-детекция симуляции (если верификатор не сработал) ===
+  // === Fallback 1: regex-детекция симуляции ===
   if (looksLikeSearchSimulation(response.content)) {
     telegramLogger.warn({ userId, responseSnippet: response.content.substring(0, 100) }, 'LLM simulated search (regex fallback)');
 
-    // Пытаемся заменить на реальный Perplexity-поиск
+    // Сначала пробуем извлечь данные прямо из контекста (уже есть, не нужен API-вызов!)
+    if (webSearchContext) {
+      const fallback = formatPerplexityFallback(webSearchContext);
+      if (fallback) {
+        telegramLogger.info({ userId }, '✅ Replaced simulation with cached Perplexity data (from context)');
+        return { ...response, content: fallback };
+      }
+    }
+
+    // Если контекста нет — пытаемся вызвать Perplexity напрямую
     try {
       const { webSearch: doSearch } = await import('../ai/websearch.js');
       const searchResult = await doSearch(userMessage);
@@ -420,7 +433,7 @@ const processAIResponse = async (
             corrected += `${i + 1}. ${url.length > 70 ? url.substring(0, 67) + '...' : url}\n`;
           });
         }
-        telegramLogger.info({ userId }, '✅ Replaced simulation with real Perplexity data (regex fallback)');
+        telegramLogger.info({ userId }, '✅ Replaced simulation with fresh Perplexity data');
         return { ...response, content: corrected };
       }
     } catch (searchError) {
@@ -433,6 +446,27 @@ const processAIResponse = async (
       content: '🔍 Я попыталась найти информацию, но поиск не вернул результатов.\n\n' +
         'Попробуй:\n• Нажать кнопку **🌐 Поиск** и написать запрос\n• Или команду `/search твой запрос`',
     };
+  }
+
+  // === Fallback 2: LLM проигнорировала данные из контекста ===
+  // Это главный новый механизм: если Perplexity данные БЫЛИ предоставлены LLM,
+  // но она их полностью проигнорировала (не использовала числа, факты, ссылки),
+  // показываем данные Perplexity напрямую — без повторного API-вызова.
+  if (webSearchContext && llmIgnoredSearchData(response.content, webSearchContext)) {
+    telegramLogger.warn({
+      userId,
+      responseSnippet: response.content.substring(0, 100),
+    }, '🚨 LLM ignored Perplexity search data → using raw Perplexity answer');
+
+    analyticsRepo.log('message_received', 'telegram', {
+      event: 'llm_ignored_search_data', responseLength: response.content.length,
+    }, userId).catch(() => {});
+
+    const fallback = formatPerplexityFallback(webSearchContext);
+    if (fallback) {
+      telegramLogger.info({ userId }, '✅ Using raw Perplexity data because LLM ignored them');
+      return { ...response, content: fallback };
+    }
   }
 
   return response;
@@ -532,13 +566,12 @@ const processMessageThroughAI = async (
     aiResponse = await processAIResponse(aiResponse, userText, userId, webSearchContext);
   }
 
-  // Save to history (skip fake search responses)
-  if (!looksLikeSearchSimulation(aiResponse.content)) {
-    ctx.session.messageHistory.push({ role: 'assistant', content: aiResponse.content });
-  } else {
-    telegramLogger.warn({ userId }, `${messageType}: blocked search simulation from history`);
-    aiResponse = { ...aiResponse, content: '😔 К сожалению, не удалось получить актуальные данные из интернета. Попробуй позже или используй /search.' };
-  }
+  // Save to history
+  // Раньше здесь была двойная проверка looksLikeSearchSimulation которая могла
+  // перезаписать УЖЕ исправленный ответ (после processAIResponse).
+  // Теперь processAIResponse гарантированно обрабатывает все случаи симуляции,
+  // поэтому здесь просто сохраняем результат.
+  ctx.session.messageHistory.push({ role: 'assistant', content: aiResponse.content });
 
   // Post-AI image interception
   if (await tryPostAIImageInterception(ctx, aiResponse.content, userText, userId)) return;
