@@ -427,13 +427,19 @@ async function tryDirectFeed(feedUrl: string): Promise<ParsedHeadline[] | null> 
 // ===== HTML парсинг (основной) =====
 
 /**
- * Парсинг заголовков новостей с одного сайта
+ * Парсинг заголовков новостей с одного сайта.
+ *
+ * Порядок приоритетов:
+ * 1. Прямой RSS URL (vc.ru/rss, /feed, etc.)
+ * 2. URL возвращает RSS/XML напрямую
+ * 3. RSS autodiscovery из HTML (<link type="application/rss+xml">)
+ * 4. Стандартные RSS пути (/feed, /rss, /rss.xml, ...)
+ * 5. HTML парсинг заголовков (fallback)
  */
 export async function parseNewsFromSite(siteUrl: string): Promise<ParsedHeadline[]> {
   const origin = new URL(siteUrl).origin;
 
-  // ===== Шаг 0: Проверить, является ли сам URL RSS-фидом =====
-  // Быстрая проверка по URL паттерну (https://vc.ru/rss, /feed, etc.)
+  // ===== Шаг 0: Если URL — прямая ссылка на RSS =====
   if (isDirectFeedUrl(siteUrl)) {
     appLogger.info({ siteUrl }, 'URL looks like direct RSS feed, trying direct parse');
     const directHeadlines = await tryDirectFeed(siteUrl);
@@ -443,85 +449,98 @@ export async function parseNewsFromSite(siteUrl: string): Promise<ParsedHeadline
     appLogger.warn({ siteUrl }, 'Direct RSS feed URL returned no headlines, trying standard paths');
   }
 
-  // Если URL не распознан как RSS — загружаем и проверяем содержимое
+  // ===== Шаг 1: Загрузить URL =====
+  let pageBody: string | null = null;
+  let pageIsRss = false;
+
   if (!isDirectFeedUrl(siteUrl)) {
     try {
       const directResponse = await fetchWithTimeout(siteUrl, 8000);
       if (directResponse.ok) {
         const contentType = directResponse.headers.get('content-type') ?? '';
-        const bodyText = await directResponse.text();
-        const isRss = contentType.includes('xml') || contentType.includes('rss') || contentType.includes('atom') ||
-          bodyText.trimStart().startsWith('<?xml') || bodyText.trimStart().startsWith('<rss') || bodyText.trimStart().startsWith('<feed');
-        
-        if (isRss) {
-          const headlines = parseRssFeed(bodyText, origin);
+        pageBody = await directResponse.text();
+        pageIsRss = contentType.includes('xml') || contentType.includes('rss') || contentType.includes('atom') ||
+          pageBody.trimStart().startsWith('<?xml') || pageBody.trimStart().startsWith('<rss') || pageBody.trimStart().startsWith('<feed');
+
+        // Если контент — RSS/XML, парсим сразу
+        if (pageIsRss) {
+          const headlines = parseRssFeed(pageBody, origin);
           if (headlines.length > 0) {
             appLogger.info({ siteUrl, count: headlines.length }, 'Direct RSS feed parsed from URL');
             return headlines;
           }
         }
-        
-        // Если это НЕ RSS — переиспользуем загруженный HTML
-        if (!isRss) {
-          return parseHtmlContent(bodyText, siteUrl, origin);
-        }
       }
     } catch (err) {
-      appLogger.debug({ error: err, siteUrl }, 'Direct URL fetch failed, trying RSS paths');
+      appLogger.debug({ error: err, siteUrl }, 'Direct URL fetch failed');
     }
   }
 
-  // ===== Шаг 1: Попробовать стандартные RSS пути =====
+  // ===== Шаг 2: RSS autodiscovery из загруженного HTML =====
+  if (pageBody && !pageIsRss) {
+    try {
+      const $meta = load(pageBody);
+      const rssLink = $meta('link[type="application/rss+xml"]').attr('href')
+        ?? $meta('link[type="application/atom+xml"]').attr('href');
+      if (rssLink) {
+        const feedUrl = normalizeUrl(rssLink, origin);
+        if (feedUrl) {
+          appLogger.info({ feedUrl, siteUrl }, 'Found RSS autodiscovery, fetching feed');
+          const rssResponse = await fetchWithTimeout(feedUrl, 5000);
+          if (rssResponse.ok) {
+            const feedXml = await rssResponse.text();
+            const rssHeadlines = parseRssFeed(feedXml, origin);
+            if (rssHeadlines.length > 0) {
+              appLogger.info({ feedUrl, count: rssHeadlines.length }, 'RSS autodiscovery feed parsed');
+              return rssHeadlines;
+            }
+          }
+        }
+      }
+    } catch {
+      // Продолжаем дальше
+    }
+  }
+
+  // ===== Шаг 3: Стандартные RSS пути (/feed, /rss, /rss.xml, ...) =====
   try {
     const rssHeadlines = await tryRssFeed(siteUrl);
     if (rssHeadlines && rssHeadlines.length > 0) {
       return rssHeadlines;
     }
   } catch (err) {
-    appLogger.debug({ error: err, siteUrl }, 'RSS feed attempt failed, trying HTML');
+    appLogger.debug({ error: err, siteUrl }, 'RSS feed attempt failed');
   }
 
-  // ===== Шаг 2: Загрузить HTML и парсить =====
-  let html: string;
-  try {
-    const response = await fetchWithTimeout(siteUrl);
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status} ${response.statusText}`);
+  // ===== Шаг 4: HTML парсинг (последний вариант) =====
+  // Используем уже загруженный HTML, если есть
+  if (pageBody && !pageIsRss) {
+    const htmlHeadlines = parseHtmlContent(pageBody, siteUrl, origin);
+    if (htmlHeadlines.length > 0) {
+      return htmlHeadlines;
     }
-    html = await response.text();
-  } catch (error) {
-    const err = error as { name?: string; message?: string };
-    if (err.name === 'AbortError') {
-      appLogger.warn({ siteUrl }, 'News site parse timeout');
-      throw new Error(`Таймаут при загрузке ${siteUrl} (>${FETCH_TIMEOUT_MS / 1000}с)`);
-    }
-    throw error;
   }
 
-  // ===== Шаг 2а: Проверить autodiscovery RSS в HTML =====
-  try {
-    const $meta = load(html);
-    const rssLink = $meta('link[type="application/rss+xml"]').attr('href')
-      ?? $meta('link[type="application/atom+xml"]').attr('href');
-    if (rssLink) {
-      const feedUrl = normalizeUrl(rssLink, origin);
-      if (feedUrl) {
-        const rssResponse = await fetchWithTimeout(feedUrl, 5000);
-        if (rssResponse.ok) {
-          const feedXml = await rssResponse.text();
-          const rssHeadlines = parseRssFeed(feedXml, origin);
-          if (rssHeadlines.length > 0) {
-            appLogger.info({ feedUrl, count: rssHeadlines.length }, 'RSS autodiscovery feed parsed');
-            return rssHeadlines;
-          }
-        }
+  // Если HTML не был загружен ранее — загружаем сейчас
+  if (!pageBody) {
+    try {
+      const response = await fetchWithTimeout(siteUrl);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status} ${response.statusText}`);
       }
+      const html = await response.text();
+      return parseHtmlContent(html, siteUrl, origin);
+    } catch (error) {
+      const err = error as { name?: string; message?: string };
+      if (err.name === 'AbortError') {
+        appLogger.warn({ siteUrl }, 'News site parse timeout');
+        throw new Error(`Таймаут при загрузке ${siteUrl} (>${FETCH_TIMEOUT_MS / 1000}с)`);
+      }
+      throw error;
     }
-  } catch {
-    // Продолжаем HTML парсинг
   }
 
-  return parseHtmlContent(html, siteUrl, origin);
+  return [];
 }
 
 /**
