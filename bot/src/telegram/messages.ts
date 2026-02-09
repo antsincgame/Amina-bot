@@ -104,7 +104,11 @@ const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Record<strin
         await ctx.reply('📋 *Что запомнить?*', { parse_mode: 'Markdown' });
         ctx.session.awaitingNoteContent = true;
       } else {
-        const lines = notes.map((n, i) => `${i + 1}. ${escapeHtml(n.content)}`);
+        const lines = notes.map((n, i) => {
+          // Усекаем длинные заметки при отображении (макс. 120 символов)
+          const preview = n.content.length > 120 ? n.content.slice(0, 120).trimEnd() + '…' : n.content;
+          return `${i + 1}. ${escapeHtml(preview)}`;
+        });
         const keyboard = new InlineKeyboard().text('📌 Добавить', 'menu_note_help');
         await ctx.reply(
           `📋 <b>Заметки (${notes.length}):</b>\n\n${lines.join('\n')}\n\n<i>Удалить: /note_delete номер</i>`,
@@ -231,12 +235,19 @@ const handleAutoDetections = async (
   }
 
   // Шаг 2: Groq-классификация как fallback (если regex не сработал)
-  // Groq отвечает за ~100-300ms — почти незаметно для пользователя
+  // ОПТИМИЗАЦИЯ: Не вызываем Groq для сообщений, которые явно НЕ про картинки —
+  // вопросы, команды "назови/расскажи/найди", короткие фразы
   if (!imgPrompt) {
-    const groqPrompt = await classifyImageIntentGroq(text);
-    if (groqPrompt) {
-      imgPrompt = groqPrompt;
-      telegramLogger.info({ userId, prompt: imgPrompt, method: 'groq' }, 'Image gen detected (Groq classifier)');
+    const isObviouslyNotImage = /^(назови|расскажи|найди|подскажи|посоветуй|порекомендуй|перечисли|объясни|сколько|когда|где|кто|что|как |какой|какая|какие|зачем|почему)\b/i.test(text.trim())
+      || /\?$/.test(text.trim())
+      || text.trim().length < 8;
+
+    if (!isObviouslyNotImage) {
+      const groqPrompt = await classifyImageIntentGroq(text);
+      if (groqPrompt) {
+        imgPrompt = groqPrompt;
+        telegramLogger.info({ userId, prompt: imgPrompt, method: 'groq' }, 'Image gen detected (Groq classifier)');
+      }
     }
   }
 
@@ -494,13 +505,28 @@ const processMessageThroughAI = async (
   // Post-AI image interception
   if (await tryPostAIImageInterception(ctx, aiResponse.content, userText, userId)) return;
 
-  // Send response
-  await sendLongMessage(ctx, aiResponse.content, responseActionsKeyboard());
+  // === ПРОГРАММНОЕ удаление повторного приветствия ===
+  // Бесплатные модели часто ИГНОРИРУЮТ инструкцию "не здоровайся повторно",
+  // поэтому убираем приветствие на уровне кода, а не полагаемся на LLM
+  let finalContent = aiResponse.content;
+  const greetingRegex = /^(привет[,!\s]?\s*(?:[а-яё]+[,!\s]?\s*)?(?:👋\s*)?[\n\r]*|здравствуй(?:те)?[,!\s]?\s*(?:[а-яё]+[,!\s]?\s*)?[\n\r]*|добр(?:ое|ый|ая)\s+(?:утро|утра|день|дня|вечер|вечера|ночь|ночи)[,!\s]?\s*(?:[а-яё]+[,!\s]?\s*)?(?:☀️|🌞|🌙|🌅)?\s*[\n\r]*|хай[,!\s]?\s*(?:[а-яё]+[,!\s]?\s*)?[\n\r]*|салют[,!\s]?\s*(?:[а-яё]+[,!\s]?\s*)?[\n\r]*|приветствую[,!\s]?\s*(?:[а-яё]+[,!\s]?\s*)?[\n\r]*)/i;
 
-  // Трекаем приветствие: если ответ начинается с приветствия — запоминаем в БД
-  if (!alreadyGreetedToday && /^(привет|здравствуй|добр(ое|ый|ая)\s+(утр|день|вечер|ноч)|хай|салют|приветств)/i.test(aiResponse.content.trim())) {
-    userProfileRepo.setLastGreetingDate(userId, todayStr).catch(() => {});
+  if (!alreadyGreetedToday) {
+    // Первое приветствие за день — оставляем, запоминаем в БД
+    if (greetingRegex.test(finalContent.trim())) {
+      userProfileRepo.setLastGreetingDate(userId, todayStr).catch(() => {});
+    }
+  } else {
+    // Уже здоровалась сегодня — вырезаем приветствие из начала ответа
+    const stripped = finalContent.trim().replace(greetingRegex, '').replace(/^[\s\n\r]+/, '');
+    if (stripped.length > 10) {
+      finalContent = stripped;
+      telegramLogger.debug({ userId }, 'Stripped repeated greeting from AI response');
+    }
   }
+
+  // Send response
+  await sendLongMessage(ctx, finalContent, responseActionsKeyboard());
 
   // Fire-and-forget DB writes
   const responseTime = Date.now() - startTime;
