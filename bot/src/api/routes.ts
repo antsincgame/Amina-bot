@@ -792,6 +792,98 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
         }
       });
 
+      /**
+       * GET /api/models/openrouter/image
+       * Fetch image generation models from OpenRouter API with pricing
+       */
+      apiServer.get('/models/openrouter/image', async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+          const keys = await getApiKeys();
+          const apiKey = keys.openrouter || config.ai.apiKey;
+          const response = await fetch('https://openrouter.ai/api/v1/models', {
+            headers: {
+              'Authorization': `Bearer ${apiKey}`,
+            },
+          });
+
+          if (!response.ok) {
+            throw new Error(`OpenRouter API error: ${response.status}`);
+          }
+
+          const data = await response.json() as { data: Array<{
+            id: string;
+            name: string;
+            description?: string;
+            pricing: { prompt: string; completion: string; image?: string };
+            context_length?: number;
+            architecture?: { 
+              modality?: string;
+              output_modalities?: string[];
+            };
+          }> };
+
+          // Filter models that support image generation
+          const imageModels = data.data.filter(model => 
+            model.architecture?.output_modalities?.includes('image') ||
+            model.architecture?.modality === 'image' ||
+            model.id.includes('flux') ||
+            model.id.includes('gemini') && model.id.includes('image') ||
+            model.id.includes('dall-e') ||
+            model.id.includes('riverflow')
+          );
+
+          // Sort by price (cheapest first)
+          const sortedModels = imageModels
+            .map(m => {
+              // Цена за image output (некоторые модели используют pricing.image, другие - completion)
+              const imagePrice = m.pricing.image 
+                ? parseFloat(m.pricing.image) 
+                : parseFloat(m.pricing.completion);
+              
+              return {
+                id: m.id,
+                name: m.name,
+                description: m.description || 'Image generation model',
+                pricing: {
+                  input: parseFloat(m.pricing.prompt),
+                  output: imagePrice,
+                  perImage: imagePrice, // для отображения в UI
+                },
+                contextLength: m.context_length,
+              };
+            })
+            .sort((a, b) => a.pricing.perImage - b.pricing.perImage);
+
+          // Разделяем на дешевые и дорогие
+          const cheap = sortedModels.filter(m => m.pricing.perImage <= 0.05).slice(0, 10);
+          const premium = sortedModels.filter(m => m.pricing.perImage > 0.05).slice(0, 10);
+
+          aiLogger.info({ 
+            totalModels: sortedModels.length,
+            cheapCount: cheap.length, 
+            premiumCount: premium.length,
+            cheapestModel: cheap[0]?.id,
+            cheapestPrice: cheap[0]?.pricing.perImage,
+          }, 'Fetched image generation models from OpenRouter');
+
+          return reply.code(200).send({
+            success: true,
+            data: { 
+              cheap,  // ≤ $0.05 за картинку
+              premium, // > $0.05 за картинку
+              all: sortedModels.slice(0, 20), // топ-20 для селекта
+            },
+            source: 'openrouter',
+          });
+        } catch (error) {
+          aiLogger.error({ error }, 'Fetch OpenRouter image models error');
+          return reply.code(500).send({
+            success: false,
+            error: 'Failed to fetch image models from OpenRouter',
+          });
+        }
+      });
+
       // ============================================
       // Fallback Models (Auto-switch) Endpoints
       // ============================================

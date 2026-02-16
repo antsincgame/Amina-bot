@@ -15,6 +15,7 @@ const settingsSchema = z.object({
   vision_model: z.string().min(1),
   vision_prompt: z.string().min(10).max(500),
   vision_max_tokens: z.number().min(100).max(4096),
+  openrouter_image_model: z.string().optional(),
   tts_provider: z.string(),
   // ElevenLabs
   elevenlabs_api_key: z.string().optional(),
@@ -89,11 +90,24 @@ interface VisionModel {
   description: string;
 }
 
+interface ImageModel {
+  id: string;
+  name: string;
+  description: string;
+  pricing: {
+    input: number;
+    output: number;
+    perImage: number;
+  };
+}
+
 const MultimodalSettingsPage = () => {
   const queryClient = useQueryClient();
   const [saveMessage, setSaveMessage] = useState('');
   const [visionModels, setVisionModels] = useState<VisionModel[]>([]);
+  const [imageModels, setImageModels] = useState<ImageModel[]>([]);
   const [isRefreshingVision, setIsRefreshingVision] = useState(false);
+  const [isRefreshingImage, setIsRefreshingImage] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState('');
 
   // Fetch current settings
@@ -147,6 +161,32 @@ const MultimodalSettingsPage = () => {
     fetchVisionModels(false);
   }, [fetchVisionModels]);
 
+  // Fetch image generation models from OpenRouter
+  const fetchImageModels = useCallback(async () => {
+    try {
+      setIsRefreshingImage(true);
+      const response = await fetch(`${BOT_URL}/api/models/openrouter/image`);
+      if (response.ok) {
+        const result = await response.json();
+        const allModels = result.data?.all || [];
+        if (allModels.length > 0) {
+          setImageModels(allModels);
+        }
+      } else {
+        console.error('Image models fetch error:', response.status);
+      }
+    } catch (err) {
+      console.error('Error fetching image models:', err);
+    } finally {
+      setIsRefreshingImage(false);
+    }
+  }, []);
+
+  // Load image models on mount
+  useEffect(() => {
+    fetchImageModels();
+  }, [fetchImageModels]);
+
   // Save mutation
   const { mutate: saveSettings, isPending: isSaving } = useMutation({
     mutationFn: (data: Record<string, string>) => settingsApi.updateMany(data),
@@ -174,6 +214,7 @@ const MultimodalSettingsPage = () => {
       vision_model: DEFAULT_VISION_MODEL,
       vision_prompt: DEFAULT_VISION_PROMPT,
       vision_max_tokens: DEFAULT_VISION_MAX_TOKENS,
+      openrouter_image_model: 'google/gemini-2.5-flash-image-preview',
       tts_provider: 'edge',
       // ElevenLabs
       elevenlabs_api_key: '',
@@ -190,6 +231,7 @@ const MultimodalSettingsPage = () => {
 
   const visionMaxTokens = watch('vision_max_tokens');
   const selectedVisionModel = watch('vision_model');
+  const selectedImageModel = watch('openrouter_image_model');
 
   // Load settings into form
   useEffect(() => {
@@ -204,6 +246,7 @@ const MultimodalSettingsPage = () => {
         vision_model: map['vision_model'] || DEFAULT_VISION_MODEL,
         vision_prompt: map['vision_prompt'] || DEFAULT_VISION_PROMPT,
         vision_max_tokens: parseInt(map['vision_max_tokens'] || String(DEFAULT_VISION_MAX_TOKENS), 10),
+        openrouter_image_model: map['openrouter_image_model'] || 'google/gemini-2.5-flash-image-preview',
         tts_provider: map['tts_provider'] || 'edge',
         // ElevenLabs
         elevenlabs_api_key: map['elevenlabs_api_key'] || '',
@@ -227,6 +270,7 @@ const MultimodalSettingsPage = () => {
       vision_model_override: '',
       vision_prompt: data.vision_prompt,
       vision_max_tokens: String(data.vision_max_tokens),
+      openrouter_image_model: data.openrouter_image_model || 'google/gemini-2.5-flash-image-preview',
       tts_provider: data.tts_provider,
       // ElevenLabs
       elevenlabs_voice_id: data.elevenlabs_voice_id === 'custom'
@@ -678,6 +722,110 @@ const MultimodalSettingsPage = () => {
             <div className="flex justify-between text-xs text-white/40">
               <span>256 (короткое)</span>
               <span>2048 (детальное)</span>
+            </div>
+          </div>
+        </div>
+
+        {/* ============ IMAGE GENERATION ============ */}
+        <div className="card animate-fade-in-up stagger-4">
+          <div className="flex items-center justify-between mb-6">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-gradient-to-br from-pink-500 to-rose-600 rounded-xl shadow-lg shadow-pink-500/25">
+                <Sparkles className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <h2 className="text-xl font-semibold text-white">Генерация изображений</h2>
+                <p className="text-white/50 text-sm">OpenRouter → Gemini / FLUX / Riverflow</p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={fetchImageModels}
+              disabled={isRefreshingImage}
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-pink-500/10 border border-pink-500/30 hover:bg-pink-500/20 text-pink-400 text-sm transition-all"
+            >
+              <RefreshCw className={`w-4 h-4 ${isRefreshingImage ? 'animate-spin' : ''}`} />
+              Обновить модели
+            </button>
+          </div>
+
+          <div className="space-y-4">
+            <div className="p-4 rounded-xl border-2 border-pink-500/20 bg-pink-500/5">
+              <p className="text-white/60 text-sm leading-relaxed">
+                <strong className="text-pink-400">Fallback стратегия:</strong> HuggingFace (бесплатно) → OpenRouter (платно).
+                Если HF кредиты закончились — автоматически используется OpenRouter.
+              </p>
+            </div>
+
+            {/* Model Selector */}
+            <div>
+              <div className="flex items-center gap-2 mb-3">
+                <Sparkles className="w-5 h-5 text-pink-400" />
+                <label className="label">OpenRouter модель (fallback)</label>
+              </div>
+              
+              {imageModels.length > 0 ? (
+                <div className="space-y-2">
+                  {imageModels.map((model) => (
+                    <label
+                      key={model.id}
+                      className={`flex items-center justify-between p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                        selectedImageModel === model.id
+                          ? 'border-pink-500 bg-pink-500/10'
+                          : 'border-white/10 hover:border-white/20 bg-white/5'
+                      }`}
+                    >
+                      <div className="flex items-start gap-3 flex-1 min-w-0">
+                        <input
+                          type="radio"
+                          value={model.id}
+                          {...register('openrouter_image_model')}
+                          className="mt-1 accent-pink-500"
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <span className="font-medium text-white text-sm truncate">{model.name}</span>
+                            {model.pricing.perImage <= 0.05 && (
+                              <span className="badge-success text-xs">ДЕШЕВО</span>
+                            )}
+                            {model.pricing.perImage > 0.1 && (
+                              <span className="text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-full text-xs font-medium">
+                                ПРЕМИУМ
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-white/40 mt-0.5 font-mono truncate">{model.id}</p>
+                          {model.description && (
+                            <p className="text-xs text-white/50 mt-1">{model.description}</p>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-right ml-4">
+                        <div className="text-sm font-semibold text-pink-400">${model.pricing.perImage.toFixed(4)}</div>
+                        <div className="text-xs text-white/40">за картинку</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              ) : (
+                <div className="p-4 rounded-xl border-2 border-white/10 bg-white/5 text-center">
+                  <p className="text-white/50 text-sm">
+                    {isRefreshingImage ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Загрузка моделей...
+                      </span>
+                    ) : (
+                      'Нажмите "Обновить модели" для загрузки списка'
+                    )}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/20 text-xs text-white/60">
+              <strong className="text-amber-400">💡 Подсказка:</strong> Gemini 2.5 Flash Image ($0.04) — самая дешёвая модель.
+              Для 225 картинок = $9 (как HF PRO за месяц).
             </div>
           </div>
         </div>

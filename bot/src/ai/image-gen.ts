@@ -474,11 +474,26 @@ async function tryGenerateWithModel(
 // --------------------------------------------
 
 /**
- * Самая дешевая модель OpenRouter: Gemini 2.5 Flash Image
+ * Дефолтная модель OpenRouter: Gemini 2.5 Flash Image
  * $0.04 за output image (любой размер)
  */
-const OPENROUTER_IMAGE_MODEL = 'google/gemini-2.5-flash-image-preview';
+const DEFAULT_OPENROUTER_IMAGE_MODEL = 'google/gemini-2.5-flash-image-preview';
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+
+/**
+ * Получить модель OpenRouter для генерации изображений из настроек
+ */
+async function getOpenRouterImageModel(): Promise<string> {
+  try {
+    const model = await settingsRepo.get('openrouter_image_model');
+    if (model && model.trim().length > 0) {
+      return model.trim();
+    }
+  } catch (error) {
+    aiLogger.debug({ error }, 'Failed to get openrouter_image_model from settings, using default');
+  }
+  return DEFAULT_OPENROUTER_IMAGE_MODEL;
+}
 
 /**
  * Генерация через OpenRouter (дешёвый fallback для HuggingFace)
@@ -492,7 +507,8 @@ async function tryGenerateViaOpenRouter(prompt: string, timeoutMs: number): Prom
     throw new Error('OpenRouter API key not configured');
   }
 
-  aiLogger.info({ model: OPENROUTER_IMAGE_MODEL, prompt: prompt.substring(0, 60) }, 'Attempting generation via OpenRouter');
+  const model = await getOpenRouterImageModel();
+  aiLogger.info({ model, prompt: prompt.substring(0, 60) }, 'Attempting generation via OpenRouter');
 
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -508,7 +524,7 @@ async function tryGenerateViaOpenRouter(prompt: string, timeoutMs: number): Prom
       },
       signal: controller.signal,
       body: JSON.stringify({
-        model: OPENROUTER_IMAGE_MODEL,
+        model,
         messages: [
           {
             role: 'user',
@@ -576,7 +592,7 @@ async function tryGenerateViaOpenRouter(prompt: string, timeoutMs: number): Prom
       );
     }
 
-    aiLogger.info({ model: OPENROUTER_IMAGE_MODEL, sizeKB: Math.round(buffer.length / 1024) }, '✅ OpenRouter image generated successfully');
+    aiLogger.info({ model, sizeKB: Math.round(buffer.length / 1024) }, '✅ OpenRouter image generated successfully');
     return buffer;
   } catch (error: unknown) {
     const err = error as { name?: string; message?: string; code?: string };
@@ -699,16 +715,17 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
   try {
     const buffer = await tryGenerateViaOpenRouter(translatedPrompt, GENERATION_TIMEOUT_MS);
     const generationTimeMs = Date.now() - startTime;
+    const usedModel = await getOpenRouterImageModel();
 
     aiLogger.info({ 
-      model: OPENROUTER_IMAGE_MODEL,
+      model: usedModel,
       timeMs: generationTimeMs,
       hfAttempted: !skippedHF,
     }, '✅ OpenRouter fallback succeeded!');
 
     return {
       image: buffer,
-      model: OPENROUTER_IMAGE_MODEL,
+      model: usedModel,
       prompt: prompt,
       translatedPrompt,
       generationTimeMs,
