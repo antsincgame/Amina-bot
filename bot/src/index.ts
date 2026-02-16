@@ -44,6 +44,22 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
     credentials: true,
   });
 
+  // Root endpoint - info page
+  server.get('/', async () => {
+    return {
+      service: 'Amina Telegram Bot',
+      status: 'running',
+      version: '1.0.0',
+      endpoints: {
+        health: '/health',
+        ready: '/ready',
+        api: '/api/*',
+        admin: 'https://amina-admin.onrender.com',
+      },
+      documentation: 'https://github.com/antsincgame/Amina-bot',
+    };
+  });
+
   // Health check endpoint
   server.get('/health', async () => {
     return {
