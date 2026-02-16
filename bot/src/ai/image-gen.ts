@@ -469,12 +469,138 @@ async function tryGenerateWithModel(
   }
 }
 
+// --------------------------------------------
+// OpenRouter Image Generation (Fallback)
+// --------------------------------------------
+
+/**
+ * Самая дешевая модель OpenRouter: Gemini 2.5 Flash Image
+ * $0.04 за output image (любой размер)
+ */
+const OPENROUTER_IMAGE_MODEL = 'google/gemini-2.5-flash-image-preview';
+const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+
+/**
+ * Генерация через OpenRouter (дешёвый fallback для HuggingFace)
+ */
+async function tryGenerateViaOpenRouter(prompt: string, timeoutMs: number): Promise<Buffer> {
+  const keys = await getApiKeys();
+  const openrouterApiKey = keys.openrouter;
+
+  if (!openrouterApiKey) {
+    aiLogger.warn('OpenRouter API key not configured, cannot fallback');
+    throw new Error('OpenRouter API key not configured');
+  }
+
+  aiLogger.info({ model: OPENROUTER_IMAGE_MODEL, prompt: prompt.substring(0, 60) }, 'Attempting generation via OpenRouter');
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(OPENROUTER_API_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${openrouterApiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://github.com/antsincgame/Amina-bot',
+        'X-Title': 'Amina Telegram Bot',
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: OPENROUTER_IMAGE_MODEL,
+        messages: [
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+        modalities: ['image', 'text'],
+        image_config: {
+          aspect_ratio: '1:1',  // 1024x1024 по умолчанию
+          image_size: '1K',     // Стандартное качество
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Unknown error');
+      throw Object.assign(
+        new Error(`OpenRouter API error: ${response.status} ${errorText.substring(0, 200)}`),
+        { code: 'OPENROUTER_API_ERROR', status: response.status }
+      );
+    }
+
+    const data = await response.json() as {
+      choices?: Array<{
+        message?: {
+          images?: Array<{
+            image_url?: { url?: string };
+          }>;
+        };
+      }>;
+    };
+
+    const imageUrl = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;
+
+    if (!imageUrl) {
+      throw Object.assign(
+        new Error('OpenRouter response missing image URL'),
+        { code: 'OPENROUTER_NO_IMAGE' }
+      );
+    }
+
+    // Декодируем base64 data URL
+    if (!imageUrl.startsWith('data:image/')) {
+      throw Object.assign(
+        new Error('OpenRouter returned invalid image format'),
+        { code: 'OPENROUTER_INVALID_FORMAT' }
+      );
+    }
+
+    // data:image/png;base64,iVBORw0KG...
+    const base64Match = imageUrl.match(/^data:image\/[^;]+;base64,(.+)$/);
+    if (!base64Match || !base64Match[1]) {
+      throw Object.assign(
+        new Error('Failed to parse OpenRouter base64 image'),
+        { code: 'OPENROUTER_PARSE_ERROR' }
+      );
+    }
+
+    const buffer = Buffer.from(base64Match[1], 'base64');
+
+    if (buffer.length === 0) {
+      throw Object.assign(
+        new Error('OpenRouter returned empty image'),
+        { code: 'OPENROUTER_EMPTY_IMAGE' }
+      );
+    }
+
+    aiLogger.info({ model: OPENROUTER_IMAGE_MODEL, sizeKB: Math.round(buffer.length / 1024) }, '✅ OpenRouter image generated successfully');
+    return buffer;
+  } catch (error: unknown) {
+    const err = error as { name?: string; message?: string; code?: string };
+    if (err.name === 'AbortError') {
+      throw Object.assign(
+        new Error('OpenRouter generation timeout'),
+        { code: 'OPENROUTER_TIMEOUT' }
+      );
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 /**
  * Генерирует изображение по текстовому описанию с fallback на альтернативные модели.
  * Автоматически переводит русский промпт на английский для лучшего результата.
+ * 
+ * Стратегия fallback:
+ * 1. HuggingFace (4 модели: FLUX, SD3, SDXL) - БЕСПЛАТНО (если есть токен)
+ * 2. OpenRouter (Gemini 2.5 Flash Image) - $0.04 за картинку
  */
 export async function generateImage(prompt: string): Promise<ImageGenResult> {
-  const client = await getClient();
   const startTime = Date.now();
 
   // Переводим промпт на английский если он на русском
@@ -489,111 +615,162 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
 
   let lastError: Error | null = null;
   let usedModel = DEFAULT_MODEL;
+  let skippedHF = false;
 
-  // Пробуем модели по порядку
-  for (let i = 0; i < FALLBACK_MODELS.length; i++) {
-    const model = FALLBACK_MODELS[i]!;
-    const isFallback = i > 0;
-    
-    if (isFallback) {
-      aiLogger.info({ model, attemptNumber: i + 1 }, 'Primary model failed, trying fallback model');
-    }
+  // ===== ЭТАП 1: Пробуем HuggingFace модели =====
+  try {
+    const client = await getClient();
 
-    try {
-      const buffer = await tryGenerateWithModel(client, model, translatedPrompt, GENERATION_TIMEOUT_MS);
-      const generationTimeMs = Date.now() - startTime;
-
+    // Пробуем модели по порядку
+    for (let i = 0; i < FALLBACK_MODELS.length; i++) {
+      const model = FALLBACK_MODELS[i]!;
+      const isFallback = i > 0;
+      
       if (isFallback) {
-        aiLogger.info({ 
+        aiLogger.info({ model, attemptNumber: i + 1 }, 'Primary model failed, trying fallback model');
+      }
+
+      try {
+        const buffer = await tryGenerateWithModel(client, model, translatedPrompt, GENERATION_TIMEOUT_MS);
+        const generationTimeMs = Date.now() - startTime;
+
+        if (isFallback) {
+          aiLogger.info({ 
+            model, 
+            attemptNumber: i + 1,
+            timeMs: generationTimeMs,
+          }, '✅ Fallback model succeeded!');
+        }
+
+        return {
+          image: buffer,
+          model,
+          prompt: prompt, // оригинальный промпт для отображения пользователю
+          translatedPrompt, // английский промпт, отправленный в модель
+          generationTimeMs,
+        };
+      } catch (error: unknown) {
+        const err = error as { status?: number; message?: string; name?: string; code?: string };
+        lastError = err as Error;
+        
+        const timeElapsed = Date.now() - startTime;
+        
+        aiLogger.warn({ 
           model, 
           attemptNumber: i + 1,
-          timeMs: generationTimeMs,
-        }, '✅ Fallback model succeeded!');
+          error: err.message,
+          status: err.status,
+          code: err.code,
+          timeElapsed,
+        }, `Model ${model} failed${i < FALLBACK_MODELS.length - 1 ? ', trying next' : ', exhausted HF models'}`);
+
+        // Для некоторых ошибок не имеет смысла пробовать другие HF модели
+        if (err.status === 401 || err.code === 'HF_AUTH_ERROR') {
+          aiLogger.warn('HF auth error - will skip to OpenRouter fallback');
+          skippedHF = true;
+          break;
+        }
+
+        // "Credit balance is depleted" - пропускаем остальные HF модели
+        if (err.message?.includes('Credit balance is depleted') || err.message?.includes('purchase pre-paid credits')) {
+          aiLogger.warn('HF credits depleted - skipping to OpenRouter fallback');
+          skippedHF = true;
+          break;
+        }
+
+        // Продолжаем пробовать следующую HF модель
+        continue;
       }
-
-      return {
-        image: buffer,
-        model,
-        prompt: prompt, // оригинальный промпт для отображения пользователю
-        translatedPrompt, // английский промпт, отправленный в модель
-        generationTimeMs,
-      };
-    } catch (error: unknown) {
-      const err = error as { status?: number; message?: string; name?: string; code?: string };
-      lastError = err as Error;
-      
-      const timeElapsed = Date.now() - startTime;
-      
-      aiLogger.warn({ 
-        model, 
-        attemptNumber: i + 1,
-        error: err.message,
-        status: err.status,
-        code: err.code,
-        timeElapsed,
-      }, `Model ${model} failed${i < FALLBACK_MODELS.length - 1 ? ', trying next' : ', no more fallbacks'}`);
-
-      // Если это последняя модель — пробрасываем ошибку
-      if (i === FALLBACK_MODELS.length - 1) {
-        break;
-      }
-
-      // Для некоторых ошибок не имеет смысла пробовать другие модели
-      if (err.status === 401 || err.code === 'HF_AUTH_ERROR') {
-        throw Object.assign(
-          new Error('Неверный HF_TOKEN. Обновите в админке → API Ключи.'),
-          { code: 'HF_AUTH_ERROR' }
-        );
-      }
-
-      // Продолжаем пробовать следующую модель
-      continue;
     }
+  } catch (clientError: unknown) {
+    // Не удалось создать HF клиент (нет токена или ошибка конфига)
+    const err = clientError as { code?: string; message?: string };
+    aiLogger.warn({ error: err.message, code: err.code }, 'Failed to initialize HF client, skipping to OpenRouter');
+    lastError = err as Error;
+    skippedHF = true;
   }
 
-  // Все модели упали — формируем понятное сообщение об ошибке
+  // ===== ЭТАП 2: Все HF модели упали или пропущены → пробуем OpenRouter =====
+  aiLogger.info({ 
+    reason: skippedHF ? 'HF_SKIP' : 'HF_ALL_FAILED',
+    triedHFModels: skippedHF ? 'skipped' : FALLBACK_MODELS.length,
+  }, 'Attempting OpenRouter as final fallback');
+
+  try {
+    const buffer = await tryGenerateViaOpenRouter(translatedPrompt, GENERATION_TIMEOUT_MS);
+    const generationTimeMs = Date.now() - startTime;
+
+    aiLogger.info({ 
+      model: OPENROUTER_IMAGE_MODEL,
+      timeMs: generationTimeMs,
+      hfAttempted: !skippedHF,
+    }, '✅ OpenRouter fallback succeeded!');
+
+    return {
+      image: buffer,
+      model: OPENROUTER_IMAGE_MODEL,
+      prompt: prompt,
+      translatedPrompt,
+      generationTimeMs,
+    };
+  } catch (orError: unknown) {
+    const err = orError as { code?: string; message?: string };
+    aiLogger.error({ 
+      error: err.message,
+      code: err.code,
+      triedHF: !skippedHF,
+      triedOpenRouter: true,
+    }, 'OpenRouter fallback also failed');
+    
+    // Запоминаем последнюю ошибку от OpenRouter
+    lastError = err as Error;
+  }
+
+  // ===== ВСЕ ПРОВАЙДЕРЫ УПАЛИ =====
   const generationTimeMs = Date.now() - startTime;
   const err = lastError as { status?: number; message?: string; name?: string; code?: string } | null;
   
   aiLogger.error(
     { 
-      triedModels: FALLBACK_MODELS.length,
+      triedProviders: skippedHF ? ['OpenRouter'] : ['HuggingFace', 'OpenRouter'],
+      triedHFModels: skippedHF ? 0 : FALLBACK_MODELS.length,
       lastError: err?.message,
       timeMs: generationTimeMs,
     },
-    'All image generation models failed'
+    'All image generation providers failed'
   );
 
   // Таймаут
-  if (err?.name === 'AbortError' || err?.code === 'HF_TIMEOUT') {
+  if (err?.name === 'AbortError' || err?.code === 'HF_TIMEOUT' || err?.code === 'OPENROUTER_TIMEOUT') {
     throw Object.assign(
       new Error('Генерация заняла слишком долго. Попробуй более простой промпт.'),
-      { code: 'HF_TIMEOUT' }
+      { code: 'TIMEOUT' }
     );
   }
 
-  // Rate limit
+  // Rate limit (любой провайдер)
   if (err?.status === 429 || err?.message?.includes('429')) {
     throw Object.assign(
-      new Error('Слишком много запросов к Hugging Face. Подожди минуту.'),
-      { code: 'HF_RATE_LIMIT' }
+      new Error('Слишком много запросов к AI сервисам. Подожди минуту.'),
+      { code: 'RATE_LIMIT' }
     );
   }
 
-  // Model loading
+  // Model loading (HF)
   if (err?.status === 503 || err?.message?.includes('503')) {
     throw Object.assign(
       new Error('Модели загружаются на сервере. Попробуй через 30 секунд.'),
-      { code: 'HF_MODEL_LOADING' }
+      { code: 'MODEL_LOADING' }
     );
   }
 
   // Generic error
+  const providerList = skippedHF ? 'OpenRouter' : `HuggingFace (${FALLBACK_MODELS.length} моделей) + OpenRouter`;
   throw Object.assign(
     new Error(
-      `Не удалось сгенерировать изображение (попробовано ${FALLBACK_MODELS.length} моделей): ${err?.message || 'неизвестная ошибка'}. Попробуй позже.`
+      `Не удалось сгенерировать изображение (попробовано: ${providerList}): ${err?.message || 'неизвестная ошибка'}. Попробуй позже.`
     ),
-    { code: 'HF_GENERATION_ERROR' }
+    { code: 'GENERATION_ERROR' }
   );
 }
 
