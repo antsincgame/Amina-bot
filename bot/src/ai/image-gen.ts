@@ -27,6 +27,15 @@ async function getInferenceClientClass(): Promise<typeof import('@huggingface/in
 // --------------------------------------------
 
 const DEFAULT_MODEL = 'black-forest-labs/FLUX.1-schnell';
+
+/** Fallback модели (в порядке приоритета) */
+const FALLBACK_MODELS = [
+  'black-forest-labs/FLUX.1-schnell',      // Основная (быстрая, 4 шага)
+  'stabilityai/stable-diffusion-xl-base-1.0', // Fallback 1 (проверенная)
+  'runwayml/stable-diffusion-v1-5',        // Fallback 2 (легковесная)
+  'prompthero/openjourney-v4',             // Fallback 3 (художественная)
+];
+
 /** Таймаут генерации (ms) — FLUX.1-schnell обычно укладывается в 30с */
 const GENERATION_TIMEOUT_MS = 60_000;
 /** Кеш HF-токена чтобы не дёргать БД на каждый запрос */
@@ -397,7 +406,63 @@ async function translatePromptToEnglish(prompt: string): Promise<string> {
 // --------------------------------------------
 
 /**
- * Генерирует изображение по текстовому описанию.
+ * Попытка генерации с одной моделью
+ */
+async function tryGenerateWithModel(
+  client: InferenceClient,
+  model: string,
+  prompt: string,
+  timeoutMs: number
+): Promise<Buffer> {
+  aiLogger.info({ model, prompt: prompt.substring(0, 60) }, 'Attempting image generation');
+  
+  let genTimeoutId: ReturnType<typeof setTimeout> | undefined;
+  
+  try {
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      genTimeoutId = setTimeout(() => {
+        reject(Object.assign(
+          new Error(`Model ${model} timeout`),
+          { code: 'HF_TIMEOUT', name: 'AbortError' }
+        ));
+      }, timeoutMs);
+    });
+
+    // Определяем параметры в зависимости от модели
+    const isFLUX = model.includes('FLUX');
+    const parameters = isFLUX
+      ? { num_inference_steps: 4 }      // FLUX быстрый (4 шага)
+      : { num_inference_steps: 25 };    // SD модели (25 шагов)
+
+    const imageBlob = await Promise.race([
+      client.textToImage({
+        model,
+        inputs: prompt,
+        provider: HF_PROVIDER,
+        parameters,
+      }) as unknown as Promise<Blob>,
+      timeoutPromise,
+    ]);
+
+    const arrayBuffer = await imageBlob.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    if (buffer.length === 0) {
+      throw Object.assign(
+        new Error(`Model ${model} returned empty image`),
+        { code: 'HF_EMPTY_RESPONSE' }
+      );
+    }
+
+    aiLogger.info({ model, sizeKB: Math.round(buffer.length / 1024) }, 'Image generated successfully');
+    return buffer;
+  } finally {
+    if (genTimeoutId) clearTimeout(genTimeoutId);
+  }
+}
+
+/**
+ * Генерирует изображение по текстовому описанию с fallback на альтернативные модели.
  * Автоматически переводит русский промпт на английский для лучшего результата.
  */
 export async function generateImage(prompt: string): Promise<ImageGenResult> {
@@ -407,113 +472,121 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
   // Переводим промпт на английский если он на русском
   const translatedPrompt = await translatePromptToEnglish(prompt);
 
-  aiLogger.info({ originalPrompt: prompt, translatedPrompt, model: DEFAULT_MODEL }, 'Generating image via HF FLUX.1-schnell');
+  aiLogger.info({ 
+    originalPrompt: prompt, 
+    translatedPrompt, 
+    primaryModel: FALLBACK_MODELS[0],
+    fallbackCount: FALLBACK_MODELS.length - 1,
+  }, 'Starting image generation with fallback support');
 
-  // Таймаут с корректной очисткой — предотвращает утечку таймера
-  let genTimeoutId: ReturnType<typeof setTimeout> | undefined;
+  let lastError: Error | null = null;
+  let usedModel = DEFAULT_MODEL;
 
-  try {
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      genTimeoutId = setTimeout(() => {
-        reject(Object.assign(
-          new Error('Генерация заняла слишком долго. Попробуй более простой промпт.'),
-          { code: 'HF_TIMEOUT', name: 'AbortError' }
-        ));
-      }, GENERATION_TIMEOUT_MS);
-    });
-
-    // InferenceClient не сохраняет overload-типы, поэтому cast необходим.
-    // По умолчанию (без outputType) textToImage возвращает Blob.
-    const imageBlob = await Promise.race([
-      client.textToImage({
-        model: DEFAULT_MODEL,
-        inputs: translatedPrompt,
-        provider: HF_PROVIDER,
-        parameters: {
-          num_inference_steps: 4,
-        },
-      }) as unknown as Promise<Blob>,
-      timeoutPromise,
-    ]);
-
-    // Blob → Buffer (совместимо с Node.js 18+)
-    const arrayBuffer = await imageBlob.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    const generationTimeMs = Date.now() - startTime;
-
-    if (buffer.length === 0) {
-      throw Object.assign(
-        new Error('Модель вернула пустое изображение. Попробуй другой промпт.'),
-        { code: 'HF_EMPTY_RESPONSE' }
-      );
-    }
-
-    aiLogger.info(
-      { 
-        model: DEFAULT_MODEL, 
-        sizeKB: Math.round(buffer.length / 1024),
-        timeMs: generationTimeMs,
-      },
-      'Image generated successfully'
-    );
-
-    return {
-      image: buffer,
-      model: DEFAULT_MODEL,
-      prompt: prompt, // оригинальный промпт для отображения пользователю
-      translatedPrompt, // английский промпт, отправленный в модель
-      generationTimeMs,
-    };
-  } catch (error: unknown) {
-    const err = error as { status?: number; message?: string; name?: string };
-    const generationTimeMs = Date.now() - startTime;
+  // Пробуем модели по порядку
+  for (let i = 0; i < FALLBACK_MODELS.length; i++) {
+    const model = FALLBACK_MODELS[i]!;
+    const isFallback = i > 0;
     
-    aiLogger.error(
-      { error: err.message, model: DEFAULT_MODEL, timeMs: generationTimeMs },
-      'Image generation failed'
-    );
-
-    // Таймаут (AbortController)
-    if (err.name === 'AbortError') {
-      throw Object.assign(
-        new Error('Генерация заняла слишком долго. Попробуй более простой промпт.'),
-        { code: 'HF_TIMEOUT' }
-      );
+    if (isFallback) {
+      aiLogger.info({ model, attemptNumber: i + 1 }, 'Primary model failed, trying fallback model');
     }
 
-    if (err.status === 401 || err.message?.includes('401')) {
-      throw Object.assign(
-        new Error('Неверный HF_TOKEN. Обновите в админке → API Ключи.'),
-        { code: 'HF_AUTH_ERROR' }
-      );
-    }
-    if (err.status === 429 || err.message?.includes('429')) {
-      throw Object.assign(
-        new Error('Слишком много запросов к Hugging Face. Подожди минуту.'),
-        { code: 'HF_RATE_LIMIT' }
-      );
-    }
-    if (err.status === 503 || err.message?.includes('503')) {
-      throw Object.assign(
-        new Error('Модель загружается на сервере. Попробуй через 30 секунд.'),
-        { code: 'HF_MODEL_LOADING' }
-      );
-    }
+    try {
+      const buffer = await tryGenerateWithModel(client, model, translatedPrompt, GENERATION_TIMEOUT_MS);
+      const generationTimeMs = Date.now() - startTime;
 
-    // Если ошибка уже наша — пробрасываем
-    if ((error as { code?: string }).code?.startsWith('HF_')) {
-      throw error;
+      if (isFallback) {
+        aiLogger.info({ 
+          model, 
+          attemptNumber: i + 1,
+          timeMs: generationTimeMs,
+        }, '✅ Fallback model succeeded!');
+      }
+
+      return {
+        image: buffer,
+        model,
+        prompt: prompt, // оригинальный промпт для отображения пользователю
+        translatedPrompt, // английский промпт, отправленный в модель
+        generationTimeMs,
+      };
+    } catch (error: unknown) {
+      const err = error as { status?: number; message?: string; name?: string; code?: string };
+      lastError = err as Error;
+      
+      const timeElapsed = Date.now() - startTime;
+      
+      aiLogger.warn({ 
+        model, 
+        attemptNumber: i + 1,
+        error: err.message,
+        status: err.status,
+        code: err.code,
+        timeElapsed,
+      }, `Model ${model} failed${i < FALLBACK_MODELS.length - 1 ? ', trying next' : ', no more fallbacks'}`);
+
+      // Если это последняя модель — пробрасываем ошибку
+      if (i === FALLBACK_MODELS.length - 1) {
+        break;
+      }
+
+      // Для некоторых ошибок не имеет смысла пробовать другие модели
+      if (err.status === 401 || err.code === 'HF_AUTH_ERROR') {
+        throw Object.assign(
+          new Error('Неверный HF_TOKEN. Обновите в админке → API Ключи.'),
+          { code: 'HF_AUTH_ERROR' }
+        );
+      }
+
+      // Продолжаем пробовать следующую модель
+      continue;
     }
-    
-    throw Object.assign(
-      new Error(
-        `Не удалось сгенерировать изображение: ${err.message || 'неизвестная ошибка'}. Попробуй позже.`
-      ),
-      { code: 'HF_GENERATION_ERROR' }
-    );
-  } finally {
-    if (genTimeoutId) clearTimeout(genTimeoutId);
   }
+
+  // Все модели упали — формируем понятное сообщение об ошибке
+  const generationTimeMs = Date.now() - startTime;
+  const err = lastError as { status?: number; message?: string; name?: string; code?: string } | null;
+  
+  aiLogger.error(
+    { 
+      triedModels: FALLBACK_MODELS.length,
+      lastError: err?.message,
+      timeMs: generationTimeMs,
+    },
+    'All image generation models failed'
+  );
+
+  // Таймаут
+  if (err?.name === 'AbortError' || err?.code === 'HF_TIMEOUT') {
+    throw Object.assign(
+      new Error('Генерация заняла слишком долго. Попробуй более простой промпт.'),
+      { code: 'HF_TIMEOUT' }
+    );
+  }
+
+  // Rate limit
+  if (err?.status === 429 || err?.message?.includes('429')) {
+    throw Object.assign(
+      new Error('Слишком много запросов к Hugging Face. Подожди минуту.'),
+      { code: 'HF_RATE_LIMIT' }
+    );
+  }
+
+  // Model loading
+  if (err?.status === 503 || err?.message?.includes('503')) {
+    throw Object.assign(
+      new Error('Модели загружаются на сервере. Попробуй через 30 секунд.'),
+      { code: 'HF_MODEL_LOADING' }
+    );
+  }
+
+  // Generic error
+  throw Object.assign(
+    new Error(
+      `Не удалось сгенерировать изображение (попробовано ${FALLBACK_MODELS.length} моделей): ${err?.message || 'неизвестная ошибка'}. Попробуй позже.`
+    ),
+    { code: 'HF_GENERATION_ERROR' }
+  );
 }
 
 /**
