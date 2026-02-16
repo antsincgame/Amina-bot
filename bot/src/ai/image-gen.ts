@@ -30,13 +30,14 @@ const DEFAULT_MODEL = 'black-forest-labs/FLUX.1-schnell';
 
 /** 
  * Fallback модели (в порядке приоритета)
- * ВАЖНО: используем ТОЛЬКО модели с endpoints_compatible (доступны через HF Inference API)
+ * ВАЖНО: ТОЛЬКО модели доступные через hf-inference провайдер (проверено 2026-02-16)
+ * Список: https://huggingface.co/models?inference_provider=hf-inference&pipeline_tag=text-to-image
  */
 const FALLBACK_MODELS = [
-  'black-forest-labs/FLUX.1-schnell',      // Основная (4 шага, ~10-30с)
-  'black-forest-labs/FLUX.1-dev',          // Fallback 1 (более качественная FLUX)
-  'stabilityai/stable-diffusion-xl-base-1.0', // Fallback 2 (SDXL, проверенная)
-  'stabilityai/sdxl-turbo',                // Fallback 3 (SDXL быстрая)
+  'black-forest-labs/FLUX.1-schnell',              // Основная (4 шага, Apache 2.0)
+  'black-forest-labs/FLUX.1-dev',                  // Fallback 1 (качественнее)
+  'stabilityai/stable-diffusion-xl-base-1.0',      // Fallback 2 (SDXL, проверенная)
+  'stabilityai/stable-diffusion-3-medium-diffusers', // Fallback 3 (SD3, новая)
 ];
 
 /** Таймаут генерации (ms) — FLUX.1-schnell обычно укладывается в 30с */
@@ -433,13 +434,13 @@ async function tryGenerateWithModel(
 
     // Определяем параметры в зависимости от модели
     const isFLUX = model.includes('FLUX');
-    const isTurbo = model.includes('turbo');
+    const isSD3 = model.includes('stable-diffusion-3');
     
     const parameters = isFLUX
       ? { num_inference_steps: 4 }       // FLUX быстрый (4 шага)
-      : isTurbo
-      ? { num_inference_steps: 1 }       // Turbo модели (1 шаг)
-      : { num_inference_steps: 25 };     // SD модели (25 шагов)
+      : isSD3
+      ? { num_inference_steps: 28 }      // SD3 (28 шагов рекомендовано)
+      : { num_inference_steps: 25 };     // SDXL (25 шагов)
 
     const imageBlob = await Promise.race([
       client.textToImage({
