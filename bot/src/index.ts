@@ -36,8 +36,11 @@ let bot: ReturnType<typeof createBot> | null = null;
 
 const setupRoutes = async (server: FastifyInstance): Promise<void> => {
   // Register CORS
+  const allowedOrigins = process.env.ADMIN_URL
+    ? [process.env.ADMIN_URL]
+    : true;
   await server.register(cors, {
-    origin: true,
+    origin: allowedOrigins,
     credentials: true,
   });
 
@@ -237,8 +240,9 @@ const start = async (): Promise<void> => {
     appLogger.info('☀️ Digest scheduler started');
 
     // Init voice messages infrastructure (bucket + table check)
-    ensureVoiceMessagesInfra().catch(err => appLogger.warn({ error: err }, 'Voice messages infra init failed (non-critical)'));
-    appLogger.info('🎤 Voice messages storage initialized');
+    ensureVoiceMessagesInfra()
+      .then(() => appLogger.info('🎤 Voice messages storage initialized'))
+      .catch(err => appLogger.warn({ error: err }, 'Voice messages infra init failed (non-critical)'));
 
     // Register bot menu commands in Telegram UI (после старта бота)
     await bot.api.setMyCommands([
@@ -267,7 +271,11 @@ const start = async (): Promise<void> => {
 // Graceful Shutdown
 // --------------------------------------------
 
+let shuttingDown = false;
+
 const shutdown = async (signal: string): Promise<void> => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   appLogger.info({ signal }, 'Shutdown signal received');
 
   // Cleanup intervals/timers

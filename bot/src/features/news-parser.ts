@@ -592,7 +592,7 @@ function parseHtmlContent(html: string, siteUrl: string, origin: string): Parsed
 
     if (!title || title.length < MIN_TITLE_LENGTH || title.length > MAX_TITLE_LENGTH) return;
     if (isSkipText(title)) return;
-    if (seenTitles.has(title.toLowerCase())) return;
+    if (seenTitles.has(normalizeTitle(title))) return;
 
     // Уже нашли через стратегию A/B?
     const innerLink = $heading.find('a').attr('href');

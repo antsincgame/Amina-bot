@@ -116,6 +116,9 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     ctx.session.messageHistory = [];
     ctx.session.conversationId = null; // Сбрасываем — ensureConversation создаст/загрузит при следующем сообщении
     ctx.session.awaitingImagePrompt = false;
+    ctx.session.awaitingTodoTask = false;
+    ctx.session.awaitingNoteContent = false;
+    ctx.session.awaitingSearchQuery = false;
 
     try {
       // Если был старый диалог — очищаем его сообщения в БД (но сохраняем саму запись)
@@ -149,7 +152,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
       });
 
       await ctx.reply(
-        `📋 **Активные напоминания (${reminders.length}):**\n\n${lines.join('\n\n')}\n\n_Для отмены: /remind\\_cancel номер_`,
+        `📋 *Активные напоминания (${reminders.length}):*\n\n${lines.join('\n\n')}\n\n_Для отмены: /remind\\_cancel номер_`,
         { parse_mode: 'Markdown' }
       );
     } catch (error) {
@@ -220,11 +223,10 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     try {
       const result = await generateImage(prompt);
       const timeSeconds = (result.generationTimeMs / 1000).toFixed(1);
-      const safePrompt = escapeMarkdown(prompt);
 
       await ctx.replyWithPhoto(
         new InputFile(result.image, 'generated.png'),
-        { caption: `🎨 ${safePrompt}\n⏱ ${timeSeconds}с | FLUX.1-schnell` }
+        { caption: `🎨 ${prompt}\n⏱ ${timeSeconds}с | FLUX.1-schnell` }
       );
 
       telegramLogger.info({ userId, prompt, timeMs: result.generationTimeMs }, 'Image sent to user');
@@ -376,8 +378,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
     try {
       await todosRepo.create(userId, task);
-      await ctx.reply(`✅ Задача добавлена!\n\n☐ _${task}_`, {
-        parse_mode: 'Markdown',
+      await ctx.reply(`✅ Задача добавлена!\n\n☐ <i>${escapeHtml(task)}</i>`, {
+        parse_mode: 'HTML',
         reply_markup: todosListKeyboard(),
       });
     } catch (error: unknown) {
@@ -420,7 +422,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
     try {
       const done = await todosRepo.markDone(userId, index);
-      if (done) await ctx.reply(`🎉 Выполнено: ~~${done.task}~~`, { parse_mode: 'Markdown' });
+      if (done) await ctx.reply(`🎉 Выполнено: <s>${escapeHtml(done.task)}</s>`, { parse_mode: 'HTML' });
       else await ctx.reply('❌ Задача с таким номером не найдена.');
     } catch (err) {
       telegramLogger.warn({ error: err, userId }, 'Failed to complete todo');

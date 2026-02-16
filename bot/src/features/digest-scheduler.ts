@@ -44,6 +44,9 @@ export function startDigestScheduler(bot: BotLike): void {
     return;
   }
 
+  if (!process.env.TZ || process.env.TZ !== 'Europe/Minsk') {
+    appLogger.warn({ TZ: process.env.TZ }, 'TZ is not set to Europe/Minsk — digest times may be incorrect!');
+  }
   appLogger.info('Starting morning digest scheduler (TZ=Europe/Minsk)');
 
   // Очищаем sent-кеш в полночь

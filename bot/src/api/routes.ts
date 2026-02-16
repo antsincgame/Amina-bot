@@ -9,7 +9,7 @@ import { rateLimitHook } from '../utils/rate-limiter.js';
 import { getAllAudioModels, getFreeVisionModels, refreshFreeVisionModelsCache, getVisionFallbackStatus } from '../ai/multimodal.js';
 import { getSearchModelInfo, getAvailableModels, isWebSearchEnabled, clearPerplexityCache } from '../ai/websearch.js';
 import { userProfileRepo, userMemoryRepo, userLogsRepo } from '../memory/user-memory.js';
-import { config, clearApiKeysCache } from '../config/index.js';
+import { config, clearApiKeysCache, getApiKeys } from '../config/index.js';
 import { getConfiguredSites, saveConfiguredSites, parseNewsFromSite } from '../features/news-parser.js';
 import { invalidateTTSConfig } from '../features/tts.js';
 import { voiceMessagesRepo } from '../features/voice-messages-repo.js';
@@ -340,7 +340,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
             const { key } = request.params;
             const { value } = request.body as { value: string };
 
-            if (!value) {
+            if (value === undefined || value === null) {
               return reply.code(400).send({
                 success: false,
                 error: 'Value is required',
@@ -734,9 +734,11 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
        */
       apiServer.get('/models/openrouter/audio', async (request: FastifyRequest, reply: FastifyReply) => {
         try {
+          const keys = await getApiKeys();
+          const apiKey = keys.openrouter || config.ai.apiKey;
           const response = await fetch('https://openrouter.ai/api/v1/models', {
             headers: {
-              'Authorization': `Bearer ${config.ai.apiKey}`,
+              'Authorization': `Bearer ${apiKey}`,
             },
           });
 

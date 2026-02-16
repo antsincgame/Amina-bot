@@ -168,18 +168,23 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
   bot.callbackQuery('todos_list', async (ctx) => {
     await ctx.answerCallbackQuery();
     const userId = ctx.from?.id.toString() ?? 'unknown';
-    const todos = await todosRepo.getActive(userId);
+    try {
+      const todos = await todosRepo.getActive(userId);
 
-    if (todos.length === 0) {
-      await ctx.editMessageText('🎉 Все задачи выполнены!');
-      return;
+      if (todos.length === 0) {
+        await ctx.editMessageText('🎉 Все задачи выполнены!');
+        return;
+      }
+
+      const lines = todos.map((t, i) => `${i + 1}. ☐ ${escapeHtml(t.task)}`);
+      await ctx.editMessageText(
+        `📋 <b>Задачи (${todos.length}):</b>\n\n${lines.join('\n')}`,
+        { parse_mode: 'HTML', reply_markup: todoDoneKeyboard(todos.length) }
+      );
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to load todos list (callback)');
+      await ctx.editMessageText('😔 Не удалось загрузить задачи.');
     }
-
-    const lines = todos.map((t, i) => `${i + 1}. ☐ ${t.task}`);
-    await ctx.editMessageText(
-      `📋 *Задачи (${todos.length}):*\n\n${lines.join('\n')}`,
-      { parse_mode: 'Markdown', reply_markup: todoDoneKeyboard(todos.length) }
-    );
   });
 
   bot.callbackQuery(/^todo_done_(\d+)$/, async (ctx) => {

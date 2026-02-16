@@ -123,7 +123,13 @@ export const splitIntoChunks = (text: string): string[] => {
       if (paragraph.length > MAX_MESSAGE_LENGTH) {
         const sentences = paragraph.split(/(?<=[.!?])\s+/);
         for (const sentence of sentences) {
-          if (currentChunk.length + sentence.length + 1 > MAX_MESSAGE_LENGTH) {
+          // If a single sentence exceeds the limit, hard-split by character count
+          if (sentence.length > MAX_MESSAGE_LENGTH) {
+            if (currentChunk) { chunks.push(currentChunk.trim()); currentChunk = ''; }
+            for (let j = 0; j < sentence.length; j += MAX_MESSAGE_LENGTH) {
+              chunks.push(sentence.slice(j, j + MAX_MESSAGE_LENGTH));
+            }
+          } else if (currentChunk.length + sentence.length + 1 > MAX_MESSAGE_LENGTH) {
             if (currentChunk) chunks.push(currentChunk.trim());
             currentChunk = sentence;
           } else {
@@ -204,18 +210,25 @@ export const sendLongMessage = async (
     const { InlineKeyboard: IK } = await import('grammy');
     effectiveKeyboard = new IK();
     // Копируем кнопки, заменяя callback_data 'read_aloud' → 'read_aloud_full:ID'
-    const rawRows = (keyboard as unknown as { inline_keyboard: Array<Array<{ text: string; callback_data?: string }>> }).inline_keyboard;
-    if (rawRows) {
-      for (const row of rawRows) {
-        for (const btn of row) {
-          if (btn.callback_data === 'read_aloud') {
-            effectiveKeyboard.text(btn.text, `read_aloud_full:${fullTextId}`);
-          } else if (btn.callback_data) {
-            effectiveKeyboard.text(btn.text, btn.callback_data);
+    try {
+      const rawRows = (keyboard as unknown as { inline_keyboard: Array<Array<{ text: string; callback_data?: string }>> }).inline_keyboard;
+      if (rawRows && Array.isArray(rawRows)) {
+        for (let ri = 0; ri < rawRows.length; ri++) {
+          const row = rawRows[ri]!;
+          for (const btn of row) {
+            if (btn.callback_data === 'read_aloud') {
+              effectiveKeyboard.text(btn.text, `read_aloud_full:${fullTextId}`);
+            } else if (btn.callback_data) {
+              effectiveKeyboard.text(btn.text, btn.callback_data);
+            }
           }
+          if (ri < rawRows.length - 1) effectiveKeyboard.row();
         }
-        effectiveKeyboard.row();
+      } else {
+        effectiveKeyboard = keyboard;
       }
+    } catch {
+      effectiveKeyboard = keyboard;
     }
   }
 

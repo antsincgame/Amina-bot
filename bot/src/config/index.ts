@@ -9,10 +9,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const botRoot = resolve(__dirname, '../..');
 
-// Load .env (or .env.test if it exists and NODE_ENV=test)
+// Load .env
 dotenv.config({ path: resolve(botRoot, '.env') });
-// Also try loading .env.test which overrides — for test environments
-dotenv.config({ path: resolve(botRoot, '.env.test'), override: true });
+// Load .env.test with override ONLY in test environments
+if (process.env.NODE_ENV === 'test') {
+  dotenv.config({ path: resolve(botRoot, '.env.test'), override: true });
+}
 
 // --------------------------------------------
 // Environment Schema Validation

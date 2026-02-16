@@ -52,8 +52,21 @@ const BUCKET = 'voice-messages';
 // --------------------------------------------
 
 let initialized = false;
+let initPromise: Promise<void> | null = null;
 
 export async function ensureVoiceMessagesInfra(): Promise<void> {
+  if (initialized) return;
+  if (initPromise) return initPromise;
+
+  initPromise = doEnsureVoiceMessagesInfra();
+  try {
+    await initPromise;
+  } finally {
+    initPromise = null;
+  }
+}
+
+async function doEnsureVoiceMessagesInfra(): Promise<void> {
   if (initialized) return;
 
   const sb = getSupabase();

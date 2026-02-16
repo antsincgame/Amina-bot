@@ -67,27 +67,31 @@ let hfClient: InferenceClient | null = null;
 let currentHfToken: string = '';
 let hfTokenCacheTime: number = 0;
 
+/** Cached token from DB (separate from currentHfToken which tracks the client's token) */
+let cachedHfToken: string | null = null;
+
 /**
- * Получить HF токен из БД
- * НЕ обновляет currentHfToken — это делает только getClient()
+ * Получить HF токен из БД (с кэшированием)
  */
 async function getHfToken(): Promise<string | null> {
   const now = Date.now();
   
-  if (currentHfToken && now - hfTokenCacheTime < HF_TOKEN_CACHE_TTL) {
-    return currentHfToken;
+  // Кэш валиден — возвращаем (включая currentHfToken от клиента)
+  if (cachedHfToken && now - hfTokenCacheTime < HF_TOKEN_CACHE_TTL) {
+    return cachedHfToken;
   }
 
   try {
     const token = await settingsRepo.get('hf_token');
     if (token) {
+      cachedHfToken = token;
       hfTokenCacheTime = now;
       return token;
     }
     return null;
   } catch (error) {
     aiLogger.error({ error }, 'Failed to get HF token from DB');
-    return currentHfToken || null;
+    return cachedHfToken || currentHfToken || null;
   }
 }
 
@@ -194,11 +198,9 @@ export async function classifyImageIntentGroq(text: string): Promise<string | nu
 
 Ответь СТРОГО одним JSON без текста.`;
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
-
-    try {
-      for (const model of GROQ_CLASSIFY_MODELS) {
+    for (const model of GROQ_CLASSIFY_MODELS) {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 4000);
         try {
           const response = await fetch(GROQ_API_URL, {
             method: 'POST',
@@ -256,19 +258,18 @@ export async function classifyImageIntentGroq(text: string): Promise<string | nu
         } catch (modelError) {
           const err = modelError as { name?: string; message?: string };
           if (err.name === 'AbortError') {
-            aiLogger.warn({ text: text.substring(0, 60) }, 'Groq image classify timed out');
-            return null;
+            aiLogger.warn({ model, text: text.substring(0, 60) }, 'Groq image classify timed out');
+            continue;
           }
           aiLogger.debug({ model, error: err.message }, 'Groq classify model error, trying next');
           continue;
+        } finally {
+          clearTimeout(timeoutId);
         }
       }
 
-      aiLogger.warn('All Groq classify models failed');
-      return null;
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    aiLogger.warn('All Groq classify models failed');
+    return null;
   } catch (error) {
     aiLogger.warn({ error }, 'Groq image intent classification failed');
     return null;
@@ -363,12 +364,15 @@ async function translatePromptToEnglish(prompt: string): Promise<string> {
     const response = await aiService.chat(
       [
         {
+          role: 'system',
+          content: 'You are a prompt translator for AI image generation. Translate the user\'s image description from Russian to English. Output ONLY the English translation, nothing else. Make it vivid and descriptive for best image generation results. Keep it concise (under 200 chars). Do NOT add quotes or explanations.',
+        },
+        {
           role: 'user',
           content: prompt,
         },
       ],
       'telegram',
-      'You are a prompt translator for AI image generation. Translate the user\'s image description from Russian to English. Output ONLY the English translation, nothing else. Make it vivid and descriptive for best image generation results. Keep it concise (under 200 chars). Do NOT add quotes or explanations.',
     );
 
     const translated = response.content?.trim();

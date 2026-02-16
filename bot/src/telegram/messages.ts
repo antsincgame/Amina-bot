@@ -240,7 +240,7 @@ const handleAutoDetections = async (
   // ОПТИМИЗАЦИЯ: Не вызываем Groq для сообщений, которые явно НЕ про картинки —
   // вопросы, команды "назови/расскажи/найди", короткие фразы
   if (!imgPrompt) {
-    const isObviouslyNotImage = /^(назови|расскажи|найди|подскажи|посоветуй|порекомендуй|перечисли|объясни|сколько|когда|где|кто|что|как |какой|какая|какие|зачем|почему)\b/i.test(text.trim())
+    const isObviouslyNotImage = /^(назови|расскажи|найди|подскажи|посоветуй|порекомендуй|перечисли|объясни|сколько|когда|где|кто|что|как |какой|какая|какие|зачем|почему)(?:\s|$|,)/i.test(text.trim())
       || /\?$/.test(text.trim())
       || text.trim().length < 8;
 
@@ -262,7 +262,7 @@ const handleAutoDetections = async (
       const cleanPrompt = imgPrompt.replace(/, high quality.*$/, '');
       await ctx.replyWithPhoto(
         new InputFile(result.image, 'generated.png'),
-        { caption: `🎨 ${escapeMarkdown(cleanPrompt)}\n⏱ ${timeSeconds}с | FLUX.1-schnell` }
+        { caption: `🎨 ${cleanPrompt}\n⏱ ${timeSeconds}с | FLUX.1-schnell` }
       );
       analyticsRepo.log('message_received', 'telegram', { userId, event: 'image_generated', prompt: imgPrompt, model: result.model, timeMs: result.generationTimeMs }).catch(() => {});
       return true;
@@ -591,7 +591,8 @@ const processMessageThroughAI = async (
   await ensureConversation(ctx, userId, chatId);
 
   // Определяем — здоровалась ли Амина сегодня (из БД, не session)
-  const todayStr = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`; // YYYY-MM-DD (local TZ)
   const lastGreetingDate = await userProfileRepo.getLastGreetingDate(userId);
   const alreadyGreetedToday = lastGreetingDate === todayStr;
 
@@ -631,6 +632,9 @@ const processMessageThroughAI = async (
   // Теперь processAIResponse гарантированно обрабатывает все случаи симуляции,
   // поэтому здесь просто сохраняем результат.
   ctx.session.messageHistory.push({ role: 'assistant', content: aiResponse.content });
+  if (ctx.session.messageHistory.length > MAX_HISTORY_MESSAGES) {
+    ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
+  }
 
   // Post-AI image interception
   if (await tryPostAIImageInterception(ctx, aiResponse.content, userText, userId)) return;
@@ -715,7 +719,7 @@ const tryPostAIImageInterception = async (
     const cleanPrompt = imgPrompt.replace(/, high quality.*$/, '');
     await ctx.replyWithPhoto(
       new InputFile(result.image, 'generated.png'),
-      { caption: `🎨 ${escapeMarkdown(cleanPrompt)}\n⏱ ${timeSeconds}с | FLUX.1-schnell` }
+      { caption: `🎨 ${cleanPrompt}\n⏱ ${timeSeconds}с | FLUX.1-schnell` }
     );
     analyticsRepo.log('message_received', 'telegram', {
       userId, event: 'image_generated_postai', prompt: imgPrompt,
@@ -737,7 +741,11 @@ const tryPostAIImageInterception = async (
 // ============================================
 
 const handleTextMessage = async (ctx: BotContext): Promise<void> => {
-  const userId = ctx.from?.id.toString() ?? 'unknown';
+  if (!ctx.from?.id) {
+    telegramLogger.warn('Message without from.id — ignoring');
+    return;
+  }
+  const userId = ctx.from.id.toString();
   const chatId = ctx.chat?.id ?? 0;
   const userMessage = ctx.message?.text ?? '';
   const startTime = Date.now();
@@ -755,8 +763,8 @@ const handleTextMessage = async (ctx: BotContext): Promise<void> => {
     try {
       const result = await generateImage(userMessage);
       await ctx.replyWithPhoto(new InputFile(result.image), {
-        caption: `🎨 *${result.prompt}*\n\n_Модель: ${result.model}_\n_Время: ${result.generationTimeMs}мс_`,
-        parse_mode: 'Markdown',
+        caption: `🎨 <b>${escapeHtml(result.prompt)}</b>\n\n<i>Модель: ${escapeHtml(result.model)}</i>\n<i>Время: ${result.generationTimeMs}мс</i>`,
+        parse_mode: 'HTML',
       });
       analyticsRepo.log('message_sent', 'telegram', { userId, type: 'image', model: result.model }).catch(() => {});
       telegramLogger.info({ userId, prompt: userMessage, model: result.model }, 'Image generated successfully');
@@ -874,7 +882,11 @@ const VOICE_ERROR_MESSAGES: Record<string, string> = {
 };
 
 const handleVoiceMessage = async (ctx: BotContext): Promise<void> => {
-  const userId = ctx.from?.id.toString() ?? 'unknown';
+  if (!ctx.from?.id) {
+    telegramLogger.warn('Voice message without from.id — ignoring');
+    return;
+  }
+  const userId = ctx.from.id.toString();
   const chatId = ctx.chat?.id ?? 0;
   const duration = ctx.message?.voice?.duration ?? 0;
   const startTime = Date.now();
@@ -1093,9 +1105,8 @@ const handleDirectWebSearch = async (
 ): Promise<boolean> => {
   const searchEnabled = await isWebSearchEnabled();
   if (!searchEnabled) {
-    telegramLogger.warn({ userId }, 'Web search disabled — skipping');
-    await ctx.reply('🔍 Поиск в интернете сейчас отключён.\n\n_Обратитесь к администратору._', { parse_mode: 'Markdown' });
-    return true;
+    telegramLogger.warn({ userId }, 'Web search disabled — falling through to AI');
+    return false;
   }
 
   await ctx.replyWithChatAction('typing');

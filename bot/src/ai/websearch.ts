@@ -554,7 +554,7 @@ export async function webSearch(
     };
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      telegramLogger.warn({ query, timeout: 25000 }, 'Web search timeout');
+      telegramLogger.warn({ query, timeout: timeoutMs }, 'Web search timeout');
       throw Object.assign(new Error('Web search timeout'), { code: 'PERPLEXITY_TIMEOUT' });
     }
     if (typeof error === 'object' && error !== null && 'code' in error) {

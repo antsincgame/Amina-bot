@@ -29,43 +29,54 @@ export const userPrefsRepo = {
     chatId: number,
     firstName?: string
   ): Promise<UserPreferences> {
+    // Сначала пробуем прочитать существующие настройки
+    const { data: existing } = await getSupabase()
+      .from('user_preferences')
+      .select('*')
+      .eq('user_id', userId)
+      .single();
+
+    if (existing) {
+      // Обновляем first_name и chat_id если изменились, НЕ трогая digest_hour/city
+      if (firstName && existing.first_name !== firstName || existing.chat_id !== chatId) {
+        try {
+          await getSupabase()
+            .from('user_preferences')
+            .update({
+              first_name: firstName ?? existing.first_name,
+              chat_id: chatId,
+            })
+            .eq('user_id', userId);
+        } catch (err) {
+          dbLogger.warn({ error: err, userId }, 'Failed to update user prefs fields');
+        }
+      }
+      return existing as UserPreferences;
+    }
+
+    // Пользователя нет — создаём с дефолтами
     const { data, error } = await getSupabase()
       .from('user_preferences')
-      .upsert(
-        {
-          user_id: userId,
-          chat_id: chatId,
-          first_name: firstName ?? null,
-          digest_hour: 10,
-          digest_city: 'Гродно',
-        },
-        { onConflict: 'user_id', ignoreDuplicates: false }
-      )
+      .insert({
+        user_id: userId,
+        chat_id: chatId,
+        first_name: firstName ?? null,
+        digest_hour: 10,
+        digest_city: 'Гродно',
+      })
       .select()
       .single();
 
     if (error) {
-      dbLogger.error({ error, userId }, 'Failed to upsert user prefs');
-      // Fallback: попробовать просто прочитать (может уже существует)
-      const { data: existing } = await getSupabase()
+      dbLogger.error({ error, userId }, 'Failed to insert user prefs');
+      // Race condition: кто-то создал параллельно — пробуем прочитать
+      const { data: raceData } = await getSupabase()
         .from('user_preferences')
         .select('*')
         .eq('user_id', userId)
         .single();
-      if (existing) return existing as UserPreferences;
+      if (raceData) return raceData as UserPreferences;
       throw error;
-    }
-
-    // Обновляем first_name если оно изменилось (upsert не перезаписывает если уже есть)
-    if (firstName && data.first_name !== firstName) {
-      try {
-        await getSupabase()
-          .from('user_preferences')
-          .update({ first_name: firstName })
-          .eq('user_id', userId);
-      } catch (err) {
-        dbLogger.warn({ error: err, userId }, 'Failed to update first_name');
-      }
     }
 
     return data as UserPreferences;

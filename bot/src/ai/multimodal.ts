@@ -506,7 +506,9 @@ export async function transcribeAudio(
     throw new AppError('FILE_TOO_LARGE', `Файл слишком большой (${fileSizeMB}MB, максимум 25MB)`);
   }
 
-  return await transcribeAudioGroq(audioBuffer, 'voice.ogg');
+  const ext = mimeType.split('/').pop() || 'ogg';
+  const filename = `voice.${ext === 'mpeg' ? 'mp3' : ext}`;
+  return await transcribeAudioGroq(audioBuffer, filename, multimodalConfig.audioModel);
 }
 
 /**
@@ -535,7 +537,8 @@ function getMimeTypeFromFilename(filename: string): string {
  */
 export async function transcribeAudioGroq(
   audioBuffer: Buffer,
-  filename: string = 'audio.ogg'
+  filename: string = 'audio.ogg',
+  modelOverride?: string,
 ): Promise<AudioTranscriptionResult> {
   const groq = await getGroqClient();
   
@@ -550,10 +553,10 @@ export async function transcribeAudioGroq(
     // Создаём File-like объект с правильным MIME типом
     const file = new File([audioBuffer], filename, { type: mimeType });
 
+    const whisperModel = modelOverride || 'whisper-large-v3';
     const response = await groq.audio.transcriptions.create({
       file,
-      model: 'whisper-large-v3',
-      language: 'ru',
+      model: whisperModel,
     });
 
     // response - объект с text
