@@ -829,16 +829,28 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
             model.id.includes('flux') ||
             model.id.includes('gemini') && model.id.includes('image') ||
             model.id.includes('dall-e') ||
+            model.id.includes('gpt') && model.id.includes('image') ||
             model.id.includes('riverflow')
           );
 
           // Sort by price (cheapest first)
           const sortedModels = imageModels
             .map(m => {
-              // Цена за image output (некоторые модели используют pricing.image, другие - completion)
-              const imagePrice = m.pricing.image 
+              // OpenRouter pricing для image моделей:
+              // - pricing.image (если есть) = цена за 1M output tokens
+              // - pricing.completion (fallback) = цена за 1M output tokens
+              // 
+              // Реальная цена за картинку зависит от размера:
+              // - 1K image (1024x1024) ≈ 1000 output tokens ≈ pricing * 0.001
+              // - 4K image (2048x2048) ≈ 4000 output tokens ≈ pricing * 0.004
+              //
+              // Для UI показываем цену за 1K image (стандартный размер)
+              const pricingPerMillionTokens = m.pricing.image 
                 ? parseFloat(m.pricing.image) 
                 : parseFloat(m.pricing.completion);
+              
+              // Конвертируем: $X per 1M tokens → $X * 0.001 per 1K image
+              const pricePerImage = pricingPerMillionTokens * 0.001;
               
               return {
                 id: m.id,
@@ -846,12 +858,13 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
                 description: m.description || 'Image generation model',
                 pricing: {
                   input: parseFloat(m.pricing.prompt),
-                  output: imagePrice,
-                  perImage: imagePrice, // для отображения в UI
+                  output: pricingPerMillionTokens,
+                  perImage: pricePerImage, // цена за 1K image (1024x1024)
                 },
                 contextLength: m.context_length,
               };
             })
+            .filter(m => m.pricing.perImage >= 0) // убираем auto-router (-1)
             .sort((a, b) => a.pricing.perImage - b.pricing.perImage);
 
           // Разделяем на дешевые и дорогие
@@ -869,8 +882,8 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
           return reply.code(200).send({
             success: true,
             data: { 
-              cheap,  // ≤ $0.05 за картинку
-              premium, // > $0.05 за картинку
+              cheap,  // ≤ $0.05 за картинку (1K)
+              premium, // > $0.05 за картинку (1K)
               all: sortedModels.slice(0, 20), // топ-20 для селекта
             },
             source: 'openrouter',
