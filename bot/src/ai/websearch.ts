@@ -6,10 +6,11 @@
  * Принцип: лучше поискать лишний раз, чем ответить устаревшей информацией.
  */
 
-import { config } from '../config/index.js';
+import { config, getApiKeys } from '../config/index.js';
 import { settingsRepo } from '../db/supabase.js';
-import { telegramLogger } from '../config/logger.js';
+import { telegramLogger, aiLogger } from '../config/logger.js';
 import { SingleCache } from '../utils/cache.js';
+import OpenAI from 'openai';
 
 // --------------------------------------------
 // Types
@@ -96,6 +97,38 @@ function getModelInfo(modelId: string): PerplexityModel | undefined {
 const perplexityKeyCache = new SingleCache<string>(60_000);
 const perplexityModelCache = new SingleCache<string>(60_000);
 const searchMaxTokensCache = new SingleCache<number>(60_000);
+
+// OpenRouter client для fallback поиска
+let openrouterClient: OpenAI | null = null;
+let currentOpenRouterKey: string = '';
+
+async function getOpenRouterClient(): Promise<OpenAI | null> {
+  try {
+    const keys = await getApiKeys();
+    const apiKey = keys.openrouter;
+    
+    if (!apiKey) return null;
+    
+    // Пересоздаём клиент если ключ изменился
+    if (!openrouterClient || currentOpenRouterKey !== apiKey) {
+      openrouterClient = new OpenAI({
+        apiKey: apiKey,
+        baseURL: 'https://openrouter.ai/api/v1',
+        timeout: 30000,
+        defaultHeaders: {
+          'HTTP-Referer': 'https://amina-bot.render.com',
+          'X-Title': 'Amina AI Bot',
+        },
+      });
+      currentOpenRouterKey = apiKey;
+      aiLogger.info('OpenRouter web search client initialized');
+    }
+    return openrouterClient;
+  } catch (error) {
+    aiLogger.warn({ error }, 'Failed to initialize OpenRouter client for web search');
+    return null;
+  }
+}
 
 async function getPerplexityApiKey(): Promise<string> {
   if (config.perplexity?.apiKey) return config.perplexity.apiKey;
@@ -394,7 +427,84 @@ export function aiShowsUncertainty(response: string): boolean {
 }
 
 /**
- * Выполняет веб-поиск через Perplexity API
+ * Fallback: веб-поиск через OpenRouter с :online суффиксом
+ * Используется если Perplexity недоступен (502/timeout)
+ */
+async function webSearchViaOpenRouter(
+  query: string,
+  maxTokens: number,
+  systemPrompt: string
+): Promise<WebSearchResult | null> {
+  const client = await getOpenRouterClient();
+  if (!client) {
+    aiLogger.debug('OpenRouter client not available for web search fallback');
+    return null;
+  }
+
+  try {
+    aiLogger.info({ query: query.substring(0, 80), maxTokens }, 'Attempting web search via OpenRouter :online');
+
+    // Используем бесплатную модель с :online суффиксом для веб-поиска
+    const model = 'meta-llama/llama-3.2-3b-instruct:free:online';
+    
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 25000);
+
+    try {
+      const response = await client.chat.completions.create({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: query },
+        ],
+        max_tokens: maxTokens,
+        temperature: 0.1,
+      }, {
+        signal: controller.signal,
+      });
+
+      const content = response.choices?.[0]?.message?.content || '';
+      
+      if (!content || content.length < 50) {
+        throw new Error('OpenRouter returned empty or too short response');
+      }
+
+      // OpenRouter :online не возвращает citations в том же формате что Perplexity,
+      // но может включать ссылки в текст — извлекаем их
+      const urlRegex = /https?:\/\/[^\s)]+/g;
+      const citations = [...new Set(content.match(urlRegex) || [])];
+
+      const usage = response.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+
+      aiLogger.info({
+        tokens: usage.total_tokens,
+        model,
+        answerLength: content.length,
+        citations: citations.length,
+      }, 'Web search via OpenRouter :online completed');
+
+      return {
+        answer: content,
+        citations,
+        model: response.model,
+        tokens_used: {
+          prompt: usage.prompt_tokens,
+          completion: usage.completion_tokens,
+          total: usage.total_tokens,
+        },
+      };
+    } finally {
+      clearTimeout(timeoutId);
+    }
+  } catch (error) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    aiLogger.warn({ error: errMsg, query: query.substring(0, 50) }, 'OpenRouter web search failed');
+    return null;
+  }
+}
+
+/**
+ * Выполняет веб-поиск через Perplexity API с fallback на OpenRouter
  * Использует настраиваемые токены из админки + модель
  */
 export async function webSearch(
@@ -508,6 +618,16 @@ export async function webSearch(
         'Perplexity API error'
       );
       
+      // 502/503 — пробуем OpenRouter fallback
+      if (response.status === 502 || response.status === 503) {
+        telegramLogger.info('Perplexity unavailable, trying OpenRouter :online fallback');
+        const fallbackResult = await webSearchViaOpenRouter(enhancedQuery, maxTokens, systemPrompt);
+        if (fallbackResult) {
+          return fallbackResult;
+        }
+        telegramLogger.warn('OpenRouter fallback also failed');
+      }
+      
       if (response.status === 401) {
         throw Object.assign(new Error(`Invalid Perplexity API key: ${errorText.substring(0, 100)}`), { code: 'PERPLEXITY_AUTH_ERROR' });
       }
@@ -554,7 +674,12 @@ export async function webSearch(
     };
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      telegramLogger.warn({ query, timeout: timeoutMs }, 'Web search timeout');
+      telegramLogger.warn({ query, timeout: timeoutMs }, 'Web search timeout, trying OpenRouter fallback');
+      // Timeout — пробуем OpenRouter fallback
+      const fallbackResult = await webSearchViaOpenRouter(enhancedQuery, maxTokens, systemPrompt);
+      if (fallbackResult) {
+        return fallbackResult;
+      }
       throw Object.assign(new Error('Web search timeout'), { code: 'PERPLEXITY_TIMEOUT' });
     }
     if (typeof error === 'object' && error !== null && 'code' in error) {
