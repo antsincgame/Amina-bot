@@ -28,12 +28,15 @@ async function getInferenceClientClass(): Promise<typeof import('@huggingface/in
 
 const DEFAULT_MODEL = 'black-forest-labs/FLUX.1-schnell';
 
-/** Fallback модели (в порядке приоритета) */
+/** 
+ * Fallback модели (в порядке приоритета)
+ * ВАЖНО: используем ТОЛЬКО модели с endpoints_compatible (доступны через HF Inference API)
+ */
 const FALLBACK_MODELS = [
-  'black-forest-labs/FLUX.1-schnell',      // Основная (быстрая, 4 шага)
-  'stabilityai/stable-diffusion-xl-base-1.0', // Fallback 1 (проверенная)
-  'runwayml/stable-diffusion-v1-5',        // Fallback 2 (легковесная)
-  'prompthero/openjourney-v4',             // Fallback 3 (художественная)
+  'black-forest-labs/FLUX.1-schnell',      // Основная (4 шага, ~10-30с)
+  'black-forest-labs/FLUX.1-dev',          // Fallback 1 (более качественная FLUX)
+  'stabilityai/stable-diffusion-xl-base-1.0', // Fallback 2 (SDXL, проверенная)
+  'stabilityai/sdxl-turbo',                // Fallback 3 (SDXL быстрая)
 ];
 
 /** Таймаут генерации (ms) — FLUX.1-schnell обычно укладывается в 30с */
@@ -430,9 +433,13 @@ async function tryGenerateWithModel(
 
     // Определяем параметры в зависимости от модели
     const isFLUX = model.includes('FLUX');
+    const isTurbo = model.includes('turbo');
+    
     const parameters = isFLUX
-      ? { num_inference_steps: 4 }      // FLUX быстрый (4 шага)
-      : { num_inference_steps: 25 };    // SD модели (25 шагов)
+      ? { num_inference_steps: 4 }       // FLUX быстрый (4 шага)
+      : isTurbo
+      ? { num_inference_steps: 1 }       // Turbo модели (1 шаг)
+      : { num_inference_steps: 25 };     // SD модели (25 шагов)
 
     const imageBlob = await Promise.race([
       client.textToImage({
