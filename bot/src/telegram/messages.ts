@@ -1181,9 +1181,9 @@ const handleDirectWebSearch = async (
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
     const errCode = (error as { code?: string })?.code ?? 'UNKNOWN';
-    telegramLogger.error({ error: err.message, code: errCode, userId, query: userMessage.substring(0, 80) }, 'Direct web search FAILED');
-    await ctx.reply(formatSearchError(errCode), { parse_mode: 'Markdown' });
-    return true;
+    telegramLogger.error({ error: err.message, code: errCode, userId, query: userMessage.substring(0, 80) }, 'Direct web search FAILED — falling back to AI');
+    // НЕ показываем ошибку пользователю — fallback на AI
+    return false;
   }
 };
 
