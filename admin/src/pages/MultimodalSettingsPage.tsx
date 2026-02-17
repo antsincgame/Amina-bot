@@ -265,9 +265,7 @@ const MultimodalSettingsPage = () => {
   const onSubmit = (data: SettingsForm) => {
     const toSave: Record<string, string> = {
       audio_model: data.audio_model,
-      audio_model_override: '',
       vision_model: data.vision_model,
-      vision_model_override: '',
       vision_prompt: data.vision_prompt,
       vision_max_tokens: String(data.vision_max_tokens),
       openrouter_image_model: data.openrouter_image_model || 'google/gemini-2.5-flash-image',

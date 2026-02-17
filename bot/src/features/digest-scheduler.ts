@@ -206,6 +206,20 @@ function resetSentCacheAtMidnight(): void {
 }
 
 /**
+ * Обёртка с таймаутом для buildDigest
+ */
+async function buildDigestWithTimeout(
+  userId: string, firstName: string | null, city: string | null, timeoutMs = 90_000,
+): Promise<string> {
+  return Promise.race([
+    buildDigest(userId, firstName, city ?? 'Гродно'),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error(`buildDigest timeout after ${timeoutMs}ms`)), timeoutMs),
+    ),
+  ]);
+}
+
+/**
  * Обработать дайджесты
  */
 async function processDigests(bot: BotLike): Promise<void> {
@@ -214,29 +228,39 @@ async function processDigests(bot: BotLike): Promise<void> {
 
   try {
     const currentHour = new Date().getHours();
+    const todayStr = new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD
 
     const users = await userPrefsRepo.getDigestUsers(currentHour);
     if (users.length === 0) return;
 
-    for (const user of users) {
-      const cacheKey = `${user.user_id}_${currentHour}`;
-      if (SENT_TODAY.has(cacheKey)) continue;
+    // Параллелизация с лимитом 3 одновременных дайджеста
+    const CONCURRENCY = 3;
+    for (let i = 0; i < users.length; i += CONCURRENCY) {
+      const batch = users.slice(i, i + CONCURRENCY);
+      await Promise.allSettled(
+        batch.map(async (user) => {
+          const cacheKey = `${user.user_id}_${todayStr}_${currentHour}`;
+          if (SENT_TODAY.has(cacheKey)) return;
 
-      try {
-        const digestText = await buildDigest(user.user_id, user.first_name, user.digest_city);
-        await sendLongMessage(bot, user.chat_id, digestText, 'Markdown');
+          try {
+            const digestText = await buildDigestWithTimeout(
+              user.user_id, user.first_name, user.digest_city,
+            );
+            await sendLongMessage(bot, user.chat_id, digestText, 'Markdown');
 
-        SENT_TODAY.add(cacheKey);
-        appLogger.info({ userId: user.user_id, hour: currentHour, city: user.digest_city }, 'Digest sent');
-      } catch (sendError) {
-        const err = sendError as { error_code?: number };
-        if (err.error_code === 403) {
-          await userPrefsRepo.update(user.user_id, { digest_enabled: false });
-          appLogger.warn({ userId: user.user_id }, 'User blocked bot, digest disabled');
-        } else {
-          appLogger.error({ error: sendError, userId: user.user_id }, 'Failed to send digest');
-        }
-      }
+            SENT_TODAY.add(cacheKey);
+            appLogger.info({ userId: user.user_id, hour: currentHour, city: user.digest_city }, 'Digest sent');
+          } catch (sendError) {
+            const err = sendError as { error_code?: number; message?: string };
+            if (err.error_code === 403) {
+              await userPrefsRepo.update(user.user_id, { digest_enabled: false });
+              appLogger.warn({ userId: user.user_id }, 'User blocked bot, digest disabled');
+            } else {
+              appLogger.error({ error: err.message, userId: user.user_id }, 'Failed to send digest');
+            }
+          }
+        }),
+      );
     }
   } finally {
     isProcessing = false;

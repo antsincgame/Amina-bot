@@ -59,7 +59,7 @@ const DashboardPage = () => {
     },
     {
       label: 'Токенов (7 дней)',
-      value: stats?.tokensByDay.reduce((sum, d) => sum + d.tokens, 0) ?? 0,
+      value: stats?.tokensByDay?.reduce((sum, d) => sum + d.tokens, 0) ?? 0,
       icon: Zap,
       color: 'text-amber-600',
       bgColor: 'bg-amber-100',

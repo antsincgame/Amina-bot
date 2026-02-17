@@ -681,7 +681,17 @@ function parseHtmlContent(html: string, siteUrl: string, origin: string): Parsed
  * Возвращает массив заголовков с указанием источника.
  * Выполняет дедупликацию между источниками по нормализованному заголовку и URL.
  */
+// Кэш спарсенных новостей (10 минут TTL) — один и тот же набор для всех юзеров
+let parsedNewsCache: { headlines: ParsedHeadline[]; ts: number } | null = null;
+const PARSED_NEWS_CACHE_TTL_MS = 10 * 60 * 1000; // 10 минут
+
 export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
+  // Проверяем кэш — не парсим заново для каждого юзера
+  if (parsedNewsCache && Date.now() - parsedNewsCache.ts < PARSED_NEWS_CACHE_TTL_MS) {
+    appLogger.debug({ cached: parsedNewsCache.headlines.length }, 'Returning cached news headlines');
+    return parsedNewsCache.headlines;
+  }
+
   const sites = await getConfiguredSites();
   const enabledSites = sites.filter(s => s.enabled);
 
@@ -736,5 +746,9 @@ export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
   }
 
   appLogger.info({ totalHeadlines: allHeadlines.length, sites: enabledSites.length }, 'News parsing complete');
+
+  // Кэшируем результат
+  parsedNewsCache = { headlines: allHeadlines, ts: Date.now() };
+
   return allHeadlines;
 }

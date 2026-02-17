@@ -125,9 +125,9 @@ const SettingsPage = () => {
       const modelValue = settingsMap['openrouter_model'] ?? 'openrouter/free';
       const customOverride = settingsMap['custom_model_override'] ?? '';
       
-      // Check if model is in predefined lists
-      const allPredefinedModels = [...FREE_MODELS, ...PREMIUM_MODELS];
-      const isKnownModel = allPredefinedModels.some(m => m.id === modelValue);
+      // Check if model is in current lists (state or hardcoded fallback)
+      const allKnownModels = [...freeModels, ...premiumModels];
+      const isKnownModel = allKnownModels.some(m => m.id === modelValue);
       
       if (!isKnownModel && !customOverride) {
         // Custom model - set select to __custom__ and store model in separate input

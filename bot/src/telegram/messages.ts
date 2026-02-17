@@ -335,6 +335,24 @@ const ensureConversation = async (ctx: BotContext, userId: string, chatId: numbe
   ctx.session.messageHistory = sanitizeMessageHistory(ctx.session.messageHistory);
 };
 
+/** Строит контекст памяти с одной повторной попыткой */
+const buildMemoryWithRetry = async (
+  userId: string,
+  telegramInfo: TelegramUserInfo,
+): Promise<string> => {
+  try {
+    return await memoryContextBuilder.buildContext(userId, telegramInfo);
+  } catch (err) {
+    telegramLogger.warn({ error: err, userId }, 'Memory context attempt 1 failed, retrying...');
+    try {
+      return await memoryContextBuilder.buildContext(userId, telegramInfo);
+    } catch (err2) {
+      telegramLogger.error({ error: err2, userId }, 'Memory context attempt 2 failed — responding WITHOUT memory');
+      return '';
+    }
+  }
+};
+
 /** Строит полный контекст (время + память + поиск) параллельно */
 const buildFullContext = async (
   userId: string,
@@ -346,10 +364,7 @@ const buildFullContext = async (
   const timeContext = buildTimeContext(firstName);
 
   const [memoryContextRaw, webSearchContext] = await Promise.all([
-    memoryContextBuilder.buildContext(userId, telegramInfo ?? ({} as TelegramUserInfo)).catch((err) => {
-      telegramLogger.warn({ error: err, userId }, 'Failed to build memory context');
-      return '';
-    }),
+    buildMemoryWithRetry(userId, telegramInfo ?? ({} as TelegramUserInfo)),
     getSearchContext(userText).catch((err) => {
       telegramLogger.warn({ error: err, userId }, 'Failed to get search context');
       return '';
@@ -669,7 +684,16 @@ const processMessageThroughAI = async (
   userLogsRepo.add(userId, 'ai_response', aiResponse.content, { chatId, type: messageType, responseLength: aiResponse.content.length }, {
     model: aiResponse.model, tokensPrompt: aiResponse.tokens_used.prompt, tokensCompletion: aiResponse.tokens_used.completion, responseTimeMs: responseTime,
   }).catch(() => {});
-  memoryExtractor.extractFacts(userId, userText, aiResponse.content).catch(() => {});
+  memoryExtractor.extractFacts(userId, userText, aiResponse.content).catch((err) => {
+    telegramLogger.warn({ error: err, userId }, 'extractFacts failed');
+  });
+
+  // Автосуммаризация длинных разговоров (каждые 20 сообщений)
+  if (ctx.session.messageHistory.length >= 20 && ctx.session.messageHistory.length % 20 === 0) {
+    memoryExtractor.summarizeConversation(userId, ctx.session.messageHistory).catch((err) => {
+      telegramLogger.warn({ error: err, userId }, 'summarizeConversation failed');
+    });
+  }
 
   if (convId) {
     const nowISO = new Date().toISOString();

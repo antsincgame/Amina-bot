@@ -736,6 +736,8 @@ export const memoryExtractor = {
       
       if (facts.length > 0) {
         aiLogger.info({ userId, factsCount: facts.length }, 'Facts extracted from conversation');
+        // Инвалидируем кэш контекста — следующее сообщение увидит новые факты
+        memoryContextBuilder.invalidateCache(userId);
       }
     } catch (error) {
       aiLogger.error({ error, userId }, 'Failed to extract facts');
@@ -779,19 +781,46 @@ ${conversationText}
 };
 
 // --------------------------------------------
-// Memory Context Builder
+// Memory Context Builder (with per-user TTL cache)
 // --------------------------------------------
+
+const memoryContextCache = new Map<string, { context: string; ts: number }>();
+const MEMORY_CONTEXT_CACHE_TTL_MS = 45_000; // 45 секунд
+
+function getCachedMemoryContext(userId: string): string | null {
+  const entry = memoryContextCache.get(userId);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > MEMORY_CONTEXT_CACHE_TTL_MS) {
+    memoryContextCache.delete(userId);
+    return null;
+  }
+  return entry.context;
+}
+
+function setCachedMemoryContext(userId: string, context: string): void {
+  // Ограничение размера: максимум 200 записей
+  if (memoryContextCache.size >= 200) {
+    const oldestKey = memoryContextCache.keys().next().value;
+    if (oldestKey) memoryContextCache.delete(oldestKey);
+  }
+  memoryContextCache.set(userId, { context, ts: Date.now() });
+}
 
 export const memoryContextBuilder = {
   /**
-   * Построить полный контекст для AI с учётом памяти
+   * Построить полный контекст для AI с учётом памяти.
+   * Кэширует результат на 45 секунд per user.
    */
   async buildContext(userId: string, telegramInfo?: TelegramUserInfo): Promise<string> {
-    // Получаем профиль
-    const profile = await userProfileRepo.getOrCreate(userId, telegramInfo);
-    
-    // Получаем память
-    const memoryContext = await userMemoryRepo.getContextForPrompt(userId);
+    // Проверяем кэш
+    const cached = getCachedMemoryContext(userId);
+    if (cached !== null) return cached;
+
+    // Получаем профиль и память параллельно
+    const [profile, memoryContext] = await Promise.all([
+      userProfileRepo.getOrCreate(userId, telegramInfo),
+      userMemoryRepo.getContextForPrompt(userId),
+    ]);
     
     // Формируем контекст
     const parts: string[] = [];
@@ -817,6 +846,13 @@ export const memoryContextBuilder = {
     parts.push(`Обращайся к пользователю по имени когда уместно.`);
     parts.push(`Помни о его предпочтениях и контексте.`);
     
-    return parts.join('\n');
+    const result = parts.join('\n');
+    setCachedMemoryContext(userId, result);
+    return result;
+  },
+
+  /** Инвалидировать кэш контекста конкретного пользователя */
+  invalidateCache(userId: string): void {
+    memoryContextCache.delete(userId);
   },
 };
