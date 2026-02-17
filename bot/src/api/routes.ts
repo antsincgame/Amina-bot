@@ -837,20 +837,21 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
           const sortedModels = imageModels
             .map(m => {
               // OpenRouter pricing для image моделей:
-              // - pricing.image (если есть) = цена за 1M output tokens
-              // - pricing.completion (fallback) = цена за 1M output tokens
+              // - pricing.image (если есть) = $ per token
+              // - pricing.completion (fallback) = $ per token
               // 
               // Реальная цена за картинку зависит от размера:
-              // - 1K image (1024x1024) ≈ 1000 output tokens ≈ pricing * 0.001
-              // - 4K image (2048x2048) ≈ 4000 output tokens ≈ pricing * 0.004
+              // - 1K image (1024x1024) ≈ 1000 output tokens
+              // - 4K image (2048x2048) ≈ 4000 output tokens
               //
-              // Для UI показываем цену за 1K image (стандартный размер)
-              const pricingPerMillionTokens = m.pricing.image 
+              // Формула: pricePerImage = pricePerToken * imageOutputTokens
+              // Для 1K image (стандарт): pricePerToken * 1000
+              const pricePerToken = m.pricing.image 
                 ? parseFloat(m.pricing.image) 
                 : parseFloat(m.pricing.completion);
               
-              // Конвертируем: $X per 1M tokens → $X * 0.001 per 1K image
-              const pricePerImage = pricingPerMillionTokens * 0.001;
+              // Цена за 1K image (1024x1024)
+              const pricePerImage = pricePerToken * 1000;
               
               return {
                 id: m.id,
@@ -858,7 +859,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
                 description: m.description || 'Image generation model',
                 pricing: {
                   input: parseFloat(m.pricing.prompt),
-                  output: pricingPerMillionTokens,
+                  output: pricePerToken,
                   perImage: pricePerImage, // цена за 1K image (1024x1024)
                 },
                 contextLength: m.context_length,
