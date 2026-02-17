@@ -475,9 +475,9 @@ async function tryGenerateWithModel(
 
 /**
  * Дефолтная модель OpenRouter: Gemini 2.5 Flash Image
- * $0.04 за output image (любой размер)
+ * ~$0.0003 per 1K image (почти бесплатно!)
  */
-const DEFAULT_OPENROUTER_IMAGE_MODEL = 'google/gemini-2.5-flash-image-preview';
+const DEFAULT_OPENROUTER_IMAGE_MODEL = 'google/gemini-2.5-flash-image';
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 /**

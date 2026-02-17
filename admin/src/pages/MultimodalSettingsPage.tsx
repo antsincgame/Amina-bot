@@ -214,7 +214,7 @@ const MultimodalSettingsPage = () => {
       vision_model: DEFAULT_VISION_MODEL,
       vision_prompt: DEFAULT_VISION_PROMPT,
       vision_max_tokens: DEFAULT_VISION_MAX_TOKENS,
-      openrouter_image_model: 'google/gemini-2.5-flash-image-preview',
+      openrouter_image_model: 'google/gemini-2.5-flash-image',
       tts_provider: 'edge',
       // ElevenLabs
       elevenlabs_api_key: '',
@@ -246,7 +246,7 @@ const MultimodalSettingsPage = () => {
         vision_model: map['vision_model'] || DEFAULT_VISION_MODEL,
         vision_prompt: map['vision_prompt'] || DEFAULT_VISION_PROMPT,
         vision_max_tokens: parseInt(map['vision_max_tokens'] || String(DEFAULT_VISION_MAX_TOKENS), 10),
-        openrouter_image_model: map['openrouter_image_model'] || 'google/gemini-2.5-flash-image-preview',
+        openrouter_image_model: map['openrouter_image_model'] || 'google/gemini-2.5-flash-image',
         tts_provider: map['tts_provider'] || 'edge',
         // ElevenLabs
         elevenlabs_api_key: map['elevenlabs_api_key'] || '',
@@ -270,7 +270,7 @@ const MultimodalSettingsPage = () => {
       vision_model_override: '',
       vision_prompt: data.vision_prompt,
       vision_max_tokens: String(data.vision_max_tokens),
-      openrouter_image_model: data.openrouter_image_model || 'google/gemini-2.5-flash-image-preview',
+      openrouter_image_model: data.openrouter_image_model || 'google/gemini-2.5-flash-image',
       tts_provider: data.tts_provider,
       // ElevenLabs
       elevenlabs_voice_id: data.elevenlabs_voice_id === 'custom'
@@ -801,8 +801,12 @@ const MultimodalSettingsPage = () => {
                         </div>
                       </div>
                       <div className="text-right ml-4">
-                        <div className="text-sm font-semibold text-pink-400">${model.pricing.perImage.toFixed(4)}</div>
-                        <div className="text-xs text-white/40">за картинку</div>
+                        <div className="text-sm font-semibold text-pink-400">
+                          ${model.pricing.perImage < 0.001 
+                            ? model.pricing.perImage.toExponential(2) 
+                            : model.pricing.perImage.toFixed(4)}
+                        </div>
+                        <div className="text-xs text-white/40">за 1K image</div>
                       </div>
                     </label>
                   ))}
@@ -824,8 +828,8 @@ const MultimodalSettingsPage = () => {
             </div>
 
             <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/20 text-xs text-white/60">
-              <strong className="text-amber-400">💡 Подсказка:</strong> Gemini 2.5 Flash Image ($0.04) — самая дешёвая модель.
-              Для 225 картинок = $9 (как HF PRO за месяц).
+              <strong className="text-amber-400">💡 Подсказка:</strong> Gemini 2.5 Flash Image (3e-10 за 1K) — самая дешёвая.
+              Почти бесплатная! Для 10,000 картинок = ~$0.003
             </div>
           </div>
         </div>
