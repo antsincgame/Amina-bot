@@ -262,11 +262,3 @@ async function factCheckViaPerplexity(userMessage: string, _aiResponse: string):
   return null;
 }
 
-// ============================================
-// Legacy exports (для обратной совместимости)
-// ============================================
-
-/** @deprecated Верификация теперь всегда включена */
-export function clearVerifyCache(): void {
-  // no-op — верификация всегда включена
-}

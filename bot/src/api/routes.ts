@@ -1109,21 +1109,26 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
         async (
           request: FastifyRequest<{
             Params: { userId: string };
-            Querystring: { type?: string; limit?: string };
+            Querystring: { type?: string; limit?: string; pinned?: string };
           }>,
           reply: FastifyReply
         ) => {
           try {
             const { userId } = request.params;
-            const { type, limit } = request.query;
+            const { type, limit, pinned } = request.query;
 
             let memories;
-            if (type) {
+            if (pinned === 'true') {
+              // Закреплённые записи
+              memories = await userMemoryRepo.getPinned(userId);
+            } else if (type) {
+              // Фильтр по типу
               memories = await userMemoryRepo.getByType(
                 userId,
                 type as 'fact' | 'preference' | 'context' | 'summary' | 'important'
               );
             } else {
+              // Все записи с лимитом
               memories = await userMemoryRepo.getAll(
                 userId,
                 limit ? parseInt(limit, 10) : 50

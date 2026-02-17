@@ -8,21 +8,24 @@ interface AuthState {
   session: Session | null;
   isLoading: boolean;
   error: string | null;
+  subscription: ReturnType<typeof supabase.auth.onAuthStateChange>['data']['subscription'] | null;
   
   // Actions
   initialize: () => Promise<unknown>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   clearError: () => void;
+  cleanup: () => void;
 }
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       user: null,
       session: null,
       isLoading: true,
       error: null,
+      subscription: null,
 
       initialize: async () => {
         try {
@@ -37,7 +40,7 @@ export const useAuthStore = create<AuthState>()(
             isLoading: false,
           });
 
-          // Listen for auth changes (unsubscribe is automatic when page unloads)
+          // Listen for auth changes
           const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
             set({
               user: session?.user ?? null,
@@ -45,7 +48,8 @@ export const useAuthStore = create<AuthState>()(
             });
           });
 
-          // Store subscription for cleanup (if needed in future)
+          // Store subscription for cleanup
+          set({ subscription });
           return subscription;
         } catch (error) {
           set({
@@ -84,10 +88,15 @@ export const useAuthStore = create<AuthState>()(
         set({ isLoading: true });
 
         try {
+          // Cleanup subscription before signout
+          const { subscription } = get();
+          subscription?.unsubscribe();
+          
           await supabase.auth.signOut();
           set({
             user: null,
             session: null,
+            subscription: null,
             isLoading: false,
           });
         } catch (error) {
@@ -99,6 +108,12 @@ export const useAuthStore = create<AuthState>()(
       },
 
       clearError: () => set({ error: null }),
+
+      cleanup: () => {
+        const { subscription } = get();
+        subscription?.unsubscribe();
+        set({ subscription: null });
+      },
     }),
     {
       name: 'amina-auth',
