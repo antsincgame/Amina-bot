@@ -8,21 +8,19 @@ services:
     region: frankfurt
     plan: starter
     rootDir: bot
-    buildCommand: npm ci
+    buildCommand: npm ci && npm run build
     startCommand: npm start
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 3000
       - key: HOST
         value: 0.0.0.0
       - key: LOG_LEVEL
         value: info
-      - key: OPENROUTER_MODEL
-        value: openrouter/free
-      # Secrets - set in Render Dashboard
+      - key: TZ
+        value: Europe/Minsk
+      # Secrets — set in Render Dashboard
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: OPENROUTER_API_KEY
@@ -57,11 +55,8 @@ services:
         source: /*
         destination: /index.html
     envVars:
-      # Задайте в Render Dashboard → amina-admin → Environment
       - key: VITE_SUPABASE_URL
         sync: false
       - key: VITE_SUPABASE_ANON_KEY
-        sync: false
-      - key: VITE_BOT_URL
         sync: false
     autoDeploy: true
