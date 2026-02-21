@@ -429,8 +429,9 @@ export function aiShowsUncertainty(response: string): boolean {
 }
 
 /**
- * Fallback: веб-поиск через OpenRouter с :online суффиксом
- * Используется если Perplexity недоступен (502/timeout)
+ * Fallback: веб-поиск через OpenRouter с :online суффиксом.
+ * Используется если Perplexity недоступен (401/402/429/502/timeout).
+ * Стоимость: $4/1000 результатов (по умолчанию 5 = $0.02/запрос) + токены LLM.
  */
 async function webSearchViaOpenRouter(
   query: string,
@@ -444,11 +445,14 @@ async function webSearchViaOpenRouter(
   }
 
   try {
-    aiLogger.info({ query: query.substring(0, 80), maxTokens }, 'Attempting web search via OpenRouter :online');
+    // Используем основную модель из настроек с :online суффиксом
+    const mainModel = await settingsRepo.get('openrouter_model').catch(() => null);
+    const model = mainModel
+      ? `${mainModel}:online`
+      : 'google/gemini-2.0-flash-001:online';
 
-    // Используем бесплатную модель с :online суффиксом для веб-поиска
-    const model = 'meta-llama/llama-3.2-3b-instruct:free:online';
-    
+    aiLogger.info({ query: query.substring(0, 80), maxTokens, model }, 'Web search via OpenRouter :online');
+
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 25000);
 
@@ -456,7 +460,7 @@ async function webSearchViaOpenRouter(
       const response = await client.chat.completions.create({
         model,
         messages: [
-          { role: 'system', content: systemPrompt },
+          { role: 'system', content: systemPrompt + '\n\nОтвечай ОБЯЗАТЕЛЬНО на русском языке. Включай ссылки на источники.' },
           { role: 'user', content: query },
         ],
         max_tokens: maxTokens,
@@ -471,10 +475,28 @@ async function webSearchViaOpenRouter(
         throw new Error('OpenRouter returned empty or too short response');
       }
 
-      // OpenRouter :online не возвращает citations в том же формате что Perplexity,
-      // но может включать ссылки в текст — извлекаем их
-      const urlRegex = /https?:\/\/[^\s)]+/g;
-      const citations = [...new Set(content.match(urlRegex) || [])];
+      // Извлекаем citations из annotations (OpenRouter формат) и из текста
+      const citations: string[] = [];
+      const message = response.choices?.[0]?.message as Record<string, unknown> | undefined;
+      const annotations = message?.annotations as Array<{
+        type?: string;
+        url_citation?: { url?: string };
+      }> | undefined;
+      
+      if (annotations && Array.isArray(annotations)) {
+        for (const ann of annotations) {
+          if (ann.type === 'url_citation' && ann.url_citation?.url) {
+            citations.push(ann.url_citation.url);
+          }
+        }
+      }
+
+      // Также извлекаем URLs из текста если annotations пустые
+      if (citations.length === 0) {
+        const urlRegex = /https?:\/\/[^\s)>\]]+/g;
+        const textUrls = content.match(urlRegex) || [];
+        citations.push(...new Set(textUrls));
+      }
 
       const usage = response.usage || { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
 
@@ -483,12 +505,12 @@ async function webSearchViaOpenRouter(
         model,
         answerLength: content.length,
         citations: citations.length,
-      }, 'Web search via OpenRouter :online completed');
+      }, '✅ Web search via OpenRouter :online completed');
 
       return {
         answer: content,
-        citations,
-        model: response.model,
+        citations: [...new Set(citations)],
+        model: response.model ?? model,
         tokens_used: {
           prompt: usage.prompt_tokens,
           completion: usage.completion_tokens,
@@ -500,7 +522,7 @@ async function webSearchViaOpenRouter(
     }
   } catch (error) {
     const errMsg = error instanceof Error ? error.message : String(error);
-    aiLogger.warn({ error: errMsg, query: query.substring(0, 50) }, 'OpenRouter web search failed');
+    aiLogger.warn({ error: errMsg, query: query.substring(0, 50) }, 'OpenRouter web search fallback failed');
     return null;
   }
 }
@@ -519,8 +541,14 @@ export async function webSearch(
   const apiKey = await getPerplexityApiKey();
   
   if (!apiKey) {
+    // Perplexity не настроен → пробуем OpenRouter :online
+    telegramLogger.info('Perplexity not configured, trying OpenRouter :online');
+    const enhancedQuery = enhanceSearchQuery(query);
+    const fallback = await webSearchViaOpenRouter(enhancedQuery, options.maxTokens || DEFAULT_SEARCH_MAX_TOKENS,
+      'Ты — поисковый ассистент. Найди актуальную информацию и ответь подробно на русском.');
+    if (fallback) return fallback;
     throw Object.assign(
-      new Error('Perplexity API key not configured'),
+      new Error('Perplexity API key not configured and OpenRouter fallback failed'),
       { code: 'PERPLEXITY_NOT_CONFIGURED' }
     );
   }
@@ -620,15 +648,13 @@ export async function webSearch(
         'Perplexity API error'
       );
       
-      // 502/503 — пробуем OpenRouter fallback
-      if (response.status === 502 || response.status === 503) {
-        telegramLogger.info('Perplexity unavailable, trying OpenRouter :online fallback');
-        const fallbackResult = await webSearchViaOpenRouter(enhancedQuery, maxTokens, systemPrompt);
-        if (fallbackResult) {
-          return fallbackResult;
-        }
-        telegramLogger.warn('OpenRouter fallback also failed');
+      // ЛЮБАЯ ошибка Perplexity → пробуем OpenRouter :online fallback
+      telegramLogger.info({ status: response.status }, 'Perplexity failed, trying OpenRouter :online fallback');
+      const fallbackResult = await webSearchViaOpenRouter(enhancedQuery, maxTokens, systemPrompt);
+      if (fallbackResult) {
+        return fallbackResult;
       }
+      telegramLogger.warn({ status: response.status }, 'OpenRouter fallback also failed');
       
       if (response.status === 401) {
         throw Object.assign(new Error(`Invalid Perplexity API key: ${errorText.substring(0, 100)}`), { code: 'PERPLEXITY_AUTH_ERROR' });
