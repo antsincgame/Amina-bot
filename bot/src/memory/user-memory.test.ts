@@ -88,7 +88,7 @@ describe('memoryContextBuilder', () => {
     });
 
     it('should build context with user profile data', async () => {
-      // Mock RPC for get_user_memory_context
+      // Use different userId to avoid cache hit from previous test
       mockRpc.mockResolvedValue({
         data: {
           facts: ['Пользователь любит Python', 'Имя: Дима'],
@@ -99,9 +99,8 @@ describe('memoryContextBuilder', () => {
         error: null,
       });
 
-      // Mock user profile
       const chain = createChain({
-        user_id: '123456',
+        user_id: '999888',
         first_name: 'Дима',
         username: 'dima',
         language_code: 'ru',
@@ -115,9 +114,8 @@ describe('memoryContextBuilder', () => {
       });
       mockFrom.mockReturnValue(chain);
 
-      const context = await memoryContextBuilder.buildContext('123456');
+      const context = await memoryContextBuilder.buildContext('999888');
       expect(typeof context).toBe('string');
-      // Should contain some user info
       if (context.length > 0) {
         expect(context).toContain('Дима');
       }

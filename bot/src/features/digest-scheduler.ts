@@ -192,16 +192,18 @@ export async function sendDigestNow(
  * TZ=Europe/Minsk → new Date().getHours() возвращает минское время
  */
 function resetSentCacheAtMidnight(): void {
-  if (new Date().getHours() === 0) {
+  const minskHour = () => Number(new Intl.DateTimeFormat('en', { timeZone: 'Europe/Minsk', hour: 'numeric', hour12: false }).format(new Date()));
+
+  if (minskHour() === 0) {
     SENT_TODAY.clear();
   }
 
   midnightResetInterval = setInterval(() => {
-    if (new Date().getHours() === 0) {
+    if (minskHour() === 0) {
       SENT_TODAY.clear();
-      appLogger.debug('Digest SENT_TODAY cache cleared at midnight');
+      appLogger.debug('Digest SENT_TODAY cache cleared at midnight (Minsk)');
     }
-  }, 60 * 60 * 1000);
+  }, 5 * 60 * 1000);
   midnightResetInterval.unref();
 }
 

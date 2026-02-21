@@ -25,10 +25,13 @@ import type { AIMessage } from '../../../shared/types/index.js';
 export interface SessionData {
   conversationId: string | null;
   messageHistory: AIMessage[];
+  messageCount?: number;
   awaitingImagePrompt?: boolean;
   awaitingTodoTask?: boolean;
   awaitingNoteContent?: boolean;
   awaitingSearchQuery?: boolean;
+  /** Изображение, ожидающее инструкции по редактированию (base64 + MIME) */
+  pendingEditImage?: { base64: string; mimeType: string };
   /** Дата последнего приветствия (YYYY-MM-DD) чтобы не здороваться повторно за день */
   lastGreetingDate?: string;
 }

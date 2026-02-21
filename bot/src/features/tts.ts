@@ -377,8 +377,8 @@ async function generateEdgeChunk(text: string, voice: string): Promise<Buffer | 
     const timeout = setTimeout(() => {
       if (!resolved) {
         resolved = true;
-        appLogger.warn({ textLen: text.length }, 'TTS: Edge chunk timeout');
-        resolve(chunks.length > 0 ? Buffer.concat(chunks) : null);
+        appLogger.warn({ textLen: text.length, partialChunks: chunks.length }, 'TTS: Edge chunk timeout — discarding partial audio');
+        resolve(null);
       }
     }, 30_000);
 

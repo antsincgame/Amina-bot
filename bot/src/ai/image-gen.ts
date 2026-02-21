@@ -342,8 +342,11 @@ export function extractImagePrompt(text: string): string {
   
   prompt = prompt.trim();
   
-  // Если промпт короткий — добавляем суффикс качества
-  if (prompt.length > 0 && prompt.length < 100) {
+  if (!prompt) {
+    return 'abstract colorful art' + QUALITY_SUFFIX;
+  }
+
+  if (prompt.length < 100) {
     prompt += QUALITY_SUFFIX;
   }
   
@@ -374,21 +377,12 @@ async function translatePromptToEnglish(prompt: string): Promise<string> {
   try {
     const { aiService } = await import('./openrouter.js');
 
-    const response = await aiService.chat(
-      [
-        {
-          role: 'system',
-          content: 'You are a prompt translator for AI image generation. Translate the user\'s image description from Russian to English. Output ONLY the English translation, nothing else. Make it vivid and descriptive for best image generation results. Keep it concise (under 200 chars). Do NOT add quotes or explanations.',
-        },
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
+    const response = await aiService.complete(
+      'You are a prompt translator for AI image generation. Translate the following Russian image description to English. Output ONLY the English translation. Make it vivid and descriptive. Keep it concise (under 200 chars). Do NOT add quotes or explanations.\n\nTranslate: ' + prompt,
       'telegram',
     );
 
-    const translated = response.content?.trim();
+    const translated = response?.trim();
 
     if (translated && translated.length > 3 && translated.length < 500) {
       aiLogger.info(
@@ -796,5 +790,221 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
  */
 export async function isImageGenAvailable(): Promise<boolean> {
   const token = await getHfToken();
-  return !!token;
+  if (token) return true;
+  const { getApiKeys } = await import('../config/index.js');
+  const keys = await getApiKeys();
+  return !!keys.openrouter;
+}
+
+// ============================================
+// Image Editing (input image + text → output image)
+// ============================================
+
+const IMAGE_EDIT_PATTERNS = [
+  /\b(измени|отредактируй|исправь|переделай|перерисуй)\b/i,
+  /\b(убери|удали|уберите|удалите)\s/i,
+  /\b(добавь|добавьте|вставь|вставьте|дорисуй)\s/i,
+  /\b(замени|поменяй|смени)\s/i,
+  /\b(сделай|сделайте)\s+(ярче|темнее|контрастнее|чётче|четче|резче|светлее|теплее|холоднее|чёрно-белым|черно-белым|цветным|размытым|прозрачн)/i,
+  /\b(обрежь|поверни|отзеркаль|переверни|увеличь|уменьши|растяни|сожми)\b/i,
+  /\b(перекрась|перекрасить|покрась|раскрась)\b/i,
+  /\b(убери|замени|размой|удали)\s+(фон|задн)/i,
+  /\b(стилизуй|стилизовать|в стиле)\b/i,
+  /\b(улучши|улучшить|апскейл|upscale)\b/i,
+  /\b(edit|modify|change|fix|remove|add|replace|crop|rotate|flip|enhance|brighten|darken)\b/i,
+  /\b(make\s+it|make\s+the)\s/i,
+  /\b(remove\s+background|add\s+text|change\s+color)\b/i,
+];
+
+/**
+ * Определяет, является ли текст запросом на редактирование изображения.
+ * Используется для caption к фото и для reply-сообщений.
+ */
+export function detectImageEditIntent(text: string): boolean {
+  if (!text || text.trim().length < 3) return false;
+  return IMAGE_EDIT_PATTERNS.some(p => p.test(text.trim()));
+}
+
+/**
+ * Извлечь чистый промпт редактирования из текста.
+ * "пожалуйста, убери фон на этой картинке" → "убери фон"
+ */
+export function extractEditPrompt(text: string): string {
+  let prompt = text.trim();
+  prompt = prompt.replace(/^(пожалуйста\s*,?\s*|ну\s+|а\s+|эй\s*,?\s*|слушай\s*,?\s*|амина\s*,?\s*)/i, '');
+  prompt = prompt.replace(/\s*(на\s+этой\s+картинке|на\s+этом\s+фото|на\s+фото|на\s+картинке|на\s+изображении|this\s+image|this\s+photo)[.!?]?\s*$/i, '');
+  prompt = prompt.replace(/[,\s]*(пожалуйста|плиз|please)[.!?]*$/i, '');
+  prompt = prompt.replace(/[.!?]+$/, '');
+  return prompt.trim() || text.trim();
+}
+
+/**
+ * Переводит промпт редактирования на английский.
+ * Отличается от translatePromptToEnglish: специализирован для edit-инструкций.
+ */
+async function translateEditPromptToEnglish(prompt: string): Promise<string> {
+  if (!hasCyrillic(prompt)) return prompt;
+
+  try {
+    const { aiService } = await import('./openrouter.js');
+    const response = await aiService.complete(
+      'You are a translator for image editing instructions. Translate the following Russian image editing instruction to English. Output ONLY the English translation. Be precise and concise. Do NOT add quotes or explanations.\n\nTranslate: ' + prompt,
+      'telegram',
+    );
+    const translated = response?.trim();
+    if (translated && translated.length > 2 && translated.length < 500) {
+      aiLogger.info(
+        { original: prompt.substring(0, 60), translated: translated.substring(0, 80) },
+        'Edit prompt translated to English'
+      );
+      return translated;
+    }
+    return prompt;
+  } catch {
+    aiLogger.warn('Edit prompt translation failed, using original');
+    return prompt;
+  }
+}
+
+/**
+ * Парсинг base64-изображения из ответа OpenRouter.
+ * Вынесено из tryGenerateViaOpenRouter для переиспользования в editImage.
+ */
+function parseOpenRouterImageResponse(data: {
+  choices?: Array<{
+    message?: {
+      images?: Array<{
+        image_url?: { url?: string };
+      }>;
+    };
+  }>;
+}): Buffer {
+  const imageUrl = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;
+  if (!imageUrl) {
+    throw Object.assign(new Error('OpenRouter response missing image URL'), { code: 'OPENROUTER_NO_IMAGE' });
+  }
+  if (!imageUrl.startsWith('data:image/')) {
+    throw Object.assign(new Error('OpenRouter returned invalid image format'), { code: 'OPENROUTER_INVALID_FORMAT' });
+  }
+  const base64Match = imageUrl.match(/^data:image\/[^;]+;base64,(.+)$/);
+  if (!base64Match?.[1]) {
+    throw Object.assign(new Error('Failed to parse OpenRouter base64 image'), { code: 'OPENROUTER_PARSE_ERROR' });
+  }
+  const buffer = Buffer.from(base64Match[1], 'base64');
+  if (buffer.length === 0) {
+    throw Object.assign(new Error('OpenRouter returned empty image'), { code: 'OPENROUTER_EMPTY_IMAGE' });
+  }
+  return buffer;
+}
+
+const MAX_IMAGE_BASE64_SIZE = 7 * 1024 * 1024; // 7MB Gemini limit
+
+/**
+ * Редактирует изображение по текстовому описанию через OpenRouter Gemini.
+ * Принимает base64-изображение + промпт редактирования, возвращает новое изображение.
+ */
+export async function editImage(
+  imageBase64: string,
+  mimeType: string,
+  editPrompt: string,
+): Promise<ImageGenResult> {
+  const startTime = Date.now();
+
+  if (imageBase64.length > MAX_IMAGE_BASE64_SIZE) {
+    throw Object.assign(
+      new Error('Изображение слишком большое для редактирования (макс. 7 МБ). Попробуй сжать или обрезать.'),
+      { code: 'IMAGE_TOO_LARGE' }
+    );
+  }
+
+  const cleanPrompt = extractEditPrompt(editPrompt);
+  const translatedPrompt = await translateEditPromptToEnglish(cleanPrompt);
+
+  const keys = await getApiKeys();
+  if (!keys.openrouter) {
+    throw Object.assign(
+      new Error('OpenRouter API key не настроен. Настройте его в админке для редактирования изображений.'),
+      { code: 'OPENROUTER_NOT_CONFIGURED' }
+    );
+  }
+
+  const model = await getOpenRouterImageModel();
+  aiLogger.info({ model, prompt: translatedPrompt.substring(0, 80) }, 'Starting image edit via OpenRouter');
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), GENERATION_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(OPENROUTER_API_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${keys.openrouter}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://github.com/antsincgame/Amina-bot',
+        'X-Title': 'Amina Telegram Bot',
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'image_url',
+              image_url: { url: `data:${mimeType};base64,${imageBase64}` },
+            },
+            {
+              type: 'text',
+              text: `Edit this image: ${translatedPrompt}. Return ONLY the edited image.`,
+            },
+          ],
+        }],
+        modalities: ['image', 'text'],
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Unknown error');
+      throw Object.assign(
+        new Error(`OpenRouter API error: ${response.status} ${errorText.substring(0, 200)}`),
+        { code: 'OPENROUTER_API_ERROR', status: response.status }
+      );
+    }
+
+    const data = await response.json() as {
+      choices?: Array<{
+        message?: {
+          images?: Array<{ image_url?: { url?: string } }>;
+        };
+      }>;
+    };
+
+    const buffer = parseOpenRouterImageResponse(data);
+    const generationTimeMs = Date.now() - startTime;
+
+    aiLogger.info({ model, sizeKB: Math.round(buffer.length / 1024), timeMs: generationTimeMs }, 'Image edited successfully');
+
+    return {
+      image: buffer,
+      model,
+      prompt: editPrompt,
+      translatedPrompt,
+      generationTimeMs,
+    };
+  } catch (error: unknown) {
+    const err = error as { name?: string; message?: string; code?: string; status?: number };
+    if (err.name === 'AbortError') {
+      throw Object.assign(new Error('Редактирование заняло слишком долго. Попробуй ещё раз.'), { code: 'TIMEOUT' });
+    }
+    if (err.status === 429) {
+      throw Object.assign(new Error('Слишком много запросов. Подожди минуту.'), { code: 'RATE_LIMIT' });
+    }
+    if (err.code && err.code.startsWith('OPENROUTER_')) throw error;
+    throw Object.assign(
+      new Error(`Не удалось отредактировать изображение: ${err.message || 'неизвестная ошибка'}. Попробуй позже.`),
+      { code: 'EDIT_ERROR' }
+    );
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }

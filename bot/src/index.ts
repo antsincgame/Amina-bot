@@ -265,6 +265,7 @@ const start = async (): Promise<void> => {
       { command: 'menu', description: '🎛 Главное меню с кнопками' },
       { command: 'search', description: '🌐 Поиск в интернете' },
       { command: 'imagine', description: '🎨 Сгенерировать картинку' },
+      { command: 'edit', description: '✏️ Редактировать фото' },
       { command: 'note', description: '📌 Сохранить заметку' },
       { command: 'notes', description: '📋 Мои заметки' },
       { command: 'todo', description: '✅ Добавить задачу' },

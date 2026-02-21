@@ -93,3 +93,8 @@ export const notesActionsKeyboard = (): InlineKeyboard =>
 /** Кнопка "Обновить" для напоминаний */
 export const remindersRefreshKeyboard = (): InlineKeyboard =>
   new InlineKeyboard().text('🔄 Обновить', 'menu_reminders');
+
+/** Подсказка под сгенерированным изображением */
+export const imageActionsKeyboard = (): InlineKeyboard =>
+  new InlineKeyboard()
+    .text('✏️ Как редактировать', 'edit_image_help');

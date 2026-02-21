@@ -34,7 +34,8 @@ import {
 export const setupCommands = (bot: Bot<BotContext>): void => {
   // /start
   bot.command('start', async (ctx) => {
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    if (!ctx.from?.id) return;
+    const userId = ctx.from.id.toString();
     telegramLogger.info({ userId }, 'User started bot');
 
     analyticsRepo.log('message_received', 'telegram', { command: 'start', userId }).catch(() => {});
@@ -85,6 +86,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
       `*📋 Команды:*\n` +
       `/menu — главное меню с кнопками\n` +
       `/imagine \\_описание\\_ — картинка\n` +
+      `/edit — редактирование фото\n` +
       `/search \\_запрос\\_ — поиск в сети\n` +
       `/note \\_текст\\_ — заметка\n` +
       `/notes — список заметок\n` +
@@ -109,7 +111,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
   // /clear
   bot.command('clear', async (ctx) => {
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    if (!ctx.from?.id) return;
+    const userId = ctx.from.id.toString();
     
     // Полная очистка сессии (контекст для AI)
     const oldConvId = ctx.session.conversationId;
@@ -134,9 +137,28 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     await ctx.reply('✅ История диалога очищена. Начнём сначала!');
   });
 
+  // /edit
+  bot.command('edit', async (ctx) => {
+    await ctx.reply(
+      `✏️ <b>Редактирование изображений</b>\n\n` +
+      `<b>Способ 1:</b> Отправь фото с подписью-инструкцией\n` +
+      `<i>Например: отправь фото и напиши «убери фон»</i>\n\n` +
+      `<b>Способ 2:</b> Ответь (reply) на любое фото текстом или голосовым\n` +
+      `<i>Например: свайпни на фото и напиши «сделай ярче»</i>\n\n` +
+      `<b>Что можно:</b>\n` +
+      `• убери/замени/размой фон\n` +
+      `• добавь текст/объект\n` +
+      `• измени цвета, сделай ярче/темнее\n` +
+      `• стилизуй (в стиле аниме, масло...)\n` +
+      `• убери объект, обрежь, поверни`,
+      { parse_mode: 'HTML' }
+    );
+  });
+
   // /reminders
   bot.command('reminders', async (ctx) => {
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    if (!ctx.from?.id) return;
+    const userId = ctx.from.id.toString();
     try {
       const reminders = await remindersRepo.getByUser(userId);
       if (reminders.length === 0) {
@@ -163,7 +185,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
   // /remind_cancel
   bot.command('remind_cancel', async (ctx) => {
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    if (!ctx.from?.id) return;
+    const userId = ctx.from.id.toString();
     const arg = ctx.message?.text?.replace(/^\/remind_cancel\s*/i, '').trim();
 
     if (!arg) {
@@ -202,7 +225,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
   // /imagine
   bot.command('imagine', async (ctx) => {
     const prompt = ctx.match?.trim();
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    if (!ctx.from?.id) return;
+    const userId = ctx.from.id.toString();
 
     if (!prompt) {
       // Спрашиваем, что нарисовать
@@ -242,7 +266,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
   // /search
   bot.command('search', async (ctx) => {
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    if (!ctx.from?.id) return;
+    const userId = ctx.from.id.toString();
     const query = ctx.message?.text?.replace(/^\/search\s*/i, '').trim();
 
     if (!query) {
@@ -274,7 +299,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
   // /note
   bot.command('note', async (ctx) => {
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    if (!ctx.from?.id) return;
+    const userId = ctx.from.id.toString();
     const content = ctx.match?.trim();
 
     if (!content) {
@@ -298,7 +324,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
   // /notes
   bot.command('notes', async (ctx) => {
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    if (!ctx.from?.id) return;
+    const userId = ctx.from.id.toString();
     try {
       const notes = await notesRepo.getByUser(userId);
       if (notes.length === 0) {
@@ -340,7 +367,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
   // /note_delete
   bot.command('note_delete', async (ctx) => {
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    if (!ctx.from?.id) return;
+    const userId = ctx.from.id.toString();
     const indexStr = ctx.match?.trim();
     const index = parseInt(indexStr || '', 10);
 
@@ -367,7 +395,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
   // /todo
   bot.command('todo', async (ctx) => {
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    if (!ctx.from?.id) return;
+    const userId = ctx.from.id.toString();
     const task = ctx.match?.trim();
 
     if (!task) {
@@ -390,7 +419,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
   // /todos
   bot.command('todos', async (ctx) => {
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    if (!ctx.from?.id) return;
+    const userId = ctx.from.id.toString();
     try {
       const todos = await todosRepo.getActive(userId);
       if (todos.length === 0) {
@@ -411,7 +441,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
   // /done
   bot.command('done', async (ctx) => {
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    if (!ctx.from?.id) return;
+    const userId = ctx.from.id.toString();
     const indexStr = ctx.match?.trim();
     const index = parseInt(indexStr || '', 10);
 
@@ -434,7 +465,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
   // /digest
   bot.command('digest', async (ctx) => {
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    if (!ctx.from?.id) return;
+    const userId = ctx.from.id.toString();
     const chatId = ctx.chat.id;
     const arg = ctx.match?.trim().toLowerCase();
 
@@ -500,7 +532,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
   // /test_parser — проверить парсинг новостей (только для разработки/отладки)
   bot.command('test_parser', async (ctx) => {
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    if (!ctx.from?.id) return;
+    const userId = ctx.from.id.toString();
     
     try {
       await ctx.reply('🔍 Запускаю парсинг всех настроенных сайтов...');

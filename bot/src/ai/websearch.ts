@@ -331,8 +331,8 @@ const QUERY_ENHANCERS: QueryType[] = [
   {
     pattern: /погода/i,
     enhancer: (q) => {
-      const match = q.match(/погода\s*(?:в\s+)?([\wа-яёА-ЯЁ]+)?/i);
-      const city = match?.[1] || 'Москве';
+      const match = q.match(/погода\s*(?:в\s+)?([\wа-яёА-ЯЁ][\wа-яёА-ЯЁ\s-]*)?/i);
+      const city = match?.[1]?.trim() || 'Москве';
       return `Какая погода в ${city} сейчас? Температура, осадки, ветер.`;
     },
   },

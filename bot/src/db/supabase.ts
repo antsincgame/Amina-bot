@@ -159,9 +159,8 @@ export const settingsRepo = {
       SETTINGS_CACHE.set(key, { value, ts: now });
     }
 
-    // Кешируем отсутствующие ключи как null
     for (const key of missedKeys) {
-      if (!result[key]) {
+      if (!(key in result)) {
         SETTINGS_CACHE.set(key, { value: null, ts: now });
       }
     }

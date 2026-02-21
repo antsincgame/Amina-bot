@@ -238,8 +238,9 @@ const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
   }
 
   const visionPrompt = settings['vision_prompt']?.trim() || DEFAULT_VISION_PROMPT;
-  const visionMaxTokens = settings['vision_max_tokens'] 
-    ? Number(settings['vision_max_tokens']) 
+  const parsedMaxTokens = Number(settings['vision_max_tokens']);
+  const visionMaxTokens = (Number.isFinite(parsedMaxTokens) && parsedMaxTokens > 0)
+    ? parsedMaxTokens
     : DEFAULT_VISION_MAX_TOKENS;
 
   aiLogger.debug({
@@ -566,7 +567,7 @@ export async function transcribeAudioGroq(
 
     return {
       text: text.trim(),
-      model: 'groq/whisper-large-v3',
+      model: `groq/${whisperModel}`,
     };
   } catch (error: unknown) {
     const err = error as { status?: number; message?: string };

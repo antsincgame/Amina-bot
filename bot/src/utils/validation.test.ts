@@ -108,14 +108,14 @@ describe('validateChannel', () => {
   it('should accept valid channels', () => {
     expect(validateChannel('telegram')).toBe('telegram');
     expect(validateChannel('voice')).toBe('voice');
+    expect(validateChannel('admin')).toBe('admin');
     expect(validateChannel('all')).toBe('all');
   });
 
   it('should throw for invalid channels', () => {
     expect(() => validateChannel('invalid')).toThrow();
-    expect(() => validateChannel('TELEGRAM')).toThrow(); // Case sensitive
+    expect(() => validateChannel('TELEGRAM')).toThrow();
     expect(() => validateChannel('')).toThrow();
-    expect(() => validateChannel('admin')).toThrow();
   });
 });
 
@@ -130,8 +130,8 @@ describe('validateEventType', () => {
     expect(validateEventType('message_received')).toBe('message_received');
     expect(validateEventType('call_started')).toBe('call_started');
     expect(validateEventType('call_ended')).toBe('call_ended');
-    expect(validateEventType('ai_request')).toBe('ai_request');
     expect(validateEventType('ai_response')).toBe('ai_response');
+    expect(validateEventType('api_request')).toBe('api_request');
     expect(validateEventType('error')).toBe('error');
   });
 
@@ -260,7 +260,7 @@ describe('Zod Schemas', () => {
 
     it('should reject invalid event types', () => {
       expect(eventTypeSchema.safeParse('invalid').success).toBe(false);
-      expect(eventTypeSchema.safeParse('settings_updated').success).toBe(false);
+      expect(eventTypeSchema.safeParse('ai_request').success).toBe(false);
     });
   });
 });

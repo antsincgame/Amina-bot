@@ -86,7 +86,7 @@ export function validateEventType(eventType: string): z.infer<typeof eventTypeSc
  * Validate limit parameter
  */
 export function validateLimit(limit: number, min = 1, max = 1000): number {
-  if (limit < min || limit > max) {
+  if (!Number.isFinite(limit) || limit < min || limit > max) {
     throw new Error(`Limit must be between ${min} and ${max}`);
   }
   return limit;

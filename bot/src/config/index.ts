@@ -173,8 +173,8 @@ export async function getApiKeys(): Promise<{ openrouter: string; groq: string }
     apiKeysCache.set(result);
 
     return {
-      openrouter: result.openrouter || config.ai.apiKey,
-      groq: result.groq || config.groq.apiKey,
+      openrouter: config.ai.apiKey || result.openrouter,
+      groq: config.groq.apiKey || result.groq,
     };
   } catch {
     return { openrouter: config.ai.apiKey, groq: config.groq.apiKey };

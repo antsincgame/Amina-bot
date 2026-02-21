@@ -73,8 +73,14 @@ async function processReminders(bot: BotLike): Promise<void> {
 
         await bot.api.sendMessage(reminder.chat_id, message);
 
-        // Помечаем как выполненное
-        await remindersRepo.markCompleted(reminder.id);
+        try {
+          await remindersRepo.markCompleted(reminder.id);
+        } catch (dbErr) {
+          appLogger.error(
+            { error: dbErr, id: reminder.id, userId: reminder.user_id },
+            'Reminder sent but markCompleted failed — will not retry to avoid duplicate'
+          );
+        }
 
         appLogger.info(
           { id: reminder.id, userId: reminder.user_id, task: reminder.task },
@@ -83,20 +89,18 @@ async function processReminders(bot: BotLike): Promise<void> {
       } catch (sendError) {
         const err = sendError as { description?: string; error_code?: number };
 
-        // Если пользователь заблокировал бота — помечаем completed
         if (err.error_code === 403 || err.description?.includes('bot was blocked')) {
           appLogger.warn(
             { id: reminder.id, userId: reminder.user_id },
             'User blocked bot, marking reminder completed'
           );
-          await remindersRepo.markCompleted(reminder.id);
+          await remindersRepo.markCompleted(reminder.id).catch(() => {});
         } else {
           appLogger.error(
             { error: sendError, id: reminder.id, userId: reminder.user_id },
             'Failed to send reminder'
           );
-          // Инкрементируем retry_count; после MAX_RETRY_COUNT попыток — отменяем
-          await remindersRepo.markFailed(reminder.id);
+          await remindersRepo.markFailed(reminder.id).catch(() => {});
         }
       }
     }

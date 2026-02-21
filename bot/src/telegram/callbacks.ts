@@ -325,6 +325,18 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
     ctx.session.awaitingImagePrompt = true;
   });
 
+  bot.callbackQuery('edit_image_help', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      '✏️ <b>Как редактировать:</b>\n\n' +
+      '1. Ответь (reply) на фото текстом: <i>«убери фон»</i>\n' +
+      '2. Или отправь фото с подписью: <i>«сделай ярче»</i>\n' +
+      '3. Или ответь голосовым сообщением на фото\n\n' +
+      '<b>Примеры:</b> убери фон, добавь шляпу, сделай в стиле аниме, замени цвет на красный',
+      { parse_mode: 'HTML' }
+    );
+  });
+
   bot.callbackQuery('menu_reminders', async (ctx) => {
     await ctx.answerCallbackQuery();
     const userId = ctx.from?.id.toString() ?? 'unknown';

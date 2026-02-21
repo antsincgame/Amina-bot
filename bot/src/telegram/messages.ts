@@ -30,7 +30,7 @@ import {
 } from '../memory/user-memory.js';
 import { detectReminderIntent, extractReminder } from '../reminders/reminder-parser.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';
-import { detectImageGenIntent, extractImagePrompt, generateImage, classifyImageIntentGroq, isAIResponseAboutImages } from '../ai/image-gen.js';
+import { detectImageGenIntent, extractImagePrompt, generateImage, classifyImageIntentGroq, isAIResponseAboutImages, detectImageEditIntent, editImage } from '../ai/image-gen.js';
 import { notesRepo } from '../features/notes-repo.js';
 import { todosRepo } from '../features/todos-repo.js';
 import { userPrefsRepo } from '../features/user-prefs-repo.js';
@@ -90,12 +90,21 @@ export const setupMessageHandlers = (bot: Bot<BotContext>): void => {
 // Reply Keyboard Button Handlers
 // ============================================
 
+const clearAwaitingFlags = (ctx: BotContext): void => {
+  ctx.session.awaitingImagePrompt = false;
+  ctx.session.awaitingTodoTask = false;
+  ctx.session.awaitingNoteContent = false;
+  ctx.session.awaitingSearchQuery = false;
+};
+
 const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Record<string, () => Promise<void>> => ({
   '🌐 Поиск': async () => {
+    clearAwaitingFlags(ctx);
     await ctx.reply('🔍 *Что найти в интернете?*', { parse_mode: 'Markdown' });
     ctx.session.awaitingSearchQuery = true;
   },
   '🎨 Картинка': async () => {
+    clearAwaitingFlags(ctx);
     await ctx.reply('🎨 *Что нарисовать?*', { parse_mode: 'Markdown' });
     ctx.session.awaitingImagePrompt = true;
   },
@@ -103,6 +112,7 @@ const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Record<strin
     try {
       const notes = await notesRepo.getByUser(userId);
       if (notes.length === 0) {
+        clearAwaitingFlags(ctx);
         await ctx.reply('📋 *Что запомнить?*', { parse_mode: 'Markdown' });
         ctx.session.awaitingNoteContent = true;
       } else {
@@ -126,15 +136,16 @@ const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Record<strin
     try {
       const todos = await todosRepo.getActive(userId);
       if (todos.length === 0) {
+        clearAwaitingFlags(ctx);
         await ctx.reply('✅ *Какую задачу добавить?*', { parse_mode: 'Markdown' });
         ctx.session.awaitingTodoTask = true;
       } else {
-        const lines = todos.map((t, i) => `${i + 1}. ☐ ${t.task}`);
+        const lines = todos.map((t, i) => `${i + 1}. ☐ ${escapeHtml(t.task)}`);
         const keyboard = todoDoneKeyboard(todos.length);
         keyboard.row().text('➕ Добавить', 'menu_todo_help');
         await ctx.reply(
-          `📋 *Задачи (${todos.length}):*\n\n${lines.join('\n')}`,
-          { parse_mode: 'Markdown', reply_markup: keyboard }
+          `📋 <b>Задачи (${todos.length}):</b>\n\n${lines.join('\n')}`,
+          { parse_mode: 'HTML', reply_markup: keyboard }
         );
       }
     } catch (err) {
@@ -149,10 +160,10 @@ const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Record<strin
         await ctx.reply('⏰ Нет активных напоминаний.\n\nНапиши: _напомни через 2 часа ..._', { parse_mode: 'Markdown' });
       } else {
         const lines = reminders.map((r, i) => {
-          const d = new Date(r.scheduled_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-          return `${i + 1}. ${r.task} — ⏰ ${d}`;
+          const d = new Date(r.scheduled_at).toLocaleString('ru-RU', { timeZone: 'Europe/Minsk', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+          return `${i + 1}. ${escapeHtml(r.task)} — ⏰ ${d}`;
         });
-        await ctx.reply(`⏰ *Напоминания (${reminders.length}):*\n\n${lines.join('\n')}\n\n_/remind\\_cancel номер_`, { parse_mode: 'Markdown' });
+        await ctx.reply(`⏰ <b>Напоминания (${reminders.length}):</b>\n\n${lines.join('\n')}\n\n<i>/remind_cancel номер</i>`, { parse_mode: 'HTML' });
       }
     } catch (err) {
       telegramLogger.warn({ error: err, userId }, 'Failed to load reminders via button');
@@ -160,12 +171,17 @@ const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Record<strin
     }
   },
   '☀️ Дайджест': async () => {
-    const prefs = await userPrefsRepo.get(userId);
-    const status = prefs?.digest_enabled ? '✅ Включён' : '❌ Выключен';
-    await ctx.reply(
-      `☀️ *Дайджест:* ${status}\n\nВремя: ${prefs?.digest_hour ?? 10}:00 | Город: ${prefs?.digest_city ?? 'Гродно'}`,
-      { parse_mode: 'Markdown', reply_markup: digestToggleKeyboard(prefs?.digest_enabled ?? false) }
-    );
+    try {
+      const prefs = await userPrefsRepo.get(userId);
+      const status = prefs?.digest_enabled ? '✅ Включён' : '❌ Выключен';
+      await ctx.reply(
+        `☀️ <b>Дайджест:</b> ${status}\n\nВремя: ${prefs?.digest_hour ?? 10}:00 | Город: ${escapeHtml(prefs?.digest_city ?? 'Гродно')}`,
+        { parse_mode: 'HTML', reply_markup: digestToggleKeyboard(prefs?.digest_enabled ?? false) }
+      );
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to load digest prefs');
+      await ctx.reply('😔 Не удалось загрузить настройки дайджеста.');
+    }
   },
   '📰 Дайджест сейчас': async () => {
     const chatId = ctx.chat?.id ?? 0;
@@ -262,7 +278,7 @@ const handleAutoDetections = async (
       const cleanPrompt = imgPrompt.replace(/, high quality.*$/, '');
       await ctx.replyWithPhoto(
         new InputFile(result.image, 'generated.png'),
-        { caption: `🎨 ${cleanPrompt}\n⏱ ${timeSeconds}с | FLUX.1-schnell` }
+        { caption: `🎨 ${cleanPrompt}\n⏱ ${timeSeconds}с | ${result.model}\n\n✏️ Ответь на это фото с описанием правок для редактирования` }
       );
       analyticsRepo.log('message_received', 'telegram', { userId, event: 'image_generated', prompt: imgPrompt, model: result.model, timeMs: result.generationTimeMs }).catch(() => {});
       return true;
@@ -605,7 +621,7 @@ const processMessageThroughAI = async (
 
   // Определяем — здоровалась ли Амина сегодня (из БД, не session)
   const now = new Date();
-  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`; // YYYY-MM-DD (local TZ)
+  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Minsk' }).format(now);
   const lastGreetingDate = await userProfileRepo.getLastGreetingDate(userId);
   const alreadyGreetedToday = lastGreetingDate === todayStr;
 
@@ -686,8 +702,9 @@ const processMessageThroughAI = async (
     telegramLogger.warn({ error: err, userId }, 'extractFacts failed');
   });
 
-  // Автосуммаризация длинных разговоров (каждые 20 сообщений)
-  if (ctx.session.messageHistory.length >= 20 && ctx.session.messageHistory.length % 20 === 0) {
+  // Автосуммаризация: по счётчику сообщений (а не length, т.к. history capped at 20)
+  ctx.session.messageCount = (ctx.session.messageCount ?? 0) + 1;
+  if (ctx.session.messageCount % 20 === 0) {
     memoryExtractor.summarizeConversation(userId, ctx.session.messageHistory).catch((err) => {
       telegramLogger.warn({ error: err, userId }, 'summarizeConversation failed');
     });
@@ -768,7 +785,11 @@ const handleTextMessage = async (ctx: BotContext): Promise<void> => {
     return;
   }
   const userId = ctx.from.id.toString();
-  const chatId = ctx.chat?.id ?? 0;
+  if (!ctx.chat?.id) {
+    telegramLogger.warn('Message without chat.id — ignoring');
+    return;
+  }
+  const chatId = ctx.chat.id;
   const userMessage = ctx.message?.text ?? '';
   const startTime = Date.now();
 
@@ -785,7 +806,7 @@ const handleTextMessage = async (ctx: BotContext): Promise<void> => {
     try {
       const result = await generateImage(userMessage);
       await ctx.replyWithPhoto(new InputFile(result.image), {
-        caption: `🎨 <b>${escapeHtml(result.prompt)}</b>\n\n<i>Модель: ${escapeHtml(result.model)}</i>\n<i>Время: ${result.generationTimeMs}мс</i>`,
+        caption: `🎨 <b>${escapeHtml(result.prompt)}</b>\n\n<i>Модель: ${escapeHtml(result.model)}</i>\n<i>Время: ${result.generationTimeMs}мс</i>\n\n✏️ Ответь на это фото с описанием правок для редактирования`,
         parse_mode: 'HTML',
       });
       analyticsRepo.log('message_sent', 'telegram', { userId, type: 'image', model: result.model }).catch(() => {});
@@ -804,8 +825,8 @@ const handleTextMessage = async (ctx: BotContext): Promise<void> => {
     ctx.session.awaitingTodoTask = false;
     try {
       await todosRepo.create(userId, userMessage);
-      await ctx.reply(`✅ Задача добавлена!\n\n☐ _${escapeMarkdown(userMessage)}_`, {
-        parse_mode: 'Markdown',
+      await ctx.reply(`✅ Задача добавлена!\n\n☐ <i>${escapeHtml(userMessage)}</i>`, {
+        parse_mode: 'HTML',
         reply_markup: todosListKeyboard(),
       });
       telegramLogger.info({ userId, task: userMessage }, 'Todo created via awaiting');
@@ -866,6 +887,22 @@ const handleTextMessage = async (ctx: BotContext): Promise<void> => {
 
   analyticsRepo.log('message_received', 'telegram', { userId, chatId, messageLength: userMessage.length }).catch(() => {});
   userLogsRepo.add(userId, 'message', userMessage, { chatId, messageLength: userMessage.length }).catch(() => {});
+
+  // === PATH B: Reply to photo with edit instructions ===
+  const replyPhoto = ctx.message?.reply_to_message?.photo;
+  if (replyPhoto && replyPhoto.length > 0 && detectImageEditIntent(userMessage)) {
+    telegramLogger.info({ userId, prompt: userMessage.substring(0, 60) }, 'Image edit detected via reply to photo');
+    try {
+      const { base64, mimeType } = await downloadTelegramPhoto(ctx, replyPhoto);
+      await handleImageEdit(ctx, base64, mimeType, userMessage, userId);
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : 'Не удалось отредактировать изображение.';
+      telegramLogger.error({ error, userId }, 'Reply-to-photo edit failed');
+      await ctx.reply(`😔 ${errorMsg}`);
+    }
+    return;
+  }
+
   await ctx.replyWithChatAction('typing');
 
   try {
@@ -908,8 +945,12 @@ const handleVoiceMessage = async (ctx: BotContext): Promise<void> => {
     telegramLogger.warn('Voice message without from.id — ignoring');
     return;
   }
+  if (!ctx.chat?.id) {
+    telegramLogger.warn('Voice message without chat.id — ignoring');
+    return;
+  }
   const userId = ctx.from.id.toString();
-  const chatId = ctx.chat?.id ?? 0;
+  const chatId = ctx.chat.id;
   const duration = ctx.message?.voice?.duration ?? 0;
   const startTime = Date.now();
 
@@ -961,6 +1002,21 @@ const handleVoiceMessage = async (ctx: BotContext): Promise<void> => {
       language_code: ctx.from?.language_code,
     };
 
+    // === PATH C: Voice reply to photo → image edit ===
+    const voiceReplyPhoto = ctx.message?.reply_to_message?.photo;
+    if (voiceReplyPhoto && voiceReplyPhoto.length > 0 && detectImageEditIntent(transcribedText)) {
+      telegramLogger.info({ userId, prompt: transcribedText.substring(0, 60) }, 'Image edit detected via voice reply to photo');
+      try {
+        const { base64, mimeType } = await downloadTelegramPhoto(ctx, voiceReplyPhoto);
+        await handleImageEdit(ctx, base64, mimeType, transcribedText, userId);
+      } catch (editError) {
+        const editMsg = editError instanceof Error ? editError.message : 'Не удалось отредактировать изображение.';
+        telegramLogger.error({ error: editError, userId }, 'Voice reply-to-photo edit failed');
+        await ctx.reply(`😔 ${editMsg}`);
+      }
+      return;
+    }
+
     // Auto-detections
     if (await handleAutoDetections(ctx, transcribedText, userId, chatId)) return;
 
@@ -978,6 +1034,70 @@ const handleVoiceMessage = async (ctx: BotContext): Promise<void> => {
     const errorMsg = error instanceof Error ? error.message : 'Unknown error';
     analyticsRepo.log('error', 'telegram', { userId, type: 'voice', error: errorMsg, errorCode }).catch(() => {});
     await ctx.reply(errorCode ? (VOICE_ERROR_MESSAGES[errorCode] ?? formatAIError(errorCode, errorMsg)) : formatAIError(errorCode, errorMsg));
+  }
+};
+
+// ============================================
+// Photo Download Helper (shared by photo handler + reply-to-photo edit)
+// ============================================
+
+/**
+ * Скачивает фото из Telegram по массиву PhotoSize.
+ * Возвращает { base64, mimeType } для дальнейшей обработки.
+ */
+const downloadTelegramPhoto = async (
+  ctx: BotContext,
+  photos: Array<{ file_id: string; width: number; height: number }>,
+): Promise<{ base64: string; mimeType: string }> => {
+  const largestPhoto = photos[photos.length - 1];
+  if (!largestPhoto) throw new Error('No photo found in message');
+  const file = await ctx.api.getFile(largestPhoto.file_id);
+  if (!file.file_path) throw Object.assign(new Error('Telegram не вернул путь к файлу'), { code: 'FILE_NOT_FOUND' });
+
+  const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
+  const response = await fetch(fileUrl);
+  if (!response.ok) throw new Error(`Failed to download photo: ${response.status}`);
+
+  const base64 = Buffer.from(await response.arrayBuffer()).toString('base64');
+  const mimeType = file.file_path.endsWith('.png') ? 'image/png' : 'image/jpeg';
+  return { base64, mimeType };
+};
+
+// ============================================
+// Image Edit Handler (shared logic for all entry points)
+// ============================================
+
+const handleImageEdit = async (
+  ctx: BotContext,
+  imageBase64: string,
+  mimeType: string,
+  editPrompt: string,
+  userId: string,
+): Promise<void> => {
+  await ctx.replyWithChatAction('upload_photo');
+  const startTime = Date.now();
+
+  try {
+    const result = await editImage(imageBase64, mimeType, editPrompt);
+    const timeSeconds = (result.generationTimeMs / 1000).toFixed(1);
+
+    await ctx.replyWithPhoto(
+      new InputFile(result.image, 'edited.png'),
+      {
+        caption: `✏️ <b>Отредактировано</b>\n📝 ${escapeHtml(editPrompt)}\n⏱ ${timeSeconds}с | ${escapeHtml(result.model)}`,
+        parse_mode: 'HTML',
+      }
+    );
+
+    analyticsRepo.log('message_sent', 'telegram', {
+      userId, type: 'image_edit', model: result.model, timeMs: result.generationTimeMs,
+    }).catch(() => {});
+    telegramLogger.info({ userId, prompt: editPrompt.substring(0, 60), model: result.model, timeMs: result.generationTimeMs }, 'Image edited successfully');
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : 'Не удалось отредактировать изображение.';
+    telegramLogger.error({ error, userId, prompt: editPrompt.substring(0, 60) }, 'Image edit failed');
+    analyticsRepo.log('error', 'telegram', { userId, type: 'image_edit', error: errorMsg }).catch(() => {});
+    await ctx.reply(`😔 ${errorMsg}`);
   }
 };
 
@@ -1000,22 +1120,20 @@ const handlePhotoMessage = async (ctx: BotContext): Promise<void> => {
   if (!rateLimitResult.allowed) { await ctx.reply(rateLimitResult.message ?? '⏳ Слишком много сообщений.'); return; }
 
   analyticsRepo.log('message_received', 'telegram', { userId, type: 'photo', hasCaption: !!caption }).catch(() => {});
-  await ctx.replyWithChatAction('typing');
 
   try {
     const photos = ctx.message?.photo ?? [];
-    const largestPhoto = photos[photos.length - 1];
-    if (!largestPhoto) throw new Error('No photo found in message');
-    const file = await ctx.api.getFile(largestPhoto.file_id);
-    if (!file.file_path) throw Object.assign(new Error('Telegram не вернул путь к файлу'), { code: 'FILE_NOT_FOUND' });
+    const { base64: imageBase64, mimeType } = await downloadTelegramPhoto(ctx, photos);
 
-    const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
-    const response = await fetch(fileUrl);
-    if (!response.ok) throw new Error(`Failed to download photo: ${response.status}`);
+    // === PATH A: Фото + caption с edit-ключевыми словами → редактирование ===
+    if (caption && detectImageEditIntent(caption)) {
+      telegramLogger.info({ userId, caption: caption.substring(0, 60) }, 'Image edit detected via photo caption');
+      await handleImageEdit(ctx, imageBase64, mimeType, caption, userId);
+      return;
+    }
 
-    const imageBase64 = Buffer.from(await response.arrayBuffer()).toString('base64');
-    const mimeType = file.file_path?.endsWith('.png') ? 'image/png' : 'image/jpeg';
-
+    // === Стандартный flow: vision analysis ===
+    await ctx.replyWithChatAction('typing');
     await ensureConversation(ctx, userId, chatId);
 
     const aiResponse = await processImageWithLLM(imageBase64, mimeType, caption, ctx.session.messageHistory);
@@ -1030,7 +1148,7 @@ const handlePhotoMessage = async (ctx: BotContext): Promise<void> => {
     if (convId) {
       const nowISO = new Date().toISOString();
       Promise.all([
-        conversationsRepo.addMessage(convId, { role: 'user', content: userContent, timestamp: nowISO, metadata: { type: 'photo', width: largestPhoto.width, height: largestPhoto.height } }),
+        conversationsRepo.addMessage(convId, { role: 'user', content: userContent, timestamp: nowISO, metadata: { type: 'photo' } }),
         conversationsRepo.addMessage(convId, { role: 'assistant', content: aiResponse.content, timestamp: nowISO, metadata: { tokens_used: aiResponse.tokens_used.total, model: aiResponse.model } }),
         analyticsRepo.log('ai_response', 'telegram', { userId, type: 'photo', model: aiResponse.model, tokens: aiResponse.tokens_used.total }),
       ]).catch((err) => { telegramLogger.warn({ error: err, userId }, 'Background photo DB writes failed'); });

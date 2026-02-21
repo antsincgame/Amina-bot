@@ -710,7 +710,7 @@ export const memoryExtractor = {
       const response = await aiService.complete(extractionPrompt, 'telegram');
       
       // Парсим JSON
-      const jsonMatch = response.match(/\[[\s\S]*\]/);
+      const jsonMatch = response.match(/\[\s*\{[\s\S]*?\}\s*\]/);
       if (!jsonMatch) return;
       
       const facts = JSON.parse(jsonMatch[0]) as Array<{
