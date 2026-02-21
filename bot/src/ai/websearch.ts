@@ -68,9 +68,11 @@ interface PerplexityModel {
 }
 
 const PERPLEXITY_MODELS: PerplexityModel[] = [
-  { id: 'sonar', name: 'Sonar', inputPrice: 1.00, outputPrice: 1.00, requestFee: 5.00, online: true },
-  { id: 'sonar-pro', name: 'Sonar Pro', inputPrice: 3.00, outputPrice: 15.00, requestFee: 6.00, online: true },
-  { id: 'sonar-reasoning-pro', name: 'Sonar Reasoning Pro', inputPrice: 2.00, outputPrice: 8.00, requestFee: 6.00, online: true },
+  { id: 'sonar', name: 'Sonar (базовый)', inputPrice: 1.00, outputPrice: 1.00, requestFee: 5.00, online: true },
+  { id: 'sonar-pro', name: 'Sonar Pro (расширенный)', inputPrice: 3.00, outputPrice: 15.00, requestFee: 6.00, online: true },
+  { id: 'sonar-pro-search', name: 'Sonar Pro Search (глубокий поиск)', inputPrice: 3.00, outputPrice: 15.00, requestFee: 6.00, online: true },
+  { id: 'sonar-reasoning-pro', name: 'Sonar Reasoning Pro (аналитика)', inputPrice: 2.00, outputPrice: 8.00, requestFee: 6.00, online: true },
+  { id: 'sonar-deep-research', name: 'Sonar Deep Research (исследование)', inputPrice: 2.00, outputPrice: 8.00, requestFee: 6.00, online: true },
 ];
 
 function getCheapestOnlineModel(): string {

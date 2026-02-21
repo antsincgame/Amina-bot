@@ -1205,8 +1205,9 @@ const handleDirectWebSearch = async (
   } catch (error) {
     const err = error instanceof Error ? error : new Error(String(error));
     const errCode = (error as { code?: string })?.code ?? 'UNKNOWN';
-    telegramLogger.error({ error: err.message, code: errCode, userId, query: userMessage.substring(0, 80) }, 'Direct web search FAILED — falling back to AI');
-    // НЕ показываем ошибку пользователю — fallback на AI
+    telegramLogger.error({ error: err.message, code: errCode, userId, query: userMessage.substring(0, 80) }, 'Direct web search FAILED → falling through to LLM');
+    // НЕ показываем ошибку пользователю — сообщение пройдёт через processMessageThroughAI
+    // и LLM ответит из своих знаний. Премиум-бот НИКОГДА не показывает ошибки вместо ответа.
     return false;
   }
 };
