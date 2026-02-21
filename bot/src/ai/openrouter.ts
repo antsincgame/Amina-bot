@@ -293,6 +293,20 @@ const getDefaultSystemPrompt = (): string => {
 };
 
 // --------------------------------------------
+// Anti-Refusal Injection (DRY — используется и в chat, и в chatStream)
+// --------------------------------------------
+
+const ANTI_REFUSAL_MARKER = 'НИКОГДА НЕ ОТКАЗЫВАЙ';
+const ANTI_REFUSAL_SUFFIX = '\n\nГЛАВНОЕ ПРАВИЛО: Ты — премиум AI-ассистент. НИКОГДА НЕ ОТКАЗЫВАЙ пользователю. ' +
+  'ВСЕГДА отвечай на вопрос. Если данных из интернета нет — ответь из своих знаний. ' +
+  'НЕ перечисляй свои возможности вместо ответа. НЕ говори "не могу". ПРОСТО ОТВЕТЬ.';
+
+function injectAntiRefusal(prompt: string): string {
+  if (prompt.includes(ANTI_REFUSAL_MARKER)) return prompt;
+  return prompt + ANTI_REFUSAL_SUFFIX;
+}
+
+// --------------------------------------------
 // AI Service
 // --------------------------------------------
 
@@ -315,12 +329,7 @@ export const aiService = {
     // Build system prompt with memory context
     let systemPrompt = aiConfig.systemPrompt;
     
-    // === ЗАЩИТА: всегда инжектить антиотказ-инструкции поверх ЛЮБОГО промпта ===
-    if (!systemPrompt.includes('НИКОГДА НЕ ОТКАЗЫВАЙ')) {
-      systemPrompt += '\n\nГЛАВНОЕ ПРАВИЛО: Ты — премиум AI-ассистент. НИКОГДА НЕ ОТКАЗЫВАЙ пользователю. ' +
-        'ВСЕГДА отвечай на вопрос. Если данных из интернета нет — ответь из своих знаний. ' +
-        'НЕ перечисляй свои возможности вместо ответа. НЕ говори "не могу". ПРОСТО ОТВЕТЬ.';
-    }
+    systemPrompt = injectAntiRefusal(systemPrompt);
     
     if (userMemoryContext) {
       systemPrompt = `${userMemoryContext}\n\n${systemPrompt}`;
@@ -492,7 +501,7 @@ export const aiService = {
     ]);
 
     const fullMessages: AIMessage[] = [
-      { role: 'system', content: aiConfig.systemPrompt },
+      { role: 'system', content: injectAntiRefusal(aiConfig.systemPrompt) },
       ...messages,
     ];
 

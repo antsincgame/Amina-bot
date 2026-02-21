@@ -46,6 +46,8 @@ export const getSupabase = (): SupabaseClient => {
 const SETTINGS_CACHE = new Map<string, { value: string | null; ts: number }>();
 /** TTL кеша настроек — 5 минут. Настройки меняются редко. */
 const SETTINGS_CACHE_TTL = 5 * 60 * 1000;
+/** Максимальный размер кеша (ключей ~30, лимит с запасом) */
+const SETTINGS_CACHE_MAX_SIZE = 100;
 
 export const settingsRepo = {
   async get(key: string): Promise<string | null> {
@@ -71,6 +73,11 @@ export const settingsRepo = {
     }
 
     const value = (data as { value: string } | null)?.value ?? null;
+    // Eviction: если кэш переполнен — удаляем самую старую запись
+    if (SETTINGS_CACHE.size >= SETTINGS_CACHE_MAX_SIZE) {
+      const oldestKey = SETTINGS_CACHE.keys().next().value;
+      if (oldestKey) SETTINGS_CACHE.delete(oldestKey);
+    }
     SETTINGS_CACHE.set(key, { value, ts: Date.now() });
     return value;
   },
@@ -250,7 +257,17 @@ export const promptsRepo = {
   },
 
   async setActive(id: string): Promise<void> {
-    // Deactivate all prompts first — with error handling
+    // Запоминаем текущий активный промпт для rollback
+    const { data: currentActive } = await getSupabase()
+      .from('prompts')
+      .select('id')
+      .eq('is_active', true)
+      .limit(1)
+      .maybeSingle();
+
+    const previousActiveId = (currentActive as { id: string } | null)?.id;
+
+    // Деактивируем все
     const { error: deactivateError } = await getSupabase()
       .from('prompts')
       .update({ is_active: false })
@@ -261,14 +278,24 @@ export const promptsRepo = {
       throw deactivateError;
     }
 
-    // Activate the selected one
+    // Активируем выбранный
     const { error } = await getSupabase()
       .from('prompts')
       .update({ is_active: true, updated_at: new Date().toISOString() })
       .eq('id', id);
 
     if (error) {
-      dbLogger.error({ error, id }, 'Failed to set active prompt');
+      dbLogger.error({ error, id }, 'Failed to set active prompt — rolling back');
+      // Rollback: восстанавливаем предыдущий активный промпт
+      if (previousActiveId) {
+        await getSupabase()
+          .from('prompts')
+          .update({ is_active: true })
+          .eq('id', previousActiveId)
+          .then(({ error: rollbackErr }) => {
+            if (rollbackErr) dbLogger.error({ error: rollbackErr }, 'Rollback also failed');
+          });
+      }
       throw error;
     }
   },

@@ -104,6 +104,37 @@ const searchMaxTokensCache = new SingleCache<number>(60_000);
 let openrouterClient: OpenAI | null = null;
 let currentOpenRouterKey: string = '';
 
+// --------------------------------------------
+// In-flight dedup: один и тот же запрос не выполняется параллельно
+// --------------------------------------------
+const inflightSearches = new Map<string, Promise<WebSearchResult>>();
+
+// Circuit breaker: после N последовательных неудач — пауза
+const searchCircuit = {
+  failures: 0,
+  lastFailure: 0,
+  /** Порог: 3 подряд неудачи → пауза 60 сек */
+  THRESHOLD: 3,
+  COOLDOWN_MS: 60_000,
+
+  recordFailure(): void {
+    this.failures++;
+    this.lastFailure = Date.now();
+  },
+  recordSuccess(): void {
+    this.failures = 0;
+  },
+  isOpen(): boolean {
+    if (this.failures < this.THRESHOLD) return false;
+    // Cooldown истёк — даём ещё шанс (half-open)
+    if (Date.now() - this.lastFailure > this.COOLDOWN_MS) {
+      this.failures = this.THRESHOLD - 1; // half-open: одна попытка
+      return false;
+    }
+    return true;
+  },
+};
+
 async function getOpenRouterClient(): Promise<OpenAI | null> {
   try {
     const keys = await getApiKeys();
@@ -132,13 +163,17 @@ async function getOpenRouterClient(): Promise<OpenAI | null> {
   }
 }
 
+/** Sentinel: кэшируем отсутствие ключа чтобы не ходить в БД повторно */
+const EMPTY_KEY_SENTINEL = '__EMPTY__';
+
 async function getPerplexityApiKey(): Promise<string> {
   if (config.perplexity?.apiKey) return config.perplexity.apiKey;
   const cached = perplexityKeyCache.get();
+  if (cached === EMPTY_KEY_SENTINEL) return '';
   if (cached) return cached;
   try {
     const key = await settingsRepo.get('perplexity_api_key');
-    if (key) perplexityKeyCache.set(key);
+    perplexityKeyCache.set(key || EMPTY_KEY_SENTINEL);
     return key || '';
   } catch { return ''; }
 }
@@ -528,10 +563,52 @@ async function webSearchViaOpenRouter(
 }
 
 /**
- * Выполняет веб-поиск через Perplexity API с fallback на OpenRouter
- * Использует настраиваемые токены из админки + модель
+ * Выполняет веб-поиск через Perplexity API с fallback на OpenRouter.
+ * 
+ * Защита от дублирования:
+ * - In-flight dedup: одинаковые запросы не выполняются параллельно
+ * - Circuit breaker: после 3 подряд неудач — пауза 60 сек
  */
 export async function webSearch(
+  query: string,
+  options: {
+    maxTokens?: number;
+    forDigest?: boolean;
+  } = {}
+): Promise<WebSearchResult> {
+  // Circuit breaker: если search сломан — не тратим кредиты
+  if (searchCircuit.isOpen()) {
+    telegramLogger.warn({ failures: searchCircuit.failures }, 'Search circuit breaker OPEN — skipping');
+    throw Object.assign(new Error('Search temporarily unavailable (circuit breaker)'), { code: 'SEARCH_CIRCUIT_OPEN' });
+  }
+
+  // In-flight dedup: если этот запрос уже выполняется — ждём результат
+  const cacheKey = query.substring(0, 120).toLowerCase().trim();
+  const inflight = inflightSearches.get(cacheKey);
+  if (inflight) {
+    telegramLogger.debug({ query: query.substring(0, 50) }, 'Reusing in-flight search');
+    return inflight;
+  }
+
+  const searchPromise = webSearchInternal(query, options)
+    .then(result => {
+      searchCircuit.recordSuccess();
+      return result;
+    })
+    .catch(err => {
+      searchCircuit.recordFailure();
+      throw err;
+    })
+    .finally(() => {
+      inflightSearches.delete(cacheKey);
+    });
+
+  inflightSearches.set(cacheKey, searchPromise);
+  return searchPromise;
+}
+
+/** Внутренняя реализация webSearch (без dedup/circuit breaker) */
+async function webSearchInternal(
   query: string,
   options: {
     maxTokens?: number;
@@ -839,23 +916,22 @@ export async function enhanceResponseIfNeeded(
  * Логика:
  * 1. Если в БД явно задано web_search_enabled = 'false' → выключен
  * 2. Если в БД явно задано web_search_enabled = 'true' → включён
- * 3. Если настройка НЕ задана → авто-определение: включён если Perplexity API ключ существует
- *    (раньше по умолчанию был выключен, что приводило к тому что поиск не работал
- *     даже при настроенном ключе — LLM симулировала поиск вместо реального)
+ * 3. Если настройка НЕ задана → авто-определение:
+ *    включён если есть Perplexity ИЛИ OpenRouter ключ (OpenRouter :online — полноценный fallback)
  */
 export async function isWebSearchEnabled(): Promise<boolean> {
   try {
     const enabled = await settingsRepo.get('web_search_enabled');
     
-    // Явно выключен в настройках
     if (enabled === 'false') return false;
-    
-    // Явно включён в настройках
     if (enabled === 'true') return true;
     
-    // Настройка не задана → авто-определение по наличию API ключа
+    // Авто: поиск доступен через Perplexity ИЛИ OpenRouter :online
     const apiKey = await getPerplexityApiKey();
-    return !!apiKey;
+    if (apiKey) return true;
+    
+    const keys = await getApiKeys();
+    return !!keys.openrouter;
   } catch (error) {
     telegramLogger.warn({ error }, 'Failed to check web_search_enabled, defaulting to false');
     return false;

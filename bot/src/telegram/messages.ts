@@ -480,10 +480,9 @@ const tryGetPerplexityData = async (
     }
   }
 
-  // Свежий запрос к Perplexity
+  // Свежий запрос к Perplexity / OpenRouter :online
   try {
-    const { webSearch: doSearch } = await import('../ai/websearch.js');
-    const result = await doSearch(userMessage);
+    const result = await webSearch(userMessage);
     if (result.answer && result.answer.length > 30) {
       let text = result.answer;
       if (result.citations.length > 0) {
@@ -513,7 +512,6 @@ const forceAnswer = async (
 ): Promise<string | null> => {
   try {
     telegramLogger.info({ userId, query: userMessage.substring(0, 60) }, '🔄 Force-answering with strict prompt');
-    const { aiService } = await import('../ai/openrouter.js');
 
     const forceResult = await aiService.chat(
       [{ role: 'user', content: userMessage }],
@@ -988,7 +986,11 @@ const handleVoiceMessage = async (ctx: BotContext): Promise<void> => {
 // ============================================
 
 const handlePhotoMessage = async (ctx: BotContext): Promise<void> => {
-  const userId = ctx.from?.id.toString() ?? 'unknown';
+  if (!ctx.from?.id) {
+    telegramLogger.warn('Photo message without from.id — ignoring');
+    return;
+  }
+  const userId = ctx.from.id.toString();
   const chatId = ctx.chat?.id ?? 0;
   const caption = ctx.message?.caption;
 
@@ -1057,7 +1059,11 @@ const handlePhotoMessage = async (ctx: BotContext): Promise<void> => {
 // ============================================
 
 const handleDocumentMessage = async (ctx: BotContext): Promise<void> => {
-  const userId = ctx.from?.id.toString() ?? 'unknown';
+  if (!ctx.from?.id) {
+    telegramLogger.warn('Document message without from.id — ignoring');
+    return;
+  }
+  const userId = ctx.from.id.toString();
   const document = ctx.message?.document;
   if (!document) return;
   const mimeType = document.mime_type ?? '';

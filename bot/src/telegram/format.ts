@@ -256,17 +256,24 @@ export const sendLongMessage = async (
 
 /**
  * Контекст времени суток + день недели + имя для system prompt.
- * TZ=Europe/Minsk → new Date() уже в минском времени.
+ * Явно использует Europe/Minsk (МСК) независимо от серверной TZ.
  */
 export const buildTimeContext = (firstName?: string): string => {
   const now = new Date();
-  const hour = now.getHours();
-  const day = WEEKDAYS_RU[now.getDay()] ?? 'неизвестно';
-  const dateStr = now.toLocaleDateString('ru-RU', {
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-  });
+  const TZ = 'Europe/Minsk';
+
+  // Intl.DateTimeFormat гарантирует правильную TZ независимо от серверных настроек
+  const parts = new Intl.DateTimeFormat('ru-RU', {
+    timeZone: TZ,
+    hour: 'numeric', minute: '2-digit', hour12: false,
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+  }).formatToParts(now);
+
+  const get = (type: string) => parts.find(p => p.type === type)?.value ?? '';
+  const hour = parseInt(get('hour'), 10) || 0;
+  const minute = get('minute');
+  const day = get('weekday');
+  const dateStr = `${get('day')} ${get('month')} ${get('year')}`;
 
   let greeting = '';
   if (hour >= 5 && hour < 12) greeting = 'утро';
@@ -276,7 +283,7 @@ export const buildTimeContext = (firstName?: string): string => {
 
   const nameStr = firstName ? `Имя пользователя: ${firstName}.` : '';
 
-  return `[Контекст: ${dateStr}, ${day}, ${greeting} (${hour}:${String(now.getMinutes()).padStart(2, '0')} МСК). ${nameStr}]`;
+  return `[Контекст: ${dateStr}, ${day}, ${greeting} (${hour}:${minute} МСК). ${nameStr}]`;
 };
 
 // ============================================
