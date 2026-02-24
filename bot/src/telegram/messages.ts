@@ -61,6 +61,24 @@ import {
 } from './keyboards.js';
 
 // ============================================
+// Constants
+// ============================================
+
+const MAX_CITATIONS_DISPLAY = 5;
+const MAX_URL_DISPLAY_LENGTH = 70;
+const MIN_SEARCH_ANSWER_LENGTH = 30;
+const MIN_FORCE_ANSWER_LENGTH = 50;
+const AUTO_SUMMARY_INTERVAL = 20;
+const MAX_NOTE_PREVIEW_LENGTH = 120;
+
+function formatCitationsBlock(citations: string[]): string {
+  if (citations.length === 0) return '';
+  return '\n\n📚 Источники:\n' + citations.slice(0, MAX_CITATIONS_DISPLAY)
+    .map((url, i) => `${i + 1}. ${url.length > MAX_URL_DISPLAY_LENGTH ? url.substring(0, MAX_URL_DISPLAY_LENGTH - 3) + '...' : url}`)
+    .join('\n') + '\n';
+}
+
+// ============================================
 // Message Handlers Setup
 // ============================================
 
@@ -118,7 +136,7 @@ const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Record<strin
       } else {
         const lines = notes.map((n, i) => {
           // Усекаем длинные заметки при отображении (макс. 120 символов)
-          const preview = n.content.length > 120 ? n.content.slice(0, 120).trimEnd() + '…' : n.content;
+          const preview = n.content.length > MAX_NOTE_PREVIEW_LENGTH ? n.content.slice(0, MAX_NOTE_PREVIEW_LENGTH).trimEnd() + '…' : n.content;
           return `${i + 1}. ${escapeHtml(preview)}`;
         });
         const keyboard = new InlineKeyboard().text('📌 Добавить', 'menu_note_help');
@@ -524,14 +542,8 @@ const tryGetPerplexityData = async (
   // Свежий запрос к Perplexity / OpenRouter :online
   try {
     const result = await webSearch(userMessage);
-    if (result.answer && result.answer.length > 30) {
-      let text = result.answer;
-      if (result.citations.length > 0) {
-        text += '\n\n📚 Источники:\n';
-        result.citations.slice(0, 5).forEach((url, i) => {
-          text += `${i + 1}. ${url.length > 70 ? url.substring(0, 67) + '...' : url}\n`;
-        });
-      }
+    if (result.answer && result.answer.length > MIN_SEARCH_ANSWER_LENGTH) {
+      const text = result.answer + formatCitationsBlock(result.citations);
       telegramLogger.info({ userId }, '✅ Got fresh Perplexity data');
       return text;
     }
@@ -570,7 +582,7 @@ const forceAnswer = async (
 
     // Проверяем что retry не отказ
     if (forceResult.content &&
-        forceResult.content.length > 50 &&
+        forceResult.content.length > MIN_FORCE_ANSWER_LENGTH &&
         !looksLikeSearchSimulation(forceResult.content) &&
         !looksLikeSearchRefusal(forceResult.content)) {
       telegramLogger.info({ userId, length: forceResult.content.length }, '✅ Force-answer succeeded');
@@ -729,7 +741,7 @@ const processMessageThroughAI = async (
 
   // Автосуммаризация: по счётчику сообщений (а не length, т.к. history capped at 20)
   ctx.session.messageCount = (ctx.session.messageCount ?? 0) + 1;
-  if (ctx.session.messageCount % 20 === 0) {
+  if (ctx.session.messageCount % AUTO_SUMMARY_INTERVAL === 0) {
     memoryExtractor.summarizeConversation(userId, ctx.session.messageHistory).catch((err) => {
       telegramLogger.warn({ error: err, userId }, 'summarizeConversation failed');
     });
@@ -1099,8 +1111,8 @@ const handleImageEdit = async (
   editPrompt: string,
   userId: string,
 ): Promise<void> => {
+  const statusMsg = await ctx.reply('✏️ Редактирую изображение... Это может занять 10-30 секунд.');
   await ctx.replyWithChatAction('upload_photo');
-  const startTime = Date.now();
 
   try {
     const result = await editImage(imageBase64, mimeType, editPrompt);
@@ -1109,10 +1121,12 @@ const handleImageEdit = async (
     await ctx.replyWithPhoto(
       new InputFile(result.image, 'edited.png'),
       {
-        caption: `✏️ <b>Отредактировано</b>\n📝 ${escapeHtml(editPrompt)}\n⏱ ${timeSeconds}с | ${escapeHtml(result.model)}`,
+        caption: `✏️ <b>Отредактировано</b>\n📝 ${escapeHtml(editPrompt)}\n⏱ ${timeSeconds}с\n\n💡 <i>Ответь на это фото, чтобы продолжить редактирование</i>`,
         parse_mode: 'HTML',
       }
     );
+
+    ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id).catch(() => {});
 
     analyticsRepo.log('message_sent', 'telegram', {
       userId, type: 'image_edit', model: result.model, timeMs: result.generationTimeMs,
@@ -1122,6 +1136,7 @@ const handleImageEdit = async (
     const errorMsg = error instanceof Error ? error.message : 'Не удалось отредактировать изображение.';
     telegramLogger.error({ error, userId, prompt: editPrompt.substring(0, 60) }, 'Image edit failed');
     analyticsRepo.log('error', 'telegram', { userId, type: 'image_edit', error: errorMsg }).catch(() => {});
+    ctx.api.deleteMessage(ctx.chat!.id, statusMsg.message_id).catch(() => {});
     await ctx.reply(`😔 ${errorMsg}`);
   }
 };

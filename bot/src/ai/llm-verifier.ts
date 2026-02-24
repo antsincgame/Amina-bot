@@ -18,6 +18,22 @@ import { webSearch, needsWebSearch } from './websearch.js';
 import { looksLikeSearchSimulation, looksLikeSearchRefusal } from '../telegram/format.js';
 
 // ============================================
+// Constants
+// ============================================
+
+const MAX_CITATIONS_DISPLAY = 5;
+const MAX_URL_DISPLAY_LENGTH = 70;
+const MIN_SEARCH_ANSWER_LENGTH = 30;
+const MIN_FACTCHECK_ANSWER_LENGTH = 50;
+
+function formatCitations(citations: string[]): string {
+  if (citations.length === 0) return '';
+  return '\n\n📚 Источники:\n' + citations.slice(0, MAX_CITATIONS_DISPLAY)
+    .map((url, i) => `${i + 1}. ${url.length > MAX_URL_DISPLAY_LENGTH ? url.substring(0, MAX_URL_DISPLAY_LENGTH - 3) + '...' : url}`)
+    .join('\n') + '\n';
+}
+
+// ============================================
 // Types
 // ============================================
 
@@ -81,8 +97,11 @@ export async function verifyResponse(
 ): Promise<VerifyResult> {
   const startTime = Date.now();
 
-  // Не верифицируем очень короткие ответы и бытовые сообщения
-  if (aiResponse.length < 30 || userMessage.length < 5) {
+  if (userMessage.length < 5) {
+    return { isValid: true, verifyTimeMs: Date.now() - startTime, skipped: true };
+  }
+  // Короткие ответы всё равно проверяем на отказ — "Не могу помочь." тоже < 30 символов
+  if (aiResponse.length < 30 && !looksLikeSearchRefusal(aiResponse)) {
     return { isValid: true, verifyTimeMs: Date.now() - startTime, skipped: true };
   }
 
@@ -205,16 +224,8 @@ async function replaceWithRealSearch(userMessage: string): Promise<string | null
   try {
     const searchResult = await webSearch(userMessage);
 
-    if (searchResult.answer && searchResult.answer.length > 30) {
-      let result = searchResult.answer;
-
-      // Добавляем источники если есть
-      if (searchResult.citations.length > 0) {
-        result += '\n\n📚 Источники:\n';
-        searchResult.citations.slice(0, 5).forEach((url, i) => {
-          result += `${i + 1}. ${url.length > 70 ? url.substring(0, 67) + '...' : url}\n`;
-        });
-      }
+    if (searchResult.answer && searchResult.answer.length > MIN_SEARCH_ANSWER_LENGTH) {
+      const result = searchResult.answer + formatCitations(searchResult.citations);
 
       telegramLogger.info(
         { resultLength: result.length, citations: searchResult.citations.length },
@@ -238,15 +249,8 @@ async function factCheckViaPerplexity(userMessage: string, _aiResponse: string):
   try {
     const searchResult = await webSearch(userMessage);
 
-    if (searchResult.answer && searchResult.answer.length > 50) {
-      let result = searchResult.answer;
-
-      if (searchResult.citations.length > 0) {
-        result += '\n\n📚 Источники:\n';
-        searchResult.citations.slice(0, 5).forEach((url, i) => {
-          result += `${i + 1}. ${url.length > 70 ? url.substring(0, 67) + '...' : url}\n`;
-        });
-      }
+    if (searchResult.answer && searchResult.answer.length > MIN_FACTCHECK_ANSWER_LENGTH) {
+      const result = searchResult.answer + formatCitations(searchResult.citations);
 
       telegramLogger.info(
         { resultLength: result.length },

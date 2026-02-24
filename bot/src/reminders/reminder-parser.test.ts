@@ -17,8 +17,12 @@ describe('reminder-parser', () => {
       expect(detectReminderIntent('напомни мне завтра в 10 купить молоко')).toBe(true);
     });
 
-    it('should detect "напомнить"', () => {
-      expect(detectReminderIntent('можешь напомнить про встречу?')).toBe(true);
+    it('should detect "напомнить" with time context', () => {
+      expect(detectReminderIntent('можешь напомнить через час про встречу?')).toBe(true);
+    });
+
+    it('should NOT detect "напомнить" without time context (goes to LLM)', () => {
+      expect(detectReminderIntent('можешь напомнить про встречу?')).toBe(false);
     });
 
     it('should detect "не забыть"', () => {
@@ -56,8 +60,12 @@ describe('reminder-parser', () => {
       expect(detectReminderIntent('послезавтра в 8 выезжаю')).toBe(true);
     });
 
-    it('should detect "remind" (English)', () => {
-      expect(detectReminderIntent('remind me to call John')).toBe(true);
+    it('should detect "remind" with time context', () => {
+      expect(detectReminderIntent('remind me in 30 minutes to call John')).toBe(true);
+    });
+
+    it('should NOT detect "remind" without time context (goes to LLM)', () => {
+      expect(detectReminderIntent('remind me to call John')).toBe(false);
     });
 
     it('should detect "поставь напоминание"', () => {
@@ -74,9 +82,15 @@ describe('reminder-parser', () => {
     });
 
     it('should be case-insensitive', () => {
-      expect(detectReminderIntent('НАПОМНИ мне!')).toBe(true);
-      expect(detectReminderIntent('Remind Me')).toBe(true);
+      expect(detectReminderIntent('НАПОМНИ через 2 часа позвонить!')).toBe(true);
       expect(detectReminderIntent('НЕ ЗАБЫТЬ купить хлеб')).toBe(true);
+    });
+
+    it('should NOT detect "напомни" without time (prevents false positives)', () => {
+      expect(detectReminderIntent('НАПОМНИ мне!')).toBe(false);
+      expect(detectReminderIntent('напомни что такое ООП')).toBe(false);
+      expect(detectReminderIntent('напомни о себе')).toBe(false);
+      expect(detectReminderIntent('напомни что матрица — иллюзия')).toBe(false);
     });
 
     // === НЕ должен ложно срабатывать ===

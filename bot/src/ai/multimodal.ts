@@ -422,7 +422,7 @@ export async function analyzeImage(
 /**
  * Анализировать изображение по URL
  */
-export async function analyzeImageUrl(
+async function analyzeImageUrl(
   imageUrl: string,
   userPrompt?: string
 ): Promise<VisionAnalysisResult> {
@@ -536,7 +536,7 @@ function getMimeTypeFromFilename(filename: string): string {
  * Поддерживает: mp3, mp4, wav, flac, mpeg, mpga, m4a, ogg, webm
  * Лимит: 25MB
  */
-export async function transcribeAudioGroq(
+async function transcribeAudioGroq(
   audioBuffer: Buffer,
   filename: string = 'audio.ogg',
   modelOverride?: string,
@@ -632,7 +632,7 @@ export async function processImageWithLLM(
  * Обработать голосовое сообщение: транскрипция + отправка в основную LLM
  * Транскрипция скрыта от пользователя — он видит только ответ LLM
  */
-export async function processVoiceWithLLM(
+async function processVoiceWithLLM(
   audioBase64: string,
   mimeType: string,
   chatHistory?: { role: 'user' | 'assistant' | 'system'; content: string }[]

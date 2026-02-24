@@ -179,7 +179,7 @@ export const voiceMessagesRepo = {
     if (error) {
       dbLogger.error({ error, userId }, 'Failed to save voice message metadata');
       // Try to delete uploaded file
-      await sb.storage.from(BUCKET).remove([filePath]).catch(() => {});
+      await sb.storage.from(BUCKET).remove([filePath]).catch(e => dbLogger.debug({ error: e }, 'Cleanup: failed to remove uploaded voice file'));
       throw error;
     }
 

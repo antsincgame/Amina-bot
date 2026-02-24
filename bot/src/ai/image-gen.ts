@@ -806,10 +806,13 @@ const IMAGE_EDIT_PATTERNS = [
   /\b(добавь|добавьте|вставь|вставьте|дорисуй)\s/i,
   /\b(замени|поменяй|смени)\s/i,
   /\b(сделай|сделайте)\s+(ярче|темнее|контрастнее|чётче|четче|резче|светлее|теплее|холоднее|чёрно-белым|черно-белым|цветным|размытым|прозрачн)/i,
+  /\b(сделай|сделайте)\s+[\wа-яёА-ЯЁ\s]+\s+(красн|син|зелён|жёлт|оранжев|фиолетов|розов|чёрн|бел|сер|голуб)/i,
   /\b(обрежь|поверни|отзеркаль|переверни|увеличь|уменьши|растяни|сожми)\b/i,
   /\b(перекрась|перекрасить|покрась|раскрась)\b/i,
+  /\b(подправь|отретушируй|откорректируй|подкорректируй)\b/i,
+  /\b(преврати|преобразуй)\s+(в|как)\s/i,
   /\b(убери|замени|размой|удали)\s+(фон|задн)/i,
-  /\b(стилизуй|стилизовать|в стиле)\b/i,
+  /\b(стилизуй|стилизовать|в стиле|как у)\b/i,
   /\b(улучши|улучшить|апскейл|upscale)\b/i,
   /\b(edit|modify|change|fix|remove|add|replace|crop|rotate|flip|enhance|brighten|darken)\b/i,
   /\b(make\s+it|make\s+the)\s/i,
@@ -832,6 +835,7 @@ export function detectImageEditIntent(text: string): boolean {
 export function extractEditPrompt(text: string): string {
   let prompt = text.trim();
   prompt = prompt.replace(/^(пожалуйста\s*,?\s*|ну\s+|а\s+|эй\s*,?\s*|слушай\s*,?\s*|амина\s*,?\s*)/i, '');
+  prompt = prompt.replace(/^(можешь|сможешь|попробуй|могла бы)\s+(убрать|удалить|добавить|изменить|заменить|сделать|подправить|отредактировать)\s*/i, '');
   prompt = prompt.replace(/\s*(на\s+этой\s+картинке|на\s+этом\s+фото|на\s+фото|на\s+картинке|на\s+изображении|this\s+image|this\s+photo)[.!?]?\s*$/i, '');
   prompt = prompt.replace(/[,\s]*(пожалуйста|плиз|please)[.!?]*$/i, '');
   prompt = prompt.replace(/[.!?]+$/, '');
@@ -848,7 +852,15 @@ async function translateEditPromptToEnglish(prompt: string): Promise<string> {
   try {
     const { aiService } = await import('./openrouter.js');
     const response = await aiService.complete(
-      'You are a translator for image editing instructions. Translate the following Russian image editing instruction to English. Output ONLY the English translation. Be precise and concise. Do NOT add quotes or explanations.\n\nTranslate: ' + prompt,
+      'You are a specialized translator for AI image editing instructions.\n' +
+      'Translate the Russian editing instruction to English.\n\n' +
+      'RULES:\n' +
+      '1. Preserve imperative mood ("remove", "add", "make brighter" — NOT "please remove")\n' +
+      '2. Keep spatial references accurate ("left", "right", "center", "top", "bottom")\n' +
+      '3. Preserve color names and style references ("Van Gogh style", "anime style")\n' +
+      '4. For compound instructions, translate ALL parts\n' +
+      '5. Output ONLY the English translation, nothing else\n\n' +
+      'Translate: ' + prompt,
       'telegram',
     );
     const translated = response?.trim();
@@ -955,7 +967,14 @@ export async function editImage(
             },
             {
               type: 'text',
-              text: `Edit this image: ${translatedPrompt}. Return ONLY the edited image.`,
+              text: `You are a professional image editor. Apply this edit precisely:\n\n` +
+                `INSTRUCTION: ${translatedPrompt}\n\n` +
+                `RULES:\n` +
+                `- Make ONLY the requested change, preserve everything else\n` +
+                `- Maintain the original resolution, composition, and quality\n` +
+                `- If removing an object, fill the area naturally with the surrounding context\n` +
+                `- If changing colors/style, keep the subject recognizable\n` +
+                `- Return ONLY the edited image, no text`,
             },
           ],
         }],

@@ -16,16 +16,26 @@ import { aiLogger } from '../config/logger.js';
 
 const MAX_AI_RETRIES = 2;
 const AI_RETRY_DELAY_MS = 2000;
+const MAX_MINUTES_RANGE = 1440; // 24 часа в минутах
+const MAX_HOURS_RANGE = 72;
+const ONE_YEAR_MS = 365 * 24 * 60 * 60 * 1000;
+const MIN_TASK_LENGTH = 3;
 
 // --------------------------------------------
 // Intent Detection (regex, без AI-вызова)
 // --------------------------------------------
 
+/**
+ * Требуем наличие временного контекста для "напомни/напомнить" — 
+ * иначе "напомни что такое ООП" ложно перехватывается как создание напоминания.
+ * Паттерны без временного контекста ("не забыть", "поставь напоминание") достаточно специфичны.
+ */
+const TIME_CONTEXT = '(?=.*(?:через|завтра|послезавтра|утром|вечером|днём|ночью|в\\s+\\d{1,2}[:.\\s]|в\\s+понедельник|в\\s+вторник|в\\s+среду|в\\s+четверг|в\\s+пятницу|в\\s+субботу|в\\s+воскресенье|минут|час|in\\s+\\d+\\s*(?:min|hour|sec|day|week)|tomorrow|tonight|at\\s+\\d))';
+
 const REMINDER_PATTERNS = [
-  /напомни/i,
-  /напоминани/i,
-  /напомнить/i,
-  /remind/i,
+  new RegExp(`напомни${TIME_CONTEXT}`, 'i'),
+  new RegExp(`напомнить${TIME_CONTEXT}`, 'i'),
+  new RegExp(`remind${TIME_CONTEXT}`, 'i'),
   /не забыть/i,
   /не забудь/i,
   /поставь.{0,20}напомин/i,
@@ -85,7 +95,7 @@ function extractTaskFromText(text: string): string {
     .trim();
 
   // Если ничего не осталось — берём оригинал без "напомни"
-  if (task.length < 3) {
+  if (task.length < MIN_TASK_LENGTH) {
     task = text.replace(/^(напомни|напомнить)\s*(мне|нам)?\s*/i, '').trim();
   }
 
@@ -136,7 +146,7 @@ function parseSimpleTime(text: string): RegexTimeMatch | null {
   const minuteMatch = text.match(/через\s+(\d+)\s*(минут\w*|мин)/i);
   if (minuteMatch) {
     const n = parseInt(minuteMatch[1]!, 10);
-    if (n >= 1 && n <= 1440) { // от 1 мин до 24 часов
+    if (n >= 1 && n <= MAX_MINUTES_RANGE) {
       return { offsetMs: n * MINUTE_MS, label: `через ${n} мин.` };
     }
   }
@@ -145,7 +155,7 @@ function parseSimpleTime(text: string): RegexTimeMatch | null {
   const hourMatch = text.match(/через\s+(\d+)\s*(час\w*)/i);
   if (hourMatch) {
     const n = parseInt(hourMatch[1]!, 10);
-    if (n >= 1 && n <= 72) {
+    if (n >= 1 && n <= MAX_HOURS_RANGE) {
       const hoursLabel = n === 1 ? 'час' : (n < 5 ? 'часа' : 'часов');
       return { offsetMs: n * HOUR_MS, label: `через ${n} ${hoursLabel}` };
     }
@@ -307,9 +317,7 @@ ISO: ${minskTime}
         return null;
       }
 
-      // Максимум 1 год вперёд
-      const oneYearMs = 365 * 24 * 60 * 60 * 1000;
-      if (scheduledDate.getTime() > now.getTime() + oneYearMs) {
+      if (scheduledDate.getTime() > now.getTime() + ONE_YEAR_MS) {
         aiLogger.warn({ scheduled_at: parsed.scheduled_at }, 'Reminder date too far in the future');
         return null;
       }

@@ -8,7 +8,7 @@ import { aiLogger, getLogs, getLogStats } from '../config/logger.js';
 import { rateLimitHook } from '../utils/rate-limiter.js';
 import { getAllAudioModels, getFreeVisionModels, refreshFreeVisionModelsCache, getVisionFallbackStatus } from '../ai/multimodal.js';
 import { getSearchModelInfo, getAvailableModels, isWebSearchEnabled, clearPerplexityCache } from '../ai/websearch.js';
-import { userProfileRepo, userMemoryRepo, userLogsRepo } from '../memory/user-memory.js';
+import { userProfileRepo, userMemoryRepo, userLogsRepo, type UserLog } from '../memory/user-memory.js';
 import { config, clearApiKeysCache, getApiKeys } from '../config/index.js';
 import { getConfiguredSites, saveConfiguredSites, parseNewsFromSite } from '../features/news-parser.js';
 import { invalidateTTSConfig } from '../features/tts.js';
@@ -1247,7 +1247,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
             const { event_type, from, to, limit } = request.query;
 
             const logs = await userLogsRepo.getByUser(userId, {
-              eventType: event_type as any,
+              eventType: event_type as UserLog['event_type'],
               from: from ? new Date(from) : undefined,
               to: to ? new Date(to) : undefined,
               limit: limit ? parseInt(limit, 10) : 100,

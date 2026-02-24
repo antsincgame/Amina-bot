@@ -94,13 +94,13 @@ async function processReminders(bot: BotLike): Promise<void> {
             { id: reminder.id, userId: reminder.user_id },
             'User blocked bot, marking reminder completed'
           );
-          await remindersRepo.markCompleted(reminder.id).catch(() => {});
+          await remindersRepo.markCompleted(reminder.id).catch(e => appLogger.debug({ error: e }, 'markCompleted failed'));
         } else {
           appLogger.error(
             { error: sendError, id: reminder.id, userId: reminder.user_id },
             'Failed to send reminder'
           );
-          await remindersRepo.markFailed(reminder.id).catch(() => {});
+          await remindersRepo.markFailed(reminder.id).catch(e => appLogger.debug({ error: e }, 'markFailed failed'));
         }
       }
     }
