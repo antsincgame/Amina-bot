@@ -551,19 +551,21 @@ export async function transcribeAudioGroq(
   aiLogger.info({ filename, size: audioBuffer.length, mimeType }, 'Transcribing audio via Groq Whisper (FREE)');
 
   try {
-    // Создаём File-like объект с правильным MIME типом
     const file = new File([audioBuffer], filename, { type: mimeType });
 
-    const whisperModel = modelOverride || 'whisper-large-v3';
+    const rawModel = modelOverride || 'whisper-large-v3';
+    const whisperModel = rawModel.replace(/^groq\//, '');
+
+    aiLogger.debug({ whisperModel, rawModel }, 'Sending to Groq Whisper API');
+
     const response = await groq.audio.transcriptions.create({
       file,
       model: whisperModel,
     });
 
-    // response - объект с text
     const text = response.text;
 
-    aiLogger.info({ textLength: text.length }, 'Groq Whisper transcription complete (FREE)');
+    aiLogger.info({ textLength: text.length, model: whisperModel }, 'Groq Whisper transcription complete (FREE)');
 
     return {
       text: text.trim(),
