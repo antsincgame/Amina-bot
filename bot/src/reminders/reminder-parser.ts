@@ -36,11 +36,30 @@ const REMINDER_PATTERNS = [
   /в\s+\d{1,2}[:.]\d{2}\s+(сделать|купить|позвонить|написать|проверить|отправить|забрать|встретить|оплатить)/i,
 ];
 
+/** Запросы на ПРОСМОТР напоминаний (не создание) */
+const REMINDER_LIST_PATTERNS = [
+  /\b(список|покажи|предоставь|выведи|открой|просмотр)\b.{0,15}(напомин|remind)/i,
+  /\b(мои|все|активн|текущ)\b.{0,10}(напомин|remind)/i,
+  /\b(напомин|remind).{0,10}(список|все|мои|покажи|сколько|какие|есть)\b/i,
+  /^(напоминания|reminders)$/i,
+  /\bwhat.{0,10}remind/i,
+  /\bshow.{0,10}remind/i,
+];
+
 /**
- * Быстрая проверка: похоже ли сообщение на запрос напоминания?
+ * Проверка: пользователь хочет ПОСМОТРЕТЬ список напоминаний (а не создать)?
+ */
+export function detectReminderListIntent(text: string): boolean {
+  return REMINDER_LIST_PATTERNS.some(pattern => pattern.test(text));
+}
+
+/**
+ * Быстрая проверка: похоже ли сообщение на запрос СОЗДАНИЯ напоминания?
  * Без вызова AI, чистый regex.
+ * Исключает запросы на просмотр списка напоминаний.
  */
 export function detectReminderIntent(text: string): boolean {
+  if (detectReminderListIntent(text)) return false;
   return REMINDER_PATTERNS.some(pattern => pattern.test(text));
 }
 

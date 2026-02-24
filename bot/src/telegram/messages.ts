@@ -28,7 +28,7 @@ import {
   memoryContextBuilder,
   type TelegramUserInfo,
 } from '../memory/user-memory.js';
-import { detectReminderIntent, extractReminder } from '../reminders/reminder-parser.js';
+import { detectReminderIntent, detectReminderListIntent, extractReminder } from '../reminders/reminder-parser.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';
 import { detectImageGenIntent, extractImagePrompt, generateImage, classifyImageIntentGroq, isAIResponseAboutImages, detectImageEditIntent, editImage } from '../ai/image-gen.js';
 import { notesRepo } from '../features/notes-repo.js';
@@ -215,7 +215,32 @@ const handleAutoDetections = async (
   userId: string,
   chatId: number,
 ): Promise<boolean> => {
-  // === Напоминания ===
+  // === Список напоминаний (НЕ создание, а просмотр) ===
+  if (detectReminderListIntent(text)) {
+    try {
+      const reminders = await remindersRepo.getByUser(userId);
+      if (reminders.length === 0) {
+        await ctx.reply('⏰ У тебя нет активных напоминаний.\n\nНапиши, например: «Напомни через 2 часа позвонить маме»');
+      } else {
+        const lines = reminders.map((r, i) => {
+          const dateStr = new Date(r.scheduled_at).toLocaleString('ru-RU', {
+            day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Minsk',
+          });
+          return `${i + 1}. ${escapeHtml(r.task)}\n   ⏰ ${dateStr}`;
+        });
+        await ctx.reply(
+          `⏰ <b>Напоминания (${reminders.length}):</b>\n\n${lines.join('\n\n')}\n\n<i>Отмена: /remind_cancel номер</i>`,
+          { parse_mode: 'HTML' }
+        );
+      }
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to list reminders');
+      await ctx.reply('😔 Не удалось загрузить напоминания.');
+    }
+    return true;
+  }
+
+  // === Напоминания (создание) ===
   if (detectReminderIntent(text)) {
     try {
       const extracted = await extractReminder(text, new Date());
