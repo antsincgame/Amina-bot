@@ -36,11 +36,14 @@ let bot: ReturnType<typeof createBot> | null = null;
 
 const setupRoutes = async (server: FastifyInstance): Promise<void> => {
   // Register CORS
-  const allowedOrigins = process.env.ADMIN_URL
-    ? [process.env.ADMIN_URL]
-    : true;
+  const allowedOrigins: string[] = [];
+  if (process.env.ADMIN_URL) allowedOrigins.push(process.env.ADMIN_URL);
+  // Домены сайтов, которые шлют заявки через /api/leads
+  const leadOrigins = (process.env.LEAD_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+  allowedOrigins.push(...leadOrigins);
+
   await server.register(cors, {
-    origin: allowedOrigins,
+    origin: allowedOrigins.length > 0 ? allowedOrigins : true,
     credentials: true,
   });
 

@@ -43,6 +43,11 @@ const chatCompletionRequestSchema = z.object({
 
 type ChatCompletionRequest = z.infer<typeof chatCompletionRequestSchema>;
 
+/** HTML escape для lead сообщений (не зависит от telegram/format.ts) */
+function escapeHtmlSimple(text: string): string {
+  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 // --------------------------------------------
 // API Routes
 // --------------------------------------------
@@ -1510,6 +1515,110 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
           } catch (error) {
             const msg = error instanceof Error ? error.message : 'Unknown error';
             return reply.code(500).send({ success: false, error: msg });
+          }
+        },
+      );
+
+      // ============================================
+      // Leads (заявки с сайтов → Telegram админу)
+      // ============================================
+
+      const leadSchema = z.object({
+        name: z.string().min(1).max(200),
+        phone: z.string().min(1).max(50),
+        email: z.string().email().optional().or(z.literal('')),
+        tariff: z.string().max(200).optional(),
+        comment: z.string().max(2000).optional(),
+        source: z.string().max(200).optional(),
+      });
+
+      /**
+       * POST /api/leads
+       * Принимает заявку с сайта и отправляет уведомление админу в Telegram.
+       * admin_chat_id задаётся в настройках (Settings → admin_chat_id).
+       * Не трогает существующую логику бота — использует Telegram API напрямую.
+       */
+      apiServer.post(
+        '/leads',
+        async (request: FastifyRequest, reply: FastifyReply) => {
+          try {
+            const body = leadSchema.parse(request.body);
+
+            // Получаем admin_chat_id из настроек
+            const adminChatId = await settingsRepo.get('admin_chat_id');
+            if (!adminChatId) {
+              aiLogger.warn('Lead received but admin_chat_id not configured');
+              return reply.code(200).send({
+                success: true,
+                warning: 'Lead accepted but admin notification not configured',
+              });
+            }
+
+            // Формируем сообщение
+            const now = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Minsk' });
+            const lines = [
+              '📩 <b>Новая заявка!</b>',
+              '',
+              `👤 <b>Имя:</b> ${escapeHtmlSimple(body.name)}`,
+              `📞 <b>Телефон:</b> ${escapeHtmlSimple(body.phone)}`,
+            ];
+            if (body.email) lines.push(`✉️ <b>Email:</b> ${escapeHtmlSimple(body.email)}`);
+            if (body.tariff) lines.push(`📦 <b>Тариф:</b> ${escapeHtmlSimple(body.tariff)}`);
+            if (body.comment) lines.push(`💬 <b>Комментарий:</b> ${escapeHtmlSimple(body.comment)}`);
+            if (body.source) lines.push(`🌐 <b>Источник:</b> ${escapeHtmlSimple(body.source)}`);
+            lines.push(`🕐 ${now}`);
+
+            const text = lines.join('\n');
+
+            // Отправляем через Telegram Bot API напрямую (не зависит от bot instance)
+            const token = config.telegram.token;
+            const tgResponse = await fetch(
+              `https://api.telegram.org/bot${token}/sendMessage`,
+              {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  chat_id: adminChatId,
+                  text,
+                  parse_mode: 'HTML',
+                }),
+              },
+            );
+
+            if (!tgResponse.ok) {
+              const errBody = await tgResponse.text();
+              aiLogger.error({ status: tgResponse.status, body: errBody }, 'Failed to send lead to Telegram');
+              return reply.code(200).send({
+                success: true,
+                warning: 'Lead accepted but Telegram notification failed',
+              });
+            }
+
+            aiLogger.info({ source: body.source, name: body.name }, '📩 Lead sent to admin');
+
+            // Логируем в аналитику (fire-and-forget)
+            const { analyticsRepo } = await import('../db/supabase.js');
+            analyticsRepo.log('message_received', 'telegram', {
+              event: 'lead_received',
+              source: body.source,
+              name: body.name,
+              phone: body.phone,
+            }).catch(() => {});
+
+            return reply.code(200).send({ success: true });
+          } catch (error) {
+            if (error instanceof z.ZodError) {
+              return reply.code(400).send({
+                success: false,
+                error: 'Invalid lead data',
+                details: error.errors,
+              });
+            }
+            aiLogger.error({ error }, 'Lead endpoint error');
+            return reply.code(500).send({
+              success: false,
+              error: 'Internal server error',
+            });
           }
         },
       );

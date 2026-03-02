@@ -29,6 +29,9 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
+      # Домены сайтов для /api/leads (CORS)
+      - key: LEAD_ORIGINS
+        value: https://vibecoding.by,https://grodno.vibecoding.by
     autoDeploy: true
 
   # ===========================================
