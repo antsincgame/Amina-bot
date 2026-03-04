@@ -21,7 +21,7 @@ import { userPrefsRepo } from '../features/user-prefs-repo.js';
 import { sendDigestNow } from '../features/digest-scheduler.js';
 import { parseAllConfiguredSites, getConfiguredSites } from '../features/news-parser.js';
 import { escapeMarkdown, escapeHtml, sendLongMessage } from './format.js';
-import { makeCall, getCallHistory, isTelephonyAllowed } from '../features/telephony/lirax.js';
+import { connectCall, getCallHistory, isTelephonyAllowed, getLiraXConfig } from '../features/telephony/lirax.js';
 import { aiService } from '../ai/openrouter.js';
 import type { AIMessage } from '../../../shared/types/index.js';
 import {
@@ -553,15 +553,21 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
     const input = ctx.match?.trim() || '';
 
+    const cfg = await getLiraXConfig();
+    const hasOperatorPhone = !!cfg.operatorPhone;
+
     if (!input) {
+      const modeHint = hasOperatorPhone
+        ? `Режим: <b>реальный номер</b> (${escapeHtml(cfg.operatorPhone)} → клиент)`
+        : `⚠️ Задайте <b>Телефон оператора</b> в админке для звонков на реальные номера`;
+
       await ctx.reply(
         '📞 <b>Телефония Amina</b>\n\n' +
         '<b>Простой звонок:</b>\n' +
         '<code>/call +375291234567</code>\n\n' +
-        '<b>Звонок с заданием:</b>\n' +
-        '<code>/call +375291234567 напомни о встрече завтра в 14:00</code>\n' +
-        '<code>/call +375291234567 уточни готовность заказа</code>\n\n' +
-        'Amina сама разберёт номер и задачу, сформирует сценарий звонка.',
+        '<b>Звонок с голосовым сообщением:</b>\n' +
+        '<code>/call +375291234567 напомни о встрече завтра в 14:00</code>\n\n' +
+        `${modeHint}`,
         { parse_mode: 'HTML' },
       );
       return;
@@ -584,21 +590,25 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
       return;
     }
 
-    telegramLogger.info({ userId, phone, instruction }, '[LiraX] call command');
+    telegramLogger.info({ userId, phone, instruction, hasOperatorPhone }, '[LiraX] call command');
 
     if (!instruction) {
       try {
-        const result = await makeCall(phone);
+        const result = await connectCall(phone);
+        const modeLabel = result.mode === 'make2calls'
+          ? `АТС звонит на ${escapeHtml(cfg.operatorPhone)}, затем соединит с абонентом.`
+          : 'АТС звонит на SIP-оператора, затем соединит с абонентом.';
+
         await ctx.reply(
           `📞 <b>Звонок инициирован!</b>\n\n` +
           `📱 Номер: <code>${escapeHtml(phone)}</code>\n` +
-          `🆔 ID: <code>${result.id_makecall}</code>\n\n` +
-          `АТС звонит менеджеру, затем соединит с абонентом.`,
+          `🆔 ID: <code>${result.id}</code>\n\n` +
+          modeLabel,
           { parse_mode: 'HTML' },
         );
       } catch (error) {
         const msg = error instanceof Error ? error.message : 'Неизвестная ошибка';
-        telegramLogger.error({ error, userId, phone }, '[LiraX] makeCall failed');
+        telegramLogger.error({ error, userId, phone }, '[LiraX] connectCall failed');
         await ctx.reply(
           `❌ <b>Ошибка звонка:</b>\n<code>${escapeHtml(msg)}</code>`,
           { parse_mode: 'HTML' },
@@ -608,16 +618,18 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     }
 
     try {
-      const systemPrompt = `Ты — телефонный ассистент Amina. Пользователь хочет позвонить и дал инструкцию.
-Сформируй краткий текст задания для оператора и определи тип звонка.
+      const systemPrompt = `Ты — телефонный ассистент Amina. Пользователь хочет позвонить клиенту и дал инструкцию.
+Проанализируй инструкцию и определи:
+1. Нужно ли голосовое сообщение (TTS) клиенту при соединении?
+2. Краткое описание задачи.
 
-Номер: ${phone}
+Номер клиента: ${phone}
 Инструкция: ${instruction}
 
 Ответь СТРОГО в JSON:
 {
-  "summary": "краткое описание задачи для оператора (1-2 предложения)",
-  "speech_text": "текст для автоматического приветствия (если нужно TTS), или null для обычного звонка",
+  "summary": "краткое описание задачи (1-2 предложения)",
+  "speech_text": "текст голосового сообщения для клиента (на русском, без 'ru ' префикса), или null если просто соединить",
   "type": "simple" | "tts"
 }`;
 
@@ -635,14 +647,25 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
         parsed = { summary: instruction, speech_text: null, type: 'simple' };
       }
 
-      const result = await makeCall(phone);
+      const speechText = parsed.type === 'tts' && parsed.speech_text
+        ? parsed.speech_text
+        : undefined;
+
+      const result = await connectCall(phone, speechText);
+      const modeLabel = result.mode === 'make2calls'
+        ? `АТС звонит на ${escapeHtml(cfg.operatorPhone)}, затем соединит с абонентом.`
+        : 'АТС звонит на SIP-оператора, затем соединит с абонентом.';
+
+      const speechInfo = speechText
+        ? `\n🔊 Голосовое: <i>${escapeHtml(speechText)}</i>`
+        : '';
 
       await ctx.reply(
         `📞 <b>Звонок инициирован!</b>\n\n` +
         `📱 Номер: <code>${escapeHtml(phone)}</code>\n` +
-        `📋 Задание: ${escapeHtml(parsed.summary)}\n` +
-        `🆔 ID: <code>${result.id_makecall}</code>\n\n` +
-        `АТС звонит менеджеру, затем соединит с абонентом.`,
+        `📋 Задание: ${escapeHtml(parsed.summary)}${speechInfo}\n` +
+        `🆔 ID: <code>${result.id}</code>\n\n` +
+        modeLabel,
         { parse_mode: 'HTML' },
       );
     } catch (error) {

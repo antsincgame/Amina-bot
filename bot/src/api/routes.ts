@@ -17,7 +17,7 @@ import {
   verifyWebhookToken,
   formatCallEvent,
   clearLiraXConfigCache,
-  makeCall,
+  connectCall,
   getTelephonyUsers,
   addTelephonyUser,
   removeTelephonyUser,
@@ -1894,17 +1894,17 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
       apiServer.post(
         '/lirax/test-call',
         async (
-          request: FastifyRequest<{ Body: { phone: string; ext?: string } }>,
+          request: FastifyRequest<{ Body: { phone: string; speech?: string } }>,
           reply: FastifyReply,
         ) => {
           try {
-            const { phone, ext } = request.body as { phone: string; ext?: string };
+            const { phone, speech } = request.body as { phone: string; speech?: string };
             if (!phone) {
               return reply.code(400).send({ success: false, error: 'phone is required' });
             }
 
-            const result = await makeCall(phone, ext);
-            aiLogger.info({ phone, ext, result }, '[LiraX] Test call initiated');
+            const result = await connectCall(phone, speech);
+            aiLogger.info({ phone, result }, '[LiraX] Test call initiated');
 
             return reply.code(200).send({ success: true, data: result });
           } catch (error) {

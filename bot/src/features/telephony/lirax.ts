@@ -20,6 +20,7 @@ export interface LiraXConfig {
   token: string;
   webhookToken: string;
   defaultExt: string;
+  operatorPhone: string;
 }
 
 let configCache: LiraXConfig | null = null;
@@ -32,6 +33,7 @@ export async function getLiraXConfig(): Promise<LiraXConfig> {
     'lirax_token',
     'lirax_webhook_token',
     'lirax_default_ext',
+    'lirax_operator_phone',
   ]);
 
   // DB имеет приоритет над env vars для токенов — позволяет менять без редеплоя
@@ -48,8 +50,9 @@ export async function getLiraXConfig(): Promise<LiraXConfig> {
     settings['lirax_default_ext'] ||
     process.env.LIRAX_DEFAULT_EXT ||
     '201';
+  const operatorPhone = settings['lirax_operator_phone'] || '';
 
-  configCache = { url, token, webhookToken, defaultExt };
+  configCache = { url, token, webhookToken, defaultExt, operatorPhone };
   return configCache;
 }
 
@@ -153,6 +156,40 @@ export async function make2Calls(params: {
 
   const result = await liraXRequest('make2Calls', body);
   return result as Make2CallsResult;
+}
+
+export interface ConnectCallResult {
+  id: string;
+  mode: 'make2calls' | 'makecall';
+}
+
+/**
+ * Умный звонок: если задан operatorPhone — make2Calls (мобильный→мобильный),
+ * иначе fallback на makeCall (SIP ext → мобильный).
+ */
+export async function connectCall(
+  targetPhone: string,
+  speech?: string,
+): Promise<ConnectCallResult> {
+  const cfg = await getLiraXConfig();
+
+  if (cfg.operatorPhone) {
+    const params: Record<string, string | number> = {
+      from: cfg.defaultExt,
+      to1: cfg.operatorPhone,
+      to2: targetPhone,
+    };
+    if (speech) params['speech'] = `ru ${speech}`;
+
+    const result = await liraXRequest('make2Calls', params) as Make2CallsResult;
+    return { id: result.id_make2calls, mode: 'make2calls' };
+  }
+
+  const result = await liraXRequest('makeCall', {
+    from: cfg.defaultExt,
+    to: targetPhone,
+  }) as MakeCallResult;
+  return { id: result.id_makecall, mode: 'makecall' };
 }
 
 export interface CallRecord {

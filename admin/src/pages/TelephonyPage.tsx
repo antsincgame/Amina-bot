@@ -165,6 +165,7 @@ const TelephonyPage = () => {
   const [adminChatId, setAdminChatId] = useState('7867087040');
   const [webhookToken, setWebhookToken] = useState('');
   const [defaultExt, setDefaultExt] = useState('201');
+  const [operatorPhone, setOperatorPhone] = useState('');
   const [notifyCalls, setNotifyCalls] = useState(true);
   const [notifyRecords, setNotifyRecords] = useState(true);
   const [settingsSaved, setSettingsSaved] = useState(false);
@@ -234,6 +235,7 @@ const TelephonyPage = () => {
     setAdminChatId(map.get('lirax_admin_chat_id') || '7867087040');
     setWebhookToken(map.get('lirax_webhook_token') || '');
     setDefaultExt(map.get('lirax_default_ext') || '201');
+    setOperatorPhone(map.get('lirax_operator_phone') || '');
     setNotifyCalls(map.get('lirax_notify_calls') !== 'false');
     setNotifyRecords(map.get('lirax_notify_records') !== 'false');
   }, [allSettings]);
@@ -246,6 +248,7 @@ const TelephonyPage = () => {
         lirax_admin_chat_id: adminChatId,
         lirax_webhook_token: webhookToken,
         lirax_default_ext: defaultExt,
+        lirax_operator_phone: operatorPhone,
         lirax_notify_calls: notifyCalls ? 'true' : 'false',
         lirax_notify_records: notifyRecords ? 'true' : 'false',
       });
@@ -502,10 +505,28 @@ const TelephonyPage = () => {
             </p>
           </div>
 
+          {/* Operator Phone */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1.5">
+              📱 Телефон оператора (реальный номер)
+            </label>
+            <input
+              type="tel"
+              className="input w-full"
+              value={operatorPhone}
+              onChange={(e) => setOperatorPhone(e.target.value)}
+              placeholder="+375291234567"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              <b>Главная настройка для звонков!</b> При /call АТС сначала позвонит на этот номер, затем соединит с клиентом.
+              Без SIP-телефона — только реальные мобильные.
+            </p>
+          </div>
+
           {/* Default Extension */}
           <div>
             <label className="block text-sm font-medium text-gray-300 mb-1.5">
-              Внутренний номер по умолчанию
+              Внутренний номер (ext)
             </label>
             <input
               type="text"
@@ -515,7 +536,7 @@ const TelephonyPage = () => {
               placeholder="201"
             />
             <p className="text-xs text-gray-500 mt-1">
-              Номер оператора, которому АТС звонит первым при исходящих вызовах
+              Внутренний номер АТС для маршрутизации (используется как caller ID)
             </p>
           </div>
 
