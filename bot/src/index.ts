@@ -210,9 +210,20 @@ const initBotAndServices = async (webhookAlreadySet: boolean): Promise<void> => 
       });
       appLogger.info('🔗 Telegram webhook activated');
     } catch (err) {
-      appLogger.warn({ error: err }, '⚠️ Failed to set webhook');
+      appLogger.warn({ error: err }, '⚠️ Failed to set webhook — falling back to polling');
+      bot.start({
+        onStart: (botInfo) => appLogger.info({ username: botInfo.username }, '🤖 Bot started (polling fallback)'),
+      }).catch(pollErr => appLogger.error({ error: pollErr?.message ?? pollErr }, '❌ Polling fallback failed'));
     }
-  } else if (!config.isProd) {
+  } else {
+    appLogger.info(config.isProd
+      ? '⚠️ WEBHOOK_URL not set in production — starting polling mode'
+      : '🔄 Development mode — starting polling');
+    try {
+      await bot.api.deleteWebhook();
+    } catch {
+      appLogger.debug('deleteWebhook skipped');
+    }
     bot.start({
       onStart: (botInfo) => {
         appLogger.info({ username: botInfo.username }, '🤖 Bot started (polling)');
