@@ -841,10 +841,11 @@ export const memoryContextBuilder = {
       parts.push(memoryContext);
     }
     
-    parts.push(`\n=== ИНСТРУКЦИИ ===`);
-    parts.push(`Используй эту информацию для персонализированных ответов.`);
-    parts.push(`Обращайся к пользователю по имени когда уместно.`);
-    parts.push(`Помни о его предпочтениях и контексте.`);
+    parts.push(`\n=== ОБЯЗАТЕЛЬНЫЕ ИНСТРУКЦИИ ===`);
+    parts.push(`ОБЯЗАТЕЛЬНО используй имя пользователя "${userName}" в ответе.`);
+    parts.push(`Используй факты выше для персонализированных ответов.`);
+    parts.push(`Помни о предпочтениях и контексте этого конкретного человека.`);
+    parts.push(`НИКОГДА не пиши [Имя] или [Name] — только реальное имя: ${userName}.`);
     
     const result = parts.join('\n');
     setCachedMemoryContext(userId, result);

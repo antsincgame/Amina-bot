@@ -665,18 +665,31 @@ const processMessageThroughAI = async (
   // Build context in parallel
   const { memoryContext, webSearchContext } = await buildFullContext(userId, userText, telegramInfo.first_name, telegramInfo, alreadyGreetedToday);
 
-  // Add to history
+  // Build user message — inject user name/context directly so weak models can't miss it
+  const userName = telegramInfo.first_name || telegramInfo.username || null;
+  const contextPrefix = userName
+    ? `[Меня зовут ${userName}. Обращайся ко мне по имени.]\n`
+    : '';
+  const augmentedUserText = contextPrefix + userText;
+
+  // Add to history (original text without prefix to keep history clean)
   ctx.session.messageHistory.push({ role: 'user', content: userText });
   if (ctx.session.messageHistory.length > MAX_HISTORY_MESSAGES) {
     ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
   }
 
+  // Build messages with augmented last message for the AI call
+  const messagesForAI: typeof ctx.session.messageHistory = [
+    ...ctx.session.messageHistory.slice(0, -1),
+    { role: 'user', content: augmentedUserText },
+  ];
+
   // Build full context with search warning
   let fullContext = memoryContext + webSearchContext;
   fullContext = addSearchWarning(fullContext, userText, webSearchContext, userId);
 
-  // Get AI response
-  let aiResponse = await aiService.chat(ctx.session.messageHistory, 'telegram', fullContext);
+  // Get AI response (use augmented messages so name is always visible to model)
+  let aiResponse = await aiService.chat(messagesForAI, 'telegram', fullContext);
 
   // Enhance with web search if AI is uncertain
   if (!webSearchContext) {
@@ -691,6 +704,18 @@ const processMessageThroughAI = async (
   // Применяем ко ВСЕМ типам сообщений (text + voice), т.к. голосовые проходят
   // тот же AI pipeline и бесплатные LLM отказывают одинаково для обоих типов
   aiResponse = await processAIResponse(aiResponse, userText, userId, webSearchContext);
+
+  // Replace placeholder [Имя]/[Name] that weak models sometimes leave
+  if (userName) {
+    aiResponse = {
+      ...aiResponse,
+      content: aiResponse.content
+        .replace(/\[Имя\]/gi, userName)
+        .replace(/\[Name\]/gi, userName)
+        .replace(/\[Пользователь\]/gi, userName)
+        .replace(/\[User\]/gi, userName),
+    };
+  }
 
   // Save to history (skip gibberish to avoid poisoning context)
   if (!isGibberish(aiResponse.content)) {
