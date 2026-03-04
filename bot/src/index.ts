@@ -251,6 +251,8 @@ const start = async (): Promise<void> => {
         onStart: (botInfo) => {
           appLogger.info({ username: botInfo.username }, '🤖 Bot started (polling mode)');
         },
+      }).catch((err) => {
+        appLogger.error({ error: err?.message ?? err }, '❌ Bot polling start failed — продолжаем без polling');
       });
     }
 
