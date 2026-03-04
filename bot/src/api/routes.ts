@@ -15,7 +15,7 @@ import { invalidateTTSConfig } from '../features/tts.js';
 import { voiceMessagesRepo } from '../features/voice-messages-repo.js';
 import { verifyWebhookToken, formatCallEvent, clearLiraXConfigCache, makeCall, type LiraXWebhookPayload, type LiraXEventPayload } from '../features/telephony/lirax.js';
 import archiver from 'archiver';
-import type { Message, Conversation, LogLevel } from '../../../shared/types/index.js';
+import type { Message, AIMessage, Conversation, LogLevel } from '../../../shared/types/index.js';
 
 // --------------------------------------------
 // Request Schemas
@@ -1965,9 +1965,9 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
 - Текст speech/hello/ask/bye/ok всегда начинается с "ru " для русского языка
 - Не добавляй ничего кроме JSON`;
 
-            const messages: Message[] = [
-              { role: 'system', content: systemPrompt, timestamp: new Date().toISOString() },
-              { role: 'user', content: rule, timestamp: new Date().toISOString() },
+            const messages: AIMessage[] = [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: rule },
             ];
 
             const aiResult = await aiService.chat(messages);
