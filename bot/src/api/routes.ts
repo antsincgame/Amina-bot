@@ -1709,9 +1709,6 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
        */
       apiServer.post(
         '/lirax',
-        {
-          config: { rawBody: true },
-        },
         async (request: FastifyRequest, reply: FastifyReply) => {
           try {
             // LiraX шлёт application/x-www-form-urlencoded — Fastify парсит в request.body
