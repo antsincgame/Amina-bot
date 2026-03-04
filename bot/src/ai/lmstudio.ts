@@ -18,7 +18,7 @@ interface LMStudioModel {
 }
 
 const HEALTH_CACHE_TTL_MS = 30_000;
-const HEALTH_CHECK_TIMEOUT_MS = 3_000;
+const HEALTH_CHECK_TIMEOUT_MS = 8_000;
 const CONFIG_CACHE_TTL_MS = 60_000;
 const DEFAULT_API_KEY = 'lm-studio';
 
@@ -110,7 +110,7 @@ export async function checkLMStudioHealth(cfg: LMStudioConfig): Promise<boolean>
 
 export async function fetchLMStudioModels(cfg: LMStudioConfig): Promise<LMStudioModel[]> {
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 5_000);
+  const timeoutId = setTimeout(() => controller.abort(), 10_000);
 
   const modelsUrl = cfg.url.endsWith('/v1')
     ? `${cfg.url}/models`
