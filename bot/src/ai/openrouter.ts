@@ -10,15 +10,28 @@ import { SingleCache } from '../utils/cache.js';
 // Динамический поиск бесплатных моделей через OpenRouter API
 // --------------------------------------------
 
-const STATIC_FREE_MODELS = [
-  'meta-llama/llama-3.2-3b-instruct:free',
-  'mistralai/mistral-7b-instruct:free',
-  'google/gemma-2-9b-it:free',
+const RUSSIAN_CAPABLE_MODELS: ReadonlySet<string> = new Set([
   'meta-llama/llama-3.1-8b-instruct:free',
-  'qwen/qwen-2-7b-instruct:free',
-  'huggingfaceh4/zephyr-7b-beta:free',
-  'openchat/openchat-7b:free',
+  'meta-llama/llama-3.2-3b-instruct:free',
+  'google/gemma-2-9b-it:free',
+  'mistralai/mistral-7b-instruct:free',
+  'microsoft/phi-3-mini-128k-instruct:free',
+]);
+
+const BLOCKED_MODEL_PATTERNS = [
+  'qwen', 'yi-', 'baichuan', 'deepseek', 'sakura', 'japanese',
+  'chinese', 'zephyr', 'openchat', 'arcee', 'trinity',
 ];
+
+function isRussianCapable(modelId: string): boolean {
+  const lower = modelId.toLowerCase();
+  if (BLOCKED_MODEL_PATTERNS.some(p => lower.includes(p))) return false;
+  if (RUSSIAN_CAPABLE_MODELS.has(modelId)) return true;
+  if (lower.includes('llama') || lower.includes('gemma') || lower.includes('mistral') || lower.includes('phi')) return true;
+  return false;
+}
+
+const STATIC_FREE_MODELS = [...RUSSIAN_CAPABLE_MODELS];
 
 const freeModelsCache = new SingleCache<string[]>(5 * 60 * 1000); // 5 минут
 
@@ -62,12 +75,12 @@ async function fetchFreeModels(): Promise<string[]> {
       throw new Error('Unexpected OpenRouter API response format');
     }
 
-    // Фильтруем бесплатные модели (pricing = 0)
     const freeModels = data.data
       .filter(m => m.pricing?.prompt === '0' && m.pricing?.completion === '0')
-      .filter(m => (m.context_length || 0) >= 4096) // Минимум 4K контекст
+      .filter(m => (m.context_length || 0) >= 4096)
       .map(m => m.id)
-      .slice(0, 15); // Максимум 15 моделей для гонки
+      .filter(isRussianCapable)
+      .slice(0, 10);
     
     if (freeModels.length > 0) {
       freeModelsCache.set(freeModels);
@@ -289,7 +302,10 @@ const getDefaultSystemPrompt = (): string => {
 - Текущие дата и время ВСЕГДА указаны в [Контекст: ...] в начале сообщения
 - ВСЕГДА используй эту дату, НИКОГДА не выдумывай дату самостоятельно
 
-Отвечай на том языке, на котором к тебе обращаются.`;
+ЯЗЫК ОТВЕТА:
+- Ты ВСЕГДА отвечаешь на русском языке, если пользователь пишет на русском.
+- ЗАПРЕЩЕНО вставлять иероглифы, символы других языков (японский, китайский, корейский, арабский).
+- Если пользователь пишет на другом языке — отвечай на том языке.`;
 };
 
 // --------------------------------------------
@@ -595,6 +611,34 @@ export const aiService = {
     }
   },
 };
+
+// ============================================
+// Gibberish / Language Quality Detection
+// ============================================
+
+const CJK_RANGE = /[\u3000-\u9FFF\uF900-\uFAFF\u{20000}-\u{2FA1F}]/u;
+const CYRILLIC_RE = /[а-яёА-ЯЁ]/g;
+
+/**
+ * Проверяет, содержит ли ответ подозрительную мешанину языков.
+ * Возвращает true если ответ — gibberish (не должен отправляться пользователю).
+ */
+export function isGibberish(text: string, userLang: 'ru' | 'en' | 'other' = 'ru'): boolean {
+  if (!text || text.length < 20) return false;
+
+  if (CJK_RANGE.test(text)) {
+    const cjkCount = [...text].filter(ch => CJK_RANGE.test(ch)).length;
+    if (cjkCount > 3) return true;
+  }
+
+  if (userLang === 'ru') {
+    const cyrillicMatches = text.match(CYRILLIC_RE);
+    const cyrillicRatio = (cyrillicMatches?.length ?? 0) / text.replace(/\s/g, '').length;
+    if (cyrillicRatio < 0.15 && text.length > 50) return true;
+  }
+
+  return false;
+}
 
 // ============================================
 // Exported Fallback Helper Functions

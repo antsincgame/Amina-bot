@@ -14,7 +14,7 @@ import type { BotContext } from './bot.js';
 import { MAX_HISTORY_MESSAGES } from './bot.js';
 import { config } from '../config/index.js';
 import { telegramLogger } from '../config/logger.js';
-import { aiService } from '../ai/openrouter.js';
+import { aiService, isGibberish } from '../ai/openrouter.js';
 import { processImageWithLLM, transcribeAudio } from '../ai/multimodal.js';
 import { getSearchContext, enhanceResponseIfNeeded, needsWebSearch, webSearch, isWebSearchEnabled, shouldForceWebSearch, searchAndFormat } from '../ai/websearch.js';
 import { conversationsRepo, analyticsRepo } from '../db/supabase.js';
@@ -692,14 +692,14 @@ const processMessageThroughAI = async (
   // тот же AI pipeline и бесплатные LLM отказывают одинаково для обоих типов
   aiResponse = await processAIResponse(aiResponse, userText, userId, webSearchContext);
 
-  // Save to history
-  // Раньше здесь была двойная проверка looksLikeSearchSimulation которая могла
-  // перезаписать УЖЕ исправленный ответ (после processAIResponse).
-  // Теперь processAIResponse гарантированно обрабатывает все случаи симуляции,
-  // поэтому здесь просто сохраняем результат.
-  ctx.session.messageHistory.push({ role: 'assistant', content: aiResponse.content });
-  if (ctx.session.messageHistory.length > MAX_HISTORY_MESSAGES) {
-    ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
+  // Save to history (skip gibberish to avoid poisoning context)
+  if (!isGibberish(aiResponse.content)) {
+    ctx.session.messageHistory.push({ role: 'assistant', content: aiResponse.content });
+    if (ctx.session.messageHistory.length > MAX_HISTORY_MESSAGES) {
+      ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
+    }
+  } else {
+    telegramLogger.warn({ userId, contentPreview: aiResponse.content.slice(0, 100) }, 'Gibberish response detected — not saving to history');
   }
 
   // Post-AI image interception
