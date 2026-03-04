@@ -199,7 +199,7 @@ interface MultimodalConfig {
 // Дефолтные модели
 const DEFAULT_VISION_MODEL = 'allenai/molmo-2-8b:free';
 const DEFAULT_AUDIO_MODEL = 'groq/whisper-large-v3';
-const DEFAULT_VISION_PROMPT = 'Опиши подробно что изображено на этой картинке. Обрати внимание на детали, цвета, объекты и их расположение.';
+const DEFAULT_VISION_PROMPT = 'Внимательно рассмотри изображение. Если на нём есть текст — прочитай его полностью и точно. Затем опиши что изображено: объекты, сцена, детали. Ответ структурируй: сначала текст (если есть), потом описание.';
 const DEFAULT_VISION_MAX_TOKENS = 1024;
 
 const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
@@ -589,6 +589,24 @@ async function transcribeAudioGroq(
 // Combined Processing
 // --------------------------------------------
 
+// OCR-ориентированные паттерны в подписи пользователя
+const OCR_CAPTION_PATTERNS = [
+  /прочитай|read|прочти|распознай|что написано|что тут написано|что здесь написано/i,
+  /текст|text|надпись|надписи|слова|слово/i,
+  /переведи|translate|перевод|перепиши|перепечатай/i,
+  /скриншот|screenshot|снимок экрана/i,
+  /распознать|ocr/i,
+];
+
+/**
+ * Определяет, хочет ли пользователь OCR/распознавание текста
+ */
+function detectOcrIntent(caption: string): boolean {
+  return OCR_CAPTION_PATTERNS.some(p => p.test(caption));
+}
+
+const OCR_VISION_PROMPT = 'Прочитай весь текст на изображении дословно и точно, ничего не пропуская. Если текст на иностранном языке — сначала процитируй оригинал, затем переведи на русский. Если текста нет — опиши что изображено.';
+
 /**
  * Обработать изображение: анализ + отправка в основную LLM
  */
@@ -598,20 +616,25 @@ export async function processImageWithLLM(
   userCaption?: string,
   chatHistory?: { role: 'user' | 'assistant' | 'system'; content: string }[]
 ): Promise<AIResponse> {
-  // 1. Анализируем изображение
-  const analysis = await analyzeImage(
-    imageBase64,
-    mimeType,
-    userCaption || 'Опиши подробно что изображено на этой картинке.'
-  );
+  // Выбираем промпт для vision-модели в зависимости от намерения
+  const isOcrRequest = userCaption ? detectOcrIntent(userCaption) : false;
+  const visionPrompt = isOcrRequest
+    ? OCR_VISION_PROMPT
+    : (userCaption
+        ? `Внимательно рассмотри изображение. Если на нём есть текст — прочитай его полностью. Затем ответь на вопрос пользователя: ${userCaption}`
+        : undefined); // undefined → будет использован DEFAULT_VISION_PROMPT из настроек
 
-  // 2. Формируем контекст для основной LLM: техническое описание от Vision + вопрос/подпись пользователя
-  // Пользователь видит только финальный ответ LLM, не это сообщение
-  const descriptionBlock = `Описание изображения (что на картинке):\n${analysis.description}`;
+  // 1. Анализируем изображение
+  const analysis = await analyzeImage(imageBase64, mimeType, visionPrompt);
+
+  // 2. Формируем контекст для основной LLM
+  const descriptionBlock = `Результат анализа изображения:\n${analysis.description}`;
   const userBlock = userCaption
     ? `Вопрос или комментарий пользователя: ${userCaption}`
-    : 'Пользователь не написал текст — опиши что на картинке.';
-  const instruction = 'Дай ответ пользователю: опиши изображение или ответь на его вопрос. Пиши от себя, не упоминай «описание», «vision», «анализ».';
+    : 'Пользователь прислал изображение без текста — расскажи что на нём.';
+  const instruction = isOcrRequest
+    ? 'Передай пользователю распознанный текст и/или перевод. Пиши чисто, без лишних слов про «vision» или «анализ».'
+    : 'Дай ответ пользователю: опиши изображение или ответь на его вопрос. Пиши от себя, не упоминай «описание», «vision», «анализ».';
 
   const imageContext = `${descriptionBlock}\n\n${userBlock}\n\n${instruction}`;
 
