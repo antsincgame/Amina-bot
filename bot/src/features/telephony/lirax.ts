@@ -50,7 +50,7 @@ export async function getLiraXConfig(): Promise<LiraXConfig> {
     settings['lirax_default_ext'] ||
     process.env.LIRAX_DEFAULT_EXT ||
     '201';
-  const operatorPhone = settings['lirax_operator_phone'] || '';
+  const operatorPhone = (settings['lirax_operator_phone'] || '').trim();
 
   configCache = { url, token, webhookToken, defaultExt, operatorPhone };
   return configCache;
@@ -82,7 +82,8 @@ async function liraXRequest(
     body.set(key, String(value));
   }
 
-  telegramLogger.info({ cmd, params: Object.fromEntries(body) }, '[LiraX] → request');
+  const { token: _redacted, ...safeParams } = Object.fromEntries(body);
+  telegramLogger.info({ cmd, params: safeParams }, '[LiraX] → request');
 
   const response = await fetch(cfg.url, {
     method: 'POST',
@@ -212,28 +213,14 @@ export async function getCallHistory(
   dateFinish: string,
   callType?: 0 | 1 | -1,
 ): Promise<CallRecord[]> {
-  const cfg = await getLiraXConfig();
-
-  const params: Record<string, string> = {
+  const params: Record<string, string | number> = {
     date_start: dateStart,
     date_finish: dateFinish,
-    token: cfg.token,
   };
-  if (callType !== undefined) params['call_type'] = String(callType);
+  if (callType !== undefined) params['call_type'] = callType;
 
-  const searchParams = new URLSearchParams({
-    cmd: 'get_calls',
-    ...params,
-  });
-
-  const url = `${cfg.url}?${searchParams.toString()}`;
-  const response = await fetch(url);
-
-  if (!response.ok) {
-    throw new Error(`LiraX get_calls error: ${response.status}`);
-  }
-
-  return response.json() as Promise<CallRecord[]>;
+  const result = await liraXRequest('get_calls', params);
+  return (Array.isArray(result) ? result : []) as CallRecord[];
 }
 
 export interface LiraXUser {
@@ -377,8 +364,12 @@ export async function removeTelephonyUser(telegramId: string): Promise<Telephony
 }
 
 export async function isTelephonyAllowed(telegramId: string): Promise<boolean> {
-  const adminChatId = await settingsRepo.get('lirax_admin_chat_id');
-  if (adminChatId && adminChatId === telegramId) return true;
+  const [liraxAdminId, globalAdminId] = await Promise.all([
+    settingsRepo.get('lirax_admin_chat_id'),
+    settingsRepo.get('admin_chat_id'),
+  ]);
+  if (liraxAdminId && liraxAdminId === telegramId) return true;
+  if (globalAdminId && globalAdminId === telegramId) return true;
 
   const users = await getTelephonyUsers();
   return users.some((u) => u.telegram_id === telegramId);

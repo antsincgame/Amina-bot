@@ -13,6 +13,7 @@ import {
   Bell,
   BellOff,
   Mic,
+  MicOff,
   Plus,
   Trash2,
   Sparkles,
@@ -162,7 +163,7 @@ const TelephonyPage = () => {
   const queryClient = useQueryClient();
 
   // Settings state
-  const [adminChatId, setAdminChatId] = useState('7867087040');
+  const [adminChatId, setAdminChatId] = useState('');
   const [webhookToken, setWebhookToken] = useState('');
   const [defaultExt, setDefaultExt] = useState('201');
   const [operatorPhone, setOperatorPhone] = useState('');
@@ -200,20 +201,26 @@ const TelephonyPage = () => {
     queryFn: fetchTelephonyUsers,
   });
 
+  const [mutationError, setMutationError] = useState<string | null>(null);
+
   const { mutate: addUser, isPending: addingUser } = useMutation({
     mutationFn: () => addTelephonyUserApi(newUserId.trim(), newUserName.trim() || newUserId.trim()),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['lirax-users'] });
       setNewUserId('');
       setNewUserName('');
+      setMutationError(null);
     },
+    onError: (err) => setMutationError(`Ошибка добавления: ${err instanceof Error ? err.message : String(err)}`),
   });
 
   const { mutate: removeUser } = useMutation({
     mutationFn: (telegramId: string) => removeTelephonyUserApi(telegramId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['lirax-users'] });
+      setMutationError(null);
     },
+    onError: (err) => setMutationError(`Ошибка удаления: ${err instanceof Error ? err.message : String(err)}`),
   });
 
   const { isLoading: scenariosLoading } = useQuery({
@@ -232,7 +239,7 @@ const TelephonyPage = () => {
   useEffect(() => {
     if (!allSettings) return;
     const map = new Map(allSettings.map((s) => [s.key, s.value]));
-    setAdminChatId(map.get('lirax_admin_chat_id') || '7867087040');
+    setAdminChatId(map.get('lirax_admin_chat_id') || '');
     setWebhookToken(map.get('lirax_webhook_token') || '');
     setDefaultExt(map.get('lirax_default_ext') || '201');
     setOperatorPhone(map.get('lirax_operator_phone') || '');
@@ -241,6 +248,8 @@ const TelephonyPage = () => {
   }, [allSettings]);
 
   // ---- Mutations ----
+
+  const [reloadWarning, setReloadWarning] = useState(false);
 
   const { mutate: saveSettings, isPending: savingSettings } = useMutation({
     mutationFn: async () => {
@@ -252,7 +261,11 @@ const TelephonyPage = () => {
         lirax_notify_calls: notifyCalls ? 'true' : 'false',
         lirax_notify_records: notifyRecords ? 'true' : 'false',
       });
-      await fetch(`${BOT_URL}/api/lirax/reload-config`, { method: 'POST' }).catch(() => {});
+      const reloadRes = await fetch(`${BOT_URL}/api/lirax/reload-config`, { method: 'POST' }).catch(() => null);
+      if (!reloadRes || !reloadRes.ok) {
+        setReloadWarning(true);
+        setTimeout(() => setReloadWarning(false), 5000);
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] });
@@ -260,13 +273,16 @@ const TelephonyPage = () => {
       setSettingsSaved(true);
       setTimeout(() => setSettingsSaved(false), 3000);
     },
+    onError: (err) => setMutationError(`Ошибка сохранения: ${err instanceof Error ? err.message : String(err)}`),
   });
 
   const { mutate: persistScenarios, isPending: savingScenarios } = useMutation({
     mutationFn: () => saveScenarios(scenarios),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['lirax-scenarios'] });
+      setMutationError(null);
     },
+    onError: (err) => setMutationError(`Ошибка сохранения сценариев: ${err instanceof Error ? err.message : String(err)}`),
   });
 
   const { mutate: doTestCall, isPending: callingTest } = useMutation({
@@ -290,8 +306,8 @@ const TelephonyPage = () => {
       setScenarios((prev) =>
         prev.map((s) => (s.id === scenarioId ? { ...s, generatedPrompt: result.generatedPrompt } : s)),
       );
-    } catch {
-      // error handled silently
+    } catch (err) {
+      setMutationError(`Ошибка генерации: ${err instanceof Error ? err.message : String(err)}`);
     } finally {
       setGeneratingId(null);
     }
@@ -347,6 +363,21 @@ const TelephonyPage = () => {
         </div>
       </div>
 
+      {/* Error banner */}
+      {mutationError && (
+        <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 flex items-center gap-3">
+          <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
+          <span className="text-sm text-red-300">{mutationError}</span>
+          <button className="ml-auto text-xs text-red-400 hover:text-red-300" onClick={() => setMutationError(null)}>Закрыть</button>
+        </div>
+      )}
+      {reloadWarning && (
+        <div className="p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/30 flex items-center gap-3">
+          <AlertCircle className="w-5 h-5 text-yellow-400 shrink-0" />
+          <span className="text-sm text-yellow-300">Настройки сохранены, но бот не перезагрузил конфигурацию. Перезапустите бота вручную.</span>
+        </div>
+      )}
+
       {/* A. Connection Status */}
       <div className="card p-6">
         <div className="flex items-center gap-3 mb-4">
@@ -366,9 +397,9 @@ const TelephonyPage = () => {
               value={status.configured ? 'Настроено' : 'Не настроено'}
               ok={status.configured}
             />
-            <StatusRow label="URL АТС" value={status.url} ok={true} mono />
-            <StatusRow label="Внутренний номер" value={status.defaultExt} ok={true} />
-            <StatusRow label="Webhook URL" value={status.webhookUrl} ok={true} mono />
+            <StatusRow label="URL АТС" value={status.url} ok={!!status.url} mono />
+            <StatusRow label="Внутренний номер" value={status.defaultExt} ok={!!status.defaultExt} />
+            <StatusRow label="Webhook URL" value={status.webhookUrl} ok={!!status.webhookUrl} mono />
             <StatusRow
               label="Webhook токен"
               value={status.hasWebhookToken ? 'Установлен' : 'Не установлен'}
@@ -564,7 +595,7 @@ const TelephonyPage = () => {
               }`}
               onClick={() => setNotifyRecords(!notifyRecords)}
             >
-              {notifyRecords ? <Mic className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+              {notifyRecords ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
               <span className="text-sm">Уведомления о записях</span>
             </button>
           </div>

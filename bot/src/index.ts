@@ -1,9 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
-import { webhookCallback } from 'grammy';
 import { config } from './config/index.js';
-import { logger, serverLogger, httpLogger, appLogger } from './config/logger.js';
+import { serverLogger, httpLogger, appLogger } from './config/logger.js';
 import { createBot } from './telegram/bot.js';
 import { getSupabase, settingsRepo } from './db/supabase.js';
 import { aiService } from './ai/openrouter.js';
@@ -169,6 +168,8 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
 // --------------------------------------------
 
 const initBotAndServices = async (webhookAlreadySet: boolean): Promise<void> => {
+  if (shuttingDown) return;
+
   // Database check
   try {
     const supabase = getSupabase();
@@ -211,6 +212,7 @@ const initBotAndServices = async (webhookAlreadySet: boolean): Promise<void> => 
       appLogger.info('🔗 Telegram webhook activated');
     } catch (err) {
       appLogger.warn({ error: err }, '⚠️ Failed to set webhook — falling back to polling');
+      try { await bot.api.deleteWebhook(); } catch { appLogger.debug('deleteWebhook skipped in fallback'); }
       bot.start({
         onStart: (botInfo) => appLogger.info({ username: botInfo.username }, '🤖 Bot started (polling fallback)'),
       }).catch(pollErr => appLogger.error({ error: pollErr?.message ?? pollErr }, '❌ Polling fallback failed'));
@@ -297,6 +299,7 @@ const start = async (): Promise<void> => {
     }, 5000);
   } catch (error) {
     appLogger.fatal({ error }, 'Failed to start application');
+    process.exit(1);
   }
 };
 
@@ -342,4 +345,5 @@ process.on('unhandledRejection', (reason) => {
 
 process.on('uncaughtException', (err) => {
   appLogger.fatal({ error: err.message }, '⚠️ Uncaught Exception');
+  shutdown('uncaughtException').catch(() => process.exit(1));
 });

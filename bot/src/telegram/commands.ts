@@ -7,7 +7,7 @@
  * /todo, /todos, /done, /digest
  */
 
-import { Bot, InputFile, InlineKeyboard } from 'grammy';
+import { Bot, InputFile } from 'grammy';
 import type { BotContext } from './bot.js';
 import { telegramLogger } from '../config/logger.js';
 import { analyticsRepo, conversationsRepo } from '../db/supabase.js';
@@ -261,9 +261,9 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
         userId, event: 'image_generated', prompt, model: result.model, timeMs: result.generationTimeMs,
       }).catch(() => {});
     } catch (error: unknown) {
-      const err = error as { message?: string };
+      const errMsg = error instanceof Error ? error.message : 'Не удалось создать изображение. Попробуй позже.';
       telegramLogger.error({ error, userId, prompt }, 'Image generation failed');
-      await ctx.reply(`😔 ${err.message || 'Не удалось создать изображение. Попробуй позже.'}`);
+      await ctx.reply(`😔 ${errMsg}`);
     }
   });
 

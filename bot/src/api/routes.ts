@@ -3,7 +3,6 @@ import { z } from 'zod';
 import { aiService } from '../ai/openrouter.js';
 import { conversationsRepo, settingsRepo, promptsRepo } from '../db/supabase.js';
 import { validateMessageContent, validateUserId } from '../utils/validation.js';
-import { handleAIError } from '../utils/error-handler.js';
 import { aiLogger, getLogs, getLogStats } from '../config/logger.js';
 import { rateLimitHook } from '../utils/rate-limiter.js';
 import { getAllAudioModels, getFreeVisionModels, refreshFreeVisionModelsCache, getVisionFallbackStatus } from '../ai/multimodal.js';
@@ -21,7 +20,6 @@ import {
   getTelephonyUsers,
   addTelephonyUser,
   removeTelephonyUser,
-  type LiraXWebhookPayload,
   type LiraXEventPayload,
 } from '../features/telephony/lirax.js';
 import archiver from 'archiver';
@@ -121,7 +119,10 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
           await conversationsRepo.addMessage(conversation.id, userMessage);
 
           // Get AI response
-          const aiResponse = await aiService.chat(conversation.messages.concat([userMessage]));
+          const aiMessages: AIMessage[] = conversation.messages
+            .concat([userMessage])
+            .map(m => ({ role: m.role, content: m.content }));
+          const aiResponse = await aiService.chat(aiMessages);
 
           // Add AI response to conversation
           const assistantMessage: Message = {
@@ -381,7 +382,13 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
 
             await settingsRepo.set(key, value);
 
-            aiLogger.info({ key }, 'Setting updated via API');
+            clearApiKeysCache();
+            clearPerplexityCache();
+            clearLiraXConfigCache();
+            settingsRepo.invalidateCache?.();
+            invalidateTTSConfig();
+
+            aiLogger.info({ key }, 'Setting updated via API (caches invalidated)');
 
             return reply.code(200).send({
               success: true,
@@ -1748,7 +1755,8 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
               return reply.code(401).send({ error: 'Invalid token' });
             }
 
-            aiLogger.info({ cmd, payload }, '[LiraX webhook] received');
+            const { from_LiraX_token: _wht, ...safePayload } = payload;
+            aiLogger.info({ cmd, payload: safePayload }, '[LiraX webhook] received');
 
             if (!cmd) {
               return reply.code(400).send({ error: 'Missing cmd' });

@@ -9,16 +9,14 @@
  * - Детекция симуляции поиска
  */
 
+import { InlineKeyboard } from 'grammy';
 import type { Context } from 'grammy';
-import type { InlineKeyboard } from 'grammy';
 
 // ============================================
 // Constants
 // ============================================
 
 const MAX_MESSAGE_LENGTH = 4096; // Telegram limit
-
-const WEEKDAYS_RU = ['воскресенье', 'понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота'];
 
 // ============================================
 // Markdown / HTML Conversion
@@ -207,8 +205,7 @@ export const sendLongMessage = async (
   if (isMultiChunk && keyboard) {
     const fullTextId = cacheFullText(text);
     // Создаём новую клавиатуру, заменяя read_aloud на read_aloud_full:ID
-    const { InlineKeyboard: IK } = await import('grammy');
-    effectiveKeyboard = new IK();
+    effectiveKeyboard = new InlineKeyboard();
     // Копируем кнопки, заменяя callback_data 'read_aloud' → 'read_aloud_full:ID'
     try {
       const rawRows = (keyboard as unknown as { inline_keyboard: Array<Array<{ text: string; callback_data?: string }>> }).inline_keyboard;

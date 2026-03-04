@@ -63,8 +63,13 @@ export const createBot = (): Bot<BotContext> => {
   );
 
   // Error handler
-  bot.catch((err) => {
+  bot.catch(async (err) => {
     telegramLogger.error({ error: err.error, ctx: err.ctx?.update }, 'Bot error');
+    try {
+      await err.ctx.reply('Произошла внутренняя ошибка. Попробуй ещё раз через пару секунд.');
+    } catch {
+      telegramLogger.debug('Could not send error reply to user');
+    }
   });
 
   // Register handlers in order
