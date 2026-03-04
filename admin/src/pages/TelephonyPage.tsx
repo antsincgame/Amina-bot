@@ -163,6 +163,8 @@ const TelephonyPage = () => {
 
   // Settings state
   const [adminChatId, setAdminChatId] = useState('7867087040');
+  const [webhookToken, setWebhookToken] = useState('');
+  const [defaultExt, setDefaultExt] = useState('201');
   const [notifyCalls, setNotifyCalls] = useState(true);
   const [notifyRecords, setNotifyRecords] = useState(true);
   const [settingsSaved, setSettingsSaved] = useState(false);
@@ -230,6 +232,8 @@ const TelephonyPage = () => {
     if (!allSettings) return;
     const map = new Map(allSettings.map((s) => [s.key, s.value]));
     setAdminChatId(map.get('lirax_admin_chat_id') || '7867087040');
+    setWebhookToken(map.get('lirax_webhook_token') || '');
+    setDefaultExt(map.get('lirax_default_ext') || '201');
     setNotifyCalls(map.get('lirax_notify_calls') !== 'false');
     setNotifyRecords(map.get('lirax_notify_records') !== 'false');
   }, [allSettings]);
@@ -237,14 +241,19 @@ const TelephonyPage = () => {
   // ---- Mutations ----
 
   const { mutate: saveSettings, isPending: savingSettings } = useMutation({
-    mutationFn: () =>
-      settingsApi.updateMany({
+    mutationFn: async () => {
+      await settingsApi.updateMany({
         lirax_admin_chat_id: adminChatId,
+        lirax_webhook_token: webhookToken,
+        lirax_default_ext: defaultExt,
         lirax_notify_calls: notifyCalls ? 'true' : 'false',
         lirax_notify_records: notifyRecords ? 'true' : 'false',
-      }),
+      });
+      await fetch(`${BOT_URL}/api/lirax/reload-config`, { method: 'POST' }).catch(() => {});
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] });
+      queryClient.invalidateQueries({ queryKey: ['lirax-status'] });
       setSettingsSaved(true);
       setTimeout(() => setSettingsSaved(false), 3000);
     },
@@ -464,17 +473,49 @@ const TelephonyPage = () => {
             <label className="block text-sm font-medium text-gray-300 mb-1.5">
               Telegram ID администратора звонков
             </label>
-            <div className="flex gap-3">
-              <input
-                type="text"
-                className="input flex-1"
-                value={adminChatId}
-                onChange={(e) => setAdminChatId(e.target.value)}
-                placeholder="7867087040"
-              />
-            </div>
+            <input
+              type="text"
+              className="input w-full"
+              value={adminChatId}
+              onChange={(e) => setAdminChatId(e.target.value)}
+              placeholder="7867087040"
+            />
             <p className="text-xs text-gray-500 mt-1">
-              Этот пользователь получает уведомления о звонках и управляет сценариями
+              Этот пользователь получает уведомления о звонках и автоматически имеет доступ к /call
+            </p>
+          </div>
+
+          {/* Webhook Token */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1.5">
+              Webhook токен (from_LiraX_token)
+            </label>
+            <input
+              type="text"
+              className="input w-full font-mono text-sm"
+              value={webhookToken}
+              onChange={(e) => setWebhookToken(e.target.value)}
+              placeholder="Токен из LiraX → Интеграция General → Token for Webhooks"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              LiraX отправляет этот токен с каждым вебхуком для верификации. Найдите его в LiraX → Интеграция → Token.
+            </p>
+          </div>
+
+          {/* Default Extension */}
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1.5">
+              Внутренний номер по умолчанию
+            </label>
+            <input
+              type="text"
+              className="input w-48"
+              value={defaultExt}
+              onChange={(e) => setDefaultExt(e.target.value)}
+              placeholder="201"
+            />
+            <p className="text-xs text-gray-500 mt-1">
+              Номер оператора, которому АТС звонит первым при исходящих вызовах
             </p>
           </div>
 
