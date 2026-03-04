@@ -275,14 +275,15 @@ const start = async (): Promise<void> => {
       host: config.server.host,
     });
     serverLogger.info({ address }, '📡 HTTP server listening');
+    appLogger.info('✅ HTTP server ready — starting background init in 5s');
 
-    // Фоновая инициализация бота и сервисов
-    const useWebhook = !!(config.isProd && config.telegram.token && config.telegram.webhook.url);
-    initBotAndServices(useWebhook).catch(err => {
-      appLogger.error({ error: err }, 'Background init error');
-    });
-
-    appLogger.info('✅ Amina Bot startup complete');
+    // Задержка перед фоновой инициализацией — даём Render подтвердить health check
+    setTimeout(() => {
+      const useWebhook = !!(config.isProd && config.telegram.token && config.telegram.webhook.url);
+      initBotAndServices(useWebhook).catch(err => {
+        appLogger.error({ error: err }, 'Background init error');
+      });
+    }, 5000);
   } catch (error) {
     appLogger.fatal({ error }, 'Failed to start application');
   }
