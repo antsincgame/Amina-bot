@@ -678,9 +678,11 @@ const processMessageThroughAI = async (
     ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
   }
 
-  // Build messages with augmented last message for the AI call
+  // Build messages: deduplicate similar past questions to prevent model from copying old answers
+  const historyWithoutLast = ctx.session.messageHistory.slice(0, -1);
+  const deduped = deduplicateSimilarQuestions(historyWithoutLast, userText);
   const messagesForAI: typeof ctx.session.messageHistory = [
-    ...ctx.session.messageHistory.slice(0, -1),
+    ...deduped,
     { role: 'user', content: augmentedUserText },
   ];
 
@@ -1406,13 +1408,48 @@ const handleDirectWebSearch = async (
 // ============================================
 
 /** Очищает историю от отравленных ответов и симуляций поиска */
+/**
+ * Removes past Q+A pairs where the user's question is similar to the current one.
+ * Prevents weak models from copying their own previous answers verbatim.
+ */
+const deduplicateSimilarQuestions = (
+  history: AIMessage[],
+  currentQuestion: string,
+): AIMessage[] => {
+  const currentNorm = currentQuestion.toLowerCase().trim().replace(/[?!.,\s]+/g, ' ');
+  if (currentNorm.length < 5) return history;
+
+  const indicesToRemove = new Set<number>();
+
+  for (let i = 0; i < history.length; i++) {
+    const msg = history[i];
+    if (!msg || msg.role !== 'user') continue;
+    const pastNorm = msg.content.toLowerCase().trim().replace(/[?!.,\s]+/g, ' ');
+    const isSimilar =
+      pastNorm === currentNorm ||
+      currentNorm.includes(pastNorm) ||
+      pastNorm.includes(currentNorm);
+    if (isSimilar) {
+      indicesToRemove.add(i);
+      if (i + 1 < history.length && history[i + 1]?.role === 'assistant') {
+        indicesToRemove.add(i + 1);
+      }
+    }
+  }
+
+  if (indicesToRemove.size > 0) {
+    telegramLogger.debug({ removed: indicesToRemove.size }, 'Deduped similar Q&A from history');
+  }
+  return history.filter((_, idx) => !indicesToRemove.has(idx));
+};
+
 const sanitizeMessageHistory = (history: AIMessage[]): AIMessage[] => {
   if (history.length === 0) return history;
 
   // Remove search simulations
   let cleaned = history.filter(m => !(m.role === 'assistant' && looksLikeSearchSimulation(m.content)));
 
-  // Detect context poisoning (same response 3+ times)
+  // Detect context poisoning (same response 2+ times)
   const assistantResponses = cleaned.filter(m => m.role === 'assistant');
   const responseCounts = new Map<string, number>();
   for (const msg of assistantResponses) {
@@ -1422,7 +1459,7 @@ const sanitizeMessageHistory = (history: AIMessage[]): AIMessage[] => {
 
   const poisonedPrefixes = new Set<string>();
   for (const [prefix, count] of responseCounts) {
-    if (count >= 3) poisonedPrefixes.add(prefix);
+    if (count >= 2) poisonedPrefixes.add(prefix);
   }
 
   if (poisonedPrefixes.size > 0) {
