@@ -179,6 +179,15 @@ const start = async (): Promise<void> => {
     // Setup routes
     await setupRoutes(app);
 
+    // Запускаем HTTP сервер ПЕРВЫМ — чтобы Render health check прошёл немедленно
+    const address = await app.listen({
+      port: config.server.port,
+      host: config.server.host,
+    });
+    serverLogger.info({ address }, '📡 HTTP server listening');
+
+    // Дальнейшая инициализация — асинхронно, не блокирует health check
+
     // Test database connection
     appLogger.info('Testing database connection...');
     try {
@@ -235,13 +244,6 @@ const start = async (): Promise<void> => {
       });
       appLogger.info('🔗 Telegram webhook configured');
     }
-
-    // Start server
-    const address = await app.listen({
-      port: config.server.port,
-      host: config.server.host,
-    });
-    serverLogger.info({ address }, '📡 HTTP server listening');
 
     // Start bot polling (development) or webhook is already set (production)
     if (!config.isProd || !config.telegram.webhook.url) {
