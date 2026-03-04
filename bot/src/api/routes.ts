@@ -1847,9 +1847,9 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
             'lirax_default_ext',
           ]);
 
-          const hasToken = !!(process.env.LIRAX_TOKEN || settings['lirax_token']);
-          const url = process.env.LIRAX_URL || settings['lirax_url'] || 'https://api.lirax.net/general';
-          const defaultExt = process.env.LIRAX_DEFAULT_EXT || settings['lirax_default_ext'] || '—';
+          const hasToken = !!(settings['lirax_token'] || process.env.LIRAX_TOKEN);
+          const url = settings['lirax_url'] || process.env.LIRAX_URL || 'https://api.lirax.net/general';
+          const defaultExt = settings['lirax_default_ext'] || process.env.LIRAX_DEFAULT_EXT || '—';
 
           return reply.code(200).send({
             success: true,
@@ -1858,13 +1858,23 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
               url,
               defaultExt,
               webhookUrl: 'https://amina-bot.onrender.com/api/lirax',
-              hasWebhookToken: !!(process.env.LIRAX_WEBHOOK_TOKEN || settings['lirax_webhook_token']),
+              hasWebhookToken: !!(settings['lirax_webhook_token'] || process.env.LIRAX_WEBHOOK_TOKEN),
             },
           });
         } catch (error) {
           const msg = error instanceof Error ? error.message : 'Unknown error';
           return reply.code(500).send({ success: false, error: msg });
         }
+      });
+
+      /**
+       * POST /api/lirax/reload-config
+       * Принудительно сбросить кеш конфига LiraX (применяет новый токен без редеплоя)
+       */
+      apiServer.post('/lirax/reload-config', async (_request: FastifyRequest, reply: FastifyReply) => {
+        clearLiraXConfigCache();
+        aiLogger.info('LiraX config cache cleared via API');
+        return reply.code(200).send({ success: true, message: 'LiraX config cache cleared' });
       });
 
       /**
