@@ -41,6 +41,12 @@ const envSchema = z.object({
   // Webhook (optional)
   WEBHOOK_URL: z.string().url().optional(),
   WEBHOOK_SECRET: z.string().optional(),
+
+  // LiraX telephony (optional — can also be set via admin panel settings)
+  LIRAX_URL: z.string().url().optional(),
+  LIRAX_TOKEN: z.string().optional(),
+  LIRAX_WEBHOOK_TOKEN: z.string().optional(),
+  LIRAX_DEFAULT_EXT: z.string().optional(),
 });
 
 // --------------------------------------------

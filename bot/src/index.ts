@@ -36,14 +36,16 @@ let bot: ReturnType<typeof createBot> | null = null;
 
 const setupRoutes = async (server: FastifyInstance): Promise<void> => {
   // Register CORS
-  const allowedOrigins: string[] = [];
-  if (process.env.ADMIN_URL) allowedOrigins.push(process.env.ADMIN_URL);
-  // Домены сайтов, которые шлют заявки через /api/leads
+  const DEFAULT_ADMIN_ORIGIN = 'https://amina-admin.onrender.com';
+  const allowedOrigins: string[] = [DEFAULT_ADMIN_ORIGIN];
+  if (process.env.ADMIN_URL && process.env.ADMIN_URL !== DEFAULT_ADMIN_ORIGIN) {
+    allowedOrigins.push(process.env.ADMIN_URL);
+  }
   const leadOrigins = (process.env.LEAD_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
   allowedOrigins.push(...leadOrigins);
 
   await server.register(cors, {
-    origin: allowedOrigins.length > 0 ? allowedOrigins : true,
+    origin: allowedOrigins,
     credentials: true,
   });
 

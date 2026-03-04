@@ -182,9 +182,11 @@ const MultimodalSettingsPage = () => {
     }
   }, []);
 
-  // Load image models on mount
+  // Auto-load image models on mount (retry once on failure)
   useEffect(() => {
-    fetchImageModels();
+    fetchImageModels().catch(() => {
+      setTimeout(() => fetchImageModels(), 3000);
+    });
   }, [fetchImageModels]);
 
   // Save mutation
@@ -826,8 +828,9 @@ const MultimodalSettingsPage = () => {
             </div>
 
             <div className="p-3 rounded-lg bg-amber-500/5 border border-amber-500/20 text-xs text-white/60">
-              <strong className="text-amber-400">💡 Подсказка:</strong> Gemini 2.5 Flash Image (3e-10 за 1K) — самая дешёвая.
-              Почти бесплатная! Для 10,000 картинок = ~$0.003
+              <strong className="text-amber-400">💡 Подсказка:</strong> Gemini 2.5 Flash Image — ~$0.003 за картинку.
+              Для 1000 картинок = ~$3. Gemini 3.1 Flash Image Preview ещё дешевле.
+              Если список пуст — проверьте, что бот запущен и OpenRouter API ключ настроен.
             </div>
           </div>
         </div>

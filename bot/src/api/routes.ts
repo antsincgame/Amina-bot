@@ -13,6 +13,7 @@ import { config, clearApiKeysCache, getApiKeys } from '../config/index.js';
 import { getConfiguredSites, saveConfiguredSites, parseNewsFromSite } from '../features/news-parser.js';
 import { invalidateTTSConfig } from '../features/tts.js';
 import { voiceMessagesRepo } from '../features/voice-messages-repo.js';
+import { verifyWebhookToken, formatCallEvent, clearLiraXConfigCache, type LiraXWebhookPayload, type LiraXEventPayload } from '../features/telephony/lirax.js';
 import archiver from 'archiver';
 import type { Message, Conversation, LogLevel } from '../../../shared/types/index.js';
 
@@ -309,6 +310,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
             // Инвалидируем ВСЕ кэши после обновления настроек
             clearApiKeysCache();
             clearPerplexityCache();
+            clearLiraXConfigCache();
             settingsRepo.invalidateCache?.();
             invalidateTTSConfig();
 
@@ -827,16 +829,17 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
             };
           }> };
 
-          // Filter models that support image generation
-          const imageModels = data.data.filter(model => 
-            model.architecture?.output_modalities?.includes('image') ||
-            model.architecture?.modality === 'image' ||
-            model.id.includes('flux') ||
-            model.id.includes('gemini') && model.id.includes('image') ||
-            model.id.includes('dall-e') ||
-            model.id.includes('gpt') && model.id.includes('image') ||
-            model.id.includes('riverflow')
-          );
+          const imageModels = data.data.filter(model => {
+            if (model.architecture?.output_modalities?.includes('image')) return true;
+            if (model.architecture?.modality === 'image') return true;
+            const id = model.id.toLowerCase();
+            if (id.includes('flux')) return true;
+            if (id.includes('dall-e')) return true;
+            if (id.includes('riverflow')) return true;
+            if (id.includes('gemini') && id.includes('image')) return true;
+            if (id.includes('gpt') && id.includes('image')) return true;
+            return false;
+          });
 
           // Sort by price (cheapest first)
           const sortedModels = imageModels
@@ -1691,6 +1694,166 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
           }
         },
       );
+
+      // ============================================
+      // LiraX Telephony Webhook
+      // ============================================
+
+      /**
+       * POST /api/lirax
+       * Точка входа для вебхуков от LiraX АТС.
+       * LiraX шлёт сюда события звонков (event, record, contact, staton, makecall_finished).
+       * Формат: application/x-www-form-urlencoded
+       *
+       * Настройка в LiraX: раздел "Интеграция General" → поле "API URL-адрес" = https://amina-bot.onrender.com/api/lirax
+       */
+      apiServer.post(
+        '/lirax',
+        {
+          config: { rawBody: true },
+        },
+        async (request: FastifyRequest, reply: FastifyReply) => {
+          try {
+            // LiraX шлёт application/x-www-form-urlencoded — Fastify парсит в request.body
+            const payload = request.body as Record<string, string>;
+            const cmd = payload['cmd'];
+            const incomingToken = payload['from_LiraX_token'] || payload['token'] || '';
+
+            // Верифицируем токен (если настроен)
+            const tokenValid = await verifyWebhookToken(incomingToken);
+            if (!tokenValid) {
+              aiLogger.warn({ cmd, ip: request.ip }, '[LiraX webhook] Invalid token');
+              return reply.code(401).send({ error: 'Invalid token' });
+            }
+
+            aiLogger.info({ cmd, payload }, '[LiraX webhook] received');
+
+            if (!cmd) {
+              return reply.code(400).send({ error: 'Missing cmd' });
+            }
+
+            // Отправить уведомление в Telegram (если настроен admin_chat_id)
+            const sendTelegramNotification = async (text: string): Promise<void> => {
+              const adminChatId = await settingsRepo.get('admin_chat_id');
+              if (!adminChatId) return;
+              const token = config.telegram.token;
+              if (!token) return;
+              await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ chat_id: adminChatId, text, parse_mode: 'HTML' }),
+              }).catch((err) => aiLogger.warn({ err }, '[LiraX] Failed to send Telegram notification'));
+            };
+
+            switch (cmd) {
+              case 'event': {
+                const eventPayload = payload as unknown as LiraXEventPayload;
+                const notifyEnabled = await settingsRepo.get('lirax_notify_calls');
+                if (notifyEnabled !== 'false') {
+                  const message = formatCallEvent(eventPayload);
+                  await sendTelegramNotification(message);
+                }
+                break;
+              }
+
+              case 'record': {
+                const recordLink = payload['record_link'];
+                const callId = payload['callid'];
+                if (recordLink) {
+                  const notifyEnabled = await settingsRepo.get('lirax_notify_records');
+                  if (notifyEnabled !== 'false') {
+                    await sendTelegramNotification(
+                      `🎙 <b>Запись звонка готова</b>\n` +
+                      `ID: <code>${callId}</code>\n` +
+                      `<a href="${recordLink}">Слушать запись</a>`,
+                    );
+                  }
+                }
+                break;
+              }
+
+              case 'contact': {
+                // LiraX запрашивает имя контакта по номеру телефона
+                // Возвращаем пустой ответ (у нас нет CRM с именами)
+                return reply.code(200).send({ contact_name: '', responsible: null });
+              }
+
+              case 'staton': {
+                // Изменение статуса оператора — логируем, не уведомляем
+                aiLogger.debug(
+                  { ext: payload['ext'], status: payload['status'] },
+                  '[LiraX] Operator status change',
+                );
+                break;
+              }
+
+              case 'makecall_finished': {
+                const idMakecall = payload['id_makecall'];
+                const success = payload['success'] === '1';
+                aiLogger.info({ idMakecall, success }, '[LiraX] makeCall finished');
+
+                if (!success) {
+                  await sendTelegramNotification(
+                    `📵 <b>Звонок не состоялся</b>\n` +
+                    `ID: <code>${idMakecall}</code>\n` +
+                    `Абонент не поднял трубку`,
+                  );
+                }
+                break;
+              }
+
+              case 'make2calls_finished': {
+                const id = payload['id_make2calls'];
+                const success = payload['success'] === '1';
+                aiLogger.info({ id, success }, '[LiraX] make2Calls finished');
+                break;
+              }
+
+              default:
+                aiLogger.debug({ cmd }, '[LiraX webhook] Unhandled cmd');
+            }
+
+            return reply.code(200).send('OK');
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : 'Unknown error';
+            aiLogger.error({ error: msg }, '[LiraX webhook] Error');
+            return reply.code(500).send({ error: msg });
+          }
+        },
+      );
+
+      /**
+       * GET /api/lirax/status
+       * Проверить конфигурацию LiraX интеграции
+       */
+      apiServer.get('/lirax/status', async (_request: FastifyRequest, reply: FastifyReply) => {
+        try {
+          const settings = await settingsRepo.getMany([
+            'lirax_url',
+            'lirax_token',
+            'lirax_webhook_token',
+            'lirax_default_ext',
+          ]);
+
+          const hasToken = !!(process.env.LIRAX_TOKEN || settings['lirax_token']);
+          const url = process.env.LIRAX_URL || settings['lirax_url'] || 'https://api.lirax.net/general';
+          const defaultExt = process.env.LIRAX_DEFAULT_EXT || settings['lirax_default_ext'] || '—';
+
+          return reply.code(200).send({
+            success: true,
+            data: {
+              configured: hasToken,
+              url,
+              defaultExt,
+              webhookUrl: 'https://amina-bot.onrender.com/api/lirax',
+              hasWebhookToken: !!(process.env.LIRAX_WEBHOOK_TOKEN || settings['lirax_webhook_token']),
+            },
+          });
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : 'Unknown error';
+          return reply.code(500).send({ success: false, error: msg });
+        }
+      });
     },
     { prefix: '/api' }
   );

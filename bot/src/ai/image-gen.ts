@@ -30,14 +30,14 @@ const DEFAULT_MODEL = 'black-forest-labs/FLUX.1-schnell';
 
 /** 
  * Fallback модели (в порядке приоритета)
- * ВАЖНО: ТОЛЬКО модели доступные через hf-inference провайдер (проверено 2026-02-16)
- * Список: https://huggingface.co/models?inference_provider=hf-inference&pipeline_tag=text-to-image
+ * ВАЖНО: ТОЛЬКО модели доступные через hf-inference провайдер (проверено 2026-03-03)
+ * Список: https://huggingface.co/api/models?pipeline_tag=text-to-image&inference_provider=hf-inference
+ * FLUX.1-dev УДАЛЁН — недоступен через hf-inference с 2026-02
  */
 const FALLBACK_MODELS = [
   'black-forest-labs/FLUX.1-schnell',              // Основная (4 шага, Apache 2.0)
-  'black-forest-labs/FLUX.1-dev',                  // Fallback 1 (качественнее)
-  'stabilityai/stable-diffusion-xl-base-1.0',      // Fallback 2 (SDXL, проверенная)
-  'stabilityai/stable-diffusion-3-medium-diffusers', // Fallback 3 (SD3, новая)
+  'stabilityai/stable-diffusion-xl-base-1.0',      // Fallback 1 (SDXL, проверенная)
+  'stabilityai/stable-diffusion-3-medium-diffusers', // Fallback 2 (SD3)
 ];
 
 /** Таймаут генерации (ms) — FLUX.1-schnell обычно укладывается в 30с */
@@ -468,10 +468,16 @@ async function tryGenerateWithModel(
 // --------------------------------------------
 
 /**
- * Дефолтная модель OpenRouter: Gemini 2.5 Flash Image
- * ~$0.0003 per 1K image (почти бесплатно!)
+ * Дефолтная модель OpenRouter для генерации изображений.
+ * Gemini 3.1 Flash Image Preview — самая дешёвая ($0.0015/1K токенов)
+ * Если недоступна — fallback на Gemini 2.5 Flash Image
  */
 const DEFAULT_OPENROUTER_IMAGE_MODEL = 'google/gemini-2.5-flash-image';
+const OPENROUTER_IMAGE_FALLBACK_MODELS = [
+  'google/gemini-2.5-flash-image',
+  'google/gemini-3.1-flash-image-preview',
+  'google/gemini-3-pro-image-preview',
+];
 const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 
 /**
@@ -490,9 +496,72 @@ async function getOpenRouterImageModel(): Promise<string> {
 }
 
 /**
- * Генерация через OpenRouter (дешёвый fallback для HuggingFace)
+ * Запрос генерации к OpenRouter с указанной моделью.
+ * Возвращает Buffer изображения или кидает ошибку.
  */
-async function tryGenerateViaOpenRouter(prompt: string, timeoutMs: number): Promise<Buffer> {
+async function fetchOpenRouterImage(
+  apiKey: string,
+  model: string,
+  prompt: string,
+  timeoutMs: number,
+): Promise<Buffer> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    aiLogger.info({ model, prompt: prompt.substring(0, 60) }, 'Attempting generation via OpenRouter');
+
+    const response = await fetch(OPENROUTER_API_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://github.com/antsincgame/Amina-bot',
+        'X-Title': 'Amina Telegram Bot',
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        modalities: ['image', 'text'],
+        stream: false,
+        image_config: {
+          aspect_ratio: '1:1',
+          image_size: '1K',
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => 'Unknown error');
+      aiLogger.warn({ model, status: response.status, error: errorText.substring(0, 200) }, 'OpenRouter image API error');
+      throw Object.assign(
+        new Error(`OpenRouter API error: ${response.status} ${errorText.substring(0, 200)}`),
+        { code: 'OPENROUTER_API_ERROR', status: response.status }
+      );
+    }
+
+    const data = await response.json() as OpenRouterImageResponse;
+    const buffer = parseOpenRouterImageResponse(data);
+
+    aiLogger.info({ model, sizeKB: Math.round(buffer.length / 1024) }, '✅ OpenRouter image generated successfully');
+    return buffer;
+  } catch (error: unknown) {
+    const err = error as { name?: string; message?: string; code?: string };
+    if (err.name === 'AbortError') {
+      throw Object.assign(new Error(`OpenRouter generation timeout (model: ${model})`), { code: 'OPENROUTER_TIMEOUT' });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * Генерация через OpenRouter с fallback по нескольким моделям.
+ * Сначала пробует настроенную модель, затем — OPENROUTER_IMAGE_FALLBACK_MODELS.
+ */
+async function tryGenerateViaOpenRouter(prompt: string, timeoutMs: number): Promise<{ buffer: Buffer; model: string }> {
   const keys = await getApiKeys();
   const openrouterApiKey = keys.openrouter;
 
@@ -501,105 +570,29 @@ async function tryGenerateViaOpenRouter(prompt: string, timeoutMs: number): Prom
     throw new Error('OpenRouter API key not configured');
   }
 
-  const model = await getOpenRouterImageModel();
-  aiLogger.info({ model, prompt: prompt.substring(0, 60) }, 'Attempting generation via OpenRouter');
+  const configuredModel = await getOpenRouterImageModel();
+  const modelsToTry = [configuredModel, ...OPENROUTER_IMAGE_FALLBACK_MODELS.filter(m => m !== configuredModel)];
 
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let lastError: Error | null = null;
 
-  try {
-    const response = await fetch(OPENROUTER_API_URL, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${openrouterApiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://github.com/antsincgame/Amina-bot',
-        'X-Title': 'Amina Telegram Bot',
-      },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model,
-        messages: [
-          {
-            role: 'user',
-            content: prompt,
-          },
-        ],
-        modalities: ['image', 'text'],
-        image_config: {
-          aspect_ratio: '1:1',  // 1024x1024 по умолчанию
-          image_size: '1K',     // Стандартное качество
-        },
-      }),
-    });
+  for (const model of modelsToTry) {
+    try {
+      const buffer = await fetchOpenRouterImage(openrouterApiKey, model, prompt, timeoutMs);
+      return { buffer, model };
+    } catch (error: unknown) {
+      const err = error as { code?: string; status?: number; message?: string };
+      lastError = error as Error;
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'Unknown error');
-      throw Object.assign(
-        new Error(`OpenRouter API error: ${response.status} ${errorText.substring(0, 200)}`),
-        { code: 'OPENROUTER_API_ERROR', status: response.status }
-      );
+      if (err.code === 'OPENROUTER_TIMEOUT') throw error;
+      if (err.status === 401 || err.status === 403) throw error;
+      if (err.status === 429) throw error;
+
+      aiLogger.warn({ model, error: err.message, code: err.code }, 'OpenRouter model failed, trying next');
+      continue;
     }
-
-    const data = await response.json() as {
-      choices?: Array<{
-        message?: {
-          images?: Array<{
-            image_url?: { url?: string };
-          }>;
-        };
-      }>;
-    };
-
-    const imageUrl = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;
-
-    if (!imageUrl) {
-      throw Object.assign(
-        new Error('OpenRouter response missing image URL'),
-        { code: 'OPENROUTER_NO_IMAGE' }
-      );
-    }
-
-    // Декодируем base64 data URL
-    if (!imageUrl.startsWith('data:image/')) {
-      throw Object.assign(
-        new Error('OpenRouter returned invalid image format'),
-        { code: 'OPENROUTER_INVALID_FORMAT' }
-      );
-    }
-
-    // data:image/png;base64,iVBORw0KG...
-    const base64Match = imageUrl.match(/^data:image\/[^;]+;base64,(.+)$/);
-    if (!base64Match || !base64Match[1]) {
-      throw Object.assign(
-        new Error('Failed to parse OpenRouter base64 image'),
-        { code: 'OPENROUTER_PARSE_ERROR' }
-      );
-    }
-
-    const buffer = Buffer.from(base64Match[1], 'base64');
-
-    if (buffer.length === 0) {
-      throw Object.assign(
-        new Error('OpenRouter returned empty image'),
-        { code: 'OPENROUTER_EMPTY_IMAGE' }
-      );
-    }
-
-    aiLogger.info({ model, sizeKB: Math.round(buffer.length / 1024) }, '✅ OpenRouter image generated successfully');
-    return buffer;
-  } catch (error: unknown) {
-    const err = error as { name?: string; message?: string; code?: string };
-    if (err.name === 'AbortError') {
-      throw Object.assign(
-        new Error('OpenRouter generation timeout'),
-        { code: 'OPENROUTER_TIMEOUT' }
-      );
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
   }
+
+  throw lastError ?? new Error('All OpenRouter image models failed');
 }
 
 /**
@@ -624,14 +617,13 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
   }, 'Starting image generation with fallback support');
 
   let lastError: Error | null = null;
-  let usedModel = DEFAULT_MODEL;
   let skippedHF = false;
 
   // ===== ЭТАП 1: Пробуем HuggingFace модели =====
   try {
     const client = await getClient();
+    aiLogger.info({ modelsCount: FALLBACK_MODELS.length }, 'HF client initialized, trying models');
 
-    // Пробуем модели по порядку
     for (let i = 0; i < FALLBACK_MODELS.length; i++) {
       const model = FALLBACK_MODELS[i]!;
       const isFallback = i > 0;
@@ -655,8 +647,8 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
         return {
           image: buffer,
           model,
-          prompt: prompt, // оригинальный промпт для отображения пользователю
-          translatedPrompt, // английский промпт, отправленный в модель
+          prompt,
+          translatedPrompt,
           generationTimeMs,
         };
       } catch (error: unknown) {
@@ -674,26 +666,28 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
           timeElapsed,
         }, `Model ${model} failed${i < FALLBACK_MODELS.length - 1 ? ', trying next' : ', exhausted HF models'}`);
 
-        // Для некоторых ошибок не имеет смысла пробовать другие HF модели
         if (err.status === 401 || err.code === 'HF_AUTH_ERROR') {
           aiLogger.warn('HF auth error - will skip to OpenRouter fallback');
           skippedHF = true;
           break;
         }
 
-        // "Credit balance is depleted" - пропускаем остальные HF модели
         if (err.message?.includes('Credit balance is depleted') || err.message?.includes('purchase pre-paid credits')) {
           aiLogger.warn('HF credits depleted - skipping to OpenRouter fallback');
           skippedHF = true;
           break;
         }
 
-        // Продолжаем пробовать следующую HF модель
+        if (err.message?.includes('Rate limit') || err.status === 429) {
+          aiLogger.warn('HF rate limited - skipping to OpenRouter fallback');
+          skippedHF = true;
+          break;
+        }
+
         continue;
       }
     }
   } catch (clientError: unknown) {
-    // Не удалось создать HF клиент (нет токена или ошибка конфига)
     const err = clientError as { code?: string; message?: string };
     aiLogger.warn({ error: err.message, code: err.code }, 'Failed to initialize HF client, skipping to OpenRouter');
     lastError = err as Error;
@@ -707,20 +701,19 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
   }, 'Attempting OpenRouter as final fallback');
 
   try {
-    const buffer = await tryGenerateViaOpenRouter(translatedPrompt, GENERATION_TIMEOUT_MS);
+    const orResult = await tryGenerateViaOpenRouter(translatedPrompt, GENERATION_TIMEOUT_MS);
     const generationTimeMs = Date.now() - startTime;
-    const usedModel = await getOpenRouterImageModel();
 
     aiLogger.info({ 
-      model: usedModel,
+      model: orResult.model,
       timeMs: generationTimeMs,
       hfAttempted: !skippedHF,
     }, '✅ OpenRouter fallback succeeded!');
 
     return {
-      image: buffer,
-      model: usedModel,
-      prompt: prompt,
+      image: orResult.buffer,
+      model: orResult.model,
+      prompt,
       translatedPrompt,
       generationTimeMs,
     };
@@ -733,7 +726,6 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
       triedOpenRouter: true,
     }, 'OpenRouter fallback also failed');
     
-    // Запоминаем последнюю ошибку от OpenRouter
     lastError = err as Error;
   }
 
@@ -878,26 +870,83 @@ async function translateEditPromptToEnglish(prompt: string): Promise<string> {
   }
 }
 
+interface OpenRouterImageChoice {
+  message?: {
+    content?: string | Array<{ type?: string; image_url?: { url?: string }; imageUrl?: { url?: string } }>;
+    images?: Array<{
+      image_url?: { url?: string };
+      imageUrl?: { url?: string };
+    }>;
+  };
+}
+
+interface OpenRouterImageResponse {
+  choices?: OpenRouterImageChoice[];
+}
+
+/**
+ * Извлекает base64 data URL из ответа OpenRouter.
+ * Поддерживает несколько форматов:
+ * 1. message.images[].image_url.url (snake_case — raw API)
+ * 2. message.images[].imageUrl.url (camelCase — SDK)
+ * 3. message.content[] multipart с image_url блоками
+ */
+function extractImageUrlFromResponse(data: OpenRouterImageResponse): string | null {
+  const message = data.choices?.[0]?.message;
+  if (!message) return null;
+
+  if (message.images && message.images.length > 0) {
+    const img = message.images[0];
+    if (!img) return null;
+    const url = img.image_url?.url ?? img.imageUrl?.url;
+    if (url) return url;
+  }
+
+  if (Array.isArray(message.content)) {
+    for (const part of message.content) {
+      if (part.type === 'image_url') {
+        const url = part.image_url?.url ?? part.imageUrl?.url;
+        if (url) return url;
+      }
+    }
+  }
+
+  if (typeof message.content === 'string' && message.content.startsWith('data:image/')) {
+    return message.content;
+  }
+
+  return null;
+}
+
 /**
  * Парсинг base64-изображения из ответа OpenRouter.
  * Вынесено из tryGenerateViaOpenRouter для переиспользования в editImage.
  */
-function parseOpenRouterImageResponse(data: {
-  choices?: Array<{
-    message?: {
-      images?: Array<{
-        image_url?: { url?: string };
-      }>;
-    };
-  }>;
-}): Buffer {
-  const imageUrl = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;
+function parseOpenRouterImageResponse(data: OpenRouterImageResponse): Buffer {
+  const imageUrl = extractImageUrlFromResponse(data);
+
   if (!imageUrl) {
+    aiLogger.error({ 
+      hasChoices: !!data.choices?.length,
+      hasMessage: !!data.choices?.[0]?.message,
+      hasImages: !!data.choices?.[0]?.message?.images?.length,
+      contentType: typeof data.choices?.[0]?.message?.content,
+      rawKeys: data.choices?.[0]?.message ? Object.keys(data.choices[0].message) : [],
+    }, 'OpenRouter response missing image — dumping structure for debug');
     throw Object.assign(new Error('OpenRouter response missing image URL'), { code: 'OPENROUTER_NO_IMAGE' });
   }
+
+  if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+    throw Object.assign(
+      new Error('OpenRouter returned URL instead of base64 — external URL fetching not implemented'),
+      { code: 'OPENROUTER_EXTERNAL_URL' }
+    );
+  }
+
   if (!imageUrl.startsWith('data:image/')) {
     throw Object.assign(new Error('OpenRouter returned invalid image format'), { code: 'OPENROUTER_INVALID_FORMAT' });
   }
+
   const base64Match = imageUrl.match(/^data:image\/[^;]+;base64,(.+)$/);
   if (!base64Match?.[1]) {
     throw Object.assign(new Error('Failed to parse OpenRouter base64 image'), { code: 'OPENROUTER_PARSE_ERROR' });
@@ -990,14 +1039,7 @@ export async function editImage(
       );
     }
 
-    const data = await response.json() as {
-      choices?: Array<{
-        message?: {
-          images?: Array<{ image_url?: { url?: string } }>;
-        };
-      }>;
-    };
-
+    const data = await response.json() as OpenRouterImageResponse;
     const buffer = parseOpenRouterImageResponse(data);
     const generationTimeMs = Date.now() - startTime;
 

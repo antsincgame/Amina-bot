@@ -1,12 +1,11 @@
 {
   "name": "amina-mcp-servers",
   "version": "1.0.0",
-  "description": "MCP servers for Render, Supabase, and Voximplant",
+  "description": "MCP servers for Render, Supabase, and Perplexity",
   "type": "module",
   "scripts": {
     "render": "node render-server.js",
     "supabase": "node supabase-server.js",
-    "voximplant": "node voximplant-server.js",
     "perplexity": "node perplexity-server.js"
   },
   "dependencies": {

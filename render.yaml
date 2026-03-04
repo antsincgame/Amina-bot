@@ -29,9 +29,21 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
+      # URL админки для CORS
+      - key: ADMIN_URL
+        value: https://amina-admin.onrender.com
       # Домены сайтов для /api/leads (CORS)
       - key: LEAD_ORIGINS
         value: https://vibecoding.by,https://grodno.vibecoding.by
+      # LiraX АТС интеграция
+      - key: LIRAX_URL
+        value: https://api.lirax.net/general
+      - key: LIRAX_TOKEN
+        sync: false
+      - key: LIRAX_WEBHOOK_TOKEN
+        sync: false
+      - key: LIRAX_DEFAULT_EXT
+        value: "201"
     autoDeploy: true
 
   # ===========================================
@@ -62,4 +74,6 @@ services:
         sync: false
       - key: VITE_SUPABASE_ANON_KEY
         sync: false
+      - key: VITE_BOT_URL
+        value: https://amina-bot.onrender.com
     autoDeploy: true

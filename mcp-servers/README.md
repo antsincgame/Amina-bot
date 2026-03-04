@@ -1,6 +1,6 @@
 # MCP Серверы для Amina
 
-MCP (Model Context Protocol) серверы для интеграции Cursor с Render, Supabase, Voximplant и Perplexity (поиск в интернете).
+MCP (Model Context Protocol) серверы для интеграции Cursor с Render, Supabase и Perplexity (поиск в интернете).
 
 ## Установка
 
@@ -21,10 +21,6 @@ export RENDER_API_KEY="rnd_xxxxxxxxxxxxxx"
 export SUPABASE_URL="https://xxxxx.supabase.co"
 export SUPABASE_SERVICE_KEY="eyJhbGciOiJIUzI1NiIsInR..."
 
-# Voximplant
-export VOXIMPLANT_ACCOUNT_ID="123456"
-export VOXIMPLANT_API_KEY="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-
 # Perplexity (поиск в интернете, модель sonar — самая дешёвая)
 export PERPLEXITY_API_KEY="pplx-xxxxxxxxxxxx"
 ```
@@ -35,7 +31,6 @@ export PERPLEXITY_API_KEY="pplx-xxxxxxxxxxxx"
 |--------|-----------|
 | **Render** | Dashboard → Account Settings → API Keys |
 | **Supabase** | Project Settings → API → service_role key |
-| **Voximplant** | Control Panel → Settings → API Keys |
 | **Perplexity** | https://www.perplexity.ai/settings/api |
 
 ## Подключение в Cursor
@@ -69,16 +64,6 @@ Environment:
   SUPABASE_SERVICE_KEY=ваш_ключ
 ```
 
-**Voximplant:**
-```
-Name: voximplant
-Command: node
-Args: /полный/путь/к/mcp-servers/voximplant-server.js
-Environment:
-  VOXIMPLANT_ACCOUNT_ID=123456
-  VOXIMPLANT_API_KEY=ваш_ключ
-```
-
 **Perplexity:**
 ```
 Name: perplexity
@@ -97,10 +82,6 @@ Environment: PERPLEXITY_API_KEY=pplx-ваш_ключ
 
 ```
 Выбери последние 10 записей из таблицы analytics в Supabase
-```
-
-```
-Покажи баланс аккаунта Voximplant
 ```
 
 ```
@@ -132,18 +113,6 @@ Environment: PERPLEXITY_API_KEY=pplx-ваш_ключ
 - `supabase_rpc` — вызов функций
 - `supabase_query` — raw SQL (ограничен)
 
-### Voximplant (10 инструментов)
-- `voximplant_get_account_info` — инфо и баланс
-- `voximplant_list_phone_numbers` — номера
-- `voximplant_start_call` — совершить звонок
-- `voximplant_get_call_history` — история звонков
-- `voximplant_list_applications` — приложения
-- `voximplant_list_scenarios` — сценарии
-- `voximplant_get_scenario` — получить сценарий
-- `voximplant_create_scenario` — создать сценарий
-- `voximplant_update_scenario` — обновить сценарий
-- `voximplant_get_call_records` — записи звонков
-
 ### Perplexity (1 инструмент)
 - `perplexity_search` — ответ на вопрос с поиском в интернете (модель sonar, самая дешёвая)
 
@@ -165,6 +134,5 @@ mcp-servers/
 ├── README.md
 ├── render-server.js       # Render MCP Server
 ├── supabase-server.js     # Supabase MCP Server
-├── voximplant-server.js   # Voximplant MCP Server
 └── perplexity-server.js  # Perplexity MCP Server (поиск в интернете)
 ```

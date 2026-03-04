@@ -21,6 +21,7 @@ import { userPrefsRepo } from '../features/user-prefs-repo.js';
 import { sendDigestNow } from '../features/digest-scheduler.js';
 import { parseAllConfiguredSites, getConfiguredSites } from '../features/news-parser.js';
 import { escapeMarkdown, escapeHtml, sendLongMessage } from './format.js';
+import { makeCall, getCallHistory } from '../features/telephony/lirax.js';
 import {
   buildMainMenu,
   buildReplyKeyboard,
@@ -527,6 +528,94 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     } catch (error) {
       telegramLogger.error({ error, userId }, 'Digest command failed');
       await ctx.reply('😔 Ошибка при работе с дайджестом.');
+    }
+  });
+
+  // ====== ТЕЛЕФОНИЯ (LiraX) ======
+
+  // /call +375291234567 — инициировать звонок
+  bot.command('call', async (ctx) => {
+    if (!ctx.from?.id) return;
+    const userId = ctx.from.id.toString();
+    const phone = ctx.match?.trim().replace(/\s+/g, '');
+
+    if (!phone) {
+      await ctx.reply(
+        '📞 <b>Позвонить через АТС</b>\n\n' +
+        'Использование: <code>/call +375291234567</code>\n\n' +
+        'АТС сначала позвонит менеджеру (внутренний номер), ' +
+        'затем соединит его с указанным абонентом.',
+        { parse_mode: 'HTML' },
+      );
+      return;
+    }
+
+    await ctx.replyWithChatAction('typing');
+    telegramLogger.info({ userId, phone }, '[LiraX] makeCall requested');
+
+    try {
+      const result = await makeCall(phone);
+      await ctx.reply(
+        `📞 <b>Звонок инициирован!</b>\n\n` +
+        `📱 Номер: <code>${escapeHtml(phone)}</code>\n` +
+        `🆔 ID звонка: <code>${result.id_makecall}</code>\n\n` +
+        `АТС звонит менеджеру, затем соединит с абонентом.`,
+        { parse_mode: 'HTML' },
+      );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Неизвестная ошибка';
+      telegramLogger.error({ error, userId, phone }, '[LiraX] makeCall failed');
+      await ctx.reply(
+        `❌ <b>Ошибка при инициировании звонка:</b>\n<code>${escapeHtml(msg)}</code>`,
+        { parse_mode: 'HTML' },
+      );
+    }
+  });
+
+  // /calls — история звонков за сегодня
+  bot.command('calls', async (ctx) => {
+    if (!ctx.from?.id) return;
+    const userId = ctx.from.id.toString();
+
+    await ctx.replyWithChatAction('typing');
+    telegramLogger.info({ userId }, '[LiraX] call history requested');
+
+    try {
+      const now = new Date();
+      const start = new Date(now);
+      start.setHours(0, 0, 0, 0);
+
+      const fmt = (d: Date): string =>
+        d.toISOString().replace('T', ' ').slice(0, 19);
+
+      const calls = await getCallHistory(fmt(start), fmt(now));
+
+      if (calls.length === 0) {
+        await ctx.reply('📋 Звонков сегодня не было.');
+        return;
+      }
+
+      const lines = calls.slice(0, 20).map((c, i) => {
+        const typeLabel = c.type === '1' ? '📞 Исх' : '📲 Вх';
+        const dur = c.duration !== '0' ? `${c.duration}с` : '—';
+        const time = c.start.slice(11, 16);
+        return `${i + 1}. ${typeLabel} <code>${c.ani || c.dnis}</code> ${time} (${dur})`;
+      });
+
+      const header = calls.length > 20 ? ` (показаны первые 20 из ${calls.length})` : '';
+
+      await ctx.reply(
+        `📋 <b>Звонки сегодня${header}:</b>\n\n${lines.join('\n')}`,
+        { parse_mode: 'HTML' },
+      );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Неизвестная ошибка';
+      telegramLogger.error({ error, userId }, '[LiraX] call history failed');
+      await ctx.reply(
+        `❌ <b>Ошибка получения истории:</b>\n<code>${escapeHtml(msg)}</code>\n\n` +
+        `Убедись, что LiraX интеграция настроена.`,
+        { parse_mode: 'HTML' },
+      );
     }
   });
 
