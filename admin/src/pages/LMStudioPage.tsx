@@ -14,6 +14,8 @@ import {
   Zap,
   Terminal,
   ChevronDown,
+  Clock,
+  Shield,
 } from 'lucide-react';
 
 const BOT_URL = import.meta.env.VITE_BOT_URL || 'https://amina-bot.onrender.com';
@@ -62,6 +64,7 @@ const LMStudioPage = () => {
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [copied, setCopied] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
+  const [urlUpdatedAt, setUrlUpdatedAt] = useState('');
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings'],
@@ -90,6 +93,7 @@ const LMStudioPage = () => {
     setUrl(map['lmstudio_url'] ?? '');
     setModel(map['lmstudio_model'] ?? '');
     setApiKey(map['lmstudio_api_key'] ?? '');
+    setUrlUpdatedAt(map['lmstudio_url_updated_at'] ?? '');
     const p = map['ai_provider'];
     if (p === 'lmstudio' || p === 'openrouter') {
       setProvider(p);
@@ -163,6 +167,24 @@ const LMStudioPage = () => {
   }
 
   const isHealthy = healthStatus?.healthy === true;
+  const isTunnelManaged = url.includes('trycloudflare.com');
+
+  const formatUpdatedAt = (iso: string): string => {
+    if (!iso) return '';
+    try {
+      const d = new Date(iso);
+      const now = new Date();
+      const diffMs = now.getTime() - d.getTime();
+      const diffMin = Math.floor(diffMs / 60_000);
+      if (diffMin < 1) return 'только что';
+      if (diffMin < 60) return `${diffMin} мин назад`;
+      const diffHrs = Math.floor(diffMin / 60);
+      if (diffHrs < 24) return `${diffHrs} ч назад`;
+      return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return '';
+    }
+  };
 
   return (
     <div className="p-6 lg:p-8 max-w-3xl mx-auto space-y-6">
@@ -194,7 +216,7 @@ const LMStudioPage = () => {
 
       {/* Status Banner */}
       <div
-        className="rounded-xl p-4 flex items-center gap-3"
+        className="rounded-xl p-4 space-y-2"
         style={{
           background: isHealthy
             ? 'linear-gradient(135deg, rgba(34,197,94,0.1), rgba(34,197,94,0.05))'
@@ -202,34 +224,57 @@ const LMStudioPage = () => {
           border: `1px solid ${isHealthy ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.2)'}`,
         }}
       >
-        {isCheckingHealth ? (
-          <Loader2 className="w-5 h-5 text-white/50 animate-spin" />
-        ) : isHealthy ? (
-          <Wifi className="w-5 h-5 text-green-400" />
-        ) : (
-          <WifiOff className="w-5 h-5 text-red-400" />
-        )}
-        <div className="flex-1">
-          <span className={`font-medium ${isHealthy ? 'text-green-400' : 'text-red-400'}`}>
-            {isCheckingHealth
-              ? 'Проверка...'
-              : isHealthy
-                ? 'LM Studio Online'
-                : healthStatus?.configured
-                  ? 'LM Studio Offline'
-                  : 'Не настроено'}
-          </span>
-          {healthStatus?.url && (
-            <span className="text-white/30 text-sm ml-2">{healthStatus.url}</span>
+        <div className="flex items-center gap-3">
+          {isCheckingHealth ? (
+            <Loader2 className="w-5 h-5 text-white/50 animate-spin" />
+          ) : isHealthy ? (
+            <Wifi className="w-5 h-5 text-green-400" />
+          ) : (
+            <WifiOff className="w-5 h-5 text-red-400" />
+          )}
+          <div className="flex-1">
+            <span className={`font-medium ${isHealthy ? 'text-green-400' : 'text-red-400'}`}>
+              {isCheckingHealth
+                ? 'Проверка...'
+                : isHealthy
+                  ? 'LM Studio Online'
+                  : healthStatus?.configured
+                    ? 'LM Studio Offline'
+                    : 'Не настроено'}
+            </span>
+            {healthStatus?.url && (
+              <span className="text-white/30 text-sm ml-2">{healthStatus.url}</span>
+            )}
+          </div>
+          <button
+            onClick={checkHealth}
+            disabled={isCheckingHealth}
+            className="p-2 rounded-lg text-white/50 hover:text-white hover:bg-white/10 transition-all"
+          >
+            <RefreshCw className={`w-4 h-4 ${isCheckingHealth ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
+
+        {/* Tunnel-managed indicator */}
+        <div className="flex items-center gap-4 text-xs">
+          {isTunnelManaged && (
+            <span className="flex items-center gap-1.5 text-indigo-400/80">
+              <Shield className="w-3 h-3" />
+              tunnel.sh (авто)
+            </span>
+          )}
+          {urlUpdatedAt && (
+            <span className="flex items-center gap-1.5 text-white/30">
+              <Clock className="w-3 h-3" />
+              URL обновлён {formatUpdatedAt(urlUpdatedAt)}
+            </span>
+          )}
+          {healthStatus?.model && (
+            <span className="text-white/30 truncate">
+              {healthStatus.model}
+            </span>
           )}
         </div>
-        <button
-          onClick={checkHealth}
-          disabled={isCheckingHealth}
-          className="p-2 rounded-lg text-white/50 hover:text-white hover:bg-white/10 transition-all"
-        >
-          <RefreshCw className={`w-4 h-4 ${isCheckingHealth ? 'animate-spin' : ''}`} />
-        </button>
       </div>
 
       {/* Provider Mode */}
@@ -394,31 +439,84 @@ const LMStudioPage = () => {
           </h2>
         </div>
 
-        <div className="space-y-4 text-sm">
+        <div className="space-y-5 text-sm">
+          {/* Auto mode */}
           <div>
-            <p className="text-white/60 mb-2">1. Установи cloudflared:</p>
-            <CodeBlock
-              code="curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared && chmod +x cloudflared && sudo mv cloudflared /usr/local/bin/"
-              onCopy={handleCopyCommand}
-              copied={copied}
-            />
+            <p className="text-white/80 font-medium mb-1">Автоматический режим (рекомендуется)</p>
+            <p className="text-white/40 text-xs mb-3">
+              Скрипт сам запустит cloudflared, получит URL и обновит настройки бота.
+            </p>
+
+            <div className="space-y-3">
+              <div>
+                <p className="text-white/60 mb-2">1. Запусти LM Studio и загрузи модель</p>
+              </div>
+
+              <div>
+                <p className="text-white/60 mb-2">2. Запусти tunnel.sh:</p>
+                <CodeBlock
+                  code="cd ~/Amina && ./tunnel.sh"
+                  onCopy={handleCopyCommand}
+                  copied={copied}
+                />
+              </div>
+
+              <div>
+                <p className="text-white/60 mb-2">3. Для автозапуска при логине:</p>
+                <CodeBlock
+                  code="systemctl --user enable --now amina-tunnel"
+                  onCopy={handleCopyCommand}
+                  copied={copied}
+                />
+              </div>
+            </div>
           </div>
 
-          <div>
-            <p className="text-white/60 mb-2">2. Запусти туннель (LM Studio должна быть запущена):</p>
+          <div className="border-t border-white/5 pt-4">
+            <p className="text-white/80 font-medium mb-1">Управление сервисом</p>
+            <div className="grid grid-cols-2 gap-2 mt-3">
+              <CodeBlock
+                code="systemctl --user status amina-tunnel"
+                onCopy={handleCopyCommand}
+                copied={copied}
+              />
+              <CodeBlock
+                code="systemctl --user restart amina-tunnel"
+                onCopy={handleCopyCommand}
+                copied={copied}
+              />
+              <CodeBlock
+                code="journalctl --user -u amina-tunnel -f"
+                onCopy={handleCopyCommand}
+                copied={copied}
+              />
+              <CodeBlock
+                code="systemctl --user stop amina-tunnel"
+                onCopy={handleCopyCommand}
+                copied={copied}
+              />
+            </div>
+          </div>
+
+          <div className="p-3 rounded-xl bg-indigo-500/5 border border-indigo-500/20">
+            <p className="text-indigo-400/80 text-xs">
+              <strong>Как это работает:</strong> tunnel.sh ждёт LM Studio на
+              localhost:1234, запускает cloudflared, извлекает URL и автоматически
+              регистрирует его на боте. При падении туннеля или LM Studio скрипт
+              автоматически перезапускает всё. URL в поле выше обновляется автоматически.
+            </p>
+          </div>
+
+          {/* Manual fallback */}
+          <div className="border-t border-white/5 pt-4">
+            <p className="text-white/50 text-xs mb-2">Ручной режим (если tunnel.sh не подходит):</p>
             <CodeBlock
               code="cloudflared tunnel --url http://localhost:1234"
               onCopy={handleCopyCommand}
               copied={copied}
             />
-          </div>
-
-          <div className="p-3 rounded-xl bg-amber-500/5 border border-amber-500/20">
-            <p className="text-amber-400/80 text-xs">
-              <strong>Важно:</strong> Скопируй URL вида{' '}
-              <code className="text-amber-300">https://xxxx-xxxx.trycloudflare.com</code> из вывода
-              cloudflared и вставь в поле &quot;URL туннеля&quot; выше. URL меняется при каждом
-              перезапуске (для постоянного URL используй именованный туннель через Cloudflare Dashboard).
+            <p className="text-white/30 text-xs mt-2">
+              Скопируй URL из вывода cloudflared и вставь в поле выше вручную.
             </p>
           </div>
         </div>

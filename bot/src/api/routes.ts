@@ -1787,6 +1787,66 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
       });
 
       // ============================================
+      // Tunnel Registration
+      // ============================================
+
+      apiServer.post(
+        '/tunnel/register',
+        async (
+          request: FastifyRequest<{ Body: { url: string } }>,
+          reply: FastifyReply
+        ) => {
+          try {
+            const { url: tunnelUrl } = request.body as { url: string };
+
+            if (!tunnelUrl || typeof tunnelUrl !== 'string') {
+              return reply.code(400).send({
+                success: false,
+                error: 'url is required',
+              });
+            }
+
+            const trimmed = tunnelUrl.trim().replace(/\/+$/, '');
+            if (!trimmed.startsWith('https://')) {
+              return reply.code(400).send({
+                success: false,
+                error: 'url must start with https://',
+              });
+            }
+
+            await settingsRepo.set('lmstudio_url', trimmed);
+            await settingsRepo.set(
+              'lmstudio_url_updated_at',
+              new Date().toISOString()
+            );
+
+            clearLMStudioCache();
+            settingsRepo.invalidateCache?.();
+
+            const cfg = await getLMStudioConfig();
+            let healthy = false;
+            if (cfg) {
+              healthy = await checkLMStudioHealth(cfg);
+            }
+
+            aiLogger.info(
+              { url: trimmed, healthy },
+              'Tunnel URL registered'
+            );
+
+            return reply.code(200).send({
+              success: true,
+              data: { url: trimmed, healthy, registeredAt: new Date().toISOString() },
+            });
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : 'Unknown error';
+            aiLogger.error({ error }, 'Tunnel registration failed');
+            return reply.code(500).send({ success: false, error: msg });
+          }
+        }
+      );
+
+      // ============================================
       // LiraX Telephony Webhook
       // ============================================
 
