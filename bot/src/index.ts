@@ -203,7 +203,7 @@ const initBotAndServices = async (webhookAlreadySet: boolean): Promise<void> => 
   }
 
   // Activate webhook or start polling
-  if (webhookAlreadySet) {
+  if (webhookAlreadySet && config.telegram.webhook.url) {
     try {
       await bot.api.setWebhook(`${config.telegram.webhook.url}/webhook/telegram`, {
         secret_token: config.telegram.webhook.secret,
@@ -269,25 +269,15 @@ const start = async (): Promise<void> => {
     // Setup API routes
     await setupRoutes(app);
 
-    // --- Telegram bot: создаём ДО listen() если webhook mode ---
-    const useWebhook = !!(config.isProd && config.telegram.token && config.telegram.webhook.url);
-    if (useWebhook) {
-      appLogger.info('Initializing Telegram bot for webhook...');
-      bot = createBot();
-      app.post('/webhook/telegram', webhookCallback(bot, 'fastify', {
-        secretToken: config.telegram.webhook.secret,
-      }));
-      appLogger.info('📌 Webhook route registered');
-    }
-
-    // Запускаем HTTP сервер — health check работает с этого момента
+    // Запускаем HTTP сервер ПЕРВЫМ — health check мгновенный
     const address = await app.listen({
       port: config.server.port,
       host: config.server.host,
     });
     serverLogger.info({ address }, '📡 HTTP server listening');
 
-    // --- Всё остальное — после listen(), не блокирует health check ---
+    // Фоновая инициализация бота и сервисов
+    const useWebhook = !!(config.isProd && config.telegram.token && config.telegram.webhook.url);
     initBotAndServices(useWebhook).catch(err => {
       appLogger.error({ error: err }, 'Background init error');
     });
