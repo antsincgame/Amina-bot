@@ -1,7 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
-import formbody from '@fastify/formbody';
 import { webhookCallback } from 'grammy';
 import { config } from './config/index.js';
 import { logger, serverLogger, httpLogger, appLogger } from './config/logger.js';
@@ -49,9 +48,6 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
     origin: allowedOrigins,
     credentials: true,
   });
-
-  // Парсинг application/x-www-form-urlencoded (для вебхуков LiraX АТС)
-  await server.register(formbody);
 
   // Root endpoint - info page
   server.get('/', async () => {

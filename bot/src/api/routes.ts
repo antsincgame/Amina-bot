@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
+import formbody from '@fastify/formbody';
 import { aiService } from '../ai/openrouter.js';
 import { conversationsRepo, settingsRepo, promptsRepo } from '../db/supabase.js';
 import { validateMessageContent, validateUserId } from '../utils/validation.js';
@@ -57,6 +58,9 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
   // Prefix all routes with /api
   server.register(
     async (apiServer: FastifyInstance) => {
+      // Парсинг application/x-www-form-urlencoded (нужен для вебхуков LiraX)
+      await apiServer.register(formbody);
+
       // Apply rate limiting to all API routes
       apiServer.addHook('preHandler', rateLimitHook('api'));
 
