@@ -338,6 +338,13 @@ function injectAntiRefusal(prompt: string): string {
   return prompt + ANTI_REFUSAL_SUFFIX;
 }
 
+const THINKING_TAG_RE = /<think>[\s\S]*?<\/think>\s*/g;
+
+function stripThinkingTags(text: string): string {
+  const cleaned = text.replace(THINKING_TAG_RE, '').trim();
+  return cleaned || text;
+}
+
 // --------------------------------------------
 // AI Service
 // --------------------------------------------
@@ -381,7 +388,7 @@ export const aiService = {
       }
 
       return {
-        content: choice.message.content,
+        content: stripThinkingTags(choice.message.content),
         model: response.model,
         tokens_used: {
           prompt: response.usage?.prompt_tokens ?? 0,
@@ -623,7 +630,7 @@ export const aiService = {
       }
 
       return {
-        content: fullContent,
+        content: stripThinkingTags(fullContent),
         model: streamModel,
         tokens_used: { prompt: 0, completion: 0, total: 0 },
         finish_reason: finishReason,
