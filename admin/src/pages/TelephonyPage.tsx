@@ -19,6 +19,9 @@ import {
   Copy,
   User,
   Zap,
+  Shield,
+  UserPlus,
+  UserMinus,
 } from 'lucide-react';
 
 const BOT_URL = import.meta.env.VITE_BOT_URL || 'https://amina-bot.onrender.com';
@@ -33,6 +36,12 @@ interface LiraXStatus {
   defaultExt: string;
   webhookUrl: string;
   hasWebhookToken: boolean;
+}
+
+interface TelephonyUser {
+  telegram_id: string;
+  name: string;
+  added_at: string;
 }
 
 interface Scenario {
@@ -104,6 +113,33 @@ async function generatePrompt(rule: string): Promise<{ generatedPrompt: string; 
   return json.data;
 }
 
+async function fetchTelephonyUsers(): Promise<TelephonyUser[]> {
+  const res = await fetch(`${BOT_URL}/api/lirax/users`);
+  if (!res.ok) throw new Error('Failed to fetch telephony users');
+  const json = await res.json();
+  return json.data;
+}
+
+async function addTelephonyUserApi(telegramId: string, name: string): Promise<TelephonyUser[]> {
+  const res = await fetch(`${BOT_URL}/api/lirax/users`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ telegram_id: telegramId, name }),
+  });
+  if (!res.ok) throw new Error('Failed to add user');
+  const json = await res.json();
+  return json.data;
+}
+
+async function removeTelephonyUserApi(telegramId: string): Promise<TelephonyUser[]> {
+  const res = await fetch(`${BOT_URL}/api/lirax/users/${telegramId}`, {
+    method: 'DELETE',
+  });
+  if (!res.ok) throw new Error('Failed to remove user');
+  const json = await res.json();
+  return json.data;
+}
+
 async function testCall(phone: string): Promise<{ id_makecall: string }> {
   const res = await fetch(`${BOT_URL}/api/lirax/test-call`, {
     method: 'POST',
@@ -131,6 +167,10 @@ const TelephonyPage = () => {
   const [notifyRecords, setNotifyRecords] = useState(true);
   const [settingsSaved, setSettingsSaved] = useState(false);
 
+  // Telephony users state
+  const [newUserId, setNewUserId] = useState('');
+  const [newUserName, setNewUserName] = useState('');
+
   // Scenarios state
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [generatingId, setGeneratingId] = useState<string | null>(null);
@@ -150,6 +190,27 @@ const TelephonyPage = () => {
   const { data: allSettings } = useQuery({
     queryKey: ['settings'],
     queryFn: () => settingsApi.getAll(),
+  });
+
+  const { data: telephonyUsers = [], isLoading: usersLoading } = useQuery({
+    queryKey: ['lirax-users'],
+    queryFn: fetchTelephonyUsers,
+  });
+
+  const { mutate: addUser, isPending: addingUser } = useMutation({
+    mutationFn: () => addTelephonyUserApi(newUserId.trim(), newUserName.trim() || newUserId.trim()),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['lirax-users'] });
+      setNewUserId('');
+      setNewUserName('');
+    },
+  });
+
+  const { mutate: removeUser } = useMutation({
+    mutationFn: (telegramId: string) => removeTelephonyUserApi(telegramId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['lirax-users'] });
+    },
   });
 
   const { isLoading: scenariosLoading } = useQuery({
@@ -309,7 +370,88 @@ const TelephonyPage = () => {
         )}
       </div>
 
-      {/* B. Admin Setup + C. Notifications */}
+      {/* B. Authorized Users */}
+      <div className="card p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <Shield className="w-5 h-5 text-blue-400" />
+          <h2 className="text-lg font-semibold text-white">Авторизованные пользователи</h2>
+          {usersLoading && <Loader2 className="w-4 h-4 animate-spin text-gray-500" />}
+        </div>
+
+        <p className="text-xs text-gray-500 mb-4">
+          Только эти пользователи и администратор (chat ID ниже) могут использовать команды{' '}
+          <code className="text-blue-400">/call</code> и{' '}
+          <code className="text-blue-400">/calls</code> в Telegram-боте.
+        </p>
+
+        {/* User list */}
+        <div className="space-y-2 mb-4">
+          {telephonyUsers.length === 0 && !usersLoading && (
+            <p className="text-sm text-gray-500 italic py-2">
+              Нет авторизованных пользователей. Добавьте хотя бы одного.
+            </p>
+          )}
+          {telephonyUsers.map((u) => (
+            <div
+              key={u.telegram_id}
+              className="flex items-center justify-between px-4 py-2.5 rounded-xl bg-white/[0.02] border border-white/5"
+            >
+              <div className="flex items-center gap-3">
+                <User className="w-4 h-4 text-gray-500" />
+                <div>
+                  <span className="text-sm font-medium text-white">{u.name}</span>
+                  <span className="text-xs text-gray-500 ml-2">ID: {u.telegram_id}</span>
+                </div>
+              </div>
+              <button
+                className="p-1.5 rounded-lg text-gray-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                onClick={() => removeUser(u.telegram_id)}
+                title="Удалить"
+              >
+                <UserMinus className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {/* Add user form */}
+        <div className="flex gap-2 items-end">
+          <div className="flex-1">
+            <label className="block text-xs text-gray-500 mb-1">Telegram ID</label>
+            <input
+              type="text"
+              className="input w-full"
+              placeholder="7867087040"
+              value={newUserId}
+              onChange={(e) => setNewUserId(e.target.value)}
+            />
+          </div>
+          <div className="flex-1">
+            <label className="block text-xs text-gray-500 mb-1">Имя (опционально)</label>
+            <input
+              type="text"
+              className="input w-full"
+              placeholder="Дмитрий"
+              value={newUserName}
+              onChange={(e) => setNewUserName(e.target.value)}
+            />
+          </div>
+          <button
+            className="btn-gold flex items-center gap-1.5 whitespace-nowrap"
+            disabled={addingUser || !newUserId.trim()}
+            onClick={() => addUser()}
+          >
+            {addingUser ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <UserPlus className="w-4 h-4" />
+            )}
+            Добавить
+          </button>
+        </div>
+      </div>
+
+      {/* C. Admin Setup + Notifications */}
       <div className="card p-6">
         <div className="flex items-center gap-3 mb-6">
           <User className="w-5 h-5 text-amber-400" />

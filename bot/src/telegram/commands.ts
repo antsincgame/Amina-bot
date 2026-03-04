@@ -21,7 +21,9 @@ import { userPrefsRepo } from '../features/user-prefs-repo.js';
 import { sendDigestNow } from '../features/digest-scheduler.js';
 import { parseAllConfiguredSites, getConfiguredSites } from '../features/news-parser.js';
 import { escapeMarkdown, escapeHtml, sendLongMessage } from './format.js';
-import { makeCall, getCallHistory } from '../features/telephony/lirax.js';
+import { makeCall, getCallHistory, isTelephonyAllowed } from '../features/telephony/lirax.js';
+import { aiService } from '../ai/openrouter.js';
+import type { AIMessage } from '../../../shared/types/index.js';
 import {
   buildMainMenu,
   buildReplyKeyboard,
@@ -531,51 +533,138 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     }
   });
 
-  // ====== ТЕЛЕФОНИЯ (LiraX) ======
+  // ====== ТЕЛЕФОНИЯ (LiraX) — доступ только авторизованным ======
 
-  // /call +375291234567 — инициировать звонок
+  const TELEPHONY_DENIED_MSG =
+    '🔒 <b>Доступ запрещён</b>\n\n' +
+    'Команды телефонии доступны только авторизованным пользователям.\n' +
+    'Обратитесь к администратору для получения доступа.';
+
+  // /call — произвольная команда звонка
   bot.command('call', async (ctx) => {
     if (!ctx.from?.id) return;
     const userId = ctx.from.id.toString();
-    const phone = ctx.match?.trim().replace(/\s+/g, '');
 
-    if (!phone) {
+    const allowed = await isTelephonyAllowed(userId);
+    if (!allowed) {
+      await ctx.reply(TELEPHONY_DENIED_MSG, { parse_mode: 'HTML' });
+      return;
+    }
+
+    const input = ctx.match?.trim() || '';
+
+    if (!input) {
       await ctx.reply(
-        '📞 <b>Позвонить через АТС</b>\n\n' +
-        'Использование: <code>/call +375291234567</code>\n\n' +
-        'АТС сначала позвонит менеджеру (внутренний номер), ' +
-        'затем соединит его с указанным абонентом.',
+        '📞 <b>Телефония Amina</b>\n\n' +
+        '<b>Простой звонок:</b>\n' +
+        '<code>/call +375291234567</code>\n\n' +
+        '<b>Звонок с заданием:</b>\n' +
+        '<code>/call +375291234567 напомни о встрече завтра в 14:00</code>\n' +
+        '<code>/call +375291234567 уточни готовность заказа</code>\n\n' +
+        'Amina сама разберёт номер и задачу, сформирует сценарий звонка.',
         { parse_mode: 'HTML' },
       );
       return;
     }
 
     await ctx.replyWithChatAction('typing');
-    telegramLogger.info({ userId, phone }, '[LiraX] makeCall requested');
+
+    const phoneMatch = input.match(/(\+?\d[\d\s\-()]{6,})/);
+    const phone = phoneMatch?.[1]?.replace(/[\s\-()]/g, '') ?? null;
+    const instruction = phoneMatch?.[0]
+      ? input.replace(phoneMatch[0], '').trim()
+      : input;
+
+    if (!phone) {
+      await ctx.reply(
+        '❌ <b>Не удалось распознать номер телефона</b>\n\n' +
+        'Пример: <code>/call +375291234567</code>',
+        { parse_mode: 'HTML' },
+      );
+      return;
+    }
+
+    telegramLogger.info({ userId, phone, instruction }, '[LiraX] call command');
+
+    if (!instruction) {
+      try {
+        const result = await makeCall(phone);
+        await ctx.reply(
+          `📞 <b>Звонок инициирован!</b>\n\n` +
+          `📱 Номер: <code>${escapeHtml(phone)}</code>\n` +
+          `🆔 ID: <code>${result.id_makecall}</code>\n\n` +
+          `АТС звонит менеджеру, затем соединит с абонентом.`,
+          { parse_mode: 'HTML' },
+        );
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : 'Неизвестная ошибка';
+        telegramLogger.error({ error, userId, phone }, '[LiraX] makeCall failed');
+        await ctx.reply(
+          `❌ <b>Ошибка звонка:</b>\n<code>${escapeHtml(msg)}</code>`,
+          { parse_mode: 'HTML' },
+        );
+      }
+      return;
+    }
 
     try {
+      const systemPrompt = `Ты — телефонный ассистент Amina. Пользователь хочет позвонить и дал инструкцию.
+Сформируй краткий текст задания для оператора и определи тип звонка.
+
+Номер: ${phone}
+Инструкция: ${instruction}
+
+Ответь СТРОГО в JSON:
+{
+  "summary": "краткое описание задачи для оператора (1-2 предложения)",
+  "speech_text": "текст для автоматического приветствия (если нужно TTS), или null для обычного звонка",
+  "type": "simple" | "tts"
+}`;
+
+      const messages: AIMessage[] = [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: instruction },
+      ];
+
+      const aiResult = await aiService.chat(messages);
+      let parsed: { summary: string; speech_text: string | null; type: string };
+      try {
+        const jsonMatch = aiResult.content.match(/\{[\s\S]*\}/);
+        parsed = JSON.parse(jsonMatch?.[0] || aiResult.content);
+      } catch {
+        parsed = { summary: instruction, speech_text: null, type: 'simple' };
+      }
+
       const result = await makeCall(phone);
+
       await ctx.reply(
         `📞 <b>Звонок инициирован!</b>\n\n` +
         `📱 Номер: <code>${escapeHtml(phone)}</code>\n` +
-        `🆔 ID звонка: <code>${result.id_makecall}</code>\n\n` +
+        `📋 Задание: ${escapeHtml(parsed.summary)}\n` +
+        `🆔 ID: <code>${result.id_makecall}</code>\n\n` +
         `АТС звонит менеджеру, затем соединит с абонентом.`,
         { parse_mode: 'HTML' },
       );
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Неизвестная ошибка';
-      telegramLogger.error({ error, userId, phone }, '[LiraX] makeCall failed');
+      telegramLogger.error({ error, userId, phone, instruction }, '[LiraX] smart call failed');
       await ctx.reply(
-        `❌ <b>Ошибка при инициировании звонка:</b>\n<code>${escapeHtml(msg)}</code>`,
+        `❌ <b>Ошибка звонка:</b>\n<code>${escapeHtml(msg)}</code>`,
         { parse_mode: 'HTML' },
       );
     }
   });
 
-  // /calls — история звонков за сегодня
+  // /calls — история звонков за сегодня (только авторизованные)
   bot.command('calls', async (ctx) => {
     if (!ctx.from?.id) return;
     const userId = ctx.from.id.toString();
+
+    const allowed = await isTelephonyAllowed(userId);
+    if (!allowed) {
+      await ctx.reply(TELEPHONY_DENIED_MSG, { parse_mode: 'HTML' });
+      return;
+    }
 
     await ctx.replyWithChatAction('typing');
     telegramLogger.info({ userId }, '[LiraX] call history requested');
@@ -595,14 +684,17 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
         return;
       }
 
-      const lines = calls.slice(0, 20).map((c, i) => {
+      const MAX_DISPLAYED = 20;
+      const lines = calls.slice(0, MAX_DISPLAYED).map((c, i) => {
         const typeLabel = c.type === '1' ? '📞 Исх' : '📲 Вх';
         const dur = c.duration !== '0' ? `${c.duration}с` : '—';
         const time = c.start.slice(11, 16);
         return `${i + 1}. ${typeLabel} <code>${c.ani || c.dnis}</code> ${time} (${dur})`;
       });
 
-      const header = calls.length > 20 ? ` (показаны первые 20 из ${calls.length})` : '';
+      const header = calls.length > MAX_DISPLAYED
+        ? ` (первые ${MAX_DISPLAYED} из ${calls.length})`
+        : '';
 
       await ctx.reply(
         `📋 <b>Звонки сегодня${header}:</b>\n\n${lines.join('\n')}`,
@@ -612,8 +704,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
       const msg = error instanceof Error ? error.message : 'Неизвестная ошибка';
       telegramLogger.error({ error, userId }, '[LiraX] call history failed');
       await ctx.reply(
-        `❌ <b>Ошибка получения истории:</b>\n<code>${escapeHtml(msg)}</code>\n\n` +
-        `Убедись, что LiraX интеграция настроена.`,
+        `❌ <b>Ошибка получения истории:</b>\n<code>${escapeHtml(msg)}</code>`,
         { parse_mode: 'HTML' },
       );
     }

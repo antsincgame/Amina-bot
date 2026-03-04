@@ -13,7 +13,17 @@ import { config, clearApiKeysCache, getApiKeys } from '../config/index.js';
 import { getConfiguredSites, saveConfiguredSites, parseNewsFromSite } from '../features/news-parser.js';
 import { invalidateTTSConfig } from '../features/tts.js';
 import { voiceMessagesRepo } from '../features/voice-messages-repo.js';
-import { verifyWebhookToken, formatCallEvent, clearLiraXConfigCache, makeCall, type LiraXWebhookPayload, type LiraXEventPayload } from '../features/telephony/lirax.js';
+import {
+  verifyWebhookToken,
+  formatCallEvent,
+  clearLiraXConfigCache,
+  makeCall,
+  getTelephonyUsers,
+  addTelephonyUser,
+  removeTelephonyUser,
+  type LiraXWebhookPayload,
+  type LiraXEventPayload,
+} from '../features/telephony/lirax.js';
 import archiver from 'archiver';
 import type { Message, AIMessage, Conversation, LogLevel } from '../../../shared/types/index.js';
 
@@ -1937,6 +1947,59 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
             aiLogger.info({ count: scenarios.length }, '[LiraX] Scenarios saved');
 
             return reply.code(200).send({ success: true, message: 'Scenarios saved' });
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : 'Unknown error';
+            return reply.code(500).send({ success: false, error: msg });
+          }
+        },
+      );
+
+      // ============================================
+      // LiraX Telephony User Permissions
+      // ============================================
+
+      apiServer.get('/lirax/users', async (_request: FastifyRequest, reply: FastifyReply) => {
+        try {
+          const users = await getTelephonyUsers();
+          return reply.code(200).send({ success: true, data: users });
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : 'Unknown error';
+          return reply.code(500).send({ success: false, error: msg });
+        }
+      });
+
+      apiServer.post(
+        '/lirax/users',
+        async (
+          request: FastifyRequest<{ Body: { telegram_id: string; name: string } }>,
+          reply: FastifyReply,
+        ) => {
+          try {
+            const { telegram_id, name } = request.body as { telegram_id: string; name: string };
+            if (!telegram_id) {
+              return reply.code(400).send({ success: false, error: 'telegram_id is required' });
+            }
+            const users = await addTelephonyUser(telegram_id, name || telegram_id);
+            aiLogger.info({ telegram_id, name }, '[LiraX] Telephony user added');
+            return reply.code(200).send({ success: true, data: users });
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : 'Unknown error';
+            return reply.code(500).send({ success: false, error: msg });
+          }
+        },
+      );
+
+      apiServer.delete(
+        '/lirax/users/:telegramId',
+        async (
+          request: FastifyRequest<{ Params: { telegramId: string } }>,
+          reply: FastifyReply,
+        ) => {
+          try {
+            const { telegramId } = request.params;
+            const users = await removeTelephonyUser(telegramId);
+            aiLogger.info({ telegramId }, '[LiraX] Telephony user removed');
+            return reply.code(200).send({ success: true, data: users });
           } catch (error) {
             const msg = error instanceof Error ? error.message : 'Unknown error';
             return reply.code(500).send({ success: false, error: msg });

@@ -298,6 +298,56 @@ export type LiraXWebhookPayload =
   | Record<string, string>;
 
 // ---------------------------------------------------------------
+// Telephony user permissions
+// ---------------------------------------------------------------
+
+export interface TelephonyUser {
+  telegram_id: string;
+  name: string;
+  added_at: string;
+}
+
+const TELEPHONY_USERS_KEY = 'telephony_allowed_users';
+
+export async function getTelephonyUsers(): Promise<TelephonyUser[]> {
+  const raw = await settingsRepo.get(TELEPHONY_USERS_KEY);
+  if (!raw) return [];
+  try {
+    return JSON.parse(raw) as TelephonyUser[];
+  } catch {
+    return [];
+  }
+}
+
+export async function addTelephonyUser(telegramId: string, name: string): Promise<TelephonyUser[]> {
+  const users = await getTelephonyUsers();
+  const exists = users.some((u) => u.telegram_id === telegramId);
+  if (exists) return users;
+
+  const updated = [
+    ...users,
+    { telegram_id: telegramId, name, added_at: new Date().toISOString() },
+  ];
+  await settingsRepo.set(TELEPHONY_USERS_KEY, JSON.stringify(updated));
+  return updated;
+}
+
+export async function removeTelephonyUser(telegramId: string): Promise<TelephonyUser[]> {
+  const users = await getTelephonyUsers();
+  const updated = users.filter((u) => u.telegram_id !== telegramId);
+  await settingsRepo.set(TELEPHONY_USERS_KEY, JSON.stringify(updated));
+  return updated;
+}
+
+export async function isTelephonyAllowed(telegramId: string): Promise<boolean> {
+  const adminChatId = await settingsRepo.get('lirax_admin_chat_id');
+  if (adminChatId && adminChatId === telegramId) return true;
+
+  const users = await getTelephonyUsers();
+  return users.some((u) => u.telegram_id === telegramId);
+}
+
+// ---------------------------------------------------------------
 // Webhook token verification
 // ---------------------------------------------------------------
 
