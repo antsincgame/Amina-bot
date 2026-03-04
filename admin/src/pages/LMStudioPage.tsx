@@ -13,9 +13,11 @@ import {
   Server,
   Zap,
   Terminal,
-  ChevronDown,
   Clock,
   Shield,
+  Search,
+  Cpu,
+  CheckCircle2,
 } from 'lucide-react';
 
 const BOT_URL = import.meta.env.VITE_BOT_URL || 'https://amina-bot.onrender.com';
@@ -65,6 +67,7 @@ const LMStudioPage = () => {
   const [copied, setCopied] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
   const [urlUpdatedAt, setUrlUpdatedAt] = useState('');
+  const [modelSearch, setModelSearch] = useState('');
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings'],
@@ -135,6 +138,12 @@ const LMStudioPage = () => {
   useEffect(() => {
     checkHealth();
   }, [checkHealth]);
+
+  useEffect(() => {
+    if (healthStatus?.healthy && models.length === 0 && !isLoadingModels) {
+      loadModels();
+    }
+  }, [healthStatus?.healthy, models.length, isLoadingModels, loadModels]);
 
   const handleSave = () => {
     const toSave: Record<string, string> = {
@@ -349,43 +358,17 @@ const LMStudioPage = () => {
           </div>
 
           <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="label mb-0">Модель</label>
-              <button
-                onClick={loadModels}
-                disabled={isLoadingModels}
-                className="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
-              >
-                <RefreshCw className={`w-3 h-3 ${isLoadingModels ? 'animate-spin' : ''}`} />
-                Загрузить из LM Studio
-              </button>
-            </div>
-
-            {models.length > 0 ? (
-              <div className="relative">
-                <select
-                  value={model}
-                  onChange={(e) => setModel(e.target.value)}
-                  className="input appearance-none pr-10"
-                >
-                  <option value="">Выберите модель...</option>
-                  {models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.id}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="w-4 h-4 text-white/30 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-              </div>
-            ) : (
-              <input
-                type="text"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                placeholder="qwen3-14b-claude-4.5-opus-high-reasoning-distill"
-                className="input font-mono text-sm"
-              />
-            )}
+            <label className="label">Модель</label>
+            <input
+              type="text"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder="qwen3-14b-claude-4.5-opus-high-reasoning-distill"
+              className="input font-mono text-sm"
+            />
+            <p className="text-white/40 text-xs mt-1">
+              Или выберите из каталога моделей ниже
+            </p>
           </div>
 
           <div>
@@ -402,6 +385,116 @@ const LMStudioPage = () => {
             </p>
           </div>
         </div>
+      </div>
+
+      {/* Model Picker */}
+      <div className="card animate-fade-in-up">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <Cpu className="w-5 h-5 text-purple-400" />
+            <h2
+              className="text-lg font-semibold text-white"
+              style={{ fontFamily: 'var(--font-heading)' }}
+            >
+              Модели LM Studio
+            </h2>
+            {models.length > 0 && (
+              <span className="text-xs text-white/30 bg-white/5 px-2 py-0.5 rounded-full">
+                {models.length}
+              </span>
+            )}
+          </div>
+          <button
+            onClick={loadModels}
+            disabled={isLoadingModels}
+            className="flex items-center gap-1.5 text-xs text-indigo-400 hover:text-indigo-300 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isLoadingModels ? 'animate-spin' : ''}`} />
+            Обновить
+          </button>
+        </div>
+
+        {isLoadingModels && models.length === 0 ? (
+          <div className="flex items-center justify-center gap-2 py-8 text-white/60">
+            <Loader2 className="w-5 h-5 animate-spin" />
+            <span className="text-sm">Загрузка моделей...</span>
+          </div>
+        ) : models.length === 0 ? (
+          <div className="text-center py-8 text-white/50 text-sm">
+            {isHealthy
+              ? 'Нажмите «Обновить» для загрузки списка моделей'
+              : 'LM Studio недоступна — запустите туннель для загрузки моделей'}
+          </div>
+        ) : (
+          <>
+            {models.length > 5 && (
+              <div className="relative mb-3">
+                <Search className="w-4 h-4 text-white/30 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={modelSearch}
+                  onChange={(e) => setModelSearch(e.target.value)}
+                  placeholder="Поиск модели..."
+                  className="input pl-9 text-sm"
+                />
+              </div>
+            )}
+            <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
+              {models
+                .filter((m) => {
+                  if (!modelSearch.trim()) return true;
+                  const q = modelSearch.toLowerCase();
+                  return m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q);
+                })
+                .map((m) => {
+                  const isSelected = model === m.id;
+                  const isActive = healthStatus?.model === m.id;
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => setModel(m.id)}
+                      className="w-full text-left p-3 rounded-xl transition-all group"
+                      style={{
+                        background: isSelected
+                          ? 'linear-gradient(135deg, rgba(139,92,246,0.25), rgba(99,102,241,0.15))'
+                          : 'rgba(0,0,0,0.3)',
+                        border: `1px solid ${isSelected ? 'rgba(139,92,246,0.5)' : 'rgba(255,255,255,0.08)'}`,
+                      }}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className={`font-mono text-sm truncate ${
+                                isSelected ? 'text-purple-200 font-semibold' : 'text-amber-100/90 group-hover:text-white'
+                              }`}
+                            >
+                              {m.id}
+                            </span>
+                            {isActive && (
+                              <span className="flex items-center gap-1 text-[10px] text-green-400 bg-green-500/20 px-1.5 py-0.5 rounded-full whitespace-nowrap flex-shrink-0">
+                                <span className="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse" />
+                                active
+                              </span>
+                            )}
+                          </div>
+                          {m.name !== m.id && (
+                            <span className="text-white/50 text-xs truncate block mt-0.5">
+                              {m.name}
+                            </span>
+                          )}
+                        </div>
+                        {isSelected && (
+                          <CheckCircle2 className="w-5 h-5 text-purple-300 flex-shrink-0" />
+                        )}
+                      </div>
+                    </button>
+                  );
+                })}
+            </div>
+          </>
+        )}
       </div>
 
       {/* Save Button */}
