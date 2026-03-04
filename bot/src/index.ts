@@ -218,7 +218,9 @@ const start = async (): Promise<void> => {
       appLogger.fatal(
         'TELEGRAM_BOT_TOKEN не задан. Задайте его в Render (Environment) или в админке: API Ключи → Telegram Bot Token'
       );
-      process.exit(1);
+      // Продолжаем работу без бота — HTTP API доступен
+      appLogger.warn('⚠️ Бот не запущен — только HTTP API режим');
+      return;
     }
 
     // Test OpenRouter connection (optional — ключ может быть в админке)
@@ -297,7 +299,7 @@ const start = async (): Promise<void> => {
     appLogger.info('✅ Amina Bot is ready!');
   } catch (error) {
     appLogger.fatal({ error }, 'Failed to start application');
-    process.exit(1);
+    // Не вызываем process.exit — позволяем HTTP серверу продолжать работу если он уже запущен
   }
 };
 
