@@ -337,4 +337,14 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
 // Run
-start();
+start().catch((err) => {
+  appLogger.fatal({ error: err }, 'Unhandled error in start()');
+});
+
+process.on('unhandledRejection', (reason) => {
+  appLogger.fatal({ reason }, '⚠️ Unhandled Promise Rejection');
+});
+
+process.on('uncaughtException', (err) => {
+  appLogger.fatal({ error: err.message }, '⚠️ Uncaught Exception');
+});
