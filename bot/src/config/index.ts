@@ -38,12 +38,18 @@ const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
 
-  // Webhook (optional — empty string treated as undefined)
-  WEBHOOK_URL: z.string().transform(v => v || undefined).pipe(z.string().url().optional()),
+  // Webhook (optional — empty string or missing treated as undefined)
+  WEBHOOK_URL: z.preprocess(
+    (v) => (typeof v === 'string' && v !== '' ? v : undefined),
+    z.string().url().optional(),
+  ),
   WEBHOOK_SECRET: z.string().optional(),
 
   // LiraX telephony (optional — can also be set via admin panel settings)
-  LIRAX_URL: z.string().transform(v => v || undefined).pipe(z.string().url().optional()),
+  LIRAX_URL: z.preprocess(
+    (v) => (typeof v === 'string' && v !== '' ? v : undefined),
+    z.string().url().optional(),
+  ),
   LIRAX_TOKEN: z.string().optional(),
   LIRAX_WEBHOOK_TOKEN: z.string().optional(),
   LIRAX_DEFAULT_EXT: z.string().optional(),
@@ -62,11 +68,32 @@ const parseEnv = () => {
     if (process.env.NODE_ENV === 'test') {
       throw new Error(`Invalid env vars: ${JSON.stringify(result.error.flatten().fieldErrors)}`);
     }
-    return envSchema.parse({
+    const fallback = envSchema.safeParse({
       ...process.env,
       SUPABASE_URL: process.env.SUPABASE_URL || 'https://placeholder.supabase.co',
       SUPABASE_SERVICE_KEY: process.env.SUPABASE_SERVICE_KEY || 'placeholder',
     });
+    if (fallback.success) return fallback.data;
+    console.error('⚠️ Fallback env parse also failed — using minimal defaults');
+    return {
+      SUPABASE_URL: process.env.SUPABASE_URL || 'https://placeholder.supabase.co',
+      SUPABASE_SERVICE_KEY: process.env.SUPABASE_SERVICE_KEY || 'placeholder',
+      TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
+      OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+      OPENROUTER_MODEL: 'anthropic/claude-3-haiku',
+      GROQ_API_KEY: undefined,
+      PERPLEXITY_API_KEY: undefined,
+      PORT: 3000,
+      HOST: '0.0.0.0',
+      NODE_ENV: 'production' as const,
+      LOG_LEVEL: 'info' as const,
+      WEBHOOK_URL: undefined,
+      WEBHOOK_SECRET: undefined,
+      LIRAX_URL: undefined,
+      LIRAX_TOKEN: undefined,
+      LIRAX_WEBHOOK_TOKEN: undefined,
+      LIRAX_DEFAULT_EXT: undefined,
+    };
   }
 
   return result.data;
