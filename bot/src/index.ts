@@ -176,20 +176,29 @@ const start = async (): Promise<void> => {
       port: config.server.port,
     }, 'Configuration loaded');
 
-    // Setup routes
+    // Setup API routes
     await setupRoutes(app);
 
-    // Запускаем HTTP сервер ПЕРВЫМ — чтобы Render health check прошёл немедленно
+    // --- Регистрация webhook route ДО listen() (Fastify требует) ---
+    if (config.isProd && config.telegram.token && config.telegram.webhook.url) {
+      appLogger.info('Initializing Telegram bot for webhook...');
+      bot = createBot();
+      app.post('/webhook/telegram', webhookCallback(bot, 'fastify', {
+        secretToken: config.telegram.webhook.secret,
+      }));
+      appLogger.info('📌 Webhook route registered');
+    }
+
+    // Запускаем HTTP сервер — health check работает с этого момента
     const address = await app.listen({
       port: config.server.port,
       host: config.server.host,
     });
     serverLogger.info({ address }, '📡 HTTP server listening');
 
-    // Дальнейшая инициализация — асинхронно, не блокирует health check
+    // --- Дальнейшая инициализация (не блокирует health check) ---
 
     // Test database connection
-    appLogger.info('Testing database connection...');
     try {
       const supabase = getSupabase();
       const { error } = await supabase.from('settings').select('key').limit(1);
@@ -202,82 +211,63 @@ const start = async (): Promise<void> => {
       appLogger.warn({ error }, '⚠️ Database not available - continuing anyway');
     }
 
-    // Telegram token: env или из админки (БД)
-    if (!config.telegram.token) {
-      const settings = await settingsRepo.getMany(['telegram_bot_token']);
-      const tokenFromDb = settings['telegram_bot_token']?.trim();
-      if (tokenFromDb) {
-        config.setTelegramToken(tokenFromDb);
-        appLogger.info('✓ Telegram token loaded from admin (database)');
-      }
-    } else {
-      appLogger.info('✓ Telegram token from environment');
-    }
-
-    if (!config.telegram.token) {
-      appLogger.fatal(
-        'TELEGRAM_BOT_TOKEN не задан. Задайте его в Render (Environment) или в админке: API Ключи → Telegram Bot Token'
-      );
-      // Продолжаем работу без бота — HTTP API доступен
-      appLogger.warn('⚠️ Бот не запущен — только HTTP API режим');
-      return;
-    }
-
-    // Test OpenRouter connection (optional — пропускаем в prod для быстрого старта)
-    if (!config.isProd) {
-      appLogger.info('Testing OpenRouter connection...');
-      const aiOk = await aiService.testConnection();
-      if (!aiOk) {
-        appLogger.warn('⚠️ OpenRouter test failed — задайте OPENROUTER_API_KEY в Render или в админке (API Ключи)');
+    // Telegram token: env или из админки (БД) — если бот ещё не создан
+    if (!bot) {
+      if (!config.telegram.token) {
+        const settings = await settingsRepo.getMany(['telegram_bot_token']);
+        const tokenFromDb = settings['telegram_bot_token']?.trim();
+        if (tokenFromDb) {
+          config.setTelegramToken(tokenFromDb);
+          appLogger.info('✓ Telegram token loaded from admin (database)');
+        }
       } else {
-        appLogger.info('✓ OpenRouter connection OK');
+        appLogger.info('✓ Telegram token from environment');
       }
+
+      if (!config.telegram.token) {
+        appLogger.warn('⚠️ TELEGRAM_BOT_TOKEN не задан — только HTTP API режим');
+        appLogger.info('✅ Amina API is ready (no bot)');
+        return;
+      }
+
+      appLogger.info('Initializing Telegram bot...');
+      bot = createBot();
     }
 
-    // Create bot
-    appLogger.info('Initializing Telegram bot...');
-    bot = createBot();
-
-    // Setup webhook if in production
+    // Activate webhook on Telegram side
     if (config.isProd && config.telegram.webhook.url) {
       try {
-        app.post('/webhook/telegram', webhookCallback(bot, 'fastify', {
-          secretToken: config.telegram.webhook.secret,
-        }));
         await bot.api.setWebhook(`${config.telegram.webhook.url}/webhook/telegram`, {
           secret_token: config.telegram.webhook.secret,
         });
-        appLogger.info('🔗 Telegram webhook configured');
+        appLogger.info('🔗 Telegram webhook activated');
       } catch (err) {
-        appLogger.warn({ error: err }, '⚠️ Failed to set webhook — продолжаем без webhook');
+        appLogger.warn({ error: err }, '⚠️ Failed to set webhook');
       }
-    }
-
-    // Start bot polling (development) or webhook is already set (production)
-    if (!config.isProd || !config.telegram.webhook.url) {
+    } else {
+      // Development: polling mode
       bot.start({
         onStart: (botInfo) => {
           appLogger.info({ username: botInfo.username }, '🤖 Bot started (polling mode)');
         },
       }).catch((err) => {
-        appLogger.error({ error: err?.message ?? err }, '❌ Bot polling start failed — продолжаем без polling');
+        appLogger.error({ error: err?.message ?? err }, '❌ Bot polling start failed');
       });
     }
 
-    // Start reminder scheduler
+    // Schedulers
     startReminderScheduler(bot);
     appLogger.info('⏰ Reminder scheduler started');
 
-    // Start digest scheduler
     startDigestScheduler(bot);
     appLogger.info('☀️ Digest scheduler started');
 
-    // Init voice messages infrastructure (bucket + table check)
+    // Voice messages (non-critical)
     ensureVoiceMessagesInfra()
       .then(() => appLogger.info('🎤 Voice messages storage initialized'))
-      .catch(err => appLogger.warn({ error: err }, 'Voice messages infra init failed (non-critical)'));
+      .catch(err => appLogger.warn({ error: err }, 'Voice messages infra init failed'));
 
-    // Register bot menu commands in Telegram UI (после старта бота)
+    // Bot menu commands (non-critical)
     try {
       await bot.api.setMyCommands([
         { command: 'menu', description: '🎛 Главное меню с кнопками' },
@@ -295,13 +285,12 @@ const start = async (): Promise<void> => {
       ]);
       appLogger.info('📋 Bot menu commands registered');
     } catch (err) {
-      appLogger.warn({ error: err }, '⚠️ Failed to set bot commands (non-critical)');
+      appLogger.warn({ error: err }, '⚠️ Failed to set bot commands');
     }
 
     appLogger.info('✅ Amina Bot is ready!');
   } catch (error) {
     appLogger.fatal({ error }, 'Failed to start application');
-    // Не вызываем process.exit — позволяем HTTP серверу продолжать работу если он уже запущен
   }
 };
 
