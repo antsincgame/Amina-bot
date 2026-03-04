@@ -13,7 +13,7 @@ import { config, clearApiKeysCache, getApiKeys } from '../config/index.js';
 import { getConfiguredSites, saveConfiguredSites, parseNewsFromSite } from '../features/news-parser.js';
 import { invalidateTTSConfig } from '../features/tts.js';
 import { voiceMessagesRepo } from '../features/voice-messages-repo.js';
-import { verifyWebhookToken, formatCallEvent, clearLiraXConfigCache, type LiraXWebhookPayload, type LiraXEventPayload } from '../features/telephony/lirax.js';
+import { verifyWebhookToken, formatCallEvent, clearLiraXConfigCache, makeCall, type LiraXWebhookPayload, type LiraXEventPayload } from '../features/telephony/lirax.js';
 import archiver from 'archiver';
 import type { Message, Conversation, LogLevel } from '../../../shared/types/index.js';
 
@@ -1866,6 +1866,124 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
           return reply.code(500).send({ success: false, error: msg });
         }
       });
+
+      /**
+       * POST /api/lirax/test-call
+       * Инициировать тестовый звонок через LiraX
+       */
+      apiServer.post(
+        '/lirax/test-call',
+        async (
+          request: FastifyRequest<{ Body: { phone: string; ext?: string } }>,
+          reply: FastifyReply,
+        ) => {
+          try {
+            const { phone, ext } = request.body as { phone: string; ext?: string };
+            if (!phone) {
+              return reply.code(400).send({ success: false, error: 'phone is required' });
+            }
+
+            const result = await makeCall(phone, ext);
+            aiLogger.info({ phone, ext, result }, '[LiraX] Test call initiated');
+
+            return reply.code(200).send({ success: true, data: result });
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : 'Unknown error';
+            aiLogger.error({ error: msg }, '[LiraX] Test call failed');
+            return reply.code(500).send({ success: false, error: msg });
+          }
+        },
+      );
+
+      /**
+       * GET /api/lirax/scenarios
+       * Получить сохранённые сценарии телефонии
+       */
+      apiServer.get('/lirax/scenarios', async (_request: FastifyRequest, reply: FastifyReply) => {
+        try {
+          const raw = await settingsRepo.get('lirax_scenarios');
+          const scenarios = raw ? JSON.parse(raw) : [];
+          return reply.code(200).send({ success: true, data: scenarios });
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : 'Unknown error';
+          return reply.code(500).send({ success: false, error: msg });
+        }
+      });
+
+      /**
+       * POST /api/lirax/scenarios
+       * Сохранить сценарии телефонии
+       */
+      apiServer.post(
+        '/lirax/scenarios',
+        async (request: FastifyRequest, reply: FastifyReply) => {
+          try {
+            const scenarios = request.body;
+            if (!Array.isArray(scenarios)) {
+              return reply.code(400).send({ success: false, error: 'Body must be an array' });
+            }
+
+            await settingsRepo.set('lirax_scenarios', JSON.stringify(scenarios));
+            aiLogger.info({ count: scenarios.length }, '[LiraX] Scenarios saved');
+
+            return reply.code(200).send({ success: true, message: 'Scenarios saved' });
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : 'Unknown error';
+            return reply.code(500).send({ success: false, error: msg });
+          }
+        },
+      );
+
+      /**
+       * POST /api/lirax/generate-prompt
+       * Конвертировать бизнес-правило в конфигурацию LiraX через LLM
+       */
+      apiServer.post(
+        '/lirax/generate-prompt',
+        async (
+          request: FastifyRequest<{ Body: { rule: string } }>,
+          reply: FastifyReply,
+        ) => {
+          try {
+            const { rule } = request.body as { rule: string };
+            if (!rule || typeof rule !== 'string') {
+              return reply.code(400).send({ success: false, error: 'rule is required' });
+            }
+
+            const systemPrompt = `Ты — эксперт по телефонии LiraX. Пользователь описывает сценарий звонка на русском языке. Твоя задача — преобразовать его в конфигурацию вызова LiraX API.
+
+Доступные команды LiraX:
+1. makeCall — позвонить от менеджера клиенту (параметры: from (внутренний номер), to (номер телефона))
+2. make2Calls — соединить двух абонентов с TTS (параметры: from, to1, to2, speech="ru Текст для озвучки", timeout, successtime)
+3. AskQuestion — позвонить и задать вопрос с ожиданием ответа (параметры: from, to1, hello="ru Приветствие", ask="ru Вопрос", ok="ru да ок согласен", bye="ru До свидания")
+
+Правила ответа:
+- Ответ СТРОГО в формате JSON
+- Поле "cmd" — имя команды
+- Поле "params" — объект с параметрами (используй заглушку {{phone}} для номера клиента и {{ext}} для внутреннего номера оператора)
+- Поле "description" — краткое описание что делает сценарий
+- Текст speech/hello/ask/bye/ok всегда начинается с "ru " для русского языка
+- Не добавляй ничего кроме JSON`;
+
+            const messages: Message[] = [
+              { role: 'system', content: systemPrompt, timestamp: new Date().toISOString() },
+              { role: 'user', content: rule, timestamp: new Date().toISOString() },
+            ];
+
+            const aiResult = await aiService.chat(messages);
+            aiLogger.info({ rule }, '[LiraX] Prompt generated via LLM');
+
+            return reply.code(200).send({
+              success: true,
+              data: { generatedPrompt: aiResult.content, model: aiResult.model },
+            });
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : 'Unknown error';
+            aiLogger.error({ error: msg }, '[LiraX] Generate prompt failed');
+            return reply.code(500).send({ success: false, error: msg });
+          }
+        },
+      );
     },
     { prefix: '/api' }
   );

@@ -13,6 +13,7 @@ import LogsPage from './pages/LogsPage';
 import UsersPage from './pages/UsersPage';
 import NewsSourcesPage from './pages/NewsSourcesPage';
 import VoiceMessagesPage from './pages/VoiceMessagesPage';
+import TelephonyPage from './pages/TelephonyPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 // Protected Route wrapper
@@ -66,6 +67,7 @@ const App = () => {
           <Route path="prompts" element={<PromptsPage />} />
           <Route path="news-sources" element={<NewsSourcesPage />} />
           <Route path="voice-messages" element={<VoiceMessagesPage />} />
+          <Route path="telephony" element={<TelephonyPage />} />
           <Route path="analytics" element={<AnalyticsPage />} />
           <Route path="logs" element={<LogsPage />} />
         </Route>

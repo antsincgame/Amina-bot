@@ -14,6 +14,7 @@ import {
   Key,
   Sparkles,
   Newspaper,
+  Phone,
 } from 'lucide-react';
 
 const Layout = () => {
@@ -34,6 +35,7 @@ const Layout = () => {
     { to: '/prompts', icon: MessageSquare, label: 'Промпты' },
     { to: '/news-sources', icon: Newspaper, label: 'Источники' },
     { to: '/voice-messages', icon: AudioLines, label: 'Голосовые' },
+    { to: '/telephony', icon: Phone, label: 'Телефония' },
     { to: '/analytics', icon: BarChart3, label: 'Аналитика' },
     { to: '/logs', icon: AlertCircle, label: 'Логи' },
   ];
