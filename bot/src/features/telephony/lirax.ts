@@ -34,18 +34,19 @@ export async function getLiraXConfig(): Promise<LiraXConfig> {
     'lirax_default_ext',
   ]);
 
+  // DB имеет приоритет над env vars для токенов — позволяет менять без редеплоя
   const url =
-    process.env.LIRAX_URL ||
     settings['lirax_url'] ||
+    process.env.LIRAX_URL ||
     'https://api.lirax.net/general';
-  const token = process.env.LIRAX_TOKEN || settings['lirax_token'] || '';
+  const token = settings['lirax_token'] || process.env.LIRAX_TOKEN || '';
   const webhookToken =
-    process.env.LIRAX_WEBHOOK_TOKEN ||
     settings['lirax_webhook_token'] ||
+    process.env.LIRAX_WEBHOOK_TOKEN ||
     '';
   const defaultExt =
-    process.env.LIRAX_DEFAULT_EXT ||
     settings['lirax_default_ext'] ||
+    process.env.LIRAX_DEFAULT_EXT ||
     '201';
 
   configCache = { url, token, webhookToken, defaultExt };
