@@ -223,13 +223,15 @@ const start = async (): Promise<void> => {
       return;
     }
 
-    // Test OpenRouter connection (optional — ключ может быть в админке)
-    appLogger.info('Testing OpenRouter connection...');
-    const aiOk = await aiService.testConnection();
-    if (!aiOk) {
-      appLogger.warn('⚠️ OpenRouter test failed — задайте OPENROUTER_API_KEY в Render или в админке (API Ключи)');
-    } else {
-      appLogger.info('✓ OpenRouter connection OK');
+    // Test OpenRouter connection (optional — пропускаем в prod для быстрого старта)
+    if (!config.isProd) {
+      appLogger.info('Testing OpenRouter connection...');
+      const aiOk = await aiService.testConnection();
+      if (!aiOk) {
+        appLogger.warn('⚠️ OpenRouter test failed — задайте OPENROUTER_API_KEY в Render или в админке (API Ключи)');
+      } else {
+        appLogger.info('✓ OpenRouter connection OK');
+      }
     }
 
     // Create bot
