@@ -236,13 +236,17 @@ const start = async (): Promise<void> => {
 
     // Setup webhook if in production
     if (config.isProd && config.telegram.webhook.url) {
-      app.post('/webhook/telegram', webhookCallback(bot, 'fastify', {
-        secretToken: config.telegram.webhook.secret,
-      }));
-      await bot.api.setWebhook(`${config.telegram.webhook.url}/webhook/telegram`, {
-        secret_token: config.telegram.webhook.secret,
-      });
-      appLogger.info('🔗 Telegram webhook configured');
+      try {
+        app.post('/webhook/telegram', webhookCallback(bot, 'fastify', {
+          secretToken: config.telegram.webhook.secret,
+        }));
+        await bot.api.setWebhook(`${config.telegram.webhook.url}/webhook/telegram`, {
+          secret_token: config.telegram.webhook.secret,
+        });
+        appLogger.info('🔗 Telegram webhook configured');
+      } catch (err) {
+        appLogger.warn({ error: err }, '⚠️ Failed to set webhook — продолжаем без webhook');
+      }
     }
 
     // Start bot polling (development) or webhook is already set (production)
@@ -270,21 +274,25 @@ const start = async (): Promise<void> => {
       .catch(err => appLogger.warn({ error: err }, 'Voice messages infra init failed (non-critical)'));
 
     // Register bot menu commands in Telegram UI (после старта бота)
-    await bot.api.setMyCommands([
-      { command: 'menu', description: '🎛 Главное меню с кнопками' },
-      { command: 'search', description: '🌐 Поиск в интернете' },
-      { command: 'imagine', description: '🎨 Сгенерировать картинку' },
-      { command: 'edit', description: '✏️ Редактировать фото' },
-      { command: 'note', description: '📌 Сохранить заметку' },
-      { command: 'notes', description: '📋 Мои заметки' },
-      { command: 'todo', description: '✅ Добавить задачу' },
-      { command: 'todos', description: '📋 Список задач' },
-      { command: 'done', description: '✔️ Выполнить задачу' },
-      { command: 'reminders', description: '⏰ Мои напоминания' },
-      { command: 'digest', description: '☀️ Утренний дайджест' },
-      { command: 'help', description: '📋 Справка по боту' },
-    ]);
-    appLogger.info('📋 Bot menu commands registered');
+    try {
+      await bot.api.setMyCommands([
+        { command: 'menu', description: '🎛 Главное меню с кнопками' },
+        { command: 'search', description: '🌐 Поиск в интернете' },
+        { command: 'imagine', description: '🎨 Сгенерировать картинку' },
+        { command: 'edit', description: '✏️ Редактировать фото' },
+        { command: 'note', description: '📌 Сохранить заметку' },
+        { command: 'notes', description: '📋 Мои заметки' },
+        { command: 'todo', description: '✅ Добавить задачу' },
+        { command: 'todos', description: '📋 Список задач' },
+        { command: 'done', description: '✔️ Выполнить задачу' },
+        { command: 'reminders', description: '⏰ Мои напоминания' },
+        { command: 'digest', description: '☀️ Утренний дайджест' },
+        { command: 'help', description: '📋 Справка по боту' },
+      ]);
+      appLogger.info('📋 Bot menu commands registered');
+    } catch (err) {
+      appLogger.warn({ error: err }, '⚠️ Failed to set bot commands (non-critical)');
+    }
 
     appLogger.info('✅ Amina Bot is ready!');
   } catch (error) {
