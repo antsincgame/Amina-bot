@@ -5,6 +5,12 @@ import { settingsRepo, promptsRepo } from '../db/supabase.js';
 import type { AIResponse, AIMessage } from '../../../shared/types/index.js';
 import { AppError } from '../utils/error-handler.js';
 import { SingleCache } from '../utils/cache.js';
+import {
+  getAIProvider,
+  getLMStudioConfig,
+  getLMStudioClient,
+  checkLMStudioHealth,
+} from './lmstudio.js';
 
 // --------------------------------------------
 // Динамический поиск бесплатных моделей через OpenRouter API
@@ -346,29 +352,22 @@ export const aiService = {
     channel: 'telegram' | 'voice' = 'telegram',
     userMemoryContext?: string
   ): Promise<AIResponse> {
-    // === ОПТИМИЗАЦИЯ: config + client параллельно ===
-    const [aiConfig, client] = await Promise.all([
-      getAIConfig(channel),
-      getClient(),
-    ]);
+    const aiConfig = await getAIConfig(channel);
 
-    // Build system prompt with memory context
-    let systemPrompt = aiConfig.systemPrompt;
-    
-    systemPrompt = injectAntiRefusal(systemPrompt);
-    
+    let systemPrompt = injectAntiRefusal(aiConfig.systemPrompt);
     if (userMemoryContext) {
       systemPrompt = `${userMemoryContext}\n\n${systemPrompt}`;
     }
 
-    // Add system prompt
     const fullMessages: AIMessage[] = [
       { role: 'system', content: systemPrompt },
       ...messages,
     ];
 
-    // Хелпер для запроса к одной модели
-    const tryModel = async (model: string): Promise<AIResponse & { usedModel: string }> => {
+    const tryWithClient = async (
+      client: OpenAI,
+      model: string,
+    ): Promise<AIResponse & { usedModel: string }> => {
       const response = await client.chat.completions.create({
         model,
         messages: fullMessages,
@@ -394,10 +393,55 @@ export const aiService = {
       };
     };
 
-    // === ШАГ 1: Пробуем основную модель ===
+    // === ШАГ 0: LM Studio (если provider = auto | lmstudio) ===
+    const provider = await getAIProvider();
+    if (provider === 'lmstudio' || provider === 'auto') {
+      const lmConfig = await getLMStudioConfig();
+
+      if (lmConfig && lmConfig.model) {
+        const healthy = await checkLMStudioHealth(lmConfig);
+
+        if (healthy) {
+          try {
+            const lmClient = getLMStudioClient(lmConfig);
+            aiLogger.debug(
+              { model: lmConfig.model, provider: 'lmstudio' },
+              'Trying LM Studio'
+            );
+            const result = await tryWithClient(lmClient, lmConfig.model);
+            aiLogger.info(
+              { model: result.model, tokens: result.tokens_used.total, provider: 'lmstudio' },
+              'LM Studio response received'
+            );
+            return result;
+          } catch (lmError) {
+            const msg = lmError instanceof Error ? lmError.message : String(lmError);
+            aiLogger.warn({ error: msg, model: lmConfig.model }, 'LM Studio request failed');
+
+            if (provider === 'lmstudio') {
+              throw new AppError('LMSTUDIO_ERROR', `LM Studio ошибка: ${msg}`, lmError);
+            }
+            aiLogger.info('Falling back to OpenRouter (auto mode)');
+          }
+        } else if (provider === 'lmstudio') {
+          throw new AppError('LMSTUDIO_OFFLINE', 'LM Studio недоступна. Проверьте туннель и сервер.');
+        } else {
+          aiLogger.debug('LM Studio offline, falling back to OpenRouter (auto mode)');
+        }
+      } else if (provider === 'lmstudio') {
+        throw new AppError('LMSTUDIO_NOT_CONFIGURED', 'LM Studio не настроена. Укажите URL и модель в админке.');
+      }
+    }
+
+    // === ШАГ 1: OpenRouter — основная модель ===
+    const client = await getClient();
+
+    const tryModel = async (model: string): Promise<AIResponse & { usedModel: string }> =>
+      tryWithClient(client, model);
+
     aiLogger.debug(
-      { model: aiConfig.model, messageCount: messages.length },
-      'Trying primary model'
+      { model: aiConfig.model, messageCount: messages.length, provider: 'openrouter' },
+      'Trying primary OpenRouter model'
     );
 
     try {
@@ -411,27 +455,21 @@ export const aiService = {
       const errorMessage = primaryError instanceof Error ? primaryError.message : String(primaryError);
       aiLogger.warn({ error: errorMessage, model: aiConfig.model }, 'Primary model failed');
 
-      // Проверяем критические ошибки — для них НЕ делаем fallback
       if (errorMessage.includes('401') || errorMessage.includes('Unauthorized')) {
         throw new AppError('AUTH_ERROR', 'Неверный API ключ OpenRouter. Проверьте OPENROUTER_API_KEY.', primaryError);
       }
-      
-      // 402 (Payment Required) ТЕПЕРЬ запускает гонку бесплатных моделей!
-      // Раньше это была критическая ошибка, но бесплатные модели могут помочь
 
-      // Проверяем, нужна ли гонка моделей (включая 402!)
-      const needsRace = RACE_ERROR_PATTERNS.some(pattern => 
+      const needsRace = RACE_ERROR_PATTERNS.some(pattern =>
         errorMessage.toLowerCase().includes(pattern.toLowerCase())
       );
 
       if (!needsRace) {
-        // Rate limit — не поможет гонка, просто ждать
         if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
           throw new AppError('RATE_LIMIT', 'Превышен лимит запросов. Подождите минуту.', primaryError);
         }
         throw primaryError;
       }
-      
+
       aiLogger.info({ originalError: errorMessage }, '🔄 Will try free models race');
     }
 
@@ -521,24 +559,49 @@ export const aiService = {
     messages: AIMessage[],
     channel: 'telegram' | 'voice' = 'telegram'
   ): AsyncGenerator<string, AIResponse> {
-    const [aiConfig, client] = await Promise.all([
-      getAIConfig(channel),
-      getClient(),
-    ]);
+    const aiConfig = await getAIConfig(channel);
 
     const fullMessages: AIMessage[] = [
       { role: 'system', content: injectAntiRefusal(aiConfig.systemPrompt) },
       ...messages,
     ];
 
+    let streamClient: OpenAI;
+    let streamModel: string;
+
+    const provider = await getAIProvider();
+    if (provider === 'lmstudio' || provider === 'auto') {
+      const lmConfig = await getLMStudioConfig();
+      if (lmConfig?.model) {
+        const healthy = await checkLMStudioHealth(lmConfig);
+        if (healthy) {
+          streamClient = getLMStudioClient(lmConfig);
+          streamModel = lmConfig.model;
+        } else if (provider === 'lmstudio') {
+          throw new AppError('LMSTUDIO_OFFLINE', 'LM Studio недоступна.');
+        } else {
+          streamClient = await getClient();
+          streamModel = aiConfig.model;
+        }
+      } else if (provider === 'lmstudio') {
+        throw new AppError('LMSTUDIO_NOT_CONFIGURED', 'LM Studio не настроена.');
+      } else {
+        streamClient = await getClient();
+        streamModel = aiConfig.model;
+      }
+    } else {
+      streamClient = await getClient();
+      streamModel = aiConfig.model;
+    }
+
     aiLogger.debug(
-      { model: aiConfig.model, messageCount: messages.length },
+      { model: streamModel, messageCount: messages.length },
       'Starting streaming chat'
     );
 
     try {
-      const stream = await client.chat.completions.create({
-        model: aiConfig.model,
+      const stream = await streamClient.chat.completions.create({
+        model: streamModel,
         messages: fullMessages,
         max_tokens: aiConfig.maxTokens,
         temperature: aiConfig.temperature,
@@ -561,8 +624,8 @@ export const aiService = {
 
       return {
         content: fullContent,
-        model: aiConfig.model,
-        tokens_used: { prompt: 0, completion: 0, total: 0 }, // Not available in streaming
+        model: streamModel,
+        tokens_used: { prompt: 0, completion: 0, total: 0 },
         finish_reason: finishReason,
       };
     } catch (error) {

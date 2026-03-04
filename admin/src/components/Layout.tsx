@@ -15,6 +15,7 @@ import {
   Sparkles,
   Newspaper,
   Phone,
+  Monitor,
 } from 'lucide-react';
 
 const Layout = () => {
@@ -31,6 +32,7 @@ const Layout = () => {
     { to: '/users', icon: Users, label: 'Пользователи' },
     { to: '/api-keys', icon: Key, label: 'API Ключи' },
     { to: '/settings', icon: Settings, label: 'Настройки AI' },
+    { to: '/lmstudio', icon: Monitor, label: 'LM Studio' },
     { to: '/multimodal', icon: Mic, label: 'Голос и Фото' },
     { to: '/prompts', icon: MessageSquare, label: 'Промпты' },
     { to: '/news-sources', icon: Newspaper, label: 'Источники' },

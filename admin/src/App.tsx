@@ -14,6 +14,7 @@ import UsersPage from './pages/UsersPage';
 import NewsSourcesPage from './pages/NewsSourcesPage';
 import VoiceMessagesPage from './pages/VoiceMessagesPage';
 import TelephonyPage from './pages/TelephonyPage';
+import { LMStudioPage } from './pages/LMStudioPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 // Protected Route wrapper
@@ -62,6 +63,7 @@ const App = () => {
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="users" element={<UsersPage />} />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="lmstudio" element={<LMStudioPage />} />
           <Route path="multimodal" element={<MultimodalSettingsPage />} />
           <Route path="api-keys" element={<ApiKeysPage />} />
           <Route path="prompts" element={<PromptsPage />} />

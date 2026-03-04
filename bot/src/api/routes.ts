@@ -22,6 +22,12 @@ import {
   removeTelephonyUser,
   type LiraXEventPayload,
 } from '../features/telephony/lirax.js';
+import {
+  clearLMStudioCache,
+  getLMStudioConfig,
+  checkLMStudioHealth,
+  fetchLMStudioModels,
+} from '../ai/lmstudio.js';
 import archiver from 'archiver';
 import type { Message, AIMessage, Conversation, LogLevel } from '../../../shared/types/index.js';
 
@@ -333,10 +339,10 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
               }
             }
 
-            // Инвалидируем ВСЕ кэши после обновления настроек
             clearApiKeysCache();
             clearPerplexityCache();
             clearLiraXConfigCache();
+            clearLMStudioCache();
             settingsRepo.invalidateCache?.();
             invalidateTTSConfig();
 
@@ -385,6 +391,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
             clearApiKeysCache();
             clearPerplexityCache();
             clearLiraXConfigCache();
+            clearLMStudioCache();
             settingsRepo.invalidateCache?.();
             invalidateTTSConfig();
 
@@ -1726,6 +1733,58 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
           }
         },
       );
+
+      // ============================================
+      // LM Studio Endpoints
+      // ============================================
+
+      apiServer.get('/lmstudio/health', async (_request: FastifyRequest, reply: FastifyReply) => {
+        try {
+          const cfg = await getLMStudioConfig();
+          if (!cfg) {
+            return reply.code(200).send({
+              success: true,
+              data: { configured: false, healthy: false, url: null },
+            });
+          }
+
+          const healthy = await checkLMStudioHealth(cfg);
+          return reply.code(200).send({
+            success: true,
+            data: { configured: true, healthy, url: cfg.url, model: cfg.model },
+          });
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : 'Unknown error';
+          return reply.code(500).send({ success: false, error: msg });
+        }
+      });
+
+      apiServer.get('/lmstudio/models', async (_request: FastifyRequest, reply: FastifyReply) => {
+        try {
+          const cfg = await getLMStudioConfig();
+          if (!cfg) {
+            return reply.code(200).send({
+              success: true,
+              data: { configured: false, models: [] },
+            });
+          }
+
+          const models = await fetchLMStudioModels(cfg);
+          return reply.code(200).send({
+            success: true,
+            data: { configured: true, models, url: cfg.url },
+          });
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : 'Unknown error';
+          return reply.code(500).send({ success: false, error: msg });
+        }
+      });
+
+      apiServer.post('/lmstudio/reload', async (_request: FastifyRequest, reply: FastifyReply) => {
+        clearLMStudioCache();
+        aiLogger.info('LM Studio config cache cleared via API');
+        return reply.code(200).send({ success: true, message: 'LM Studio cache cleared' });
+      });
 
       // ============================================
       // LiraX Telephony Webhook
