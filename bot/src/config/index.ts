@@ -21,9 +21,9 @@ if (process.env.NODE_ENV === 'test') {
 // --------------------------------------------
 
 const envSchema = z.object({
-  // Supabase — ЕДИНСТВЕННЫЕ обязательные в Render (без них бот не подключится к БД)
-  SUPABASE_URL: z.string().url('SUPABASE_URL must be a valid URL'),
-  SUPABASE_SERVICE_KEY: z.string().min(1, 'SUPABASE_SERVICE_KEY is required'),
+  // Supabase — если не заданы, бот стартует без БД
+  SUPABASE_URL: z.string().url().default('https://placeholder.supabase.co'),
+  SUPABASE_SERVICE_KEY: z.string().default('placeholder'),
 
   // Всё остальное можно задать в админке (API Ключи)
   TELEGRAM_BOT_TOKEN: z.string().optional(),
@@ -57,12 +57,16 @@ const parseEnv = () => {
   const result = envSchema.safeParse(process.env);
 
   if (!result.success) {
-    console.error('❌ Invalid environment variables:');
-    console.error(result.error.format());
+    console.error('⚠️ Env validation issues (continuing anyway):');
+    console.error(JSON.stringify(result.error.flatten().fieldErrors));
     if (process.env.NODE_ENV === 'test') {
       throw new Error(`Invalid env vars: ${JSON.stringify(result.error.flatten().fieldErrors)}`);
     }
-    process.exit(1);
+    return envSchema.parse({
+      ...process.env,
+      SUPABASE_URL: process.env.SUPABASE_URL || 'https://placeholder.supabase.co',
+      SUPABASE_SERVICE_KEY: process.env.SUPABASE_SERVICE_KEY || 'placeholder',
+    });
   }
 
   return result.data;
