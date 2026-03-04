@@ -20,7 +20,7 @@ const RUSSIAN_CAPABLE_MODELS: ReadonlySet<string> = new Set([
 
 const BLOCKED_MODEL_PATTERNS = [
   'qwen', 'yi-', 'baichuan', 'deepseek', 'sakura', 'japanese',
-  'chinese', 'zephyr', 'openchat', 'arcee', 'trinity',
+  'chinese', 'zephyr', 'openchat',
 ];
 
 function isRussianCapable(modelId: string): boolean {
