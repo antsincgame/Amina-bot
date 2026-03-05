@@ -1800,13 +1800,16 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
           let status = 0;
           let errorMsg = '';
           try {
+            const headers: Record<string, string> = {
+              'User-Agent': 'Amina-Bot/1.0 (LM-Studio-Debug)',
+              Accept: 'application/json',
+            };
+            if (cfg.apiKey && cfg.apiKey !== 'lm-studio') {
+              headers.Authorization = `Bearer ${cfg.apiKey}`;
+            }
             const res = await fetch(`${cfg.url}/models`, {
-              headers: {
-                'User-Agent': 'Amina-Bot/1.0 (LM-Studio-Debug)',
-                Accept: 'application/json',
-                ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}),
-              },
-              signal: AbortSignal.timeout(15_000),
+              headers,
+              signal: AbortSignal.timeout(25_000),
             });
             status = res.status;
           } catch (err) {

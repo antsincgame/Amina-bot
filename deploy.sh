@@ -17,6 +17,8 @@ log()  { echo -e "${GREEN}[OK]${NC} $1"; }
 warn() { echo -e "${YELLOW}[!!]${NC} $1"; }
 fail() { echo -e "${RED}[FAIL]${NC} $1"; exit 1; }
 
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+
 echo "============================================"
 echo "  AMINA DEPLOY SCRIPT"
 echo "============================================"
@@ -24,7 +26,7 @@ echo ""
 
 # --- Step 1: TypeScript check ---
 echo "--- Step 1: TypeScript check (bot) ---"
-cd "$(dirname "$0")/bot"
+cd "$ROOT/bot"
 if npx tsc --noEmit 2>&1 | tail -5; then
   log "Bot: tsc OK"
 else
@@ -32,13 +34,13 @@ else
 fi
 
 echo "--- Step 1b: TypeScript check (admin) ---"
-cd "$(dirname "$0")/admin"
+cd "$ROOT/admin"
 if npx tsc --noEmit 2>&1 | tail -5; then
   log "Admin: tsc OK"
 else
   fail "Admin: TypeScript errors found"
 fi
-cd "$(dirname "$0")"
+cd "$ROOT"
 
 # --- Step 2: Git status ---
 echo ""

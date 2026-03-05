@@ -18,7 +18,7 @@ interface LMStudioModel {
 }
 
 const HEALTH_CACHE_TTL_MS = 30_000;
-const HEALTH_CHECK_TIMEOUT_MS = 15_000;
+const HEALTH_CHECK_TIMEOUT_MS = 25_000;
 const CONFIG_CACHE_TTL_MS = 60_000;
 const DEFAULT_API_KEY = 'lm-studio';
 
@@ -48,10 +48,14 @@ export async function getLMStudioConfig(): Promise<LMStudioConfig | null> {
   const url = settings['lmstudio_url']?.trim();
   if (!url) return null;
 
+  const dbApiKey = settings['lmstudio_api_key']?.trim();
+  const envApiKey = process.env.LMSTUDIO_API_KEY?.trim();
+  const apiKey = envApiKey || dbApiKey || DEFAULT_API_KEY;
+
   const cfg: LMStudioConfig = {
     url: url.endsWith('/v1') ? url : `${url.replace(/\/+$/, '')}/v1`,
     model: settings['lmstudio_model']?.trim() || '',
-    apiKey: settings['lmstudio_api_key']?.trim() || DEFAULT_API_KEY,
+    apiKey,
   };
 
   configCache.set(cfg);
@@ -93,7 +97,9 @@ export async function checkLMStudioHealth(cfg: LMStudioConfig): Promise<boolean>
 
     const headers: Record<string, string> = {
       ...HEALTH_CHECK_HEADERS,
-      ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}),
+      ...(cfg.apiKey && cfg.apiKey !== DEFAULT_API_KEY
+        ? { Authorization: `Bearer ${cfg.apiKey}` }
+        : {}),
     };
 
     try {
@@ -110,7 +116,7 @@ export async function checkLMStudioHealth(cfg: LMStudioConfig): Promise<boolean>
           'LM Studio health check: non-OK response'
         );
       }
-      healthCache.set(alive);
+      if (alive) healthCache.set(true);
       return alive;
     } catch (err) {
       clearTimeout(timeoutId);
@@ -120,7 +126,7 @@ export async function checkLMStudioHealth(cfg: LMStudioConfig): Promise<boolean>
 
   try {
     const alive = await doFetch();
-    healthCache.set(alive);
+    if (alive) healthCache.set(true);
     aiLogger.debug({ url: cfg.url, alive }, 'LM Studio health check');
     return alive;
   } catch (error) {
@@ -133,13 +139,12 @@ export async function checkLMStudioHealth(cfg: LMStudioConfig): Promise<boolean>
     try {
       await new Promise((r) => setTimeout(r, 1500));
       const retry = await doFetch();
-      healthCache.set(retry);
       if (retry) {
+        healthCache.set(true);
         aiLogger.info({ url: cfg.url }, 'LM Studio health check succeeded on retry');
       }
       return retry;
     } catch (retryErr) {
-      healthCache.set(false);
       return false;
     }
   }
@@ -155,7 +160,9 @@ export async function fetchLMStudioModels(cfg: LMStudioConfig): Promise<LMStudio
 
   const headers: Record<string, string> = {
     ...HEALTH_CHECK_HEADERS,
-    ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}),
+    ...(cfg.apiKey && cfg.apiKey !== DEFAULT_API_KEY
+      ? { Authorization: `Bearer ${cfg.apiKey}` }
+      : {}),
   };
 
   try {

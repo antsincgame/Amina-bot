@@ -44,6 +44,9 @@ services:
         sync: false
       - key: LIRAX_DEFAULT_EXT
         value: "201"
+      # LM Studio API token (если включена авторизация в LM Studio)
+      - key: LMSTUDIO_API_KEY
+        sync: false
     autoDeploy: true
 
   # ===========================================

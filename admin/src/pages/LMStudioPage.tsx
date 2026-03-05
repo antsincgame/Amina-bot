@@ -18,6 +18,9 @@ import {
   Search,
   Cpu,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Bug,
 } from 'lucide-react';
 
 const BOT_URL = import.meta.env.VITE_BOT_URL || 'https://amina-bot.onrender.com';
@@ -68,6 +71,14 @@ const LMStudioPage = () => {
   const [saveMessage, setSaveMessage] = useState('');
   const [urlUpdatedAt, setUrlUpdatedAt] = useState('');
   const [modelSearch, setModelSearch] = useState('');
+  const [debugInfo, setDebugInfo] = useState<{
+    status?: number;
+    latencyMs?: number;
+    error?: string;
+    configured?: boolean;
+  } | null>(null);
+  const [isLoadingDebug, setIsLoadingDebug] = useState(false);
+  const [debugExpanded, setDebugExpanded] = useState(false);
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings'],
@@ -136,6 +147,22 @@ const LMStudioPage = () => {
       setModels([]);
     } finally {
       setIsLoadingModels(false);
+    }
+  }, []);
+
+  const fetchDebugInfo = useCallback(async () => {
+    setIsLoadingDebug(true);
+    setDebugInfo(null);
+    try {
+      const res = await fetch(`${BOT_URL}/api/lmstudio/health/debug`);
+      const json = await res.json();
+      if (json.data) {
+        setDebugInfo(json.data);
+      }
+    } catch {
+      setDebugInfo({ error: 'Не удалось получить данные от бота' });
+    } finally {
+      setIsLoadingDebug(false);
     }
   }, []);
 
@@ -288,6 +315,74 @@ const LMStudioPage = () => {
             </span>
           )}
         </div>
+
+        {/* Debug: почему красный статус */}
+        {!isHealthy && (
+          <div className="mt-3 pt-3 border-t border-white/10">
+            <button
+              type="button"
+              onClick={() => {
+                setDebugExpanded(!debugExpanded);
+                if (!debugExpanded && !debugInfo && !isLoadingDebug) fetchDebugInfo();
+              }}
+              className="flex items-center gap-2 text-xs text-red-300/80 hover:text-red-300 transition-colors"
+            >
+              <Bug className="w-3.5 h-3.5" />
+              Почему Offline?
+              {debugExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+            </button>
+            {debugExpanded && (
+              <div className="mt-2 p-3 rounded-lg bg-black/20 text-xs space-y-2">
+                {isLoadingDebug ? (
+                  <div className="flex items-center gap-2 text-white/50">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    Загрузка...
+                  </div>
+                ) : debugInfo ? (
+                  <>
+                    {debugInfo.status != null && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-white/50">HTTP код от LM Studio:</span>
+                        <span
+                          className={`font-mono font-semibold px-1.5 py-0.5 rounded ${
+                            debugInfo.status === 200 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                          }`}
+                        >
+                          {debugInfo.status}
+                        </span>
+                      </div>
+                    )}
+                    {debugInfo.latencyMs != null && (
+                      <div className="text-white/50">
+                        Задержка: {debugInfo.latencyMs} ms
+                      </div>
+                    )}
+                    {debugInfo.error && (
+                      <div className="text-red-400">{debugInfo.error}</div>
+                    )}
+                    {debugInfo.status === 404 && (
+                      <p className="text-amber-400/90 mt-1">
+                        LM Studio не отвечает на /v1/models. Убедитесь, что LM Studio запущен и модель загружена.
+                      </p>
+                    )}
+                    {(debugInfo.status === 0 || debugInfo.error?.toLowerCase().includes('timeout') || debugInfo.error?.toLowerCase().includes('abort')) && (
+                      <p className="text-amber-400/90 mt-1">
+                        Бот на Render не может достучаться до туннеля. Проверьте: туннель запущен, LM Studio работает, URL в настройках совпадает с выводом tunnel.sh.
+                      </p>
+                    )}
+                    {debugInfo.configured === false && (
+                      <p className="text-amber-400/90 mt-1">
+                        URL туннеля не зарегистрирован в боте. Убедитесь, что tunnel.sh успешно выполнил регистрацию (POST /api/tunnel/register). Бот на Render мог быть в режиме сна — попробуйте перезапустить tunnel.sh.
+                      </p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-white/50">Нажмите «Почему Offline?» для загрузки</p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Provider Mode */}
