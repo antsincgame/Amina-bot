@@ -105,9 +105,13 @@ const LMStudioPage = () => {
     }
   }, [settings]);
 
-  const checkHealth = useCallback(async () => {
+  const checkHealth = useCallback(async (forceRefresh = false) => {
     setIsCheckingHealth(true);
     try {
+      if (forceRefresh) {
+        await fetch(`${BOT_URL}/api/lmstudio/reload`, { method: 'POST' });
+        await new Promise((r) => setTimeout(r, 400));
+      }
       const res = await fetch(`${BOT_URL}/api/lmstudio/health`);
       if (res.ok) {
         const json = await res.json();
@@ -256,7 +260,7 @@ const LMStudioPage = () => {
             )}
           </div>
           <button
-            onClick={checkHealth}
+            onClick={() => checkHealth(true)}
             disabled={isCheckingHealth}
             className="p-2 rounded-lg text-white/50 hover:text-white hover:bg-white/10 transition-all"
           >

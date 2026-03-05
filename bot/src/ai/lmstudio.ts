@@ -18,7 +18,7 @@ interface LMStudioModel {
 }
 
 const HEALTH_CACHE_TTL_MS = 30_000;
-const HEALTH_CHECK_TIMEOUT_MS = 8_000;
+const HEALTH_CHECK_TIMEOUT_MS = 15_000;
 const CONFIG_CACHE_TTL_MS = 60_000;
 const DEFAULT_API_KEY = 'lm-studio';
 
@@ -74,53 +74,95 @@ export function getLMStudioClient(cfg: LMStudioConfig): OpenAI {
   return lmStudioClient;
 }
 
+const HEALTH_CHECK_HEADERS: Record<string, string> = {
+  'User-Agent': 'Amina-Bot/1.0 (LM-Studio-Health)',
+  Accept: 'application/json',
+};
+
 export async function checkLMStudioHealth(cfg: LMStudioConfig): Promise<boolean> {
   const cached = healthCache.get();
   if (cached !== null) return cached;
-
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
-
-    const modelsUrl = cfg.url.endsWith('/v1')
-      ? `${cfg.url}/models`
-      : `${cfg.url}/v1/models`;
-
-    let response: Response;
-    try {
-      response = await fetch(modelsUrl, {
-        headers: cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {},
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    const alive = response.ok;
-    healthCache.set(alive);
-    aiLogger.debug({ url: cfg.url, alive }, 'LM Studio health check');
-    return alive;
-  } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error);
-    aiLogger.debug({ url: cfg.url, error: msg }, 'LM Studio health check failed');
-    healthCache.set(false);
-    return false;
-  }
-}
-
-export async function fetchLMStudioModels(cfg: LMStudioConfig): Promise<LMStudioModel[]> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10_000);
 
   const modelsUrl = cfg.url.endsWith('/v1')
     ? `${cfg.url}/models`
     : `${cfg.url}/v1/models`;
 
+  const doFetch = async (): Promise<boolean> => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
+
+    const headers: Record<string, string> = {
+      ...HEALTH_CHECK_HEADERS,
+      ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}),
+    };
+
+    try {
+      const response = await fetch(modelsUrl, {
+        headers,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      const alive = response.ok;
+      if (!alive) {
+        aiLogger.info(
+          { url: cfg.url, status: response.status, statusText: response.statusText },
+          'LM Studio health check: non-OK response'
+        );
+      }
+      healthCache.set(alive);
+      return alive;
+    } catch (err) {
+      clearTimeout(timeoutId);
+      throw err;
+    }
+  };
+
+  try {
+    const alive = await doFetch();
+    healthCache.set(alive);
+    aiLogger.debug({ url: cfg.url, alive }, 'LM Studio health check');
+    return alive;
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    const isAbort = error instanceof Error && error.name === 'AbortError';
+    aiLogger.info(
+      { url: cfg.url, error: msg, timeout: isAbort },
+      'LM Studio health check failed (Render may not reach Cloudflare tunnel)'
+    );
+    try {
+      await new Promise((r) => setTimeout(r, 1500));
+      const retry = await doFetch();
+      healthCache.set(retry);
+      if (retry) {
+        aiLogger.info({ url: cfg.url }, 'LM Studio health check succeeded on retry');
+      }
+      return retry;
+    } catch (retryErr) {
+      healthCache.set(false);
+      return false;
+    }
+  }
+}
+
+export async function fetchLMStudioModels(cfg: LMStudioConfig): Promise<LMStudioModel[]> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15_000);
+
+  const modelsUrl = cfg.url.endsWith('/v1')
+    ? `${cfg.url}/models`
+    : `${cfg.url}/v1/models`;
+
+  const headers: Record<string, string> = {
+    ...HEALTH_CHECK_HEADERS,
+    ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}),
+  };
+
   try {
     let response: Response;
     try {
       response = await fetch(modelsUrl, {
-        headers: cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {},
+        headers,
         signal: controller.signal,
       });
     } finally {

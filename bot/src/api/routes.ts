@@ -1786,6 +1786,51 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
         return reply.code(200).send({ success: true, message: 'LM Studio cache cleared' });
       });
 
+      apiServer.get('/lmstudio/health/debug', async (_request: FastifyRequest, reply: FastifyReply) => {
+        try {
+          clearLMStudioCache();
+          const cfg = await getLMStudioConfig();
+          if (!cfg) {
+            return reply.code(200).send({
+              success: true,
+              data: { configured: false, error: 'no_url' },
+            });
+          }
+          const start = Date.now();
+          let status = 0;
+          let errorMsg = '';
+          try {
+            const res = await fetch(`${cfg.url}/models`, {
+              headers: {
+                'User-Agent': 'Amina-Bot/1.0 (LM-Studio-Debug)',
+                Accept: 'application/json',
+                ...(cfg.apiKey ? { Authorization: `Bearer ${cfg.apiKey}` } : {}),
+              },
+              signal: AbortSignal.timeout(15_000),
+            });
+            status = res.status;
+          } catch (err) {
+            errorMsg = err instanceof Error ? err.message : String(err);
+          }
+          const latencyMs = Date.now() - start;
+          const healthy = status === 200;
+          return reply.code(200).send({
+            success: true,
+            data: {
+              configured: true,
+              healthy,
+              url: cfg.url,
+              status,
+              latencyMs,
+              error: errorMsg || undefined,
+            },
+          });
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : 'Unknown error';
+          return reply.code(500).send({ success: false, error: msg });
+        }
+      });
+
       // ============================================
       // Tunnel Registration
       // ============================================
