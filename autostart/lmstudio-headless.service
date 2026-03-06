@@ -1,0 +1,17 @@
+[Unit]
+Description=LM Studio Headless Server (for Amina)
+Documentation=https://lmstudio.ai/docs/developer/core/headless
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStartPre=%h/.lmstudio/bin/lms daemon up
+ExecStart=%h/.lmstudio/bin/lms server start
+ExecStop=%h/.lmstudio/bin/lms daemon down
+Restart=on-failure
+RestartSec=10
+Environment=HOME=%h
+
+[Install]
+WantedBy=default.target

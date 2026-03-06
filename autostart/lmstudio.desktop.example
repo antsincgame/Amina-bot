@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=LM Studio
+Comment=Local LLM server for Amina bot
+Exec=/home/norad/Applications/LM-Studio-0.3.5-x86_64.AppImage --no-sandbox
+Icon=lmstudio
+Terminal=false
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=5

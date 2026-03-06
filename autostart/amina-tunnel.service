@@ -1,0 +1,23 @@
+[Unit]
+Description=Amina LM Studio Tunnel Supervisor
+Documentation=https://github.com/antsincgame/Amina-bot
+After=network-online.target graphical-session.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=@AMINA_DIR@/tunnel.sh
+Restart=always
+RestartSec=10
+WorkingDirectory=@AMINA_DIR@
+
+Environment=LMSTUDIO_PORT=1234
+Environment=BOT_API_URL=https://amina-bot.onrender.com
+Environment=HEALTH_INTERVAL=30
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

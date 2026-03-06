@@ -27,6 +27,7 @@ import {
   getLMStudioConfig,
   checkLMStudioHealth,
   fetchLMStudioModels,
+  recordHeartbeat,
 } from '../ai/lmstudio.js';
 import archiver from 'archiver';
 import type { Message, AIMessage, Conversation, LogLevel } from '../../../shared/types/index.js';
@@ -1800,6 +1801,9 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
           let status = 0;
           let errorMsg = '';
           try {
+            const base = cfg.url.replace(/\/v1\/?$/, '');
+            const nativeUrl = `${base}/api/v1/models`;
+            const openaiUrl = cfg.url.endsWith('/v1') ? `${cfg.url}/models` : `${cfg.url}/v1/models`;
             const headers: Record<string, string> = {
               'User-Agent': 'Amina-Bot/1.0 (LM-Studio-Debug)',
               Accept: 'application/json',
@@ -1807,11 +1811,18 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
             if (cfg.apiKey && cfg.apiKey !== 'lm-studio') {
               headers.Authorization = `Bearer ${cfg.apiKey}`;
             }
-            const res = await fetch(`${cfg.url}/models`, {
+            let res = await fetch(nativeUrl, {
               headers,
               signal: AbortSignal.timeout(25_000),
             });
             status = res.status;
+            if (status !== 200) {
+              res = await fetch(openaiUrl, {
+                headers,
+                signal: AbortSignal.timeout(25_000),
+              });
+              status = res.status;
+            }
           } catch (err) {
             errorMsg = err instanceof Error ? err.message : String(err);
           }
@@ -1867,6 +1878,7 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
               'lmstudio_url_updated_at',
               new Date().toISOString()
             );
+            await recordHeartbeat();
 
             clearLMStudioCache();
             settingsRepo.invalidateCache?.();
@@ -1889,6 +1901,22 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
           } catch (error) {
             const msg = error instanceof Error ? error.message : 'Unknown error';
             aiLogger.error({ error }, 'Tunnel registration failed');
+            return reply.code(500).send({ success: false, error: msg });
+          }
+        }
+      );
+
+      apiServer.post(
+        '/tunnel/heartbeat',
+        async (
+          request: FastifyRequest<{ Body?: { url?: string } }>,
+          reply: FastifyReply
+        ) => {
+          try {
+            await recordHeartbeat();
+            return reply.code(200).send({ success: true });
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : 'Unknown error';
             return reply.code(500).send({ success: false, error: msg });
           }
         }

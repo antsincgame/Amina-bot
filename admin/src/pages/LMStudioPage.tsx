@@ -124,9 +124,12 @@ const LMStudioPage = () => {
         await new Promise((r) => setTimeout(r, 400));
       }
       const res = await fetch(`${BOT_URL}/api/lmstudio/health`);
-      if (res.ok) {
-        const json = await res.json();
-        setHealthStatus(json.data);
+      const json = await res.json().catch(() => null);
+      const data = json?.data;
+      if (res.ok && data && typeof data.configured === 'boolean') {
+        setHealthStatus(data);
+      } else {
+        setHealthStatus({ configured: false, healthy: false, url: null });
       }
     } catch {
       setHealthStatus({ configured: false, healthy: false, url: null });
@@ -141,7 +144,17 @@ const LMStudioPage = () => {
       const res = await fetch(`${BOT_URL}/api/lmstudio/models`);
       if (res.ok) {
         const json = await res.json();
-        setModels(json.data?.models ?? []);
+        const modelsList = json.data?.models ?? [];
+        setModels(modelsList);
+        if (modelsList.length > 0 && json.data?.url) {
+          setHealthStatus((prev) => ({
+            ...(prev ?? {}),
+            configured: true,
+            healthy: true,
+            url: json.data.url,
+            model: prev?.model,
+          }));
+        }
       }
     } catch {
       setModels([]);
@@ -155,9 +168,20 @@ const LMStudioPage = () => {
     setDebugInfo(null);
     try {
       const res = await fetch(`${BOT_URL}/api/lmstudio/health/debug`);
-      const json = await res.json();
-      if (json.data) {
+      const json = await res.json().catch(() => null);
+      if (res.ok && json?.data) {
         setDebugInfo(json.data);
+        if (json.data.healthy && json.data.url) {
+          setHealthStatus((prev) => ({
+            ...(prev ?? {}),
+            configured: true,
+            healthy: true,
+            url: json.data.url,
+            model: prev?.model,
+          }));
+        }
+      } else {
+        setDebugInfo({ error: json?.error || `HTTP ${res.status}` });
       }
     } catch {
       setDebugInfo({ error: 'Не удалось получить данные от бота' });

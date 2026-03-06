@@ -69,12 +69,18 @@ check_dependencies() {
   log "cloudflared: $($CLOUDFLARED_BIN --version 2>&1 | head -1)"
 }
 
+check_lmstudio_ok() {
+  local status
+  status=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$LMSTUDIO_PORT/api/v1/models" 2>/dev/null || echo "000")
+  if [ "$status" = "200" ]; then return 0; fi
+  status=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$LMSTUDIO_PORT/v1/models" 2>/dev/null || echo "000")
+  [ "$status" = "200" ]
+}
+
 wait_for_lmstudio() {
   log "Waiting for LM Studio on port ${CYAN}$LMSTUDIO_PORT${NC}..."
   while true; do
-    local status
-    status=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$LMSTUDIO_PORT/v1/models" 2>/dev/null || echo "000")
-    if [ "$status" = "200" ]; then
+    if check_lmstudio_ok; then
       log "LM Studio is running"
       return 0
     fi
@@ -93,7 +99,7 @@ extract_tunnel_url() {
       continue
     fi
     local url
-    url=$(grep -oP 'https://[a-z0-9-]+\.trycloudflare\.com' "$log_file" 2>/dev/null | head -1 || true)
+    url=$(grep -oE 'https://[a-zA-Z0-9][-a-zA-Z0-9]*\.trycloudflare\.com' "$log_file" 2>/dev/null | head -1 || true)
     if [ -n "$url" ]; then
       echo "$url"
       return 0
@@ -133,11 +139,18 @@ register_tunnel_url() {
   return 1
 }
 
+send_heartbeat() {
+  curl -s -o /dev/null -w "%{http_code}" \
+    -X POST "$BOT_API_URL/api/tunnel/heartbeat" \
+    -H "Content-Type: application/json" \
+    -d "{\"url\": \"$CURRENT_URL\"}" 2>/dev/null || true
+}
+
 start_tunnel() {
   TUNNEL_LOG=$(mktemp /tmp/amina-tunnel-XXXXXX.log)
 
   log "Starting cloudflared tunnel -> localhost:$LMSTUDIO_PORT"
-  "$CLOUDFLARED_BIN" tunnel --url "http://localhost:$LMSTUDIO_PORT" 2>"$TUNNEL_LOG" &
+  "$CLOUDFLARED_BIN" tunnel --url "http://localhost:$LMSTUDIO_PORT" >"$TUNNEL_LOG" 2>&1 &
   TUNNEL_PID=$!
   dim "cloudflared PID: $TUNNEL_PID"
 
@@ -153,6 +166,7 @@ start_tunnel() {
   url=$(extract_tunnel_url "$TUNNEL_LOG") || {
     err "Failed to extract tunnel URL. Last cloudflared output:"
     tail -20 "$TUNNEL_LOG" 2>/dev/null || true
+    err "Tip: if you have ~/.cloudflared/config.yaml, remove or rename it (quick tunnels don't work with config)"
     kill "$TUNNEL_PID" 2>/dev/null || true
     wait "$TUNNEL_PID" 2>/dev/null || true
     TUNNEL_PID=""
@@ -194,16 +208,15 @@ monitor_tunnel() {
       return 1
     fi
 
-    local lms_status
-    lms_status=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$LMSTUDIO_PORT/v1/models" 2>/dev/null || echo "000")
-    if [ "$lms_status" != "200" ]; then
-      warn "LM Studio went offline (HTTP $lms_status). Stopping tunnel..."
+    if ! check_lmstudio_ok; then
+      warn "LM Studio went offline. Stopping tunnel..."
       kill "$TUNNEL_PID" 2>/dev/null || true
       wait "$TUNNEL_PID" 2>/dev/null || true
       TUNNEL_PID=""
       return 2
     fi
 
+    send_heartbeat
     dim "$(date +%H:%M:%S) tunnel: ok | lmstudio: ok"
   done
 }

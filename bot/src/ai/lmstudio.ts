@@ -19,6 +19,7 @@ interface LMStudioModel {
 
 const HEALTH_CACHE_TTL_MS = 30_000;
 const HEALTH_CHECK_TIMEOUT_MS = 25_000;
+const HEARTBEAT_VALID_MS = 180_000; // 3 min — если туннель слал heartbeat недавно, считаем Online
 const CONFIG_CACHE_TTL_MS = 60_000;
 const DEFAULT_API_KEY = 'lm-studio';
 
@@ -83,15 +84,42 @@ const HEALTH_CHECK_HEADERS: Record<string, string> = {
   Accept: 'application/json',
 };
 
+function getModelsUrl(cfg: LMStudioConfig, useNativeApi: boolean): string {
+  const base = cfg.url.replace(/\/v1\/?$/, '');
+  if (useNativeApi) {
+    return `${base}/api/v1/models`;
+  }
+  return cfg.url.endsWith('/v1') ? `${cfg.url}/models` : `${cfg.url}/v1/models`;
+}
+
+const HEARTBEAT_KEY = 'lmstudio_heartbeat_at';
+
+export async function recordHeartbeat(): Promise<void> {
+  await settingsRepo.set(HEARTBEAT_KEY, new Date().toISOString());
+}
+
+async function isHeartbeatRecent(): Promise<boolean> {
+  const raw = await settingsRepo.get(HEARTBEAT_KEY);
+  if (!raw) return false;
+  try {
+    const ts = new Date(raw).getTime();
+    return Date.now() - ts < HEARTBEAT_VALID_MS;
+  } catch {
+    return false;
+  }
+}
+
 export async function checkLMStudioHealth(cfg: LMStudioConfig): Promise<boolean> {
   const cached = healthCache.get();
   if (cached !== null) return cached;
 
-  const modelsUrl = cfg.url.endsWith('/v1')
-    ? `${cfg.url}/models`
-    : `${cfg.url}/v1/models`;
+  if (await isHeartbeatRecent()) {
+    healthCache.set(true);
+    aiLogger.debug({ url: cfg.url }, 'LM Studio healthy via heartbeat');
+    return true;
+  }
 
-  const doFetch = async (): Promise<boolean> => {
+  const doFetch = async (url: string): Promise<boolean> => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
 
@@ -103,7 +131,7 @@ export async function checkLMStudioHealth(cfg: LMStudioConfig): Promise<boolean>
     };
 
     try {
-      const response = await fetch(modelsUrl, {
+      const response = await fetch(url, {
         headers,
         signal: controller.signal,
       });
@@ -124,8 +152,14 @@ export async function checkLMStudioHealth(cfg: LMStudioConfig): Promise<boolean>
     }
   };
 
+  const nativeUrl = getModelsUrl(cfg, true);
+  const openaiUrl = getModelsUrl(cfg, false);
+
   try {
-    const alive = await doFetch();
+    let alive = await doFetch(nativeUrl);
+    if (!alive) {
+      alive = await doFetch(openaiUrl);
+    }
     if (alive) healthCache.set(true);
     aiLogger.debug({ url: cfg.url, alive }, 'LM Studio health check');
     return alive;
@@ -138,7 +172,8 @@ export async function checkLMStudioHealth(cfg: LMStudioConfig): Promise<boolean>
     );
     try {
       await new Promise((r) => setTimeout(r, 1500));
-      const retry = await doFetch();
+      let retry = await doFetch(nativeUrl);
+      if (!retry) retry = await doFetch(openaiUrl);
       if (retry) {
         healthCache.set(true);
         aiLogger.info({ url: cfg.url }, 'LM Studio health check succeeded on retry');
@@ -154,10 +189,6 @@ export async function fetchLMStudioModels(cfg: LMStudioConfig): Promise<LMStudio
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 15_000);
 
-  const modelsUrl = cfg.url.endsWith('/v1')
-    ? `${cfg.url}/models`
-    : `${cfg.url}/v1/models`;
-
   const headers: Record<string, string> = {
     ...HEALTH_CHECK_HEADERS,
     ...(cfg.apiKey && cfg.apiKey !== DEFAULT_API_KEY
@@ -165,38 +196,47 @@ export async function fetchLMStudioModels(cfg: LMStudioConfig): Promise<LMStudio
       : {}),
   };
 
+  const tryFetch = async (url: string): Promise<LMStudioModel[]> => {
+    const response = await fetch(url, {
+      headers,
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`LM Studio API error: ${response.status}`);
+    const json = (await response.json()) as unknown;
+
+    const openaiData = json as { data?: Array<{ id: string; owned_by?: string }> };
+    if (openaiData?.data && Array.isArray(openaiData.data)) {
+      return openaiData.data.map((m) => ({
+        id: m.id,
+        name: m.id.split('/').pop()?.replace(/-/g, ' ') ?? m.id,
+        owned_by: m.owned_by ?? 'local',
+      }));
+    }
+
+    const nativeData = json as { models?: Array<{ key: string; display_name?: string }> };
+    if (nativeData?.models && Array.isArray(nativeData.models)) {
+      return nativeData.models.map((m) => ({
+        id: m.key,
+        name: m.display_name ?? m.key.split('/').pop()?.replace(/-/g, ' ') ?? m.key,
+        owned_by: 'local',
+      }));
+    }
+
+    throw new Error('Unexpected LM Studio API response format');
+  };
+
   try {
-    let response: Response;
     try {
-      response = await fetch(modelsUrl, {
-        headers,
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
+      return await tryFetch(getModelsUrl(cfg, true));
+    } catch {
+      return await tryFetch(getModelsUrl(cfg, false));
     }
-
-    if (!response.ok) {
-      throw new Error(`LM Studio API error: ${response.status}`);
-    }
-
-    const data = await response.json() as {
-      data: Array<{ id: string; owned_by?: string }>;
-    };
-
-    if (!data?.data || !Array.isArray(data.data)) {
-      throw new Error('Unexpected LM Studio API response format');
-    }
-
-    return data.data.map(m => ({
-      id: m.id,
-      name: m.id.split('/').pop()?.replace(/-/g, ' ') ?? m.id,
-      owned_by: m.owned_by ?? 'local',
-    }));
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     aiLogger.error({ url: cfg.url, error: msg }, 'Failed to fetch LM Studio models');
     throw error;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
