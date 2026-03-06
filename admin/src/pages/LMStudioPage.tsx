@@ -38,6 +38,8 @@ interface HealthStatus {
   healthy: boolean;
   url: string | null;
   model?: string;
+  source?: 'heartbeat' | 'direct' | null;
+  heartbeatAt?: string;
 }
 
 const PROVIDER_LABELS: Record<AIProvider, { label: string; desc: string }> = {
@@ -194,6 +196,13 @@ const LMStudioPage = () => {
     checkHealth();
   }, [checkHealth]);
 
+  const needsPolling = healthStatus?.configured === true && healthStatus?.healthy === false;
+  useEffect(() => {
+    if (!needsPolling) return;
+    const interval = setInterval(() => checkHealth(), 15_000);
+    return () => clearInterval(interval);
+  }, [needsPolling, checkHealth]);
+
   useEffect(() => {
     if (healthStatus?.healthy && models.length === 0 && !isLoadingModels) {
       loadModels();
@@ -301,7 +310,9 @@ const LMStudioPage = () => {
               {isCheckingHealth
                 ? 'Проверка...'
                 : isHealthy
-                  ? 'LM Studio Online'
+                  ? healthStatus?.source === 'heartbeat'
+                    ? 'LM Studio Online (heartbeat)'
+                    : 'LM Studio Online'
                   : healthStatus?.configured
                     ? 'LM Studio Offline'
                     : 'Не настроено'}
@@ -325,6 +336,12 @@ const LMStudioPage = () => {
             <span className="flex items-center gap-1.5 text-indigo-400/80">
               <Shield className="w-3 h-3" />
               tunnel.sh (авто)
+            </span>
+          )}
+          {isHealthy && healthStatus?.source === 'heartbeat' && healthStatus?.heartbeatAt && (
+            <span className="flex items-center gap-1.5 text-green-400/80">
+              <Clock className="w-3 h-3" />
+              heartbeat {formatUpdatedAt(healthStatus.heartbeatAt)}
             </span>
           )}
           {urlUpdatedAt && (
@@ -720,6 +737,16 @@ const LMStudioPage = () => {
               localhost:1234, запускает cloudflared, извлекает URL и автоматически
               регистрирует его на боте. При падении туннеля или LM Studio скрипт
               автоматически перезапускает всё. URL в поле выше обновляется автоматически.
+            </p>
+          </div>
+
+          <div className="p-3 rounded-xl bg-amber-500/5 border border-amber-500/20">
+            <p className="text-amber-400/90 text-xs font-medium mb-1">Render Free Tier: Keep-Alive</p>
+            <p className="text-white/50 text-xs">
+              Бот на Render засыпает через 15 мин без запросов. Heartbeat от туннеля не дойдёт до спящего бота.
+              Настрой <strong>UptimeRobot</strong> (бесплатно): мониторинг{' '}
+              <code className="text-amber-300/80">https://amina-bot.onrender.com/health</code> каждые 14 мин.
+              Альтернатива: cron-job.org или аналогичный сервис.
             </p>
           </div>
 

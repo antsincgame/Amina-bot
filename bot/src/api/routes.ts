@@ -26,6 +26,7 @@ import {
   clearLMStudioCache,
   getLMStudioConfig,
   checkLMStudioHealth,
+  getLMStudioHealthStatus,
   fetchLMStudioModels,
   recordHeartbeat,
 } from '../ai/lmstudio.js';
@@ -1749,10 +1750,17 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
             });
           }
 
-          const healthy = await checkLMStudioHealth(cfg);
+          const status = await getLMStudioHealthStatus(cfg);
           return reply.code(200).send({
             success: true,
-            data: { configured: true, healthy, url: cfg.url, model: cfg.model },
+            data: {
+              configured: true,
+              healthy: status.healthy,
+              url: cfg.url,
+              model: cfg.model,
+              source: status.source,
+              heartbeatAt: status.heartbeatAt ?? undefined,
+            },
           });
         } catch (error) {
           const msg = error instanceof Error ? error.message : 'Unknown error';

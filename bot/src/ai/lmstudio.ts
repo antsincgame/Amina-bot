@@ -109,15 +109,52 @@ async function isHeartbeatRecent(): Promise<boolean> {
   }
 }
 
-export async function checkLMStudioHealth(cfg: LMStudioConfig): Promise<boolean> {
-  const cached = healthCache.get();
-  if (cached !== null) return cached;
+export async function getHeartbeatAt(): Promise<string | null> {
+  const raw = await settingsRepo.get(HEARTBEAT_KEY);
+  return raw && typeof raw === 'string' ? raw.trim() || null : null;
+}
 
+export interface LMStudioHealthStatus {
+  healthy: boolean;
+  source: 'heartbeat' | 'direct' | null;
+  heartbeatAt: string | null;
+}
+
+export async function getLMStudioHealthStatus(cfg: LMStudioConfig): Promise<LMStudioHealthStatus> {
+  const heartbeatAt = await getHeartbeatAt();
+  const viaHeartbeat = heartbeatAt
+    ? Date.now() - new Date(heartbeatAt).getTime() < HEARTBEAT_VALID_MS
+    : false;
+
+  if (viaHeartbeat) {
+    healthCache.set(true);
+    aiLogger.debug({ url: cfg.url }, 'LM Studio healthy via heartbeat');
+    return { healthy: true, source: 'heartbeat', heartbeatAt };
+  }
+
+  const cached = healthCache.get();
+  if (cached !== null) {
+    return { healthy: cached, source: cached ? 'direct' : null, heartbeatAt };
+  }
+
+  const direct = await checkLMStudioHealthDirect(cfg);
+  return { healthy: direct, source: direct ? 'direct' : null, heartbeatAt };
+}
+
+export async function checkLMStudioHealth(cfg: LMStudioConfig): Promise<boolean> {
+  const status = await getLMStudioHealthStatus(cfg);
+  return status.healthy;
+}
+
+async function checkLMStudioHealthDirect(cfg: LMStudioConfig): Promise<boolean> {
   if (await isHeartbeatRecent()) {
     healthCache.set(true);
     aiLogger.debug({ url: cfg.url }, 'LM Studio healthy via heartbeat');
     return true;
   }
+
+  const cached = healthCache.get();
+  if (cached !== null) return cached;
 
   const doFetch = async (url: string): Promise<boolean> => {
     const controller = new AbortController();
