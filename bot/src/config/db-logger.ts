@@ -81,12 +81,11 @@ export async function flushLogs(): Promise<void> {
 
     if (error) {
       // Не можем залогировать в БД - выводим в консоль
-      console.error('[DB Logger] Failed to insert logs:', error.message);
-      // Возвращаем логи обратно в очередь (до лимита)
+      process.stderr.write(`[DB Logger] Failed to insert logs: ${error.message}\n`);
       logQueue = [...logsToInsert.slice(0, 50), ...logQueue.slice(0, 50)];
     }
   } catch (err) {
-    console.error('[DB Logger] Exception during flush:', err);
+    process.stderr.write(`[DB Logger] Exception during flush: ${err}\n`);
   }
 }
 
@@ -248,7 +247,7 @@ export async function getLogs(params: {
   const { data, error } = await query;
 
   if (error) {
-    console.error('[DB Logger] Failed to get logs:', error.message);
+    process.stderr.write(`[DB Logger] Failed to get logs: ${error.message}\n`);
     return [];
   }
 
@@ -272,7 +271,7 @@ export async function getLogStats(from: Date, to: Date): Promise<{
     .lte('timestamp', to.toISOString());
 
   if (error) {
-    console.error('[DB Logger] Failed to get log stats:', error.message);
+    process.stderr.write(`[DB Logger] Failed to get log stats: ${error.message}\n`);
     return {
       total: 0,
       byLevel: { debug: 0, info: 0, warn: 0, error: 0, fatal: 0 },

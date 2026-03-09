@@ -63,37 +63,32 @@ const parseEnv = () => {
   const result = envSchema.safeParse(process.env);
 
   if (!result.success) {
-    console.error('⚠️ Env validation issues (continuing anyway):');
-    console.error(JSON.stringify(result.error.flatten().fieldErrors));
+    const errors = JSON.stringify(result.error.flatten().fieldErrors);
+
     if (process.env.NODE_ENV === 'test') {
-      throw new Error(`Invalid env vars: ${JSON.stringify(result.error.flatten().fieldErrors)}`);
+      throw new Error(`Invalid env vars: ${errors}`);
     }
+
+    if (process.env.NODE_ENV === 'production') {
+      if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
+        throw new Error(
+          `FATAL: SUPABASE_URL and SUPABASE_SERVICE_KEY are required in production. ` +
+          `Validation errors: ${errors}`
+        );
+      }
+    }
+
     const fallback = envSchema.safeParse({
       ...process.env,
       SUPABASE_URL: process.env.SUPABASE_URL || 'https://placeholder.supabase.co',
       SUPABASE_SERVICE_KEY: process.env.SUPABASE_SERVICE_KEY || 'placeholder',
     });
     if (fallback.success) return fallback.data;
-    console.error('⚠️ Fallback env parse also failed — using minimal defaults');
-    return {
-      SUPABASE_URL: process.env.SUPABASE_URL || 'https://placeholder.supabase.co',
-      SUPABASE_SERVICE_KEY: process.env.SUPABASE_SERVICE_KEY || 'placeholder',
-      TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN,
-      OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
-      OPENROUTER_MODEL: 'anthropic/claude-3-haiku',
-      GROQ_API_KEY: undefined,
-      PERPLEXITY_API_KEY: undefined,
-      PORT: 3000,
-      HOST: '0.0.0.0',
-      NODE_ENV: 'production' as const,
-      LOG_LEVEL: 'info' as const,
-      WEBHOOK_URL: undefined,
-      WEBHOOK_SECRET: undefined,
-      LIRAX_URL: undefined,
-      LIRAX_TOKEN: undefined,
-      LIRAX_WEBHOOK_TOKEN: undefined,
-      LIRAX_DEFAULT_EXT: undefined,
-    };
+
+    throw new Error(
+      `FATAL: environment configuration is invalid and fallback failed. ` +
+      `Set SUPABASE_URL and SUPABASE_SERVICE_KEY. Errors: ${errors}`
+    );
   }
 
   return result.data;

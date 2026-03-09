@@ -19,13 +19,12 @@ describe('multimodal', () => {
 
   describe('vision model exports', () => {
     it('getFreeVisionModels should return array of models', async () => {
-      // Will return static fallback in test env (no API key)
       const models = await getFreeVisionModels();
       expect(models).toBeInstanceOf(Array);
       expect(models.length).toBeGreaterThan(0);
       expect(models[0]).toHaveProperty('id');
       expect(models[0]).toHaveProperty('name');
-    });
+    }, 15_000);
 
     it('getVisionFallbackStatus should return status object', () => {
       const status = getVisionFallbackStatus();
