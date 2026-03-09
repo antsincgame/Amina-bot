@@ -140,8 +140,9 @@ register_tunnel_url() {
 }
 
 send_heartbeat() {
+  # /tunnel/register работает и внутренне вызывает recordHeartbeat()
   curl -s -o /dev/null -w "%{http_code}" \
-    -X POST "$BOT_API_URL/api/tunnel/heartbeat" \
+    -X POST "$BOT_API_URL/api/tunnel/register" \
     -H "Content-Type: application/json" \
     -d "{\"url\": \"$CURRENT_URL\"}" 2>/dev/null || true
 }

@@ -1882,10 +1882,6 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
             }
 
             await settingsRepo.set('lmstudio_url', trimmed);
-            await settingsRepo.set(
-              'lmstudio_url_updated_at',
-              new Date().toISOString()
-            );
             await recordHeartbeat();
 
             clearLMStudioCache();

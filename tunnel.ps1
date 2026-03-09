@@ -188,14 +188,17 @@ function Register-TunnelUrl {
 
 function Send-Heartbeat {
     $body = @{ url = $script:CurrentUrl } | ConvertTo-Json -Compress
+    $headers = @{ 'Content-Type' = 'application/json' }
+
+    # /tunnel/register работает и внутренне вызывает recordHeartbeat()
     try {
         Invoke-WebRequest `
-            -Uri "$BOT_API_URL/api/tunnel/heartbeat" `
+            -Uri "$BOT_API_URL/api/tunnel/register" `
             -Method POST `
             -Body $body `
-            -Headers @{ 'Content-Type' = 'application/json' } `
+            -Headers $headers `
             -UseBasicParsing `
-            -TimeoutSec 10 `
+            -TimeoutSec 15 `
             -ErrorAction SilentlyContinue | Out-Null
     } catch {}
 }

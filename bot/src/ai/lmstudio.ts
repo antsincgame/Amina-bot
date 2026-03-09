@@ -92,7 +92,7 @@ function getModelsUrl(cfg: LMStudioConfig, useNativeApi: boolean): string {
   return cfg.url.endsWith('/v1') ? `${cfg.url}/models` : `${cfg.url}/v1/models`;
 }
 
-const HEARTBEAT_KEY = 'lmstudio_heartbeat_at';
+const HEARTBEAT_KEY = 'lmstudio_url_updated_at';
 
 export async function recordHeartbeat(): Promise<void> {
   await settingsRepo.set(HEARTBEAT_KEY, new Date().toISOString());
