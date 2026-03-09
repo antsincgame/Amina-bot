@@ -4,11 +4,12 @@
     Amina LM Studio Tunnel Supervisor (Windows)
 
 .DESCRIPTION
-    Автоматически:
-    1. Ждёт запуска LM Studio на localhost
-    2. Поднимает cloudflared quick tunnel
-    3. Регистрирует URL туннеля на боте (Render)
-    4. Мониторит tunnel — рестарт при падении
+    1. Убивает stale cloudflared перед стартом
+    2. Ждёт запуска LM Studio на localhost
+    3. Поднимает cloudflared quick tunnel (HTTP/2, с retry до 3 раз)
+    4. Регистрирует URL туннеля на боте (Render)
+    5. Мониторит: процесс + LM Studio + реальную доступность туннеля
+    6. Рестартит при любом из: процесс умер / LM Studio offline / URL протух
 
 .EXAMPLE
     .\tunnel.ps1
@@ -25,17 +26,20 @@ $ErrorActionPreference = 'Stop'
 #  Configuration
 # ============================================
 
-$LMSTUDIO_PORT       = if ($env:LMSTUDIO_PORT)       { $env:LMSTUDIO_PORT }       else { '1234' }
-$BOT_API_URL         = if ($env:BOT_API_URL)          { $env:BOT_API_URL }          else { 'https://amina-bot.onrender.com' }
-$CLOUDFLARED_BIN     = if ($env:CLOUDFLARED_BIN)      { $env:CLOUDFLARED_BIN }      else { 'cloudflared' }
-$HEALTH_INTERVAL     = if ($env:HEALTH_INTERVAL)      { [int]$env:HEALTH_INTERVAL } else { 30 }
-$LMSTUDIO_WAIT_SEC   = 3
-$TUNNEL_URL_TIMEOUT  = 30
-$RESTART_DELAY       = 5
+$LMSTUDIO_PORT          = if ($env:LMSTUDIO_PORT)       { $env:LMSTUDIO_PORT }       else { '1234' }
+$BOT_API_URL            = if ($env:BOT_API_URL)          { $env:BOT_API_URL }          else { 'https://amina-bot.onrender.com' }
+$CLOUDFLARED_BIN        = if ($env:CLOUDFLARED_BIN)      { $env:CLOUDFLARED_BIN }      else { 'cloudflared' }
+$HEALTH_INTERVAL        = if ($env:HEALTH_INTERVAL)      { [int]$env:HEALTH_INTERVAL } else { 30 }
+$LMSTUDIO_WAIT_SEC      = 3
+$TUNNEL_URL_TIMEOUT     = 30
+$RESTART_DELAY          = 5
+$START_RETRIES          = 3
+$UNHEALTHY_THRESHOLD    = 3
 
-$script:TunnelProcess = $null
-$script:TunnelLogFile = $null
-$script:CurrentUrl    = ''
+$script:TunnelProcess   = $null
+$script:TunnelLogFile   = $null
+$script:CurrentUrl      = ''
+$script:UnhealthyCount  = 0
 
 # ============================================
 #  Logging
@@ -47,8 +51,15 @@ function Write-Err  { param([string]$Msg) Write-Host "[tunnel] $Msg" -Foreground
 function Write-Dim  { param([string]$Msg) Write-Host "[tunnel] $Msg" -ForegroundColor DarkGray }
 
 # ============================================
-#  Cleanup (вызывается при завершении)
+#  Cleanup
 # ============================================
+
+function Stop-AllCloudflared {
+    Get-Process -Name cloudflared -ErrorAction SilentlyContinue | ForEach-Object {
+        Write-Warn "Killing stale cloudflared PID $($_.Id)"
+        $_ | Stop-Process -Force -ErrorAction SilentlyContinue
+    }
+}
 
 function Stop-Tunnel {
     Write-Log 'Shutting down...'
@@ -77,7 +88,6 @@ function Test-Dependencies {
     if (-not $cfBin) {
         Write-Err "cloudflared not found. Install:"
         Write-Err "  winget install Cloudflare.cloudflared"
-        Write-Err "  OR download from https://github.com/cloudflare/cloudflared/releases"
         exit 1
     }
 
@@ -90,33 +100,21 @@ function Test-Dependencies {
 # ============================================
 
 function Test-LMStudioOk {
-    $urls = @(
-        "http://localhost:${LMSTUDIO_PORT}/api/v1/models",
-        "http://localhost:${LMSTUDIO_PORT}/v1/models"
-    )
-
-    foreach ($url in $urls) {
+    foreach ($path in @('/api/v1/models', '/v1/models')) {
         try {
-            $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 5 -ErrorAction SilentlyContinue
-            if ($response.StatusCode -eq 200) { return $true }
-        } catch {
-            continue
-        }
+            $r = Invoke-WebRequest -Uri "http://localhost:${LMSTUDIO_PORT}${path}" -UseBasicParsing -TimeoutSec 5 -ErrorAction SilentlyContinue
+            if ($r.StatusCode -eq 200) { return $true }
+        } catch { continue }
     }
-
     return $false
 }
 
 function Wait-ForLMStudio {
     Write-Log "Waiting for LM Studio on port $LMSTUDIO_PORT..."
-
-    while ($true) {
-        if (Test-LMStudioOk) {
-            Write-Log 'LM Studio is running'
-            return
-        }
+    while (-not (Test-LMStudioOk)) {
         Start-Sleep -Seconds $LMSTUDIO_WAIT_SEC
     }
+    Write-Log 'LM Studio is running'
 }
 
 # ============================================
@@ -126,21 +124,16 @@ function Wait-ForLMStudio {
 function Get-TunnelUrl {
     param([string]$LogFile)
 
-    $elapsed = 0
-    while ($elapsed -lt $TUNNEL_URL_TIMEOUT) {
+    for ($i = 0; $i -lt $TUNNEL_URL_TIMEOUT; $i++) {
         if (Test-Path $LogFile) {
             $content = Get-Content $LogFile -Raw -ErrorAction SilentlyContinue
             if ($content) {
                 $match = [regex]::Match($content, 'https://[a-zA-Z0-9]+-[a-zA-Z0-9][-a-zA-Z0-9]*\.trycloudflare\.com')
-                if ($match.Success) {
-                    return $match.Value
-                }
+                if ($match.Success) { return $match.Value }
             }
         }
         Start-Sleep -Seconds 1
-        $elapsed++
     }
-
     return $null
 }
 
@@ -148,138 +141,129 @@ function Get-TunnelUrl {
 #  Bot API Communication
 # ============================================
 
-function Register-TunnelUrl {
+function Send-Register {
     param([string]$Url)
 
-    $body = @{ url = $Url } | ConvertTo-Json -Compress
+    $body    = @{ url = $Url } | ConvertTo-Json -Compress
     $headers = @{ 'Content-Type' = 'application/json' }
 
     try {
-        $response = Invoke-WebRequest `
+        $r = Invoke-WebRequest `
             -Uri "$BOT_API_URL/api/tunnel/register" `
-            -Method POST `
-            -Body $body `
-            -Headers $headers `
-            -UseBasicParsing `
-            -TimeoutSec 15 `
-            -ErrorAction Stop
-        if ($response.StatusCode -in 200, 201) { return $true }
+            -Method POST -Body $body -Headers $headers `
+            -UseBasicParsing -TimeoutSec 20 -ErrorAction Stop
+
+        if ($r.StatusCode -in 200, 201) {
+            $json = $r.Content | ConvertFrom-Json
+            return $json
+        }
     } catch {
-        Write-Warn "POST /api/tunnel/register failed: $_"
+        Write-Warn "POST /api/tunnel/register failed: $($_.Exception.Message)"
     }
 
-    try {
-        $fallbackBody = @{ value = $Url } | ConvertTo-Json -Compress
-        $response = Invoke-WebRequest `
-            -Uri "$BOT_API_URL/api/settings/lmstudio_url" `
-            -Method PUT `
-            -Body $fallbackBody `
-            -Headers $headers `
-            -UseBasicParsing `
-            -TimeoutSec 15 `
-            -ErrorAction Stop
-        if ($response.StatusCode -in 200, 201) { return $true }
-    } catch {
-        Write-Warn "PUT /api/settings/lmstudio_url failed: $_"
-    }
-
-    return $false
+    return $null
 }
 
-function Send-Heartbeat {
-    $body = @{ url = $script:CurrentUrl } | ConvertTo-Json -Compress
-    $headers = @{ 'Content-Type' = 'application/json' }
+function Register-TunnelUrl {
+    param([string]$Url)
+    $result = Send-Register -Url $Url
+    return ($null -ne $result)
+}
 
-    # /tunnel/register работает и внутренне вызывает recordHeartbeat()
-    try {
-        Invoke-WebRequest `
-            -Uri "$BOT_API_URL/api/tunnel/register" `
-            -Method POST `
-            -Body $body `
-            -Headers $headers `
-            -UseBasicParsing `
-            -TimeoutSec 15 `
-            -ErrorAction SilentlyContinue | Out-Null
-    } catch {}
+# Heartbeat: register + проверка healthy
+function Send-Heartbeat {
+    $result = Send-Register -Url $script:CurrentUrl
+    if ($null -eq $result) { return $null }
+
+    $healthy = $false
+    try { $healthy = $result.data.healthy } catch {}
+    return $healthy
 }
 
 # ============================================
 #  Tunnel Lifecycle
 # ============================================
 
-function Start-CloudflareTunnel {
+function Start-SingleCloudflaredAttempt {
     $tempDir = [System.IO.Path]::GetTempPath()
     $stamp   = Get-Date -Format 'yyyyMMdd-HHmmss'
 
     $script:TunnelLogFile = Join-Path $tempDir "amina-tunnel-$stamp.log"
     $stderrLog            = Join-Path $tempDir "amina-tunnel-$stamp-err.log"
 
-    Write-Log "Starting cloudflared tunnel -> localhost:$LMSTUDIO_PORT"
-
-    # --protocol http2: QUIC (UDP) часто блокируется файрволами на Windows
     $script:TunnelProcess = Start-Process `
         -FilePath $CLOUDFLARED_BIN `
         -ArgumentList "tunnel --url http://localhost:$LMSTUDIO_PORT --protocol http2" `
         -RedirectStandardOutput $script:TunnelLogFile `
         -RedirectStandardError  $stderrLog `
-        -NoNewWindow `
-        -PassThru
+        -NoNewWindow -PassThru
 
-    Start-Sleep -Seconds 2
+    Start-Sleep -Seconds 3
 
     if ($script:TunnelProcess.HasExited) {
-        Write-Err 'cloudflared exited immediately. Log:'
-        foreach ($logPath in @($stderrLog, $script:TunnelLogFile)) {
-            if (Test-Path $logPath) {
-                Get-Content $logPath -Tail 20 | ForEach-Object { Write-Err "  $_" }
-            }
-        }
-        return $false
+        Write-Warn "cloudflared exited immediately (exit $($script:TunnelProcess.ExitCode))"
+        return $null
     }
 
     Write-Dim "cloudflared PID: $($script:TunnelProcess.Id)"
-    Write-Log "Extracting tunnel URL (up to ${TUNNEL_URL_TIMEOUT}s)..."
 
-    # URL появляется в stderr — ищем там
     $url = Get-TunnelUrl -LogFile $stderrLog
-    if (-not $url) {
-        # Fallback: может URL попал в stdout
-        $url = Get-TunnelUrl -LogFile $script:TunnelLogFile
-    }
+    if (-not $url) { $url = Get-TunnelUrl -LogFile $script:TunnelLogFile }
 
     if (-not $url) {
-        Write-Err 'Failed to extract tunnel URL. Last cloudflared output:'
-        foreach ($logPath in @($stderrLog, $script:TunnelLogFile)) {
-            if (Test-Path $logPath) {
-                Get-Content $logPath -Tail 20 | ForEach-Object { Write-Err "  $_" }
-            }
-        }
-        Write-Err 'Tip: if you have ~/.cloudflared/config.yaml, remove or rename it (quick tunnels do not work with config)'
-
+        Write-Warn 'Failed to extract tunnel URL'
         if (-not $script:TunnelProcess.HasExited) {
             $script:TunnelProcess.Kill()
             $script:TunnelProcess.WaitForExit(3000) | Out-Null
         }
         $script:TunnelProcess = $null
-        return $false
+        return $null
     }
 
-    $script:CurrentUrl = $url
-    Write-Log "Tunnel URL: $url"
-
-    Write-Log "Registering URL with bot at $BOT_API_URL..."
-    if (Register-TunnelUrl -Url $url) {
-        Write-Log 'URL registered successfully'
-    } else {
-        Write-Warn 'Failed to register URL (bot may be offline). Will retry on next health check.'
-    }
-
-    return $true
+    return $url
 }
 
-# exit_reason: 1 = tunnel died, 2 = LM Studio offline
+function Start-CloudflareTunnel {
+    Write-Log "Starting cloudflared tunnel -> localhost:$LMSTUDIO_PORT"
+
+    Stop-AllCloudflared
+    Start-Sleep -Seconds 1
+
+    for ($attempt = 1; $attempt -le $START_RETRIES; $attempt++) {
+        Write-Log "Attempt $attempt/$START_RETRIES..."
+
+        $url = Start-SingleCloudflaredAttempt
+        if ($url) {
+            $script:CurrentUrl = $url
+            $script:UnhealthyCount = 0
+            Write-Log "Tunnel URL: $url"
+
+            Write-Log "Registering URL with bot at $BOT_API_URL..."
+            if (Register-TunnelUrl -Url $url) {
+                Write-Log 'URL registered successfully'
+            } else {
+                Write-Warn 'Registration failed (bot may be offline). Will retry via heartbeat.'
+            }
+            return $true
+        }
+
+        if ($attempt -lt $START_RETRIES) {
+            Write-Warn "Retrying in ${RESTART_DELAY}s..."
+            Stop-AllCloudflared
+            Start-Sleep -Seconds $RESTART_DELAY
+        }
+    }
+
+    Write-Err "Failed to start tunnel after $START_RETRIES attempts"
+    return $false
+}
+
+# ============================================
+#  Monitoring (exit_reason: 1=crashed, 2=lm_offline, 3=url_dead)
+# ============================================
+
 function Watch-Tunnel {
-    Write-Log "Monitoring tunnel (health check every ${HEALTH_INTERVAL}s)..."
+    Write-Log "Monitoring (health check every ${HEALTH_INTERVAL}s, restart after ${UNHEALTHY_THRESHOLD} unhealthy)..."
     Write-Host ''
     Write-Log '=== Tunnel active ==='
     Write-Log "  LM Studio:  http://localhost:$LMSTUDIO_PORT"
@@ -291,15 +275,16 @@ function Watch-Tunnel {
     while ($true) {
         Start-Sleep -Seconds $HEALTH_INTERVAL
 
+        # 1. cloudflared процесс жив?
         if (-not $script:TunnelProcess -or $script:TunnelProcess.HasExited) {
-            Write-Warn "cloudflared process died. Restarting in ${RESTART_DELAY}s..."
+            Write-Warn 'cloudflared process died'
             $script:TunnelProcess = $null
-            Start-Sleep -Seconds $RESTART_DELAY
             return 1
         }
 
+        # 2. LM Studio жив?
         if (-not (Test-LMStudioOk)) {
-            Write-Warn 'LM Studio went offline. Stopping tunnel...'
+            Write-Warn 'LM Studio went offline'
             if ($script:TunnelProcess -and -not $script:TunnelProcess.HasExited) {
                 $script:TunnelProcess.Kill()
                 $script:TunnelProcess.WaitForExit(3000) | Out-Null
@@ -308,9 +293,31 @@ function Watch-Tunnel {
             return 2
         }
 
-        Send-Heartbeat
+        # 3. Heartbeat + проверка реальной доступности через register(healthy)
+        $healthy = Send-Heartbeat
         $ts = Get-Date -Format 'HH:mm:ss'
-        Write-Dim "$ts tunnel: ok | lmstudio: ok"
+
+        if ($healthy -eq $true) {
+            $script:UnhealthyCount = 0
+            Write-Dim "$ts tunnel: ok | lmstudio: ok | render: ok"
+        }
+        elseif ($healthy -eq $false) {
+            $script:UnhealthyCount++
+            Write-Warn "$ts tunnel: ok | lmstudio: ok | render: UNHEALTHY ($($script:UnhealthyCount)/$UNHEALTHY_THRESHOLD)"
+
+            if ($script:UnhealthyCount -ge $UNHEALTHY_THRESHOLD) {
+                Write-Err "Tunnel URL unreachable from Render for $UNHEALTHY_THRESHOLD checks — restarting with new URL"
+                if ($script:TunnelProcess -and -not $script:TunnelProcess.HasExited) {
+                    $script:TunnelProcess.Kill()
+                    $script:TunnelProcess.WaitForExit(3000) | Out-Null
+                }
+                $script:TunnelProcess = $null
+                return 3
+            }
+        }
+        else {
+            Write-Dim "$ts tunnel: ok | lmstudio: ok | render: no response"
+        }
     }
 }
 
@@ -326,6 +333,7 @@ function Start-TunnelSupervisor {
     Write-Host ''
 
     Test-Dependencies
+    Stop-AllCloudflared
 
     try {
         while ($true) {
@@ -334,19 +342,23 @@ function Start-TunnelSupervisor {
             if (Start-CloudflareTunnel) {
                 $exitReason = Watch-Tunnel
 
-                if ($exitReason -eq 2) {
-                    Write-Log 'LM Studio offline - waiting for it to come back...'
-                    if ($script:TunnelProcess -and -not $script:TunnelProcess.HasExited) {
-                        $script:TunnelProcess.Kill()
-                        $script:TunnelProcess.WaitForExit(3000) | Out-Null
+                switch ($exitReason) {
+                    2 {
+                        Write-Log 'LM Studio offline — waiting for it to come back...'
+                        continue
                     }
-                    $script:TunnelProcess = $null
-                    continue
+                    3 {
+                        Write-Warn 'Tunnel URL expired — getting new one...'
+                        Start-Sleep -Seconds $RESTART_DELAY
+                        continue
+                    }
+                    default {
+                        Write-Warn "Tunnel crashed — restarting in ${RESTART_DELAY}s..."
+                        Start-Sleep -Seconds $RESTART_DELAY
+                    }
                 }
-
-                Write-Warn 'Tunnel crashed - restarting...'
             } else {
-                Write-Warn "Failed to start tunnel - retrying in ${RESTART_DELAY}s..."
+                Write-Warn "Failed to start tunnel — retrying in ${RESTART_DELAY}s..."
                 Start-Sleep -Seconds $RESTART_DELAY
             }
         }
@@ -354,9 +366,5 @@ function Start-TunnelSupervisor {
         Stop-Tunnel
     }
 }
-
-# ============================================
-#  Entry Point
-# ============================================
 
 Start-TunnelSupervisor

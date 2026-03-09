@@ -5,16 +5,12 @@ set -euo pipefail
 #  Amina LM Studio Tunnel Supervisor
 # ============================================
 #
-#  Автоматически:
-#  1. Ждёт запуска LM Studio
-#  2. Поднимает cloudflared quick tunnel
-#  3. Регистрирует URL туннеля на боте
-#  4. Мониторит tunnel — рестарт при падении
-#
-#  Использование:
-#    ./tunnel.sh
-#    LMSTUDIO_PORT=8080 ./tunnel.sh
-#    systemctl --user start amina-tunnel
+#  1. Убивает stale cloudflared перед стартом
+#  2. Ждёт запуска LM Studio
+#  3. Поднимает cloudflared quick tunnel (retry до 3 раз)
+#  4. Регистрирует URL туннеля на боте
+#  5. Мониторит: процесс + LM Studio + реальную доступность (healthy)
+#  6. Рестартит при: процесс умер / LM Studio offline / URL протух
 #
 
 GREEN='\033[0;32m'
@@ -31,15 +27,27 @@ HEALTH_INTERVAL="${HEALTH_INTERVAL:-30}"
 LMSTUDIO_WAIT_INTERVAL=3
 TUNNEL_URL_TIMEOUT=30
 RESTART_DELAY=5
+START_RETRIES=3
+UNHEALTHY_THRESHOLD=3
 
 TUNNEL_PID=""
 TUNNEL_LOG=""
 CURRENT_URL=""
+UNHEALTHY_COUNT=0
 
 log()  { echo -e "${GREEN}[tunnel]${NC} $1"; }
 warn() { echo -e "${YELLOW}[tunnel]${NC} $1"; }
 err()  { echo -e "${RED}[tunnel]${NC} $1"; }
 dim()  { echo -e "${DIM}[tunnel]${NC} $1"; }
+
+# ============================================
+#  Cleanup
+# ============================================
+
+kill_all_cloudflared() {
+  pkill -f "cloudflared tunnel" 2>/dev/null || true
+  sleep 1
+}
 
 cleanup() {
   log "Shutting down..."
@@ -56,6 +64,10 @@ cleanup() {
 
 trap cleanup SIGTERM SIGINT SIGHUP
 
+# ============================================
+#  Dependency Check
+# ============================================
+
 check_dependencies() {
   if ! command -v "$CLOUDFLARED_BIN" &>/dev/null; then
     err "cloudflared not found. Install:"
@@ -68,6 +80,10 @@ check_dependencies() {
   fi
   log "cloudflared: $($CLOUDFLARED_BIN --version 2>&1 | head -1)"
 }
+
+# ============================================
+#  LM Studio Health
+# ============================================
 
 check_lmstudio_ok() {
   local status
@@ -88,21 +104,22 @@ wait_for_lmstudio() {
   done
 }
 
+# ============================================
+#  Tunnel URL Extraction
+# ============================================
+
 extract_tunnel_url() {
   local log_file="$1"
   local elapsed=0
 
   while [ "$elapsed" -lt "$TUNNEL_URL_TIMEOUT" ]; do
-    if [ ! -f "$log_file" ]; then
-      sleep 1
-      elapsed=$((elapsed + 1))
-      continue
-    fi
-    local url
-    url=$(grep -oE 'https://[a-zA-Z0-9]+-[a-zA-Z0-9][-a-zA-Z0-9]*\.trycloudflare\.com' "$log_file" 2>/dev/null | head -1 || true)
-    if [ -n "$url" ]; then
-      echo "$url"
-      return 0
+    if [ -f "$log_file" ]; then
+      local url
+      url=$(grep -oE 'https://[a-zA-Z0-9]+-[a-zA-Z0-9][-a-zA-Z0-9]*\.trycloudflare\.com' "$log_file" 2>/dev/null | head -1 || true)
+      if [ -n "$url" ]; then
+        echo "$url"
+        return 0
+      fi
     fi
     sleep 1
     elapsed=$((elapsed + 1))
@@ -111,63 +128,78 @@ extract_tunnel_url() {
   return 1
 }
 
+# ============================================
+#  Bot API Communication
+# ============================================
+
+send_register() {
+  local url="$1"
+  curl -s \
+    -X POST "$BOT_API_URL/api/tunnel/register" \
+    -H "Content-Type: application/json" \
+    -d "{\"url\": \"$url\"}" \
+    --max-time 20 2>/dev/null || echo ""
+}
+
 register_tunnel_url() {
   local url="$1"
   local response
-  local http_code
+  response=$(send_register "$url")
 
-  http_code=$(curl -s -o /dev/null -w "%{http_code}" \
-    -X POST "$BOT_API_URL/api/tunnel/register" \
-    -H "Content-Type: application/json" \
-    -d "{\"url\": \"$url\"}" 2>/dev/null || echo "000")
-
-  if [ "$http_code" = "200" ] || [ "$http_code" = "201" ]; then
+  if echo "$response" | grep -q '"success":true'; then
     return 0
   fi
 
-  warn "POST /api/tunnel/register returned HTTP $http_code, trying PUT fallback..."
+  warn "POST /api/tunnel/register failed, trying PUT fallback..."
+  local http_code
   http_code=$(curl -s -o /dev/null -w "%{http_code}" \
     -X PUT "$BOT_API_URL/api/settings/lmstudio_url" \
     -H "Content-Type: application/json" \
-    -d "{\"value\": \"$url\"}" 2>/dev/null || echo "000")
+    -d "{\"value\": \"$url\"}" --max-time 15 2>/dev/null || echo "000")
 
-  if [ "$http_code" = "200" ] || [ "$http_code" = "201" ]; then
-    return 0
+  [ "$http_code" = "200" ] || [ "$http_code" = "201" ]
+}
+
+# Heartbeat: register + parse healthy field
+send_heartbeat() {
+  local response
+  response=$(send_register "$CURRENT_URL")
+
+  if [ -z "$response" ]; then
+    echo "null"
+    return
   fi
 
-  warn "PUT /api/settings/lmstudio_url returned HTTP $http_code"
-  return 1
+  if echo "$response" | grep -qE '"healthy"\s*:\s*true'; then
+    echo "true"
+  elif echo "$response" | grep -qE '"healthy"\s*:\s*false'; then
+    echo "false"
+  else
+    echo "null"
+  fi
 }
 
-send_heartbeat() {
-  # /tunnel/register работает и внутренне вызывает recordHeartbeat()
-  curl -s -o /dev/null -w "%{http_code}" \
-    -X POST "$BOT_API_URL/api/tunnel/register" \
-    -H "Content-Type: application/json" \
-    -d "{\"url\": \"$CURRENT_URL\"}" 2>/dev/null || true
-}
+# ============================================
+#  Tunnel Lifecycle
+# ============================================
 
-start_tunnel() {
+start_single_attempt() {
   TUNNEL_LOG=$(mktemp /tmp/amina-tunnel-XXXXXX.log)
 
-  log "Starting cloudflared tunnel -> localhost:$LMSTUDIO_PORT"
   "$CLOUDFLARED_BIN" tunnel --url "http://localhost:$LMSTUDIO_PORT" >"$TUNNEL_LOG" 2>&1 &
   TUNNEL_PID=$!
   dim "cloudflared PID: $TUNNEL_PID"
 
-  sleep 1
+  sleep 3
   if ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
-    err "cloudflared exited immediately. Log:"
-    tail -20 "$TUNNEL_LOG" 2>/dev/null || true
+    warn "cloudflared exited immediately"
+    TUNNEL_PID=""
     return 1
   fi
 
-  log "Extracting tunnel URL (up to ${TUNNEL_URL_TIMEOUT}s)..."
   local url
   url=$(extract_tunnel_url "$TUNNEL_LOG") || {
-    err "Failed to extract tunnel URL. Last cloudflared output:"
-    tail -20 "$TUNNEL_LOG" 2>/dev/null || true
-    err "Tip: if you have ~/.cloudflared/config.yaml, remove or rename it (quick tunnels don't work with config)"
+    warn "Failed to extract tunnel URL"
     kill "$TUNNEL_PID" 2>/dev/null || true
     wait "$TUNNEL_PID" 2>/dev/null || true
     TUNNEL_PID=""
@@ -175,20 +207,48 @@ start_tunnel() {
   }
 
   CURRENT_URL="$url"
-  log "Tunnel URL: ${CYAN}$url${NC}"
-
-  log "Registering URL with bot at $BOT_API_URL..."
-  if register_tunnel_url "$url"; then
-    log "URL registered successfully"
-  else
-    warn "Failed to register URL (bot may be offline). Will retry on next health check."
-  fi
-
   return 0
 }
 
+start_tunnel() {
+  log "Starting cloudflared tunnel -> localhost:$LMSTUDIO_PORT"
+
+  kill_all_cloudflared
+
+  local attempt
+  for attempt in $(seq 1 "$START_RETRIES"); do
+    log "Attempt $attempt/$START_RETRIES..."
+
+    if start_single_attempt; then
+      UNHEALTHY_COUNT=0
+      log "Tunnel URL: ${CYAN}$CURRENT_URL${NC}"
+
+      log "Registering URL with bot at $BOT_API_URL..."
+      if register_tunnel_url "$CURRENT_URL"; then
+        log "URL registered successfully"
+      else
+        warn "Registration failed (bot may be offline). Will retry via heartbeat."
+      fi
+      return 0
+    fi
+
+    if [ "$attempt" -lt "$START_RETRIES" ]; then
+      warn "Retrying in ${RESTART_DELAY}s..."
+      kill_all_cloudflared
+      sleep "$RESTART_DELAY"
+    fi
+  done
+
+  err "Failed to start tunnel after $START_RETRIES attempts"
+  return 1
+}
+
+# ============================================
+#  Monitoring (exit: 1=crashed, 2=lm_offline, 3=url_dead)
+# ============================================
+
 monitor_tunnel() {
-  log "Monitoring tunnel (health check every ${HEALTH_INTERVAL}s)..."
+  log "Monitoring (health every ${HEALTH_INTERVAL}s, restart after ${UNHEALTHY_THRESHOLD} unhealthy)..."
   echo ""
   log "=== Tunnel active ==="
   log "  LM Studio:  http://localhost:$LMSTUDIO_PORT"
@@ -202,25 +262,51 @@ monitor_tunnel() {
     local sleep_pid=$!
     wait "$sleep_pid" 2>/dev/null || true
 
+    # 1. cloudflared alive?
     if [ -z "$TUNNEL_PID" ] || ! kill -0 "$TUNNEL_PID" 2>/dev/null; then
-      warn "cloudflared process died. Restarting in ${RESTART_DELAY}s..."
+      warn "cloudflared process died"
       TUNNEL_PID=""
-      sleep "$RESTART_DELAY"
       return 1
     fi
 
+    # 2. LM Studio alive?
     if ! check_lmstudio_ok; then
-      warn "LM Studio went offline. Stopping tunnel..."
+      warn "LM Studio went offline"
       kill "$TUNNEL_PID" 2>/dev/null || true
       wait "$TUNNEL_PID" 2>/dev/null || true
       TUNNEL_PID=""
       return 2
     fi
 
-    send_heartbeat
-    dim "$(date +%H:%M:%S) tunnel: ok | lmstudio: ok"
+    # 3. Heartbeat + healthy check
+    local healthy
+    healthy=$(send_heartbeat)
+    local ts
+    ts=$(date +%H:%M:%S)
+
+    if [ "$healthy" = "true" ]; then
+      UNHEALTHY_COUNT=0
+      dim "$ts tunnel: ok | lmstudio: ok | render: ok"
+    elif [ "$healthy" = "false" ]; then
+      UNHEALTHY_COUNT=$((UNHEALTHY_COUNT + 1))
+      warn "$ts tunnel: ok | lmstudio: ok | render: UNHEALTHY ($UNHEALTHY_COUNT/$UNHEALTHY_THRESHOLD)"
+
+      if [ "$UNHEALTHY_COUNT" -ge "$UNHEALTHY_THRESHOLD" ]; then
+        err "Tunnel URL unreachable from Render for $UNHEALTHY_THRESHOLD checks — restarting"
+        kill "$TUNNEL_PID" 2>/dev/null || true
+        wait "$TUNNEL_PID" 2>/dev/null || true
+        TUNNEL_PID=""
+        return 3
+      fi
+    else
+      dim "$ts tunnel: ok | lmstudio: ok | render: no response"
+    fi
   done
 }
+
+# ============================================
+#  Main Loop
+# ============================================
 
 main() {
   echo ""
@@ -230,6 +316,7 @@ main() {
   echo ""
 
   check_dependencies
+  kill_all_cloudflared
 
   while true; do
     wait_for_lmstudio
@@ -238,17 +325,19 @@ main() {
       monitor_tunnel
       local exit_reason=$?
 
-      if [ "$exit_reason" -eq 2 ]; then
-        log "LM Studio offline — waiting for it to come back..."
-        if [ -n "$TUNNEL_PID" ] && kill -0 "$TUNNEL_PID" 2>/dev/null; then
-          kill "$TUNNEL_PID" 2>/dev/null || true
-          wait "$TUNNEL_PID" 2>/dev/null || true
-        fi
-        TUNNEL_PID=""
-        continue
-      fi
-
-      warn "Tunnel crashed — restarting..."
+      case $exit_reason in
+        2)
+          log "LM Studio offline — waiting for it to come back..."
+          ;;
+        3)
+          warn "Tunnel URL expired — getting new one..."
+          sleep "$RESTART_DELAY"
+          ;;
+        *)
+          warn "Tunnel crashed — restarting in ${RESTART_DELAY}s..."
+          sleep "$RESTART_DELAY"
+          ;;
+      esac
     else
       warn "Failed to start tunnel — retrying in ${RESTART_DELAY}s..."
       sleep "$RESTART_DELAY"

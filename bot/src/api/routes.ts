@@ -26,6 +26,7 @@ import {
   clearLMStudioCache,
   getLMStudioConfig,
   checkLMStudioHealth,
+  checkLMStudioReachable,
   getLMStudioHealthStatus,
   fetchLMStudioModels,
   recordHeartbeat,
@@ -1887,10 +1888,12 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
             clearLMStudioCache();
             settingsRepo.invalidateCache?.();
 
+            // Прямая проверка: Render реально стучится в tunnel URL
+            // (обходит heartbeat и кэш — иначе всегда true)
             const cfg = await getLMStudioConfig();
             let healthy = false;
             if (cfg) {
-              healthy = await checkLMStudioHealth(cfg);
+              healthy = await checkLMStudioReachable(cfg);
             }
 
             aiLogger.info(

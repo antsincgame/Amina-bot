@@ -277,6 +277,36 @@ export async function fetchLMStudioModels(cfg: LMStudioConfig): Promise<LMStudio
   }
 }
 
+/**
+ * Прямая проверка доступности LM Studio через tunnel URL.
+ * Обходит heartbeat и кэш — Render реально делает HTTP-запрос к tunnel.
+ * Таймаут 10 с, без retry — для быстрого ответа в /api/tunnel/register.
+ */
+export async function checkLMStudioReachable(cfg: LMStudioConfig): Promise<boolean> {
+  const REACHABLE_TIMEOUT_MS = 10_000;
+
+  const headers: Record<string, string> = {
+    ...HEALTH_CHECK_HEADERS,
+    ...(cfg.apiKey && cfg.apiKey !== DEFAULT_API_KEY
+      ? { Authorization: `Bearer ${cfg.apiKey}` }
+      : {}),
+  };
+
+  for (const useNative of [true, false]) {
+    const url = getModelsUrl(cfg, useNative);
+    try {
+      const response = await fetch(url, {
+        headers,
+        signal: AbortSignal.timeout(REACHABLE_TIMEOUT_MS),
+      });
+      if (response.ok) return true;
+    } catch {
+      continue;
+    }
+  }
+  return false;
+}
+
 export function clearLMStudioCache(): void {
   healthCache.clear();
   configCache.clear();
