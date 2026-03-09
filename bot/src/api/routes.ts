@@ -9,7 +9,8 @@ import { getAllAudioModels, getFreeVisionModels, refreshFreeVisionModelsCache, g
 import { getSearchModelInfo, getAvailableModels, isWebSearchEnabled, clearPerplexityCache } from '../ai/websearch.js';
 import { userProfileRepo, userMemoryRepo, userLogsRepo, type UserLog } from '../memory/user-memory.js';
 import { config, clearApiKeysCache, getApiKeys } from '../config/index.js';
-import { getConfiguredSites, saveConfiguredSites, parseNewsFromSite } from '../features/news-parser.js';
+import { getConfiguredSites, saveConfiguredSites, parseNewsFromSite, DEFAULT_AI_TECH_SOURCES } from '../features/news-parser.js';
+import type { NewsSite } from '../../../shared/types/index.js';
 import { invalidateTTSConfig } from '../features/tts.js';
 import { voiceMessagesRepo } from '../features/voice-messages-repo.js';
 import {
@@ -1340,7 +1341,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
       apiServer.post(
         '/news-sites',
         async (
-          request: FastifyRequest<{ Body: Array<{ name: string; url: string; enabled: boolean }> }>,
+          request: FastifyRequest<{ Body: Array<{ name: string; url: string; enabled: boolean; type?: string; category?: string; language?: string; jsonMapping?: unknown; filterKeywords?: unknown }> }>,
           reply: FastifyReply,
         ) => {
           try {
@@ -1349,7 +1350,10 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
               return reply.code(400).send({ success: false, error: 'Body must be an array of sites' });
             }
 
-            // Базовая валидация
+            const validTypes = ['rss', 'json_api', 'html_scrape'];
+            const validCategories = ['ai_tech', 'city_local', 'community', 'asia_tech'];
+            const validLanguages = ['ru', 'en', 'zh', 'ja', 'ko'];
+
             for (const site of sites) {
               if (!site.name || typeof site.name !== 'string') {
                 return reply.code(400).send({ success: false, error: 'Each site must have a name' });
@@ -1365,15 +1369,32 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
               } catch {
                 return reply.code(400).send({ success: false, error: `Invalid URL: ${site.url}` });
               }
+              if (site.type && !validTypes.includes(site.type)) {
+                return reply.code(400).send({ success: false, error: `Invalid type: ${site.type}. Must be one of: ${validTypes.join(', ')}` });
+              }
+              if (site.category && !validCategories.includes(site.category)) {
+                return reply.code(400).send({ success: false, error: `Invalid category: ${site.category}` });
+              }
+              if (site.language && !validLanguages.includes(site.language)) {
+                return reply.code(400).send({ success: false, error: `Invalid language: ${site.language}` });
+              }
             }
 
-            const normalized = sites.map(s => ({
-              name: s.name.trim(),
-              url: s.url.trim(),
-              enabled: s.enabled !== false,
-            }));
+            const normalized = sites.map(s => {
+              const base: Record<string, unknown> = {
+                name: s.name.trim(),
+                url: s.url.trim(),
+                enabled: s.enabled !== false,
+              };
+              if (s.type) base.type = s.type;
+              if (s.category) base.category = s.category;
+              if (s.language) base.language = s.language;
+              if (s.jsonMapping && typeof s.jsonMapping === 'object') base.jsonMapping = s.jsonMapping;
+              if (Array.isArray(s.filterKeywords)) base.filterKeywords = s.filterKeywords;
+              return base;
+            });
 
-            await saveConfiguredSites(normalized);
+            await saveConfiguredSites(normalized as unknown as NewsSite[]);
             settingsRepo.invalidateCache?.();
 
             aiLogger.info({ count: normalized.length }, 'News sites updated');
@@ -1436,6 +1457,46 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
           }
         },
       );
+
+      /**
+       * GET /api/news-sites/presets
+       * Получить список пресетных AI/Tech источников для быстрого добавления
+       */
+      apiServer.get('/news-sites/presets', async (_request: FastifyRequest, reply: FastifyReply) => {
+        return reply.code(200).send({
+          success: true,
+          data: DEFAULT_AI_TECH_SOURCES,
+          count: DEFAULT_AI_TECH_SOURCES.length,
+        });
+      });
+
+      /**
+       * POST /api/news-sites/add-presets
+       * Добавить пресетные источники к существующим (без дубликатов по URL)
+       */
+      apiServer.post('/news-sites/add-presets', async (_request: FastifyRequest, reply: FastifyReply) => {
+        try {
+          const existing = await getConfiguredSites();
+          const existingUrls = new Set(existing.map(s => s.url));
+
+          const newSites = DEFAULT_AI_TECH_SOURCES.filter(s => !existingUrls.has(s.url));
+          const merged = [...existing, ...newSites];
+
+          await saveConfiguredSites(merged);
+          settingsRepo.invalidateCache?.();
+
+          aiLogger.info({ added: newSites.length, total: merged.length }, 'Preset AI/Tech sources added');
+          return reply.code(200).send({
+            success: true,
+            message: `Добавлено ${newSites.length} новых источников`,
+            data: { added: newSites.length, total: merged.length, sites: merged },
+          });
+        } catch (error) {
+          aiLogger.error({ error }, 'Add preset sources error');
+          return reply.code(500).send({ success: false, error: 'Failed to add preset sources' });
+        }
+      });
+
       // ============================================
       // Database Migration (self-service)
       // ============================================

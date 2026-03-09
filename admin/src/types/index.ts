@@ -9,5 +9,11 @@ export type {
   AIRequest,
   AIResponse,
   DashboardStats,
+  NewsSite,
+  ParsedHeadline,
+  NewsSourceType,
+  NewsSourceCategory,
+  NewsSourceLanguage,
+  JsonFieldMapping,
 } from '../../../shared/types/index.js';
 

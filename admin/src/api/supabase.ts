@@ -268,17 +268,11 @@ export const statusApi = {
 };
 
 // News Sources API (для дайджеста — парсинг новостей с сайтов)
-export interface NewsSite {
-  name: string;
-  url: string;
-  enabled: boolean;
-}
+// Re-export shared types
+export type { NewsSite, ParsedHeadline, NewsSourceType, NewsSourceCategory, NewsSourceLanguage, JsonFieldMapping } from '../../../shared/types/index.js';
 
-export interface ParsedHeadline {
-  title: string;
-  url: string;
-  source: string;
-}
+// Import for internal use
+import type { NewsSite, ParsedHeadline } from '../../../shared/types/index.js';
 
 export const newsSourcesApi = {
   async getAll(): Promise<NewsSite[]> {
@@ -312,6 +306,22 @@ export const newsSourcesApi = {
     });
     if (!response.ok) throw new Error('Failed to test parse');
     return response.json();
+  },
+
+  async getPresets(): Promise<NewsSite[]> {
+    const response = await fetch(`${BOT_URL}/api/news-sites/presets`);
+    if (!response.ok) throw new Error('Failed to fetch presets');
+    const result = await response.json();
+    return result.data ?? [];
+  },
+
+  async addPresets(): Promise<{ added: number; total: number; sites: NewsSite[] }> {
+    const response = await fetch(`${BOT_URL}/api/news-sites/add-presets`, {
+      method: 'POST',
+    });
+    if (!response.ok) throw new Error('Failed to add presets');
+    const result = await response.json();
+    return result.data;
   },
 };
 

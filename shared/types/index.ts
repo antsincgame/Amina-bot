@@ -210,3 +210,47 @@ export interface SettingsUpdate {
   max_tokens?: number;
   temperature?: number;
 }
+
+// --------------------------------------------
+// News Sources Types
+// --------------------------------------------
+
+export type NewsSourceType = 'rss' | 'json_api' | 'html_scrape';
+export type NewsSourceCategory = 'ai_tech' | 'city_local' | 'community' | 'asia_tech';
+export type NewsSourceLanguage = 'ru' | 'en' | 'zh' | 'ja' | 'ko';
+
+export interface JsonFieldMapping {
+  /** Путь к массиву элементов (пустая строка = корневой массив) */
+  itemsPath: string;
+  /** Поле заголовка */
+  titleField: string;
+  /** Поле URL (поддерживает fallback через |: "url|story_url") */
+  urlField: string;
+  /** Поле даты публикации */
+  dateField?: string;
+}
+
+export interface NewsSite {
+  name: string;
+  url: string;
+  enabled: boolean;
+  /** Тип источника: rss (по умолчанию), json_api, html_scrape */
+  type?: NewsSourceType;
+  /** Категория контента */
+  category?: NewsSourceCategory;
+  /** Язык контента */
+  language?: NewsSourceLanguage;
+  /** Маппинг полей для JSON API источников */
+  jsonMapping?: JsonFieldMapping;
+  /** Ключевые слова для фильтрации заголовков (хотя бы одно должно совпасть) */
+  filterKeywords?: string[];
+}
+
+export interface ParsedHeadline {
+  title: string;
+  url: string;
+  source: string;
+  pubDate?: string;
+  category?: NewsSourceCategory;
+  language?: NewsSourceLanguage;
+}
