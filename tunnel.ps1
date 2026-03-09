@@ -131,7 +131,7 @@ function Get-TunnelUrl {
         if (Test-Path $LogFile) {
             $content = Get-Content $LogFile -Raw -ErrorAction SilentlyContinue
             if ($content) {
-                $match = [regex]::Match($content, 'https://[a-zA-Z0-9][-a-zA-Z0-9]*\.trycloudflare\.com')
+                $match = [regex]::Match($content, 'https://[a-zA-Z0-9]+-[a-zA-Z0-9][-a-zA-Z0-9]*\.trycloudflare\.com')
                 if ($match.Success) {
                     return $match.Value
                 }
@@ -213,10 +213,10 @@ function Start-CloudflareTunnel {
 
     Write-Log "Starting cloudflared tunnel -> localhost:$LMSTUDIO_PORT"
 
-    # cloudflared пишет URL в stderr — перенаправляем оба потока в файлы
+    # --protocol http2: QUIC (UDP) часто блокируется файрволами на Windows
     $script:TunnelProcess = Start-Process `
         -FilePath $CLOUDFLARED_BIN `
-        -ArgumentList "tunnel --url http://localhost:$LMSTUDIO_PORT" `
+        -ArgumentList "tunnel --url http://localhost:$LMSTUDIO_PORT --protocol http2" `
         -RedirectStandardOutput $script:TunnelLogFile `
         -RedirectStandardError  $stderrLog `
         -NoNewWindow `

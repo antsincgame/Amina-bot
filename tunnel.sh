@@ -99,7 +99,7 @@ extract_tunnel_url() {
       continue
     fi
     local url
-    url=$(grep -oE 'https://[a-zA-Z0-9][-a-zA-Z0-9]*\.trycloudflare\.com' "$log_file" 2>/dev/null | head -1 || true)
+    url=$(grep -oE 'https://[a-zA-Z0-9]+-[a-zA-Z0-9][-a-zA-Z0-9]*\.trycloudflare\.com' "$log_file" 2>/dev/null | head -1 || true)
     if [ -n "$url" ]; then
       echo "$url"
       return 0
