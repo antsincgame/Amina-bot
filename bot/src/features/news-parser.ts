@@ -28,11 +28,12 @@ export type { NewsSite, ParsedHeadline } from '../../../shared/types/index.js';
 // ===== Константы =====
 
 const SETTINGS_KEY = 'digest_news_sites';
-const FETCH_TIMEOUT_MS = 10_000;
-const MAX_HEADLINES_PER_SITE = 15;
-const MIN_TITLE_LENGTH = 10;
-const MAX_TITLE_LENGTH = 300;
-const MAX_NEWS_AGE_HOURS = 48;
+const FETCH_TIMEOUT_MS = 15_000;
+const MAX_HEADLINES_PER_SITE = 30;
+const MIN_TITLE_LENGTH = 8;
+const MAX_TITLE_LENGTH = 500;
+const MAX_NEWS_AGE_HOURS = 72;
+const PARSED_NEWS_CACHE_TTL_MS = 5 * 60 * 1000;
 
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -342,11 +343,17 @@ function normalizeTitle(title: string): string {
 }
 
 /**
- * Проверить соответствие заголовка ключевым словам (case-insensitive)
+ * Проверить соответствие заголовка ключевым словам (case-insensitive).
+ * При пустом массиве keywords пропускает всё.
+ * Для CJK-контента (китайский/японский/корейский) без ASCII keywords —
+ * пропускаем фильтр, т.к. ключевые слова заданы на латинице.
  */
 function matchesKeywords(title: string, keywords: string[] | undefined): boolean {
   if (!keywords || keywords.length === 0) return true;
   const titleLower = title.toLowerCase();
+  const hasLatinKeywords = keywords.some(kw => /^[a-zA-Z0-9\s\-]+$/.test(kw));
+  const isCjkTitle = /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/.test(title);
+  if (hasLatinKeywords && isCjkTitle) return true;
   return keywords.some(kw => titleLower.includes(kw.toLowerCase()));
 }
 
@@ -363,10 +370,19 @@ function addHeadline(
   },
 ): boolean {
   if (headlines.length >= MAX_HEADLINES_PER_SITE) return false;
-  if (!title || title.length < MIN_TITLE_LENGTH || title.length > MAX_TITLE_LENGTH) return false;
+  if (!title || title.length < MIN_TITLE_LENGTH || title.length > MAX_TITLE_LENGTH) {
+    appLogger.debug({ title: title?.slice(0, 50), len: title?.length, reason: 'length' }, 'Headline rejected');
+    return false;
+  }
   if (isSkipText(title)) return false;
-  if (!isNewsRecent(options?.pubDate)) return false;
-  if (!matchesKeywords(title, options?.filterKeywords)) return false;
+  if (!isNewsRecent(options?.pubDate)) {
+    appLogger.debug({ title: title.slice(0, 50), pubDate: options?.pubDate?.toISOString(), reason: 'age' }, 'Headline rejected');
+    return false;
+  }
+  if (!matchesKeywords(title, options?.filterKeywords)) {
+    appLogger.debug({ title: title.slice(0, 50), reason: 'keywords' }, 'Headline rejected');
+    return false;
+  }
 
   const titleNormalized = normalizeTitle(title);
   if (seenTitles.has(titleNormalized)) return false;
@@ -804,14 +820,14 @@ function parseHtmlContent(
   });
 
   // Стратегия D: все ссылки с «статейным» URL и длинным текстом
-  if (headlines.length < 5) {
+  if (headlines.length < 15) {
     $('a[href]').each((_i: number, _el: AnyNode) => {
       if (headlines.length >= MAX_HEADLINES_PER_SITE) return;
       const $el = $(_el);
       const title = cleanTitle($el.text());
       const href = $el.attr('href') ?? '';
 
-      if (!title || title.length < 25 || title.length > MAX_TITLE_LENGTH) return;
+      if (!title || title.length < MIN_TITLE_LENGTH || title.length > MAX_TITLE_LENGTH) return;
       if (isSkipText(title)) return;
 
       const url = normalizeUrl(href, origin);
@@ -950,7 +966,6 @@ export async function parseNewsFromSite(siteOrUrl: NewsSite | string): Promise<P
 // ===== Парсинг всех настроенных сайтов =====
 
 let parsedNewsCache: { headlines: ParsedHeadline[]; ts: number } | null = null;
-const PARSED_NEWS_CACHE_TTL_MS = 10 * 60 * 1000;
 
 export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
   if (parsedNewsCache && Date.now() - parsedNewsCache.ts < PARSED_NEWS_CACHE_TTL_MS) {
