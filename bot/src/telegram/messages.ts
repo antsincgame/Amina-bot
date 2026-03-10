@@ -843,7 +843,7 @@ const tryPostAIImageInterception = async (
 // Text Message Handler
 // ============================================
 
-const handleTextMessage = async (ctx: BotContext): Promise<void> => {
+export const handleTextMessage = async (ctx: BotContext): Promise<void> => {
   if (!ctx.from?.id) {
     telegramLogger.warn('Message without from.id — ignoring');
     return;
@@ -1025,7 +1025,7 @@ const VOICE_ERROR_MESSAGES: Record<string, string> = {
   FILE_TOO_LARGE: '📁 Голосовое сообщение слишком длинное.',
 };
 
-const handleVoiceMessage = async (ctx: BotContext): Promise<void> => {
+export const handleVoiceMessage = async (ctx: BotContext): Promise<void> => {
   if (!ctx.from?.id) {
     telegramLogger.warn('Voice message without from.id — ignoring');
     return;
@@ -1151,7 +1151,7 @@ const handleVoiceMessage = async (ctx: BotContext): Promise<void> => {
  * Скачивает фото из Telegram по массиву PhotoSize.
  * Возвращает { base64, mimeType } для дальнейшей обработки.
  */
-const downloadTelegramPhoto = async (
+export const downloadTelegramPhoto = async (
   ctx: BotContext,
   photos: Array<{ file_id: string; width: number; height: number }>,
 ): Promise<{ base64: string; mimeType: string }> => {
@@ -1173,7 +1173,7 @@ const downloadTelegramPhoto = async (
 // Image Edit Handler (shared logic for all entry points)
 // ============================================
 
-const handleImageEdit = async (
+export const handleImageEdit = async (
   ctx: BotContext,
   imageBase64: string,
   mimeType: string,
@@ -1214,7 +1214,7 @@ const handleImageEdit = async (
 // Photo Message Handler
 // ============================================
 
-const handlePhotoMessage = async (ctx: BotContext): Promise<void> => {
+export const handlePhotoMessage = async (ctx: BotContext): Promise<void> => {
   if (!ctx.from?.id) {
     telegramLogger.warn('Photo message without from.id — ignoring');
     return;
@@ -1286,7 +1286,7 @@ const handlePhotoMessage = async (ctx: BotContext): Promise<void> => {
 // Document (Image) Handler
 // ============================================
 
-const handleDocumentMessage = async (ctx: BotContext): Promise<void> => {
+export const handleDocumentMessage = async (ctx: BotContext): Promise<void> => {
   if (!ctx.from?.id) {
     telegramLogger.warn('Document message without from.id — ignoring');
     return;

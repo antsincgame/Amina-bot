@@ -104,33 +104,33 @@ describe('News Parser — Headline Filtering', () => {
     expect(headlines).toHaveLength(1);
   });
 
-  it('отклоняет слишком короткий заголовок (< 5 символов)', () => {
+  it('отклоняет слишком короткий заголовок (< 4 символа)', () => {
     const headlines: ParsedHeadline[] = [];
     const seen = new Set<string>();
-    const result = addHeadline(headlines, seen, 'GPT5', 'https://example.com/1');
+    const result = addHeadline(headlines, seen, 'GPT', 'https://example.com/1');
     expect(result).toBe(false);
     expect(headlines).toHaveLength(0);
   });
 
-  it('принимает заголовок длиной ровно 5 символов', () => {
+  it('принимает заголовок длиной ровно 4 символа', () => {
     const headlines: ParsedHeadline[] = [];
     const seen = new Set<string>();
-    const result = addHeadline(headlines, seen, '12345', 'https://example.com/1');
+    const result = addHeadline(headlines, seen, 'GPT5', 'https://example.com/1');
     expect(result).toBe(true);
   });
 
-  it('отклоняет заголовок старше 168 часов (7 дней)', () => {
+  it('отклоняет заголовок старше 336 часов (14 дней)', () => {
     const headlines: ParsedHeadline[] = [];
     const seen = new Set<string>();
-    const oldDate = new Date(Date.now() - 169 * 60 * 60 * 1000);
+    const oldDate = new Date(Date.now() - 337 * 60 * 60 * 1000);
     const result = addHeadline(headlines, seen, 'Old news about AI breakthrough', 'https://example.com/1', { pubDate: oldDate });
     expect(result).toBe(false);
   });
 
-  it('принимает заголовок возрастом 167 часов', () => {
+  it('принимает заголовок возрастом 335 часов', () => {
     const headlines: ParsedHeadline[] = [];
     const seen = new Set<string>();
-    const recentDate = new Date(Date.now() - 167 * 60 * 60 * 1000);
+    const recentDate = new Date(Date.now() - 335 * 60 * 60 * 1000);
     const result = addHeadline(headlines, seen, 'Recent news about AI breakthrough', 'https://example.com/1', { pubDate: recentDate });
     expect(result).toBe(true);
   });
@@ -154,10 +154,10 @@ describe('News Parser — Headline Filtering', () => {
   it('останавливается при достижении MAX_HEADLINES_PER_SITE (100)', () => {
     const headlines: ParsedHeadline[] = [];
     const seen = new Set<string>();
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 110; i++) {
       addHeadline(headlines, seen, `Headline number ${i} about AI technology`, `https://example.com/${i}`);
     }
-    expect(headlines).toHaveLength(50);
+    expect(headlines).toHaveLength(100);
   });
 
   it('сохраняет category и language из options', () => {
