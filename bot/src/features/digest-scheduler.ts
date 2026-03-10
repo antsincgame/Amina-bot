@@ -430,11 +430,12 @@ async function buildDigest(
 
   if (parsedHeadlines.length > 0) {
     const headlineLines = parsedHeadlines.map(h =>
-      `- ${h.title} (ссылка: ${h.url}) [источник: ${h.source}]`
+      `- [${h.title}](${h.url}) (source: ${h.source})`
     );
     rawData.push(
       `[МЕСТНЫЕ НОВОСТИ — ЗАГОЛОВКИ С НОВОСТНЫХ САЙТОВ ${city.toUpperCase()}]\n` +
       `Ниже — актуальные заголовки новостей, спарсенные с местных новостных сайтов.\n` +
+      `Входные данные уже содержат ссылки. Сохрани их!\n` +
       `Для каждой новости ОБЯЗАТЕЛЬНО сохрани ссылку в формате Markdown: [заголовок](url)\n\n` +
       headlineLines.join('\n')
     );
@@ -504,14 +505,14 @@ async function buildDigest(
   const allAiHeadlines = [...aiTechHeadlines, ...communityHeadlines];
   if (allAiHeadlines.length > 0) {
     const aiLines = allAiHeadlines.map((h, idx) =>
-      `${idx + 1}. ${h.title} (ссылка: ${h.url}) [источник: ${h.source}]${h.language && h.language !== 'ru' ? ` [язык: ${h.language}]` : ''}`
+      `${idx + 1}. [${h.title}](${h.url}) (source: ${h.source})`
     );
     rawData.push(
       `[ТЕХНОЛОГИИ И AI — МЕЖДУНАРОДНЫЕ ИСТОЧНИКИ] (${allAiHeadlines.length} заголовков)\n` +
-      `ОБЯЗАТЕЛЬНО оформи КАЖДЫЙ заголовок как Markdown-ссылку: [заголовок](url)\n` +
-      `Если на английском — переведи на русский, оригинал в скобках.\n` +
       `Ты ОБЯЗАНА включить ВСЕ ${allAiHeadlines.length} заголовков! Для каждого: перевод + 1 предложение комментария.\n` +
-      `Группируй по категориям: 🚀 Релиз | 🔬 Исследование | 🛠 Инструмент | 💡 Тренд | 📊 Бенчмарк\n\n` +
+      `Группируй по категориям: 🚀 Релиз | 🔬 Исследование | 🛠 Инструмент | 💡 Тренд | 📊 Бенчмарк\n` +
+      `ВАЖНО: Входные данные уже содержат ссылки [Title](URL). Твоя задача — перевести Title на русский, СОХРАНИВ ссылку!\n` +
+      `Формат вывода: **1. [Заголовок на русском](url)** — комментарий\n\n` +
       aiLines.join('\n')
     );
     appLogger.info({ total: allAiHeadlines.length }, 'Digest: AI/Tech headlines added (ALL, no slice)');
@@ -521,13 +522,13 @@ async function buildDigest(
   if (asiaAiHeadlines.length > 0) {
     const asiaLines = asiaAiHeadlines.map((h, idx) => {
       const langLabel = h.language === 'zh' ? '🇨🇳' : h.language === 'ja' ? '🇯🇵' : h.language === 'ko' ? '🇰🇷' : '';
-      return `${idx + 1}. ${langLabel} ${h.title} (ссылка: ${h.url}) [источник: ${h.source}]`;
+      return `${idx + 1}. ${langLabel} [${h.title}](${h.url}) (source: ${h.source})`;
     });
     rawData.push(
       `[AI НОВОСТИ ИЗ АЗИИ — КИТАЙ, ЯПОНИЯ, КОРЕЯ] (${asiaAiHeadlines.length} заголовков)\n` +
-      `ОБЯЗАТЕЛЬНО переведи КАЖДЫЙ заголовок на русский! Оригинал в скобках.\n` +
-      `Формат: [Перевод (оригинал)](url) — 1 предложение комментария\n` +
-      `Ты ОБЯЗАНА включить ВСЕ ${asiaAiHeadlines.length} заголовков!\n\n` +
+      `Ты ОБЯЗАНА включить ВСЕ ${asiaAiHeadlines.length} заголовков!\n` +
+      `ВАЖНО: Входные данные уже содержат ссылки. Переведи заголовок, СОХРАНИВ ссылку!\n` +
+      `Формат вывода: **1. [Перевод заголовка](url)** — комментарий\n\n` +
       asiaLines.join('\n')
     );
     appLogger.info({ total: asiaAiHeadlines.length }, 'Digest: Asia AI headlines added (ALL, no slice)');
@@ -605,7 +606,7 @@ ${rawData.join('\n\n')}${citationsBlock}
    - Пронумеруй ВСЕ заголовки из данных выше (их пронумерованный список).
    - Для КАЖДОГО: переведи на русский + 1 предложение комментария.
    - Группируй: 🚀 Релизы, 🔬 Исследования, 🛠 Инструменты, 💡 Тренды.
-   - Формат: **N. [Заголовок на русском (Original)](url)** — комментарий
+   - Формат: **1. [Заголовок на русском](url)** — комментарий
    - ЗАПРЕЩЕНО пропускать заголовки! Каждый номер из данных ДОЛЖЕН быть в ответе.
    - Этот раздел должен занимать 60-70% всего дайджеста.
    Если данных нет — ПРОПУСТИ.
@@ -613,7 +614,7 @@ ${rawData.join('\n\n')}${citationsBlock}
 6. **AI из Азии** — если есть азиатские заголовки:
    - Пронумеруй ВСЕ заголовки и включи КАЖДЫЙ.
    - ПЕРЕВЕДИ каждый на русский, оригинал в скобках.
-   - Формат: **N. [Перевод (原标题)](url)** — комментарий
+   - Формат: **1. [Перевод (原标题)](url)** — комментарий
    - ЗАПРЕЩЕНО пропускать заголовки!
    Если данных нет — ПРОПУСТИ.
 
