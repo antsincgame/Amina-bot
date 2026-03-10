@@ -502,7 +502,7 @@ async function buildDigest(
   // AI/TECH НОВОСТИ — из парсера (международные англоязычные источники)
   const allAiHeadlines = [...aiTechHeadlines, ...communityHeadlines];
   if (allAiHeadlines.length > 0) {
-    const aiLines = allAiHeadlines.slice(0, 50).map(h =>
+    const aiLines = allAiHeadlines.map(h =>
       `- ${h.title} (ссылка: ${h.url}) [источник: ${h.source}]${h.language && h.language !== 'ru' ? ` [язык: ${h.language}]` : ''}`
     );
     rawData.push(
@@ -510,15 +510,15 @@ async function buildDigest(
       `Заголовки спарсены с ведущих мировых AI-изданий и dev-сообществ.\n` +
       `Для каждой новости ОБЯЗАТЕЛЬНО оформи как Markdown-ссылку: [заголовок](url)\n` +
       `Если заголовок на английском — переведи на русский и добавь оригинал в скобках.\n` +
-      `ВКЛЮЧИ ВСЕ ${aiLines.length} заголовков — не пропускай ни одного!\n\n` +
+      `ВКЛЮЧИ ВСЕ ${aiLines.length} заголовков — не пропускай ни одного! Это КРИТИЧЕСКИ ВАЖНО!\n\n` +
       aiLines.join('\n')
     );
-    appLogger.info({ count: allAiHeadlines.length, inPrompt: aiLines.length }, 'Digest: AI/Tech headlines added');
+    appLogger.info({ count: allAiHeadlines.length }, 'Digest: AI/Tech headlines added');
   }
 
   // АЗИАТСКИЕ AI/TECH ИСТОЧНИКИ — китайские, японские, корейские
   if (asiaAiHeadlines.length > 0) {
-    const asiaLines = asiaAiHeadlines.slice(0, 30).map(h => {
+    const asiaLines = asiaAiHeadlines.map(h => {
       const langLabel = h.language === 'zh' ? '🇨🇳' : h.language === 'ja' ? '🇯🇵' : h.language === 'ko' ? '🇰🇷' : '';
       return `- ${langLabel} ${h.title} (ссылка: ${h.url}) [источник: ${h.source}]`;
     });
@@ -530,7 +530,7 @@ async function buildDigest(
       `ВКЛЮЧИ ВСЕ ${asiaLines.length} заголовков — не пропускай ни одного!\n\n` +
       asiaLines.join('\n')
     );
-    appLogger.info({ count: asiaAiHeadlines.length, inPrompt: asiaLines.length }, 'Digest: Asia AI headlines added');
+    appLogger.info({ count: asiaAiHeadlines.length }, 'Digest: Asia AI headlines added');
   }
 
   // 5. Напоминания на сегодня

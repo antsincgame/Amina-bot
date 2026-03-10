@@ -28,12 +28,12 @@ export type { NewsSite, ParsedHeadline } from '../../../shared/types/index.js';
 // ===== Константы =====
 
 const SETTINGS_KEY = 'digest_news_sites';
-const FETCH_TIMEOUT_MS = 15_000;
-const MAX_HEADLINES_PER_SITE = 30;
-const MIN_TITLE_LENGTH = 8;
-const MAX_TITLE_LENGTH = 500;
-const MAX_NEWS_AGE_HOURS = 72;
-const PARSED_NEWS_CACHE_TTL_MS = 5 * 60 * 1000;
+const FETCH_TIMEOUT_MS = 25_000;
+const MAX_HEADLINES_PER_SITE = 50;
+const MIN_TITLE_LENGTH = 5;
+const MAX_TITLE_LENGTH = 600;
+const MAX_NEWS_AGE_HOURS = 168;
+const PARSED_NEWS_CACHE_TTL_MS = 3 * 60 * 1000;
 
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -85,7 +85,7 @@ const SKIP_LINK_PATTERNS = [
 // ===== Пресетные AI/Tech источники =====
 
 export const DEFAULT_AI_TECH_SOURCES: NewsSite[] = [
-  // --- AI Labs & Research ---
+  // ===== AI Labs & Research =====
   {
     name: 'Hugging Face Blog',
     url: 'https://huggingface.co/blog/feed.xml',
@@ -109,12 +109,67 @@ export const DEFAULT_AI_TECH_SOURCES: NewsSite[] = [
     type: 'rss',
     category: 'ai_tech',
     language: 'en',
-    filterKeywords: ['LLM', 'language model', 'code generation', 'agent', 'transformer', 'GPT', 'diffusion', 'multimodal', 'RAG', 'fine-tuning', 'RLHF', 'benchmark'],
   },
-  // --- Developer Communities ---
   {
-    name: 'Hacker News (VibeCoding)',
-    url: 'https://hn.algolia.com/api/v1/search_by_date?query=vibecoding+OR+%22vibe+coding%22+OR+%22AI+coding%22+OR+cursor+OR+copilot&tags=story',
+    name: 'arXiv cs.CL (NLP/LLM)',
+    url: 'https://rss.arxiv.org/rss/cs.CL',
+    enabled: true,
+    type: 'rss',
+    category: 'ai_tech',
+    language: 'en',
+  },
+  {
+    name: 'arXiv cs.LG (Machine Learning)',
+    url: 'https://rss.arxiv.org/rss/cs.LG',
+    enabled: true,
+    type: 'rss',
+    category: 'ai_tech',
+    language: 'en',
+  },
+  {
+    name: 'Google AI Blog',
+    url: 'https://blog.google/technology/ai/rss/',
+    enabled: true,
+    type: 'rss',
+    category: 'ai_tech',
+    language: 'en',
+  },
+  {
+    name: 'Meta AI Blog',
+    url: 'https://ai.meta.com/blog/rss/',
+    enabled: true,
+    type: 'rss',
+    category: 'ai_tech',
+    language: 'en',
+  },
+  {
+    name: 'Anthropic News',
+    url: 'https://www.anthropic.com/rss.xml',
+    enabled: true,
+    type: 'rss',
+    category: 'ai_tech',
+    language: 'en',
+  },
+  {
+    name: 'DeepMind Blog',
+    url: 'https://deepmind.google/blog/rss.xml',
+    enabled: true,
+    type: 'rss',
+    category: 'ai_tech',
+    language: 'en',
+  },
+  {
+    name: 'Microsoft AI Blog',
+    url: 'https://blogs.microsoft.com/ai/feed/',
+    enabled: true,
+    type: 'rss',
+    category: 'ai_tech',
+    language: 'en',
+  },
+  // ===== Developer Communities =====
+  {
+    name: 'Hacker News (AI/VibeCoding)',
+    url: 'https://hn.algolia.com/api/v1/search_by_date?query=AI+OR+LLM+OR+vibecoding+OR+%22vibe+coding%22+OR+cursor+OR+copilot+OR+%22code+generation%22+OR+anthropic+OR+openai&tags=story&hitsPerPage=40',
     enabled: true,
     type: 'json_api',
     category: 'community',
@@ -128,7 +183,21 @@ export const DEFAULT_AI_TECH_SOURCES: NewsSite[] = [
   },
   {
     name: 'Dev.to (AI)',
-    url: 'https://dev.to/api/articles?tag=ai&top=7',
+    url: 'https://dev.to/api/articles?tag=ai&top=7&per_page=30',
+    enabled: true,
+    type: 'json_api',
+    category: 'community',
+    language: 'en',
+    jsonMapping: {
+      itemsPath: '',
+      titleField: 'title',
+      urlField: 'url',
+      dateField: 'published_at',
+    },
+  },
+  {
+    name: 'Dev.to (Machine Learning)',
+    url: 'https://dev.to/api/articles?tag=machinelearning&top=7&per_page=20',
     enabled: true,
     type: 'json_api',
     category: 'community',
@@ -149,6 +218,22 @@ export const DEFAULT_AI_TECH_SOURCES: NewsSite[] = [
     language: 'en',
   },
   {
+    name: 'Reddit r/MachineLearning',
+    url: 'https://www.reddit.com/r/MachineLearning/hot/.rss',
+    enabled: true,
+    type: 'rss',
+    category: 'community',
+    language: 'en',
+  },
+  {
+    name: 'Reddit r/artificial',
+    url: 'https://www.reddit.com/r/artificial/hot/.rss',
+    enabled: true,
+    type: 'rss',
+    category: 'community',
+    language: 'en',
+  },
+  {
     name: 'GitHub Trending',
     url: 'https://github.com/trending',
     enabled: true,
@@ -156,7 +241,7 @@ export const DEFAULT_AI_TECH_SOURCES: NewsSite[] = [
     category: 'ai_tech',
     language: 'en',
   },
-  // --- Tech Blogs ---
+  // ===== Tech Blogs & Aggregators =====
   {
     name: 'Simon Willison',
     url: 'https://simonwillison.net/atom/entries/',
@@ -181,34 +266,96 @@ export const DEFAULT_AI_TECH_SOURCES: NewsSite[] = [
     category: 'ai_tech',
     language: 'en',
   },
-  // --- China (через RSSHub) ---
   {
-    name: '机器之心 (Synced)',
-    url: 'https://rsshub.app/wechat/mp/jiqizhixin',
+    name: 'The Verge (AI)',
+    url: 'https://www.theverge.com/rss/ai-artificial-intelligence/index.xml',
+    enabled: true,
+    type: 'rss',
+    category: 'ai_tech',
+    language: 'en',
+  },
+  {
+    name: 'Ars Technica (AI)',
+    url: 'https://feeds.arstechnica.com/arstechnica/technology-lab',
+    enabled: true,
+    type: 'rss',
+    category: 'ai_tech',
+    language: 'en',
+  },
+  {
+    name: 'TechCrunch (AI)',
+    url: 'https://techcrunch.com/category/artificial-intelligence/feed/',
+    enabled: true,
+    type: 'rss',
+    category: 'ai_tech',
+    language: 'en',
+  },
+  {
+    name: 'VentureBeat (AI)',
+    url: 'https://venturebeat.com/category/ai/feed/',
+    enabled: true,
+    type: 'rss',
+    category: 'ai_tech',
+    language: 'en',
+  },
+  {
+    name: 'MIT Technology Review (AI)',
+    url: 'https://www.technologyreview.com/feed/',
+    enabled: true,
+    type: 'rss',
+    category: 'ai_tech',
+    language: 'en',
+  },
+  {
+    name: 'Towards Data Science (Medium)',
+    url: 'https://towardsdatascience.com/feed',
+    enabled: true,
+    type: 'rss',
+    category: 'ai_tech',
+    language: 'en',
+  },
+  {
+    name: 'AI News (artificialintelligence-news.com)',
+    url: 'https://www.artificialintelligence-news.com/feed/',
+    enabled: true,
+    type: 'rss',
+    category: 'ai_tech',
+    language: 'en',
+  },
+  {
+    name: 'Wired (AI)',
+    url: 'https://www.wired.com/feed/tag/ai/latest/rss',
+    enabled: true,
+    type: 'rss',
+    category: 'ai_tech',
+    language: 'en',
+  },
+  // ===== Asia: China =====
+  {
+    name: '36kr AI News',
+    url: 'https://36kr.com/feed',
     enabled: true,
     type: 'rss',
     category: 'asia_tech',
     language: 'zh',
-    filterKeywords: ['AI', '大模型', '编程', '代码', 'LLM', 'GPT', '智能', '算法', 'Copilot', 'Agent', '开源'],
   },
   {
-    name: '量子位 (QbitAI)',
-    url: 'https://rsshub.app/wechat/mp/QbitAI',
+    name: 'PaperWithCode (trending)',
+    url: 'https://paperswithcode.com/latest',
+    enabled: true,
+    type: 'html_scrape',
+    category: 'ai_tech',
+    language: 'en',
+  },
+  {
+    name: 'InfoQ China',
+    url: 'https://www.infoq.cn/feed',
     enabled: true,
     type: 'rss',
     category: 'asia_tech',
     language: 'zh',
-    filterKeywords: ['AI', '大模型', '编程', '代码', 'LLM', 'GPT', '智能', 'DeepSeek', 'Qwen'],
   },
-  {
-    name: '新智元 (AI Era)',
-    url: 'https://rsshub.app/wechat/mp/aiera',
-    enabled: true,
-    type: 'rss',
-    category: 'asia_tech',
-    language: 'zh',
-  },
-  // --- Japan ---
+  // ===== Asia: Japan =====
   {
     name: 'Zenn.dev (AI)',
     url: 'https://zenn.dev/topics/ai/feed',
@@ -218,8 +365,16 @@ export const DEFAULT_AI_TECH_SOURCES: NewsSite[] = [
     language: 'ja',
   },
   {
+    name: 'Zenn.dev (LLM)',
+    url: 'https://zenn.dev/topics/llm/feed',
+    enabled: true,
+    type: 'rss',
+    category: 'asia_tech',
+    language: 'ja',
+  },
+  {
     name: 'Qiita (AI)',
-    url: 'https://qiita.com/api/v2/items?query=title:AI+OR+title:LLM+OR+title:ChatGPT&per_page=15',
+    url: 'https://qiita.com/api/v2/items?query=title:AI+OR+title:LLM+OR+title:ChatGPT+OR+title:GPT&per_page=30',
     enabled: true,
     type: 'json_api',
     category: 'asia_tech',
@@ -231,7 +386,7 @@ export const DEFAULT_AI_TECH_SOURCES: NewsSite[] = [
       dateField: 'created_at',
     },
   },
-  // --- International Aggregators ---
+  // ===== Asia: International =====
   {
     name: 'Tech in Asia',
     url: 'https://www.techinasia.com/feed',
@@ -239,15 +394,6 @@ export const DEFAULT_AI_TECH_SOURCES: NewsSite[] = [
     type: 'rss',
     category: 'asia_tech',
     language: 'en',
-  },
-  {
-    name: 'InfoQ China',
-    url: 'https://www.infoq.cn/feed',
-    enabled: true,
-    type: 'rss',
-    category: 'asia_tech',
-    language: 'zh',
-    filterKeywords: ['AI', '大模型', '编程', '代码', 'LLM', 'Copilot', '智能'],
   },
 ];
 
@@ -330,6 +476,7 @@ function parsePubDate(dateStr: string): Date | undefined {
 function isNewsRecent(pubDate: Date | undefined): boolean {
   if (!pubDate) return true;
   const ageMs = Date.now() - pubDate.getTime();
+  if (ageMs < 0) return true;
   const ageHours = ageMs / (1000 * 60 * 60);
   return ageHours <= MAX_NEWS_AGE_HOURS;
 }
@@ -492,7 +639,7 @@ async function parseJsonApi(site: NewsSite): Promise<ParsedHeadline[]> {
     return [];
   }
 
-  const response = await fetchWithTimeout(site.url, 12_000);
+  const response = await fetchWithTimeout(site.url, FETCH_TIMEOUT_MS);
   if (!response.ok) {
     throw new Error(`JSON API HTTP ${response.status}: ${site.url}`);
   }
@@ -623,7 +770,7 @@ async function tryRssFeed(
   for (const path of RSS_PATHS) {
     try {
       const feedUrl = origin + path;
-      const response = await fetchWithTimeout(feedUrl, 5000);
+      const response = await fetchWithTimeout(feedUrl, FETCH_TIMEOUT_MS);
       if (!response.ok) continue;
 
       const contentType = response.headers.get('content-type') ?? '';
@@ -665,7 +812,7 @@ async function tryDirectFeed(
   options?: { category?: NewsSourceCategory; language?: NewsSourceLanguage; filterKeywords?: string[] },
 ): Promise<ParsedHeadline[] | null> {
   try {
-    const response = await fetchWithTimeout(feedUrl, 8000);
+    const response = await fetchWithTimeout(feedUrl, FETCH_TIMEOUT_MS);
     if (!response.ok) return null;
 
     const contentType = response.headers.get('content-type') ?? '';
@@ -865,7 +1012,7 @@ export async function parseNewsFromSite(siteOrUrl: NewsSite | string): Promise<P
 
   // HTML scrape — специальный путь
   if (site.type === 'html_scrape') {
-    const response = await fetchWithTimeout(siteUrl, 12_000);
+    const response = await fetchWithTimeout(siteUrl, FETCH_TIMEOUT_MS);
     if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`);
     const html = await response.text();
     const origin = new URL(siteUrl).origin;
@@ -888,7 +1035,7 @@ export async function parseNewsFromSite(siteOrUrl: NewsSite | string): Promise<P
 
   if (!isDirectFeedUrl(siteUrl)) {
     try {
-      const directResponse = await fetchWithTimeout(siteUrl, 8000);
+      const directResponse = await fetchWithTimeout(siteUrl, FETCH_TIMEOUT_MS);
       if (directResponse.ok) {
         const contentType = directResponse.headers.get('content-type') ?? '';
         pageBody = await directResponse.text();
@@ -917,7 +1064,7 @@ export async function parseNewsFromSite(siteOrUrl: NewsSite | string): Promise<P
       if (rssLink) {
         const feedUrl = normalizeUrl(rssLink, origin);
         if (feedUrl) {
-          const rssResponse = await fetchWithTimeout(feedUrl, 5000);
+          const rssResponse = await fetchWithTimeout(feedUrl, FETCH_TIMEOUT_MS);
           if (rssResponse.ok) {
             const feedXml = await rssResponse.text();
             const rssHeadlines = parseRssFeed(feedXml, origin, parseOptions);
@@ -985,8 +1132,20 @@ export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
 
   const results = await Promise.allSettled(
     enabledSites.map(async (site) => {
-      const headlines = await parseNewsFromSite(site);
-      return headlines.map(h => ({ ...h, source: site.name }));
+      try {
+        const headlines = await parseNewsFromSite(site);
+        appLogger.info(
+          { site: site.name, count: headlines.length, type: site.type, category: site.category },
+          'Site parsed successfully',
+        );
+        return headlines.map(h => ({ ...h, source: site.name }));
+      } catch (err) {
+        appLogger.warn(
+          { site: site.name, url: site.url, error: err instanceof Error ? err.message : String(err) },
+          'Site parse failed',
+        );
+        throw err;
+      }
     }),
   );
 
@@ -994,6 +1153,7 @@ export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
   const seenTitles = new Set<string>();
   const seenUrls = new Set<string>();
   let duplicatesFiltered = 0;
+  let failedSites = 0;
 
   results.forEach((result, i) => {
     const site = enabledSites[i]!;
@@ -1012,6 +1172,7 @@ export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
         allHeadlines.push(headline);
       }
     } else {
+      failedSites++;
       appLogger.warn(
         { error: result.reason, siteName: site.name, siteUrl: site.url },
         'Failed to parse news site for digest',
@@ -1019,11 +1180,22 @@ export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
     }
   });
 
-  if (duplicatesFiltered > 0) {
-    appLogger.info({ duplicatesFiltered }, 'Cross-source duplicates filtered');
-  }
-
-  appLogger.info({ totalHeadlines: allHeadlines.length, sites: enabledSites.length }, 'News parsing complete');
+  appLogger.info(
+    {
+      totalHeadlines: allHeadlines.length,
+      totalSites: enabledSites.length,
+      failedSites,
+      duplicatesFiltered,
+      byCategory: {
+        ai_tech: allHeadlines.filter(h => h.category === 'ai_tech').length,
+        community: allHeadlines.filter(h => h.category === 'community').length,
+        asia_tech: allHeadlines.filter(h => h.category === 'asia_tech').length,
+        city_local: allHeadlines.filter(h => h.category === 'city_local').length,
+        uncategorized: allHeadlines.filter(h => !h.category).length,
+      },
+    },
+    'News parsing complete',
+  );
 
   parsedNewsCache = { headlines: allHeadlines, ts: Date.now() };
   return allHeadlines;

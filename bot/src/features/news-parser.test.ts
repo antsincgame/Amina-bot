@@ -24,10 +24,10 @@ describe('News Parser — Headline Filtering', () => {
    * Симулируем логику addHeadline для проверки фильтров.
    * Это точная копия логики из news-parser.ts
    */
-  const MAX_HEADLINES_PER_SITE = 30;
-  const MIN_TITLE_LENGTH = 8;
-  const MAX_TITLE_LENGTH = 500;
-  const MAX_NEWS_AGE_HOURS = 72;
+  const MAX_HEADLINES_PER_SITE = 50;
+  const MIN_TITLE_LENGTH = 5;
+  const MAX_TITLE_LENGTH = 600;
+  const MAX_NEWS_AGE_HOURS = 168;
 
   function isNewsRecent(pubDate: Date | undefined): boolean {
     if (!pubDate) return true;
@@ -104,33 +104,33 @@ describe('News Parser — Headline Filtering', () => {
     expect(headlines).toHaveLength(1);
   });
 
-  it('отклоняет слишком короткий заголовок (< 8 символов)', () => {
+  it('отклоняет слишком короткий заголовок (< 5 символов)', () => {
     const headlines: ParsedHeadline[] = [];
     const seen = new Set<string>();
-    const result = addHeadline(headlines, seen, 'GPT-5', 'https://example.com/1');
+    const result = addHeadline(headlines, seen, 'GPT5', 'https://example.com/1');
     expect(result).toBe(false);
     expect(headlines).toHaveLength(0);
   });
 
-  it('принимает заголовок длиной ровно 8 символов', () => {
+  it('принимает заголовок длиной ровно 5 символов', () => {
     const headlines: ParsedHeadline[] = [];
     const seen = new Set<string>();
-    const result = addHeadline(headlines, seen, '12345678', 'https://example.com/1');
+    const result = addHeadline(headlines, seen, '12345', 'https://example.com/1');
     expect(result).toBe(true);
   });
 
-  it('отклоняет заголовок старше 72 часов', () => {
+  it('отклоняет заголовок старше 168 часов (7 дней)', () => {
     const headlines: ParsedHeadline[] = [];
     const seen = new Set<string>();
-    const oldDate = new Date(Date.now() - 73 * 60 * 60 * 1000);
+    const oldDate = new Date(Date.now() - 169 * 60 * 60 * 1000);
     const result = addHeadline(headlines, seen, 'Old news about AI breakthrough', 'https://example.com/1', { pubDate: oldDate });
     expect(result).toBe(false);
   });
 
-  it('принимает заголовок возрастом 71 час', () => {
+  it('принимает заголовок возрастом 167 часов', () => {
     const headlines: ParsedHeadline[] = [];
     const seen = new Set<string>();
-    const recentDate = new Date(Date.now() - 71 * 60 * 60 * 1000);
+    const recentDate = new Date(Date.now() - 167 * 60 * 60 * 1000);
     const result = addHeadline(headlines, seen, 'Recent news about AI breakthrough', 'https://example.com/1', { pubDate: recentDate });
     expect(result).toBe(true);
   });
@@ -151,13 +151,13 @@ describe('News Parser — Headline Filtering', () => {
     expect(headlines).toHaveLength(1);
   });
 
-  it('останавливается при достижении MAX_HEADLINES_PER_SITE (30)', () => {
+  it('останавливается при достижении MAX_HEADLINES_PER_SITE (50)', () => {
     const headlines: ParsedHeadline[] = [];
     const seen = new Set<string>();
-    for (let i = 0; i < 35; i++) {
+    for (let i = 0; i < 60; i++) {
       addHeadline(headlines, seen, `Headline number ${i} about AI technology`, `https://example.com/${i}`);
     }
-    expect(headlines).toHaveLength(30);
+    expect(headlines).toHaveLength(50);
   });
 
   it('сохраняет category и language из options', () => {
@@ -268,8 +268,8 @@ describe('News Parser — Category Routing in Digest', () => {
 });
 
 describe('News Parser — JSON API Parsing', () => {
-  const MAX_HEADLINES_PER_SITE = 30;
-  const MIN_TITLE_LENGTH = 8;
+  const MAX_HEADLINES_PER_SITE = 50;
+  const MIN_TITLE_LENGTH = 5;
 
   function cleanTitle(raw: string): string {
     return raw.replace(/\s+/g, ' ').trim();
@@ -355,7 +355,7 @@ describe('News Parser — JSON API Parsing', () => {
     };
     const mapping: JsonFieldMapping = { itemsPath: 'hits', titleField: 'title', urlField: 'url|story_url', dateField: 'created_at' };
     const result = parseJsonApiResponse(data, mapping, { category: 'community', language: 'en' });
-    expect(result).toHaveLength(2);
+    expect(result).toHaveLength(3);
     expect(result[0]?.category).toBe('community');
     expect(result[1]?.url).toBe('https://example.com/2');
   });
@@ -412,7 +412,7 @@ describe('News Parser — RSS Feed Parsing', () => {
           <pubDate>Mon, 09 Mar 2026 08:00:00 GMT</pubDate>
         </item>
         <item>
-          <title>Short</title>
+          <title>Tiny</title>
           <link>https://example.com/short</link>
         </item>
       </channel>
@@ -425,7 +425,7 @@ describe('News Parser — RSS Feed Parsing', () => {
       const $item = $(el);
       const title = $item.find('title').first().text().trim();
       const link = $item.find('link').first().text().trim();
-      if (title && link && title.length >= 8) {
+      if (title && link && title.length >= 5) {
         items.push({ title, link });
       }
     });
@@ -458,7 +458,7 @@ describe('News Parser — RSS Feed Parsing', () => {
       const $entry = $(el);
       const title = $entry.find('title').first().text().trim();
       const link = $entry.find('link[href]').first().attr('href') ?? '';
-      if (title && link && title.length >= 8) {
+      if (title && link && title.length >= 5) {
         entries.push({ title, link });
       }
     });
@@ -603,8 +603,8 @@ describe('News Parser — End-to-End Digest Data Flow', () => {
     expect(parsedHeadlines).toHaveLength(2);
   });
 
-  it('новый лимит: до 50 AI заголовков в промпте', () => {
-    const headlines: ParsedHeadline[] = Array.from({ length: 60 }, (_, i) => ({
+  it('без slice лимитов: все AI заголовки в промпте', () => {
+    const headlines: ParsedHeadline[] = Array.from({ length: 200 }, (_, i) => ({
       title: `AI Headline number ${i}`,
       url: `https://example.com/${i}`,
       source: `Source ${i}`,
@@ -613,12 +613,11 @@ describe('News Parser — End-to-End Digest Data Flow', () => {
     }));
 
     const aiTech = filterByCategory(headlines, 'ai_tech');
-    const inPrompt = aiTech.slice(0, 50);
-    expect(inPrompt).toHaveLength(50);
+    expect(aiTech).toHaveLength(200);
   });
 
-  it('новый лимит: до 30 азиатских заголовков в промпте', () => {
-    const headlines: ParsedHeadline[] = Array.from({ length: 40 }, (_, i) => ({
+  it('без slice лимитов: все азиатские заголовки в промпте', () => {
+    const headlines: ParsedHeadline[] = Array.from({ length: 100 }, (_, i) => ({
       title: `亚洲AI标题 ${i}`,
       url: `https://example.cn/${i}`,
       source: `Source ${i}`,
@@ -627,7 +626,6 @@ describe('News Parser — End-to-End Digest Data Flow', () => {
     }));
 
     const asiaTech = filterByCategory(headlines, 'asia_tech');
-    const inPrompt = asiaTech.slice(0, 30);
-    expect(inPrompt).toHaveLength(30);
+    expect(asiaTech).toHaveLength(100);
   });
 });
