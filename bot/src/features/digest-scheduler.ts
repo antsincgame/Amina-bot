@@ -429,7 +429,6 @@ async function buildDigest(
   }
 
   if (parsedHeadlines.length > 0) {
-    // Формат: каждый заголовок с ссылкой и источником
     const headlineLines = parsedHeadlines.map(h =>
       `- ${h.title} (ссылка: ${h.url}) [источник: ${h.source}]`
     );
@@ -440,19 +439,21 @@ async function buildDigest(
       headlineLines.join('\n')
     );
     appLogger.info({ count: parsedHeadlines.length, city }, 'Digest: using parsed headlines for city news');
-  } else {
-    // FALLBACK: если парсер не дал результатов — используем Perplexity как раньше
-    appLogger.info({ city }, 'Digest: no parsed headlines, falling back to Perplexity for city news');
-    const fallbackResult = await webSearchWithRetry(
-      `Новости ${city} Беларусь сегодня ${todayStr} site:${city === 'Гродно' ? 'grodnonews.by OR grodno.in OR newgrodno.by' : city === 'Минск' ? 'minsknews.by OR minsk-news.by' : 'belta.by'}: ` +
+  }
+
+  // ВСЕГДА используем Perplexity для городских новостей как дополнение
+  {
+    const perplexityCityResult = await webSearchWithRetry(
+      `Новости ${city} Беларусь сегодня ${todayStr}: ` +
+      (isGrodno ? 'grodnonews.by, newgrodno.by, grodno.in, ' : '') +
       `местные события, происшествия, решения городских властей, транспорт, благоустройство, культурная жизнь ${city}. ` +
       `Ищи ТОЛЬКО местные городские новости ${city}! Минимум 5 конкретных событий с датами. ` +
       `НЕ включай мировые или российские новости — ТОЛЬКО ${city}.`
     );
-    if (fallbackResult?.answer) {
-      rawData.push(`[МЕСТНЫЕ НОВОСТИ ${city.toUpperCase()}]\n${fallbackResult.answer}`);
+    if (perplexityCityResult?.answer) {
+      rawData.push(`[МЕСТНЫЕ НОВОСТИ ${city.toUpperCase()} — PERPLEXITY]\n${perplexityCityResult.answer}`);
+      allCitations.push(...(perplexityCityResult.citations ?? []));
     }
-    // Если и fallback не дал результатов — не добавляем пустой блок, LLM пропустит раздел
   }
 
   if (belarusNewsResult.status === 'fulfilled' && belarusNewsResult.value?.answer) {
@@ -502,35 +503,36 @@ async function buildDigest(
   // AI/TECH НОВОСТИ — из парсера (международные англоязычные источники)
   const allAiHeadlines = [...aiTechHeadlines, ...communityHeadlines];
   if (allAiHeadlines.length > 0) {
-    const aiLines = allAiHeadlines.map(h =>
-      `- ${h.title} (ссылка: ${h.url}) [источник: ${h.source}]${h.language && h.language !== 'ru' ? ` [язык: ${h.language}]` : ''}`
+    const selectedAi = allAiHeadlines.slice(0, 80);
+    const aiLines = selectedAi.map((h, idx) =>
+      `${idx + 1}. ${h.title} (ссылка: ${h.url}) [источник: ${h.source}]${h.language && h.language !== 'ru' ? ` [язык: ${h.language}]` : ''}`
     );
     rawData.push(
-      `[ТЕХНОЛОГИИ И AI — МЕЖДУНАРОДНЫЕ ИСТОЧНИКИ] (всего заголовков: ${aiLines.length})\n` +
-      `Заголовки спарсены с ведущих мировых AI-изданий и dev-сообществ.\n` +
-      `Для каждой новости ОБЯЗАТЕЛЬНО оформи как Markdown-ссылку: [заголовок](url)\n` +
-      `Если заголовок на английском — переведи на русский и добавь оригинал в скобках.\n` +
-      `ВКЛЮЧИ ВСЕ ${aiLines.length} заголовков — не пропускай ни одного! Это КРИТИЧЕСКИ ВАЖНО!\n\n` +
+      `[ТЕХНОЛОГИИ И AI — МЕЖДУНАРОДНЫЕ ИСТОЧНИКИ] (${selectedAi.length} из ${allAiHeadlines.length} заголовков)\n` +
+      `ОБЯЗАТЕЛЬНО оформи КАЖДЫЙ заголовок как Markdown-ссылку: [заголовок](url)\n` +
+      `Если на английском — переведи на русский, оригинал в скобках.\n` +
+      `Ты ОБЯЗАНА включить ВСЕ ${selectedAi.length} заголовков! Для каждого: перевод + 1 предложение комментария.\n` +
+      `Группируй по категориям: 🚀 Релиз | 🔬 Исследование | 🛠 Инструмент | 💡 Тренд | 📊 Бенчмарк\n\n` +
       aiLines.join('\n')
     );
-    appLogger.info({ count: allAiHeadlines.length }, 'Digest: AI/Tech headlines added');
+    appLogger.info({ total: allAiHeadlines.length, selected: selectedAi.length }, 'Digest: AI/Tech headlines added');
   }
 
   // АЗИАТСКИЕ AI/TECH ИСТОЧНИКИ — китайские, японские, корейские
   if (asiaAiHeadlines.length > 0) {
-    const asiaLines = asiaAiHeadlines.map(h => {
+    const selectedAsia = asiaAiHeadlines.slice(0, 40);
+    const asiaLines = selectedAsia.map((h, idx) => {
       const langLabel = h.language === 'zh' ? '🇨🇳' : h.language === 'ja' ? '🇯🇵' : h.language === 'ko' ? '🇰🇷' : '';
-      return `- ${langLabel} ${h.title} (ссылка: ${h.url}) [источник: ${h.source}]`;
+      return `${idx + 1}. ${langLabel} ${h.title} (ссылка: ${h.url}) [источник: ${h.source}]`;
     });
     rawData.push(
-      `[AI НОВОСТИ ИЗ АЗИИ — КИТАЙ, ЯПОНИЯ, КОРЕЯ] (всего заголовков: ${asiaLines.length})\n` +
-      `Заголовки с ведущих азиатских AI-изданий. Могут быть на китайском/японском/корейском.\n` +
-      `ОБЯЗАТЕЛЬНО переведи каждый заголовок на русский! Оригинал в скобках.\n` +
-      `Формат: [Перевод (оригинал)](url)\n` +
-      `ВКЛЮЧИ ВСЕ ${asiaLines.length} заголовков — не пропускай ни одного!\n\n` +
+      `[AI НОВОСТИ ИЗ АЗИИ — КИТАЙ, ЯПОНИЯ, КОРЕЯ] (${selectedAsia.length} из ${asiaAiHeadlines.length} заголовков)\n` +
+      `ОБЯЗАТЕЛЬНО переведи КАЖДЫЙ заголовок на русский! Оригинал в скобках.\n` +
+      `Формат: [Перевод (оригинал)](url) — 1 предложение комментария\n` +
+      `Ты ОБЯЗАНА включить ВСЕ ${selectedAsia.length} заголовков!\n\n` +
       asiaLines.join('\n')
     );
-    appLogger.info({ count: asiaAiHeadlines.length }, 'Digest: Asia AI headlines added');
+    appLogger.info({ total: asiaAiHeadlines.length, selected: selectedAsia.length }, 'Digest: Asia AI headlines added');
   }
 
   // 5. Напоминания на сегодня
@@ -601,22 +603,20 @@ ${rawData.join('\n\n')}${citationsBlock}
    ОБЯЗАТЕЛЬНО: после каждой новости ставь ссылку на источник в формате [N].
    Если данных нет — ПРОПУСТИ. НЕ ИЗВИНЯЙСЯ!
 
-5. **Технологии и AI** — ЭКСПЕРТНЫЙ РАЗБОР как журналист-аналитик:
-   - ВКЛЮЧИ ВСЕ спарсенные AI/Tech заголовки — НЕ ПРОПУСКАЙ НИ ОДНОГО!
-   - Для каждой: переведи на русский (если на английском), дай экспертный комментарий 1-2 предложения
-   - Объясни ПОЧЕМУ это важно для вайбкодера/AI-разработчика
-   - Укажи категорию: 🔬 Исследование | 🚀 Релиз | 🛠 Инструмент | 💡 Тренд | 📊 Бенчмарк
-   - Обязательно сохрани ссылки: [Заголовок](url)
-   - Ранжируй по важности: сначала прорывы, потом инструменты, потом тренды
-   - Если заголовков больше 15 — группируй по категориям, но всё равно ВКЛЮЧИ ВСЕ
+5. **Технологии и AI** — САМЫЙ ВАЖНЫЙ И ОБЪЁМНЫЙ РАЗДЕЛ:
+   - Пронумеруй ВСЕ заголовки из данных выше (их пронумерованный список).
+   - Для КАЖДОГО: переведи на русский + 1 предложение комментария.
+   - Группируй: 🚀 Релизы, 🔬 Исследования, 🛠 Инструменты, 💡 Тренды.
+   - Формат: **N. [Заголовок на русском (Original)](url)** — комментарий
+   - ЗАПРЕЩЕНО пропускать заголовки! Каждый номер из данных ДОЛЖЕН быть в ответе.
+   - Этот раздел должен занимать 60-70% всего дайджеста.
    Если данных нет — ПРОПУСТИ.
 
 6. **AI из Азии** — если есть азиатские заголовки:
-   - ВКЛЮЧИ ВСЕ азиатские заголовки — НЕ ПРОПУСКАЙ НИ ОДНОГО!
-   - ПЕРЕВЕДИ каждый заголовок на русский
-   - В скобках оставь оригинал на языке источника
-   - Дай краткий контекст: почему это интересно для глобального AI-сообщества
-   - Формат: [Перевод заголовка (原标题)](url) — комментарий
+   - Пронумеруй ВСЕ заголовки и включи КАЖДЫЙ.
+   - ПЕРЕВЕДИ каждый на русский, оригинал в скобках.
+   - Формат: **N. [Перевод (原标题)](url)** — комментарий
+   - ЗАПРЕЩЕНО пропускать заголовки!
    Если данных нет — ПРОПУСТИ.
 
 7. **Напоминания и задачи** — если есть в данных, подбодри и дай совет по приоритетам
@@ -628,14 +628,13 @@ ${rawData.join('\n\n')}${citationsBlock}
 - ЗАПРЕЩЕНО включать мировые ПОЛИТИЧЕСКИЕ новости (Россия, Украина, США)!
 - ЗАПРЕЩЕНО включать новости о войнах, конфликтах в других странах!${!isMinsk ? `
 - ЗАПРЕЩЕНО включать новости Минска!
-- ⚠️ Упоминание "Минск", "минский", "минчан" в дайджесте = ОШИБКА!` : ''}
-- Новости технологий/AI — ПРИОРИТЕТНЫЙ раздел! Уделяй ему максимум внимания как эксперт.
+- Упоминание "Минск", "минский", "минчан" в дайджесте = ОШИБКА!` : ''}
+- Раздел "Технологии и AI" — САМЫЙ БОЛЬШОЙ. Он должен содержать КАЖДЫЙ пронумерованный заголовок из данных!
+- Если в данных 80 AI-заголовков — в ответе должно быть 80 пунктов в разделе "Технологии и AI"!
 - При переводе AI-терминов: оставляй английские термины как есть (LLM, RAG, fine-tuning, RLHF, benchmark)
 - НЕ ПРИДУМЫВАЙ новости — только из данных выше
 - ОБЯЗАТЕЛЬНО ставь ссылки [N] после фактов из Perplexity
-- Эмодзи уместно, не перебарщивай
 - Формат: Markdown для Telegram (*bold*, _italic_)
-- Каждая AI-новость: 2-4 предложения с ЭКСПЕРТНЫМ комментарием
 - НЕ добавляй в конце инструкции вроде "/digest"`;
 
   try {
