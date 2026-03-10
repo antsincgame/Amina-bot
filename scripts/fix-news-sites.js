@@ -24,13 +24,21 @@ const ALL_SITES = [
   { name: 'Anthropic News', url: 'https://www.anthropic.com/rss.xml', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },
   { name: 'DeepMind Blog', url: 'https://deepmind.google/blog/rss.xml', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },
   { name: 'Microsoft AI Blog', url: 'https://blogs.microsoft.com/ai/feed/', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },
+  { name: 'Nvidia AI Blog', url: 'https://blogs.nvidia.com/feed/', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },
+  { name: 'Stability AI Blog', url: 'https://stability.ai/blog/feed', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },
+  { name: 'The Batch (DeepLearning.AI)', url: 'https://www.deeplearning.ai/the-batch/feed/', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },
+  { name: 'Lex Fridman Podcast', url: 'https://lexfridman.com/feed/podcast/', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },
   // --- Developer Communities ---
   { name: 'Hacker News (AI/VibeCoding)', url: 'https://hn.algolia.com/api/v1/search_by_date?query=AI+OR+LLM+OR+vibecoding+OR+%22vibe+coding%22+OR+%22AI+coding%22+OR+cursor+OR+copilot+OR+%22code+generation%22+OR+anthropic+OR+openai&tags=story&hitsPerPage=40', enabled: true, type: 'json_api', category: 'community', language: 'en', jsonMapping: { itemsPath: 'hits', titleField: 'title', urlField: 'url|story_url', dateField: 'created_at' } },
   { name: 'Dev.to (AI)', url: 'https://dev.to/api/articles?tag=ai&top=7&per_page=30', enabled: true, type: 'json_api', category: 'community', language: 'en', jsonMapping: { itemsPath: '', titleField: 'title', urlField: 'url', dateField: 'published_at' } },
   { name: 'Dev.to (Machine Learning)', url: 'https://dev.to/api/articles?tag=machinelearning&top=7&per_page=20', enabled: true, type: 'json_api', category: 'community', language: 'en', jsonMapping: { itemsPath: '', titleField: 'title', urlField: 'url', dateField: 'published_at' } },
+  { name: 'Dev.to (GitHub Copilot)', url: 'https://dev.to/api/articles?tag=github-copilot&top=7&per_page=20', enabled: true, type: 'json_api', category: 'community', language: 'en', jsonMapping: { itemsPath: '', titleField: 'title', urlField: 'url', dateField: 'published_at' } },
   { name: 'Reddit r/LocalLLaMA', url: 'https://www.reddit.com/r/LocalLLaMA/new/.rss', enabled: true, type: 'rss', category: 'community', language: 'en' },
   { name: 'Reddit r/MachineLearning', url: 'https://www.reddit.com/r/MachineLearning/hot/.rss', enabled: true, type: 'rss', category: 'community', language: 'en' },
   { name: 'Reddit r/artificial', url: 'https://www.reddit.com/r/artificial/hot/.rss', enabled: true, type: 'rss', category: 'community', language: 'en' },
+  { name: 'Reddit r/CursorAI', url: 'https://www.reddit.com/r/CursorAI/new/.rss', enabled: true, type: 'rss', category: 'community', language: 'en' },
+  { name: 'Reddit r/singularity', url: 'https://www.reddit.com/r/singularity/hot/.rss', enabled: true, type: 'rss', category: 'community', language: 'en' },
+  { name: 'Reddit r/ChatGPT', url: 'https://www.reddit.com/r/ChatGPT/hot/.rss', enabled: true, type: 'rss', category: 'community', language: 'en' },
   { name: 'GitHub Trending', url: 'https://github.com/trending', enabled: true, type: 'html_scrape', category: 'ai_tech', language: 'en' },
   // --- Tech Blogs ---
   { name: 'Simon Willison', url: 'https://simonwillison.net/atom/entries/', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },
@@ -44,14 +52,20 @@ const ALL_SITES = [
   { name: 'Towards Data Science (Medium)', url: 'https://towardsdatascience.com/feed', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },
   { name: 'AI News (artificialintelligence-news.com)', url: 'https://www.artificialintelligence-news.com/feed/', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },
   { name: 'Wired (AI)', url: 'https://www.wired.com/feed/tag/ai/latest/rss', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },
+  { name: 'Habr (AI)', url: 'https://habr.com/ru/rss/hub/artificial_intelligence/all/?fl=ru', enabled: true, type: 'rss', category: 'ai_tech', language: 'ru' },
+  { name: 'Habr (Machine Learning)', url: 'https://habr.com/ru/rss/hub/machine_learning/all/?fl=ru', enabled: true, type: 'rss', category: 'ai_tech', language: 'ru' },
+  { name: 'Thoughtworks Insights', url: 'https://www.thoughtworks.com/rss/insights.xml', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },
   // --- Asia ---
   { name: '36kr AI News', url: 'https://36kr.com/feed', enabled: true, type: 'rss', category: 'asia_tech', language: 'zh' },
   { name: 'PaperWithCode (trending)', url: 'https://paperswithcode.com/latest', enabled: true, type: 'html_scrape', category: 'ai_tech', language: 'en' },
   { name: 'InfoQ China', url: 'https://www.infoq.cn/feed', enabled: true, type: 'rss', category: 'asia_tech', language: 'zh' },
   { name: 'Zenn.dev (AI)', url: 'https://zenn.dev/topics/ai/feed', enabled: true, type: 'rss', category: 'asia_tech', language: 'ja' },
   { name: 'Zenn.dev (LLM)', url: 'https://zenn.dev/topics/llm/feed', enabled: true, type: 'rss', category: 'asia_tech', language: 'ja' },
+  { name: 'Zenn.dev (VibeCoding)', url: 'https://zenn.dev/topics/vibecoding/feed', enabled: true, type: 'rss', category: 'asia_tech', language: 'ja' },
   { name: 'Qiita (AI)', url: 'https://qiita.com/api/v2/items?query=title:AI+OR+title:LLM+OR+title:ChatGPT+OR+title:GPT&per_page=30', enabled: true, type: 'json_api', category: 'asia_tech', language: 'ja', jsonMapping: { itemsPath: '', titleField: 'title', urlField: 'url', dateField: 'created_at' } },
   { name: 'Tech in Asia', url: 'https://www.techinasia.com/feed', enabled: true, type: 'rss', category: 'asia_tech', language: 'en' },
+  { name: 'CSDN AI Search', url: 'https://blog.csdn.net/nav/ai', enabled: true, type: 'html_scrape', category: 'asia_tech', language: 'zh' },
+  { name: 'Synced (机器之心) EN', url: 'https://syncedreview.com/feed/', enabled: true, type: 'rss', category: 'asia_tech', language: 'en' },
 ];
 
 async function main() {

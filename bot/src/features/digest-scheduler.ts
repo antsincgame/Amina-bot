@@ -291,7 +291,7 @@ async function webSearchWithRetry(
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       const result = await webSearch(query, { forDigest: true });
-      if (result.answer && result.answer.length > 30) {
+      if (result.answer && result.answer.length > 10) {
         return { answer: result.answer, citations: result.citations ?? [] };
       }
       appLogger.warn({ query: query.substring(0, 50), attempt, answerLength: result.answer?.length ?? 0 }, 'Digest: search returned weak result');
@@ -503,36 +503,34 @@ async function buildDigest(
   // AI/TECH НОВОСТИ — из парсера (международные англоязычные источники)
   const allAiHeadlines = [...aiTechHeadlines, ...communityHeadlines];
   if (allAiHeadlines.length > 0) {
-    const selectedAi = allAiHeadlines.slice(0, 80);
-    const aiLines = selectedAi.map((h, idx) =>
+    const aiLines = allAiHeadlines.map((h, idx) =>
       `${idx + 1}. ${h.title} (ссылка: ${h.url}) [источник: ${h.source}]${h.language && h.language !== 'ru' ? ` [язык: ${h.language}]` : ''}`
     );
     rawData.push(
-      `[ТЕХНОЛОГИИ И AI — МЕЖДУНАРОДНЫЕ ИСТОЧНИКИ] (${selectedAi.length} из ${allAiHeadlines.length} заголовков)\n` +
+      `[ТЕХНОЛОГИИ И AI — МЕЖДУНАРОДНЫЕ ИСТОЧНИКИ] (${allAiHeadlines.length} заголовков)\n` +
       `ОБЯЗАТЕЛЬНО оформи КАЖДЫЙ заголовок как Markdown-ссылку: [заголовок](url)\n` +
       `Если на английском — переведи на русский, оригинал в скобках.\n` +
-      `Ты ОБЯЗАНА включить ВСЕ ${selectedAi.length} заголовков! Для каждого: перевод + 1 предложение комментария.\n` +
+      `Ты ОБЯЗАНА включить ВСЕ ${allAiHeadlines.length} заголовков! Для каждого: перевод + 1 предложение комментария.\n` +
       `Группируй по категориям: 🚀 Релиз | 🔬 Исследование | 🛠 Инструмент | 💡 Тренд | 📊 Бенчмарк\n\n` +
       aiLines.join('\n')
     );
-    appLogger.info({ total: allAiHeadlines.length, selected: selectedAi.length }, 'Digest: AI/Tech headlines added');
+    appLogger.info({ total: allAiHeadlines.length }, 'Digest: AI/Tech headlines added (ALL, no slice)');
   }
 
   // АЗИАТСКИЕ AI/TECH ИСТОЧНИКИ — китайские, японские, корейские
   if (asiaAiHeadlines.length > 0) {
-    const selectedAsia = asiaAiHeadlines.slice(0, 40);
-    const asiaLines = selectedAsia.map((h, idx) => {
+    const asiaLines = asiaAiHeadlines.map((h, idx) => {
       const langLabel = h.language === 'zh' ? '🇨🇳' : h.language === 'ja' ? '🇯🇵' : h.language === 'ko' ? '🇰🇷' : '';
       return `${idx + 1}. ${langLabel} ${h.title} (ссылка: ${h.url}) [источник: ${h.source}]`;
     });
     rawData.push(
-      `[AI НОВОСТИ ИЗ АЗИИ — КИТАЙ, ЯПОНИЯ, КОРЕЯ] (${selectedAsia.length} из ${asiaAiHeadlines.length} заголовков)\n` +
+      `[AI НОВОСТИ ИЗ АЗИИ — КИТАЙ, ЯПОНИЯ, КОРЕЯ] (${asiaAiHeadlines.length} заголовков)\n` +
       `ОБЯЗАТЕЛЬНО переведи КАЖДЫЙ заголовок на русский! Оригинал в скобках.\n` +
       `Формат: [Перевод (оригинал)](url) — 1 предложение комментария\n` +
-      `Ты ОБЯЗАНА включить ВСЕ ${selectedAsia.length} заголовков!\n\n` +
+      `Ты ОБЯЗАНА включить ВСЕ ${asiaAiHeadlines.length} заголовков!\n\n` +
       asiaLines.join('\n')
     );
-    appLogger.info({ total: asiaAiHeadlines.length, selected: selectedAsia.length }, 'Digest: Asia AI headlines added');
+    appLogger.info({ total: asiaAiHeadlines.length }, 'Digest: Asia AI headlines added (ALL, no slice)');
   }
 
   // 5. Напоминания на сегодня
@@ -630,7 +628,8 @@ ${rawData.join('\n\n')}${citationsBlock}
 - ЗАПРЕЩЕНО включать новости Минска!
 - Упоминание "Минск", "минский", "минчан" в дайджесте = ОШИБКА!` : ''}
 - Раздел "Технологии и AI" — САМЫЙ БОЛЬШОЙ. Он должен содержать КАЖДЫЙ пронумерованный заголовок из данных!
-- Если в данных 80 AI-заголовков — в ответе должно быть 80 пунктов в разделе "Технологии и AI"!
+- Если AI-заголовков больше 50 — ВСЁ РАВНО включи каждый! Пиши кратко: 1 строка = перевод + ссылка + мини-комментарий.
+- Допустимо опустить подробный комментарий если заголовков > 50, но сам заголовок + ссылка ОБЯЗАТЕЛЬНЫ!
 - При переводе AI-терминов: оставляй английские термины как есть (LLM, RAG, fine-tuning, RLHF, benchmark)
 - НЕ ПРИДУМЫВАЙ новости — только из данных выше
 - ОБЯЗАТЕЛЬНО ставь ссылки [N] после фактов из Perplexity

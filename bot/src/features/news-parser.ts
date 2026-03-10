@@ -28,12 +28,12 @@ export type { NewsSite, ParsedHeadline } from '../../../shared/types/index.js';
 // ===== Константы =====
 
 const SETTINGS_KEY = 'digest_news_sites';
-const FETCH_TIMEOUT_MS = 25_000;
-const MAX_HEADLINES_PER_SITE = 50;
-const MIN_TITLE_LENGTH = 5;
-const MAX_TITLE_LENGTH = 600;
-const MAX_NEWS_AGE_HOURS = 168;
-const PARSED_NEWS_CACHE_TTL_MS = 3 * 60 * 1000;
+const FETCH_TIMEOUT_MS = 30_000;
+const MAX_HEADLINES_PER_SITE = 100;
+const MIN_TITLE_LENGTH = 4;
+const MAX_TITLE_LENGTH = 800;
+const MAX_NEWS_AGE_HOURS = 336;
+const PARSED_NEWS_CACHE_TTL_MS = 2 * 60 * 1000;
 
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -330,6 +330,100 @@ export const DEFAULT_AI_TECH_SOURCES: NewsSite[] = [
     category: 'ai_tech',
     language: 'en',
   },
+  {
+    name: 'Lex Fridman Podcast',
+    url: 'https://lexfridman.com/feed/podcast/',
+    enabled: true,
+    type: 'rss',
+    category: 'ai_tech',
+    language: 'en',
+  },
+  {
+    name: 'The Batch (DeepLearning.AI)',
+    url: 'https://www.deeplearning.ai/the-batch/feed/',
+    enabled: true,
+    type: 'rss',
+    category: 'ai_tech',
+    language: 'en',
+  },
+  {
+    name: 'Nvidia AI Blog',
+    url: 'https://blogs.nvidia.com/feed/',
+    enabled: true,
+    type: 'rss',
+    category: 'ai_tech',
+    language: 'en',
+  },
+  {
+    name: 'Stability AI Blog',
+    url: 'https://stability.ai/blog/feed',
+    enabled: true,
+    type: 'rss',
+    category: 'ai_tech',
+    language: 'en',
+  },
+  {
+    name: 'Reddit r/CursorAI',
+    url: 'https://www.reddit.com/r/CursorAI/new/.rss',
+    enabled: true,
+    type: 'rss',
+    category: 'community',
+    language: 'en',
+  },
+  {
+    name: 'Reddit r/singularity',
+    url: 'https://www.reddit.com/r/singularity/hot/.rss',
+    enabled: true,
+    type: 'rss',
+    category: 'community',
+    language: 'en',
+  },
+  {
+    name: 'Reddit r/ChatGPT',
+    url: 'https://www.reddit.com/r/ChatGPT/hot/.rss',
+    enabled: true,
+    type: 'rss',
+    category: 'community',
+    language: 'en',
+  },
+  {
+    name: 'Dev.to (GitHub Copilot)',
+    url: 'https://dev.to/api/articles?tag=github-copilot&top=7&per_page=20',
+    enabled: true,
+    type: 'json_api',
+    category: 'community',
+    language: 'en',
+    jsonMapping: {
+      itemsPath: '',
+      titleField: 'title',
+      urlField: 'url',
+      dateField: 'published_at',
+    },
+  },
+  {
+    name: 'Habr (AI)',
+    url: 'https://habr.com/ru/rss/hub/artificial_intelligence/all/?fl=ru',
+    enabled: true,
+    type: 'rss',
+    category: 'ai_tech',
+    language: 'ru',
+  },
+  {
+    name: 'Habr (Machine Learning)',
+    url: 'https://habr.com/ru/rss/hub/machine_learning/all/?fl=ru',
+    enabled: true,
+    type: 'rss',
+    category: 'ai_tech',
+    language: 'ru',
+  },
+  {
+    name: 'Thoughtworks Insights',
+    url: 'https://www.thoughtworks.com/rss/insights.xml',
+    enabled: true,
+    type: 'rss',
+    category: 'ai_tech',
+    language: 'en',
+  },
   // ===== Asia: China =====
   {
     name: '36kr AI News',
@@ -394,6 +488,30 @@ export const DEFAULT_AI_TECH_SOURCES: NewsSite[] = [
     type: 'rss',
     category: 'asia_tech',
     language: 'en',
+  },
+  {
+    name: 'CSDN AI Search',
+    url: 'https://blog.csdn.net/nav/ai',
+    enabled: true,
+    type: 'html_scrape',
+    category: 'asia_tech',
+    language: 'zh',
+  },
+  {
+    name: 'Synced (机器之心) EN',
+    url: 'https://syncedreview.com/feed/',
+    enabled: true,
+    type: 'rss',
+    category: 'asia_tech',
+    language: 'en',
+  },
+  {
+    name: 'Zenn.dev (VibeCoding)',
+    url: 'https://zenn.dev/topics/vibecoding/feed',
+    enabled: true,
+    type: 'rss',
+    category: 'asia_tech',
+    language: 'ja',
   },
 ];
 
