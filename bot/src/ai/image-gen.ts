@@ -290,6 +290,87 @@ export async function classifyImageIntentGroq(text: string): Promise<string | nu
 }
 
 /**
+ * Классификация намерения РЕДАКТИРОВАТЬ изображение через Groq.
+ * Возвращает true, если пользователь хочет изменить картинку.
+ */
+export async function classifyImageEditIntentGroq(text: string): Promise<boolean> {
+  try {
+    const keys = await getApiKeys();
+    if (!keys.groq) return false;
+
+    const classifyPrompt = `Определи, просит ли пользователь ОТРЕДАКТИРОВАТЬ/ИЗМЕНИТЬ существующее изображение.
+Учитывай контекст: пользователь либо отправил фото с подписью, либо ответил на фото.
+
+Сообщение пользователя: "${text.substring(0, 400)}"
+
+ВАЖНО: Если пользователь хочет ИЗМЕНИТЬ картинку (убрать фон, сделать ярче, добавить что-то, стилизовать и т.д.) — ответь JSON: {"edit": true}
+Если это просто описание картинки или вопрос о ней — ответь JSON: {"edit": false}
+
+Примеры ЗАПРОСОВ на редактирование:
+- "убери фон" → {"edit": true}
+- "сделай ярче" → {"edit": true}
+- "добавь кота на плечо" → {"edit": true}
+- "стилизуй под аниме" → {"edit": true}
+- "обрежь края" → {"edit": true}
+- "перекрась машину в красный" → {"edit": true}
+
+НЕ запросы на редактирование:
+- "что на этой картинке?" → {"edit": false}
+- "красивое фото" → {"edit": false}
+- "кто это нарисовал?" → {"edit": false}
+- "привет" → {"edit": false}
+
+Ответь СТРОГО одним JSON без текста.`;
+
+    for (const model of GROQ_CLASSIFY_MODELS) {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      try {
+        const response = await fetch(GROQ_API_URL, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${keys.groq}`,
+            'Content-Type': 'application/json',
+          },
+          signal: controller.signal,
+          body: JSON.stringify({
+            model,
+            messages: [
+              { role: 'system', content: 'You are an intent classifier. Respond with JSON only.' },
+              { role: 'user', content: classifyPrompt },
+            ],
+            max_tokens: 50,
+            temperature: 0,
+          }),
+        });
+
+        if (!response.ok) continue;
+        const data = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+        const content = data.choices?.[0]?.message?.content?.trim();
+        if (!content) continue;
+
+        const jsonMatch = content.match(/\{[\s\S]*?\}/);
+        if (!jsonMatch) continue;
+
+        const parsed = JSON.parse(jsonMatch[0]) as { edit?: boolean };
+        if (parsed.edit === true) {
+          aiLogger.info({ model, text: text.substring(0, 60) }, '✏️ Groq detected image edit intent!');
+          return true;
+        }
+        return false;
+      } catch {
+        continue;
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    }
+  } catch (error) {
+    aiLogger.warn({ error }, 'Groq image edit intent classification failed');
+  }
+  return false;
+}
+
+/**
  * Проверяет, содержит ли ОТВЕТ AI паттерны, указывающие на нераспознанный запрос на картинку.
  * Используется как post-AI safety net: если AI говорит о картинках/imagine — значит
  * пользователь хотел картинку, но pre-AI детекция не сработала.
@@ -793,22 +874,18 @@ export async function isImageGenAvailable(): Promise<boolean> {
 // ============================================
 
 const IMAGE_EDIT_PATTERNS = [
-  /\b(измени|отредактируй|исправь|переделай|перерисуй)\b/i,
-  /\b(убери|удали|уберите|удалите)\s/i,
-  /\b(добавь|добавьте|вставь|вставьте|дорисуй)\s/i,
-  /\b(замени|поменяй|смени)\s/i,
-  /\b(сделай|сделайте)\s+(ярче|темнее|контрастнее|чётче|четче|резче|светлее|теплее|холоднее|чёрно-белым|черно-белым|цветным|размытым|прозрачн)/i,
-  /\b(сделай|сделайте)\s+[\wа-яёА-ЯЁ\s]+\s+(красн|син|зелён|жёлт|оранжев|фиолетов|розов|чёрн|бел|сер|голуб)/i,
-  /\b(обрежь|поверни|отзеркаль|переверни|увеличь|уменьши|растяни|сожми)\b/i,
-  /\b(перекрась|перекрасить|покрась|раскрась)\b/i,
-  /\b(подправь|отретушируй|откорректируй|подкорректируй)\b/i,
-  /\b(преврати|преобразуй)\s+(в|как)\s/i,
-  /\b(убери|замени|размой|удали)\s+(фон|задн)/i,
-  /\b(стилизуй|стилизовать|в стиле|как у)\b/i,
-  /\b(улучши|улучшить|апскейл|upscale)\b/i,
-  /\b(edit|modify|change|fix|remove|add|replace|crop|rotate|flip|enhance|brighten|darken)\b/i,
-  /\b(make\s+it|make\s+the)\s/i,
-  /\b(remove\s+background|add\s+text|change\s+color)\b/i,
+  /\b(измени|отредактируй|исправь|переделай|перерисуй|поменяй|смени|замени|подправь)\b/i,
+  /\b(убери|удали|уберите|удалите|вырежи|вырежьте)\b/i,
+  /\b(добавь|добавьте|вставь|вставьте|дорисуй|нарисуй|напиши)\b/i,
+  /\b(сделай|сделайте)\b/i,
+  /\b(обрежь|поверни|отзеркаль|переверни|увеличь|уменьши|растяни|сожми|разверни)\b/i,
+  /\b(перекрась|покрась|раскрась|закрась)\b/i,
+  /\b(фон|задний план|бэкграунд)\b/i,
+  /\b(стилизуй|стилизовать|в стиле|как у|эффект)\b/i,
+  /\b(улучши|улучшить|апскейл|upscale|качество)\b/i,
+  /\b(ярче|темнее|контрастнее|чётче|четче|резче|светлее|теплее|холоднее)\b/i,
+  /\b(edit|modify|change|fix|remove|add|replace|crop|rotate|flip|enhance|brighten|darken|style)\b/i,
+  /\b(make|remove|background|text|color)\b/i,
 ];
 
 /**
@@ -826,8 +903,9 @@ export function detectImageEditIntent(text: string): boolean {
  */
 export function extractEditPrompt(text: string): string {
   let prompt = text.trim();
+  // Убираем только вводные слова, сохраняя саму инструкцию (глагол + объект)
   prompt = prompt.replace(/^(пожалуйста\s*,?\s*|ну\s+|а\s+|эй\s*,?\s*|слушай\s*,?\s*|амина\s*,?\s*)/i, '');
-  prompt = prompt.replace(/^(можешь|сможешь|попробуй|могла бы)\s+(убрать|удалить|добавить|изменить|заменить|сделать|подправить|отредактировать)\s*/i, '');
+  prompt = prompt.replace(/^(можешь|сможешь|попробуй|могла бы|хочу|нужно|надо)\s+/i, '');
   prompt = prompt.replace(/\s*(на\s+этой\s+картинке|на\s+этом\s+фото|на\s+фото|на\s+картинке|на\s+изображении|this\s+image|this\s+photo)[.!?]?\s*$/i, '');
   prompt = prompt.replace(/[,\s]*(пожалуйста|плиз|please)[.!?]*$/i, '');
   prompt = prompt.replace(/[.!?]+$/, '');
@@ -1011,10 +1089,6 @@ export async function editImage(
           role: 'user',
           content: [
             {
-              type: 'image_url',
-              image_url: { url: `data:${mimeType};base64,${imageBase64}` },
-            },
-            {
               type: 'text',
               text: `You are a professional image editor. Apply this edit precisely:\n\n` +
                 `INSTRUCTION: ${translatedPrompt}\n\n` +
@@ -1025,9 +1099,16 @@ export async function editImage(
                 `- If changing colors/style, keep the subject recognizable\n` +
                 `- Return ONLY the edited image, no text`,
             },
+            {
+              type: 'image_url',
+              image_url: { url: `data:${mimeType};base64,${imageBase64}` },
+            },
           ],
         }],
-        modalities: ['image', 'text'],
+        modalities: ['text', 'image'],
+        image_config: {
+          image_size: '1K',
+        },
       }),
     });
 

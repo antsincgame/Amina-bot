@@ -30,7 +30,7 @@ import {
 } from '../memory/user-memory.js';
 import { detectReminderIntent, detectReminderListIntent, extractReminder } from '../reminders/reminder-parser.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';
-import { detectImageGenIntent, extractImagePrompt, generateImage, classifyImageIntentGroq, isAIResponseAboutImages, detectImageEditIntent, editImage } from '../ai/image-gen.js';
+import { detectImageGenIntent, extractImagePrompt, generateImage, classifyImageIntentGroq, isAIResponseAboutImages, detectImageEditIntent, editImage, classifyImageEditIntentGroq } from '../ai/image-gen.js';
 import { notesRepo } from '../features/notes-repo.js';
 import { todosRepo } from '../features/todos-repo.js';
 import { userPrefsRepo } from '../features/user-prefs-repo.js';
@@ -953,18 +953,39 @@ const handleTextMessage = async (ctx: BotContext): Promise<void> => {
   userLogsRepo.add(userId, 'message', userMessage, { chatId, messageLength: userMessage.length }).catch(() => {});
 
   // === PATH B: Reply to photo with edit instructions ===
-  const replyPhoto = ctx.message?.reply_to_message?.photo;
-  if (replyPhoto && replyPhoto.length > 0 && detectImageEditIntent(userMessage)) {
-    telegramLogger.info({ userId, prompt: userMessage.substring(0, 60) }, 'Image edit detected via reply to photo');
-    try {
-      const { base64, mimeType } = await downloadTelegramPhoto(ctx, replyPhoto);
-      await handleImageEdit(ctx, base64, mimeType, userMessage, userId);
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : 'Не удалось отредактировать изображение.';
-      telegramLogger.error({ error, userId }, 'Reply-to-photo edit failed');
-      await ctx.reply(`😔 ${errorMsg}`);
+  const replyMsg = ctx.message?.reply_to_message;
+  const replyPhoto = replyMsg?.photo;
+  const replyDoc = replyMsg?.document;
+  const isImageDoc = replyDoc?.mime_type?.startsWith('image/');
+
+  if ((replyPhoto && replyPhoto.length > 0) || isImageDoc) {
+    const isEditIntent = detectImageEditIntent(userMessage) || await classifyImageEditIntentGroq(userMessage);
+    if (isEditIntent) {
+      telegramLogger.info({ userId, prompt: userMessage.substring(0, 60) }, 'Image edit detected via reply to photo/document');
+      try {
+        let imageData;
+        if (replyPhoto && replyPhoto.length > 0) {
+          imageData = await downloadTelegramPhoto(ctx, replyPhoto);
+        } else {
+          // Download document image
+          const file = await ctx.api.getFile(replyDoc!.file_id);
+          if (!file.file_path) throw new Error('File path not found');
+          const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
+          const resp = await fetch(fileUrl);
+          if (!resp.ok) throw new Error('Failed to download document');
+          imageData = {
+            base64: Buffer.from(await resp.arrayBuffer()).toString('base64'),
+            mimeType: replyDoc!.mime_type!,
+          };
+        }
+        await handleImageEdit(ctx, imageData.base64, imageData.mimeType, userMessage, userId);
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : 'Не удалось отредактировать изображение.';
+        telegramLogger.error({ error, userId }, 'Reply-to-image edit failed');
+        await ctx.reply(`😔 ${errorMsg}`);
+      }
+      return;
     }
-    return;
   }
 
   await ctx.replyWithChatAction('typing');
@@ -1067,18 +1088,39 @@ const handleVoiceMessage = async (ctx: BotContext): Promise<void> => {
     };
 
     // === PATH C: Voice reply to photo → image edit ===
-    const voiceReplyPhoto = ctx.message?.reply_to_message?.photo;
-    if (voiceReplyPhoto && voiceReplyPhoto.length > 0 && detectImageEditIntent(transcribedText)) {
-      telegramLogger.info({ userId, prompt: transcribedText.substring(0, 60) }, 'Image edit detected via voice reply to photo');
-      try {
-        const { base64, mimeType } = await downloadTelegramPhoto(ctx, voiceReplyPhoto);
-        await handleImageEdit(ctx, base64, mimeType, transcribedText, userId);
-      } catch (editError) {
-        const editMsg = editError instanceof Error ? editError.message : 'Не удалось отредактировать изображение.';
-        telegramLogger.error({ error: editError, userId }, 'Voice reply-to-photo edit failed');
-        await ctx.reply(`😔 ${editMsg}`);
+    const replyMsg = ctx.message?.reply_to_message;
+    const voiceReplyPhoto = replyMsg?.photo;
+    const voiceReplyDoc = replyMsg?.document;
+    const isImageDoc = voiceReplyDoc?.mime_type?.startsWith('image/');
+
+    if ((voiceReplyPhoto && voiceReplyPhoto.length > 0) || isImageDoc) {
+      const isEditIntent = detectImageEditIntent(transcribedText) || await classifyImageEditIntentGroq(transcribedText);
+      if (isEditIntent) {
+        telegramLogger.info({ userId, prompt: transcribedText.substring(0, 60) }, 'Image edit detected via voice reply to photo/document');
+        try {
+          let imageData;
+          if (voiceReplyPhoto && voiceReplyPhoto.length > 0) {
+            imageData = await downloadTelegramPhoto(ctx, voiceReplyPhoto);
+          } else {
+            // Download document image
+            const file = await ctx.api.getFile(voiceReplyDoc!.file_id);
+            if (!file.file_path) throw new Error('File path not found');
+            const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
+            const resp = await fetch(fileUrl);
+            if (!resp.ok) throw new Error('Failed to download document');
+            imageData = {
+              base64: Buffer.from(await resp.arrayBuffer()).toString('base64'),
+              mimeType: voiceReplyDoc!.mime_type!,
+            };
+          }
+          await handleImageEdit(ctx, imageData.base64, imageData.mimeType, transcribedText, userId);
+        } catch (editError) {
+          const editMsg = editError instanceof Error ? editError.message : 'Не удалось отредактировать изображение.';
+          telegramLogger.error({ error: editError, userId }, 'Voice reply-to-image edit failed');
+          await ctx.reply(`😔 ${editMsg}`);
+        }
+        return;
       }
-      return;
     }
 
     // Auto-detections
@@ -1148,7 +1190,7 @@ const handleImageEdit = async (
     await ctx.replyWithPhoto(
       new InputFile(result.image, 'edited.png'),
       {
-        caption: `✏️ <b>Отредактировано</b>\n📝 ${escapeHtml(editPrompt)}\n⏱ ${timeSeconds}с\n\n💡 <i>Ответь на это фото, чтобы продолжить редактирование</i>`,
+        caption: `✏️ <b>Отредактировано</b>\n📝 ${escapeHtml(editPrompt)}\n⏱ ${timeSeconds}с | ${result.model}\n\n💡 <i>Ответь на это фото, чтобы продолжить редактирование</i>`,
         parse_mode: 'HTML',
       }
     );
@@ -1193,9 +1235,10 @@ const handlePhotoMessage = async (ctx: BotContext): Promise<void> => {
     const { base64: imageBase64, mimeType } = await downloadTelegramPhoto(ctx, photos);
 
     // === PATH A: Фото + caption с edit-ключевыми словами → редактирование ===
-    if (caption && detectImageEditIntent(caption)) {
-      telegramLogger.info({ userId, caption: caption.substring(0, 60) }, 'Image edit detected via photo caption');
-      await handleImageEdit(ctx, imageBase64, mimeType, caption, userId);
+    const isEditIntent = caption ? (detectImageEditIntent(caption) || await classifyImageEditIntentGroq(caption)) : false;
+    if (isEditIntent) {
+      telegramLogger.info({ userId, caption: caption?.substring(0, 60) }, 'Image edit detected via photo caption');
+      await handleImageEdit(ctx, imageBase64, mimeType, caption!, userId);
       return;
     }
 
@@ -1277,6 +1320,14 @@ const handleDocumentMessage = async (ctx: BotContext): Promise<void> => {
     const imageBase64 = Buffer.from(await response.arrayBuffer()).toString('base64');
     const caption = ctx.message?.caption;
     const chatId = ctx.chat?.id ?? 0;
+
+    // === PATH A: Документ + caption с edit-ключевыми словами → редактирование ===
+    const isEditIntent = caption ? (detectImageEditIntent(caption) || await classifyImageEditIntentGroq(caption)) : false;
+    if (isEditIntent) {
+      telegramLogger.info({ userId, caption: caption?.substring(0, 60) }, 'Image edit detected via document caption');
+      await handleImageEdit(ctx, imageBase64, mimeType, caption!, userId);
+      return;
+    }
 
     await ensureConversation(ctx, userId, chatId);
 
