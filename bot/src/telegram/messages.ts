@@ -667,7 +667,7 @@ const processMessageThroughAI = async (
 
   // Build user message — inject user name/context directly so weak models can't miss it
   const userName = telegramInfo.first_name || telegramInfo.username || null;
-  const contextPrefix = userName
+  const contextPrefix = (userName && !alreadyGreetedToday)
     ? `[Меня зовут ${userName}. Обращайся ко мне по имени.]\n`
     : '';
   const augmentedUserText = contextPrefix + userText;

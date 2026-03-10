@@ -846,6 +846,7 @@ export const memoryContextBuilder = {
     parts.push(`Используй факты выше для персонализированных ответов.`);
     parts.push(`Помни о предпочтениях и контексте этого конкретного человека.`);
     parts.push(`НИКОГДА не пиши [Имя] или [Name] — только реальное имя: ${userName}.`);
+    parts.push(`НЕ пиши фразы вроде "Теперь я буду обращаться к тебе по имени" или "Я запомнила твое имя" — ты УЖЕ его знаешь и используешь.`);
     
     const result = parts.join('\n');
     setCachedMemoryContext(userId, result);
