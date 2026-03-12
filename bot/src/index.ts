@@ -11,6 +11,7 @@ import {
 } from './config/constants.js';
 import { serverLogger, httpLogger, appLogger } from './config/logger.js';
 import { createBot } from './telegram/bot.js';
+import { registerTelegramWebhookRoute } from './telegram/webhook.js';
 import { getSupabase, settingsRepo } from './db/supabase.js';
 import { aiService } from './ai/openrouter.js';
 import { registerApiRoutes } from './api/routes.js';
@@ -159,6 +160,8 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
     }
   });
 
+  registerTelegramWebhookRoute(server, () => bot);
+
   // Register REST API routes for LLM interaction
   await registerApiRoutes(server);
 };
@@ -203,14 +206,18 @@ const initBotAndServices = async (): Promise<void> => {
     appLogger.info('✓ Telegram bot created');
   }
 
-  const shouldUseWebhook = Boolean(config.isProd && config.telegram.token && config.telegram.webhook.url);
+  const webhookBaseUrl = config.telegram.webhook.url?.replace(/\/+$/, '');
+  const shouldUseWebhook = Boolean(config.isProd && config.telegram.token && webhookBaseUrl);
 
   // Activate webhook or start polling
-  if (shouldUseWebhook && config.telegram.webhook.url) {
+  if (shouldUseWebhook && webhookBaseUrl) {
     try {
-      await bot.api.setWebhook(`${config.telegram.webhook.url}/webhook/telegram`, {
-        secret_token: config.telegram.webhook.secret,
-      });
+      await bot.api.setWebhook(
+        `${webhookBaseUrl}/webhook/telegram`,
+        config.telegram.webhook.secret
+          ? { secret_token: config.telegram.webhook.secret }
+          : {},
+      );
       appLogger.info('🔗 Telegram webhook activated');
     } catch (err) {
       appLogger.warn({ error: err }, '⚠️ Failed to set webhook — falling back to polling');

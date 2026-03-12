@@ -22,6 +22,7 @@ NC='\033[0m'
 
 LMSTUDIO_PORT="${LMSTUDIO_PORT:-1234}"
 BOT_API_URL="${BOT_API_URL:-https://amina-bot.onrender.com}"
+LMSTUDIO_TUNNEL_TOKEN="${LMSTUDIO_TUNNEL_TOKEN:-}"
 CLOUDFLARED_BIN="${CLOUDFLARED_BIN:-cloudflared}"
 HEALTH_INTERVAL="${HEALTH_INTERVAL:-30}"
 LMSTUDIO_WAIT_INTERVAL=3
@@ -76,6 +77,10 @@ check_dependencies() {
   fi
   if ! command -v curl &>/dev/null; then
     err "curl not found"
+    exit 1
+  fi
+  if [ -z "$LMSTUDIO_TUNNEL_TOKEN" ]; then
+    err "LMSTUDIO_TUNNEL_TOKEN is not set"
     exit 1
   fi
   log "cloudflared: $($CLOUDFLARED_BIN --version 2>&1 | head -1)"
@@ -137,6 +142,7 @@ send_register() {
   curl -s \
     -X POST "$BOT_API_URL/api/tunnel/register" \
     -H "Content-Type: application/json" \
+    -H "X-Amina-Tunnel-Token: $LMSTUDIO_TUNNEL_TOKEN" \
     -d "{\"url\": \"$url\"}" \
     --max-time 20 2>/dev/null || echo ""
 }
@@ -149,33 +155,25 @@ register_tunnel_url() {
   if echo "$response" | grep -q '"success":true'; then
     return 0
   fi
-
-  warn "POST /api/tunnel/register failed, trying PUT fallback..."
-  local http_code
-  http_code=$(curl -s -o /dev/null -w "%{http_code}" \
-    -X PUT "$BOT_API_URL/api/settings/lmstudio_url" \
-    -H "Content-Type: application/json" \
-    -d "{\"value\": \"$url\"}" --max-time 15 2>/dev/null || echo "000")
-
-  [ "$http_code" = "200" ] || [ "$http_code" = "201" ]
+  return 1
 }
 
-# Heartbeat: register + parse healthy field
+# Heartbeat: refresh status without rewriting lmstudio_url
 send_heartbeat() {
-  local response
-  response=$(send_register "$CURRENT_URL")
+  local http_code
+  http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+    -X POST "$BOT_API_URL/api/tunnel/heartbeat" \
+    -H "Content-Type: application/json" \
+    -H "X-Amina-Tunnel-Token: $LMSTUDIO_TUNNEL_TOKEN" \
+    -d "{\"url\": \"$CURRENT_URL\"}" \
+    --max-time 20 2>/dev/null || echo "000")
 
-  if [ -z "$response" ]; then
-    echo "null"
-    return
-  fi
-
-  if echo "$response" | grep -qE '"healthy"\s*:\s*true'; then
+  if [ "$http_code" = "200" ] || [ "$http_code" = "201" ]; then
     echo "true"
-  elif echo "$response" | grep -qE '"healthy"\s*:\s*false'; then
-    echo "false"
-  else
+  elif [ "$http_code" = "000" ]; then
     echo "null"
+  else
+    echo "false"
   fi
 }
 

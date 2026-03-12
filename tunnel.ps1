@@ -24,6 +24,7 @@ $ErrorActionPreference = 'Stop'
 
 $LMSTUDIO_PORT          = if ($env:LMSTUDIO_PORT)       { $env:LMSTUDIO_PORT }       else { '1234' }
 $BOT_API_URL            = if ($env:BOT_API_URL)          { $env:BOT_API_URL }          else { 'https://amina-bot.onrender.com' }
+$LMSTUDIO_TUNNEL_TOKEN  = if ($env:LMSTUDIO_TUNNEL_TOKEN) { $env:LMSTUDIO_TUNNEL_TOKEN } else { '' }
 $CLOUDFLARED_BIN        = if ($env:CLOUDFLARED_BIN)      { $env:CLOUDFLARED_BIN }      else { 'cloudflared' }
 $HEALTH_INTERVAL        = if ($env:HEALTH_INTERVAL)      { [int]$env:HEALTH_INTERVAL } else { 30 }
 $LMSTUDIO_WAIT_SEC      = 3
@@ -89,6 +90,11 @@ function Test-Dependencies {
 
     $version = & $CLOUDFLARED_BIN --version 2>&1 | Select-Object -First 1
     Write-Log "cloudflared: $version"
+
+    if ([string]::IsNullOrWhiteSpace($LMSTUDIO_TUNNEL_TOKEN)) {
+        Write-Err 'LMSTUDIO_TUNNEL_TOKEN is not set'
+        exit 1
+    }
 }
 
 # ============================================
@@ -141,7 +147,10 @@ function Send-Register {
     param([string]$Url)
 
     $body    = @{ url = $Url } | ConvertTo-Json -Compress
-    $headers = @{ 'Content-Type' = 'application/json' }
+    $headers = @{
+        'Content-Type' = 'application/json'
+        'X-Amina-Tunnel-Token' = $LMSTUDIO_TUNNEL_TOKEN
+    }
 
     try {
         $r = Invoke-WebRequest `
@@ -166,14 +175,31 @@ function Register-TunnelUrl {
     return ($null -ne $result)
 }
 
-# Heartbeat: register + check healthy
+# Heartbeat: refresh status without rewriting lmstudio_url
 function Send-Heartbeat {
-    $result = Send-Register -Url $script:CurrentUrl
-    if ($null -eq $result) { return $null }
+    $body    = @{ url = $script:CurrentUrl } | ConvertTo-Json -Compress
+    $headers = @{
+        'Content-Type' = 'application/json'
+        'X-Amina-Tunnel-Token' = $LMSTUDIO_TUNNEL_TOKEN
+    }
 
-    $healthy = $false
-    try { $healthy = $result.data.healthy } catch {}
-    return $healthy
+    try {
+        $response = Invoke-WebRequest `
+            -Uri "$BOT_API_URL/api/tunnel/heartbeat" `
+            -Method POST -Body $body -Headers $headers `
+            -UseBasicParsing -TimeoutSec 20 -ErrorAction Stop
+
+        return ($response.StatusCode -in 200, 201)
+    } catch {
+        $statusCode = $null
+        try { $statusCode = [int]$_.Exception.Response.StatusCode } catch {}
+
+        if ($statusCode) {
+            return $false
+        }
+
+        return $null
+    }
 }
 
 # ============================================

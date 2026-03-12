@@ -20,6 +20,10 @@ services:
         value: info
       - key: TZ
         value: UTC
+      - key: WEBHOOK_URL
+        sync: false
+      - key: WEBHOOK_SECRET
+        sync: false
       # Secrets — set in Render Dashboard
       - key: TELEGRAM_BOT_TOKEN
         sync: false
@@ -46,6 +50,8 @@ services:
         value: "201"
       # LM Studio API token (если включена авторизация в LM Studio)
       - key: LMSTUDIO_API_KEY
+        sync: false
+      - key: LMSTUDIO_TUNNEL_TOKEN
         sync: false
     autoDeploy: true
 

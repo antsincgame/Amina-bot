@@ -28,10 +28,10 @@ import {
 import {
   clearLMStudioCache,
   getLMStudioConfig,
-  checkLMStudioHealth,
-  checkLMStudioReachable,
   getLMStudioHealthStatus,
   fetchLMStudioModels,
+  probeLMStudioDirect,
+  probeLMStudioTunnelUrl,
   recordHeartbeat,
 } from '../ai/lmstudio.js';
 import archiver from 'archiver';
@@ -68,6 +68,91 @@ type ChatCompletionRequest = z.infer<typeof chatCompletionRequestSchema>;
 /** HTML escape для lead сообщений (не зависит от telegram/format.ts) */
 function escapeHtmlSimple(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+const TUNNEL_AUTH_HEADER = 'x-amina-tunnel-token';
+
+function readHeaderValue(value: string | string[] | undefined): string | null {
+  if (typeof value === 'string') {
+    const normalized = value.trim();
+    return normalized || null;
+  }
+
+  if (Array.isArray(value)) {
+    return readHeaderValue(value[0]);
+  }
+
+  return null;
+}
+
+function readTunnelToken(request: FastifyRequest): string | null {
+  const explicitToken = readHeaderValue(request.headers[TUNNEL_AUTH_HEADER]);
+  if (explicitToken) {
+    return explicitToken;
+  }
+
+  const authorization = readHeaderValue(request.headers.authorization);
+  if (!authorization?.startsWith('Bearer ')) {
+    return null;
+  }
+
+  return authorization.slice('Bearer '.length).trim() || null;
+}
+
+function getTunnelAuthFailure(request: FastifyRequest): { statusCode: number; error: string } | null {
+  if (!config.tunnel.token) {
+    return {
+      statusCode: 503,
+      error: 'LMSTUDIO_TUNNEL_TOKEN is not configured on the server',
+    };
+  }
+
+  const token = readTunnelToken(request);
+  if (!token) {
+    return { statusCode: 401, error: 'Tunnel token is required' };
+  }
+
+  if (token !== config.tunnel.token) {
+    return { statusCode: 403, error: 'Invalid tunnel token' };
+  }
+
+  return null;
+}
+
+function getTunnelUrlValidationError(tunnelUrl: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(tunnelUrl);
+  } catch {
+    return 'url must be a valid absolute URL';
+  }
+
+  if (parsed.protocol !== 'https:') {
+    return 'url must start with https://';
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  if (
+    hostname === 'localhost'
+    || hostname === '0.0.0.0'
+    || hostname === '::1'
+    || hostname === '[::1]'
+    || /^127\.\d+\.\d+\.\d+$/.test(hostname)
+    || /^10\.\d+\.\d+\.\d+$/.test(hostname)
+    || /^192\.168\.\d+\.\d+$/.test(hostname)
+  ) {
+    return 'url must not target a local or private host';
+  }
+
+  const privateRange = /^172\.(\d+)\.\d+\.\d+$/.exec(hostname);
+  if (privateRange) {
+    const secondOctet = Number(privateRange[1]);
+    if (secondOctet >= 16 && secondOctet <= 31) {
+      return 'url must not target a local or private host';
+    }
+  }
+
+  return null;
 }
 
 // --------------------------------------------
@@ -1964,45 +2049,22 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
             });
           }
           const start = Date.now();
-          let status = 0;
-          let errorMsg = '';
-          try {
-            const base = cfg.url.replace(/\/v1\/?$/, '');
-            const nativeUrl = `${base}/api/v1/models`;
-            const openaiUrl = cfg.url.endsWith('/v1') ? `${cfg.url}/models` : `${cfg.url}/v1/models`;
-            const headers: Record<string, string> = {
-              'User-Agent': 'Amina-Bot/1.0 (LM-Studio-Debug)',
-              Accept: 'application/json',
-            };
-            if (cfg.apiKey && cfg.apiKey !== 'lm-studio') {
-              headers.Authorization = `Bearer ${cfg.apiKey}`;
-            }
-            let res = await fetch(nativeUrl, {
-              headers,
-              signal: AbortSignal.timeout(25_000),
-            });
-            status = res.status;
-            if (status !== 200) {
-              res = await fetch(openaiUrl, {
-                headers,
-                signal: AbortSignal.timeout(25_000),
-              });
-              status = res.status;
-            }
-          } catch (err) {
-            errorMsg = err instanceof Error ? err.message : String(err);
-          }
+          const result = await probeLMStudioDirect(cfg, {
+            timeoutMs: 25_000,
+            userAgent: 'Amina-Bot/1.0 (LM-Studio-Debug)',
+          });
           const latencyMs = Date.now() - start;
-          const healthy = status === 200;
+
           return reply.code(200).send({
             success: true,
             data: {
               configured: true,
-              healthy,
+              healthy: result.healthy,
               url: cfg.url,
-              status,
+              status: result.status,
+              endpoint: result.endpoint ?? undefined,
               latencyMs,
-              error: errorMsg || undefined,
+              error: result.error || undefined,
             },
           });
         } catch (error) {
@@ -2022,6 +2084,14 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
           reply: FastifyReply
         ) => {
           try {
+            const authFailure = getTunnelAuthFailure(request);
+            if (authFailure) {
+              return reply.code(authFailure.statusCode).send({
+                success: false,
+                error: authFailure.error,
+              });
+            }
+
             const { url: tunnelUrl } = request.body as { url: string };
 
             if (!tunnelUrl || typeof tunnelUrl !== 'string') {
@@ -2032,32 +2102,15 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
             }
 
             const trimmed = tunnelUrl.trim().replace(/\/+$/, '');
-            if (!trimmed.startsWith('https://')) {
+            const validationError = getTunnelUrlValidationError(trimmed);
+            if (validationError) {
               return reply.code(400).send({
                 success: false,
-                error: 'url must start with https://',
+                error: validationError,
               });
             }
 
-            const settings = await settingsRepo.getMany([
-              'lmstudio_model',
-              'lmstudio_api_key',
-            ]);
-            const candidateCfg = {
-              url: trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`,
-              model: settings['lmstudio_model']?.trim() || '',
-              apiKey: process.env.LMSTUDIO_API_KEY?.trim()
-                || settings['lmstudio_api_key']?.trim()
-                || 'lm-studio',
-            };
-
-            let healthy = false;
-            try {
-              const models = await fetchLMStudioModels(candidateCfg);
-              healthy = models.length > 0;
-            } catch {
-              healthy = false;
-            }
+            const healthy = await probeLMStudioTunnelUrl(trimmed);
 
             if (!healthy) {
               return reply.code(400).send({
@@ -2096,6 +2149,14 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
           reply: FastifyReply
         ) => {
           try {
+            const authFailure = getTunnelAuthFailure(request);
+            if (authFailure) {
+              return reply.code(authFailure.statusCode).send({
+                success: false,
+                error: authFailure.error,
+              });
+            }
+
             const { url } = (request.body ?? {}) as { url?: string };
             if (!url || typeof url !== 'string') {
               return reply.code(400).send({ success: false, error: 'url is required' });
@@ -2112,7 +2173,7 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
               return reply.code(409).send({ success: false, error: 'heartbeat url does not match registered tunnel' });
             }
 
-            const healthy = await checkLMStudioReachable(cfg);
+            const healthy = await probeLMStudioTunnelUrl(normalizedIncoming);
             if (!healthy) {
               return reply.code(409).send({ success: false, error: 'registered tunnel is not reachable from server' });
             }

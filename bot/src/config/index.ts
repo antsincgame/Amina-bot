@@ -45,6 +45,7 @@ const envSchema = z.object({
     z.string().url().optional(),
   ),
   WEBHOOK_SECRET: z.string().optional(),
+  LMSTUDIO_TUNNEL_TOKEN: z.string().optional(),
 
   // URLs для CORS, HTTP-Referer, ссылок в сообщениях (опционально)
   ADMIN_URL: z.preprocess(
@@ -147,6 +148,10 @@ export const config = {
       url: env.WEBHOOK_URL,
       secret: env.WEBHOOK_SECRET,
     },
+  },
+
+  tunnel: {
+    token: env.LMSTUDIO_TUNNEL_TOKEN || '',
   },
 
   /** Установить токен Telegram (при старте из БД) */

@@ -6,7 +6,10 @@ import {
   getHeartbeatAt,
   getHeartbeatUrl,
   getLMStudioHealthStatus,
+  checkLMStudioHealth,
   checkLMStudioReachable,
+  probeLMStudioDirect,
+  probeLMStudioTunnelUrl,
 } from './lmstudio.js';
 
 vi.mock('../db/supabase.js', () => {
@@ -184,6 +187,46 @@ describe('lmstudio', () => {
     });
   });
 
+  describe('probeLMStudioDirect', () => {
+    it('should fall back to the OpenAI endpoint when native fetch fails', async () => {
+      const fetchMock = vi.spyOn(globalThis, 'fetch')
+        .mockRejectedValueOnce(new TypeError('fetch failed'))
+        .mockResolvedValueOnce(new Response('', { status: 200 }) as Response);
+
+      const result = await probeLMStudioDirect({
+        url: 'https://fallback.trycloudflare.com/v1',
+        model: 'test',
+        apiKey: 'lm-studio',
+      });
+
+      expect(result.healthy).toBe(true);
+      expect(result.status).toBe(200);
+      expect(result.endpoint).toBe('openai');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(String(fetchMock.mock.calls[0]?.[0])).toContain('/api/v1/models');
+      expect(String(fetchMock.mock.calls[1]?.[0])).toContain('/v1/models');
+    });
+  });
+
+  describe('checkLMStudioHealth', () => {
+    it('should return healthy when native fetch fails but openai endpoint succeeds', async () => {
+      const { settingsRepo } = await import('../db/supabase.js');
+      const store = (settingsRepo as unknown as { _store: Map<string, string> })._store;
+      store.set('lmstudio_url', 'https://fallback.trycloudflare.com');
+
+      const fetchMock = vi.spyOn(globalThis, 'fetch')
+        .mockRejectedValueOnce(new TypeError('fetch failed'))
+        .mockResolvedValueOnce(new Response('', { status: 200 }) as Response);
+
+      clearLMStudioCache();
+      const cfg = await getLMStudioConfig();
+      const healthy = await checkLMStudioHealth(cfg!);
+
+      expect(healthy).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe('checkLMStudioReachable', () => {
     it('should return false when tunnel is not reachable', async () => {
       const cfg = {
@@ -194,5 +237,22 @@ describe('lmstudio', () => {
       const reachable = await checkLMStudioReachable(cfg);
       expect(reachable).toBe(false);
     }, 25_000);
+  });
+
+  describe('probeLMStudioTunnelUrl', () => {
+    it('should accept a protected LM Studio endpoint without sending Authorization', async () => {
+      const fetchMock = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValue(new Response('', { status: 401 }) as Response);
+
+      const reachable = await probeLMStudioTunnelUrl('https://safe.trycloudflare.com');
+
+      expect(reachable).toBe(true);
+      expect(fetchMock).toHaveBeenCalled();
+
+      const requestInit = fetchMock.mock.calls[0]?.[1];
+      const headers = requestInit?.headers as Record<string, string> | undefined;
+      expect(headers?.Authorization).toBeUndefined();
+    });
   });
 });

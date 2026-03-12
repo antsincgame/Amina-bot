@@ -68,6 +68,14 @@ vi.mock('../ai/lmstudio.js', () => ({
   fetchLMStudioModels: vi.fn().mockResolvedValue([
     { id: 'local-model', name: 'Local Model', owned_by: 'local' },
   ]),
+  probeLMStudioDirect: vi.fn().mockResolvedValue({
+    healthy: true,
+    status: 200,
+    error: null,
+    endpoint: 'openai',
+    timeout: false,
+  }),
+  probeLMStudioTunnelUrl: vi.fn().mockResolvedValue(true),
   recordHeartbeat: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -135,6 +143,10 @@ vi.mock('../utils/rate-limiter.js', () => ({
 }));
 
 import { registerApiRoutes } from './routes.js';
+
+const tunnelHeaders = {
+  'x-amina-tunnel-token': 'test-tunnel-token',
+};
 
 describe('API Routes', () => {
   let app: FastifyInstance;
@@ -227,6 +239,36 @@ describe('API Routes', () => {
     });
   });
 
+  describe('GET /api/lmstudio/health/debug', () => {
+    it('should report healthy when direct probe succeeds via fallback endpoint', async () => {
+      const lmstudio = await import('../ai/lmstudio.js');
+      vi.mocked(lmstudio.getLMStudioConfig).mockResolvedValueOnce({
+        url: 'https://ok.trycloudflare.com/v1',
+        model: 'local-model',
+        apiKey: 'lm-studio',
+      });
+      vi.mocked(lmstudio.probeLMStudioDirect).mockResolvedValueOnce({
+        healthy: true,
+        status: 200,
+        error: null,
+        endpoint: 'openai',
+        timeout: false,
+      });
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/lmstudio/health/debug',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(true);
+      expect(body.data.healthy).toBe(true);
+      expect(body.data.status).toBe(200);
+      expect(body.data.endpoint).toBe('openai');
+    });
+  });
+
   describe('POST /api/chat', () => {
     it('should return AI response for valid request', async () => {
       const response = await app.inject({
@@ -276,10 +318,32 @@ describe('API Routes', () => {
   });
 
   describe('POST /api/tunnel/register', () => {
+    it('should require tunnel token', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/tunnel/register',
+        payload: { url: 'https://ok.trycloudflare.com' },
+      });
+
+      expect(response.statusCode).toBe(401);
+    });
+
+    it('should reject invalid tunnel token', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/tunnel/register',
+        headers: { 'x-amina-tunnel-token': 'wrong-token' },
+        payload: { url: 'https://ok.trycloudflare.com' },
+      });
+
+      expect(response.statusCode).toBe(403);
+    });
+
     it('should reject non-https tunnel url', async () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/tunnel/register',
+        headers: tunnelHeaders,
         payload: { url: 'http://example.com' },
       });
 
@@ -288,11 +352,12 @@ describe('API Routes', () => {
 
     it('should reject tunnel url when models API is invalid', async () => {
       const lmstudio = await import('../ai/lmstudio.js');
-      vi.mocked(lmstudio.fetchLMStudioModels).mockRejectedValueOnce(new Error('invalid api'));
+      vi.mocked(lmstudio.probeLMStudioTunnelUrl).mockResolvedValueOnce(false);
 
       const response = await app.inject({
         method: 'POST',
         url: '/api/tunnel/register',
+        headers: tunnelHeaders,
         payload: { url: 'https://bad.trycloudflare.com' },
       });
 
@@ -305,10 +370,40 @@ describe('API Routes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/tunnel/heartbeat',
+        headers: tunnelHeaders,
         payload: {},
       });
 
       expect(response.statusCode).toBe(400);
+    });
+
+    it('should require tunnel token for heartbeat', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/tunnel/heartbeat',
+        payload: { url: 'https://ok.trycloudflare.com' },
+      });
+
+      expect(response.statusCode).toBe(401);
+    });
+
+    it('should accept heartbeat for the registered tunnel', async () => {
+      const lmstudio = await import('../ai/lmstudio.js');
+      vi.mocked(lmstudio.getLMStudioConfig).mockResolvedValueOnce({
+        url: 'https://ok.trycloudflare.com/v1',
+        model: 'local-model',
+        apiKey: 'lm-studio',
+      });
+      vi.mocked(lmstudio.probeLMStudioTunnelUrl).mockResolvedValueOnce(true);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/tunnel/heartbeat',
+        headers: tunnelHeaders,
+        payload: { url: 'https://ok.trycloudflare.com' },
+      });
+
+      expect(response.statusCode).toBe(200);
     });
   });
 });
