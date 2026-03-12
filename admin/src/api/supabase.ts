@@ -269,7 +269,16 @@ export const statusApi = {
 
 // News Sources API (для дайджеста — парсинг новостей с сайтов)
 // Re-export shared types
-export type { NewsSite, ParsedHeadline, NewsSourceType, NewsSourceCategory, NewsSourceLanguage, JsonFieldMapping } from '../../../shared/types/index.js';
+export type {
+  NewsSite,
+  ParsedHeadline,
+  NewsSourceType,
+  NewsSourceCategory,
+  NewsSourceLanguage,
+  NewsSourceTier,
+  JsonFieldMapping,
+  HtmlFieldMapping,
+} from '../../../shared/types/index.js';
 
 // Import for internal use
 import type { NewsSite, ParsedHeadline } from '../../../shared/types/index.js';
@@ -294,7 +303,7 @@ export const newsSourcesApi = {
     }
   },
 
-  async testParse(url: string): Promise<{
+  async testParse(site: Partial<NewsSite> & { url: string }): Promise<{
     success: boolean;
     error?: string;
     data: { url: string; headlines: ParsedHeadline[]; count: number; parseTimeMs?: number };
@@ -302,22 +311,34 @@ export const newsSourcesApi = {
     const response = await fetch(`${BOT_URL}/api/news-sites/test`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url }),
+      body: JSON.stringify(site),
     });
     if (!response.ok) throw new Error('Failed to test parse');
     return response.json();
   },
 
-  async getPresets(): Promise<NewsSite[]> {
+  async getPresets(): Promise<{
+    all: NewsSite[];
+    global: NewsSite[];
+    asia: NewsSite[];
+    counts: { all: number; global: number; asia: number };
+  }> {
     const response = await fetch(`${BOT_URL}/api/news-sites/presets`);
     if (!response.ok) throw new Error('Failed to fetch presets');
     const result = await response.json();
-    return result.data ?? [];
+    return {
+      all: result.data?.all ?? [],
+      global: result.data?.global ?? [],
+      asia: result.data?.asia ?? [],
+      counts: result.counts ?? { all: 0, global: 0, asia: 0 },
+    };
   },
 
-  async addPresets(): Promise<{ added: number; total: number; sites: NewsSite[] }> {
+  async addPresets(group: 'all' | 'global' | 'asia' = 'all'): Promise<{ added: number; total: number; sites: NewsSite[]; group: string }> {
     const response = await fetch(`${BOT_URL}/api/news-sites/add-presets`, {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group }),
     });
     if (!response.ok) throw new Error('Failed to add presets');
     const result = await response.json();

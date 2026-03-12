@@ -1,7 +1,15 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { newsSourcesApi } from '../api/supabase';
-import type { NewsSite, NewsSourceType, NewsSourceCategory, NewsSourceLanguage } from '../../../shared/types/index.js';
+import type {
+  NewsSite,
+  NewsSourceType,
+  NewsSourceCategory,
+  NewsSourceLanguage,
+  NewsSourceTier,
+  JsonFieldMapping,
+  HtmlFieldMapping,
+} from '../../../shared/types/index.js';
 import {
   Newspaper,
   Plus,
@@ -23,6 +31,7 @@ import {
   Rss,
   Code,
   Globe2,
+  Pencil,
 } from 'lucide-react';
 
 // ===== Метки =====
@@ -48,16 +57,41 @@ const LANGUAGE_FLAGS: Record<NewsSourceLanguage, string> = {
   ko: '🇰🇷',
 };
 
+const TIER_LABELS: Record<NewsSourceTier, string> = {
+  tier1: 'Tier 1',
+  tier2: 'Tier 2',
+  tier3: 'Tier 3',
+};
+
+const formatJsonBlock = (value?: JsonFieldMapping | HtmlFieldMapping): string =>
+  value ? JSON.stringify(value, null, 2) : '';
+
+const parseJsonBlock = <T extends object>(raw: string, label: string): T | undefined => {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+
+  try {
+    return JSON.parse(trimmed) as T;
+  } catch {
+    throw new Error(`Поле "${label}" должно содержать валидный JSON`);
+  }
+};
+
 const NewsSourcesPage = () => {
   const queryClient = useQueryClient();
 
   const [sites, setSites] = useState<NewsSite[]>([]);
   const [hasChanges, setHasChanges] = useState(false);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [newName, setNewName] = useState('');
   const [newUrl, setNewUrl] = useState('');
   const [newType, setNewType] = useState<NewsSourceType>('rss');
   const [newCategory, setNewCategory] = useState<NewsSourceCategory>('city_local');
   const [newLanguage, setNewLanguage] = useState<NewsSourceLanguage>('ru');
+  const [newTier, setNewTier] = useState<NewsSourceTier>('tier1');
+  const [newFilterKeywords, setNewFilterKeywords] = useState('');
+  const [newJsonMapping, setNewJsonMapping] = useState('');
+  const [newHtmlMapping, setNewHtmlMapping] = useState('');
   const [addError, setAddError] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<NewsSourceCategory | 'all'>('all');
 
@@ -80,6 +114,11 @@ const NewsSourcesPage = () => {
     },
   });
 
+  const { data: presetMeta } = useQuery({
+    queryKey: ['news-site-presets'],
+    queryFn: () => newsSourcesApi.getPresets(),
+  });
+
   const { mutate: saveSites, isPending: isSaving } = useMutation({
     mutationFn: () => newsSourcesApi.save(sites),
     onSuccess: () => {
@@ -89,7 +128,7 @@ const NewsSourcesPage = () => {
   });
 
   const { mutate: testParse, isPending: isTesting } = useMutation({
-    mutationFn: (url: string) => newsSourcesApi.testParse(url),
+    mutationFn: (site: Partial<NewsSite> & { url: string }) => newsSourcesApi.testParse(site),
     onSuccess: (result) => {
       setTestResult(result.data);
       if (!result.success && result.error) {
@@ -104,12 +143,41 @@ const NewsSourcesPage = () => {
   });
 
   const { mutate: addPresets, isPending: isAddingPresets } = useMutation({
-    mutationFn: () => newsSourcesApi.addPresets(),
+    mutationFn: (group: 'all' | 'global' | 'asia') => newsSourcesApi.addPresets(group),
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['news-site-presets'] });
       queryClient.invalidateQueries({ queryKey: ['news-sites'] });
       setHasChanges(false);
     },
   });
+
+  const resetForm = () => {
+    setEditingIndex(null);
+    setNewName('');
+    setNewUrl('');
+    setNewType('rss');
+    setNewCategory('city_local');
+    setNewLanguage('ru');
+    setNewTier('tier1');
+    setNewFilterKeywords('');
+    setNewJsonMapping('');
+    setNewHtmlMapping('');
+    setAddError('');
+  };
+
+  const loadSiteIntoForm = (site: NewsSite, index: number) => {
+    setEditingIndex(index);
+    setNewName(site.name);
+    setNewUrl(site.url);
+    setNewType(site.type ?? 'rss');
+    setNewCategory(site.category ?? 'city_local');
+    setNewLanguage(site.language ?? 'ru');
+    setNewTier(site.tier ?? 'tier1');
+    setNewFilterKeywords(site.filterKeywords?.join(', ') ?? '');
+    setNewJsonMapping(formatJsonBlock(site.jsonMapping));
+    setNewHtmlMapping(formatJsonBlock(site.htmlMapping));
+    setAddError('');
+  };
 
   const handleAdd = () => {
     setAddError('');
@@ -121,22 +189,49 @@ const NewsSourcesPage = () => {
 
     try { new URL(url); } catch { setAddError('Неверный формат URL'); return; }
 
-    if (sites.some(s => s.url === url)) {
+    if (sites.some((site, index) => site.url === url && index !== editingIndex)) {
       setAddError('Этот сайт уже добавлен');
       return;
     }
 
-    const newSite: NewsSite = {
-      name, url, enabled: true,
-      type: newType,
-      category: newCategory,
-      language: newLanguage,
-    };
+    try {
+      const filterKeywords = newFilterKeywords
+        .split(',')
+        .map(keyword => keyword.trim())
+        .filter(Boolean);
 
-    setSites([...sites, newSite]);
-    setNewName('');
-    setNewUrl('');
-    setHasChanges(true);
+      const jsonMapping = newType === 'json_api'
+        ? parseJsonBlock<JsonFieldMapping>(newJsonMapping, 'JSON mapping')
+        : undefined;
+      const htmlMapping = newType === 'html_scrape'
+        ? parseJsonBlock<HtmlFieldMapping>(newHtmlMapping, 'HTML mapping')
+        : undefined;
+
+      const nextSite: NewsSite = {
+        name,
+        url,
+        enabled: editingIndex !== null ? sites[editingIndex]?.enabled !== false : true,
+        type: newType,
+        category: newCategory,
+        language: newLanguage,
+        tier: newTier,
+        ...(jsonMapping ? { jsonMapping } : {}),
+        ...(htmlMapping ? { htmlMapping } : {}),
+        ...(filterKeywords.length > 0 ? { filterKeywords } : {}),
+      };
+
+      if (editingIndex !== null) {
+        const updatedSites = sites.map((site, index) => index === editingIndex ? nextSite : site);
+        setSites(updatedSites);
+      } else {
+        setSites([...sites, nextSite]);
+      }
+
+      setHasChanges(true);
+      resetForm();
+    } catch (error) {
+      setAddError(error instanceof Error ? error.message : 'Не удалось разобрать расширенную конфигурацию');
+    }
   };
 
   const handleRemove = (index: number) => {
@@ -149,10 +244,21 @@ const NewsSourcesPage = () => {
     setHasChanges(true);
   };
 
-  const handleTestParse = (url: string) => {
-    setTestingSite(url);
+  const handleTestParse = (site: NewsSite) => {
+    setTestingSite(site.url);
     setTestResult(null);
-    testParse(url);
+    testParse({
+      name: site.name,
+      url: site.url,
+      enabled: site.enabled,
+      type: site.type,
+      category: site.category,
+      language: site.language,
+      tier: site.tier,
+      jsonMapping: site.jsonMapping,
+      htmlMapping: site.htmlMapping,
+      filterKeywords: site.filterKeywords,
+    });
   };
 
   const filteredSites = categoryFilter === 'all'
@@ -197,7 +303,7 @@ const NewsSourcesPage = () => {
       {/* Quick Actions */}
       <div className="flex flex-wrap items-center gap-3 mb-6">
         <button
-          onClick={() => addPresets()}
+          onClick={() => addPresets('all')}
           disabled={isAddingPresets}
           className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg
                      text-purple-400 hover:bg-purple-400/10 transition-all"
@@ -208,7 +314,18 @@ const NewsSourcesPage = () => {
           ) : (
             <Sparkles className="w-4 h-4" />
           )}
-          Добавить AI/Tech пресеты ({DEFAULT_PRESET_COUNT} источников)
+          Добавить весь каталог ({presetMeta?.counts.all ?? 0})
+        </button>
+
+        <button
+          onClick={() => addPresets('asia')}
+          disabled={isAddingPresets}
+          className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg
+                     text-red-300 hover:bg-red-400/10 transition-all"
+          style={{ border: '1px solid rgba(248, 113, 113, 0.28)' }}
+        >
+          <Globe2 className="w-4 h-4" />
+          Добавить Asia AI ({presetMeta?.counts.asia ?? 0})
         </button>
 
         <div className="flex items-center gap-1 ml-auto">
@@ -285,6 +402,11 @@ const NewsSourcesPage = () => {
                       {site.language && (
                         <span className="text-xs">{LANGUAGE_FLAGS[site.language]}</span>
                       )}
+                      {site.tier && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] text-gray-400 border border-gray-700 rounded">
+                          {TIER_LABELS[site.tier]}
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-2 mt-0.5">
                       <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded border ${catInfo.color}`}>
@@ -298,13 +420,29 @@ const NewsSourcesPage = () => {
                         <Link className="w-2.5 h-2.5" />
                         {site.url.length > 60 ? site.url.substring(0, 60) + '...' : site.url}
                       </span>
+                      {site.filterKeywords && site.filterKeywords.length > 0 && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-cyan-300 border border-cyan-400/20 rounded">
+                          keywords {site.filterKeywords.length}
+                        </span>
+                      )}
+                      {(site.jsonMapping || site.htmlMapping) && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-violet-300 border border-violet-400/20 rounded">
+                          config
+                        </span>
+                      )}
                     </div>
                   </div>
 
                   {/* Actions */}
                   <div className="flex items-center gap-1.5 flex-shrink-0">
                     <button
-                      onClick={() => handleTestParse(site.url)}
+                      onClick={() => loadSiteIntoForm(site, realIndex)}
+                      className="p-1.5 text-gray-400 hover:text-cyan-300 transition-colors"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleTestParse(site)}
                       disabled={isTesting && testingSite === site.url}
                       className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-lg
                                  text-amber-400 hover:bg-amber-400/10 transition-all"
@@ -337,7 +475,19 @@ const NewsSourcesPage = () => {
 
       {/* Add New Site */}
       <div className="card mb-6">
-        <h3 className="font-semibold text-lg text-gray-200 mb-4">Добавить источник</h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-semibold text-lg text-gray-200">
+            {editingIndex !== null ? 'Редактировать источник' : 'Добавить источник'}
+          </h3>
+          {editingIndex !== null && (
+            <button
+              onClick={resetForm}
+              className="text-sm text-gray-500 hover:text-white transition-colors"
+            >
+              Сбросить форму
+            </button>
+          )}
+        </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <div>
@@ -364,7 +514,7 @@ const NewsSourcesPage = () => {
           </div>
         </div>
 
-        <div className="grid grid-cols-3 gap-4 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
           <div>
             <label className="label text-sm text-gray-400 flex items-center gap-1">
               <Cpu className="w-3 h-3" /> Тип
@@ -410,7 +560,57 @@ const NewsSourcesPage = () => {
               <option value="ko">한국어 (Korean)</option>
             </select>
           </div>
+          <div>
+            <label className="label text-sm text-gray-400">Tier</label>
+            <select
+              className="input bg-white/5 text-gray-200"
+              value={newTier}
+              onChange={(e) => setNewTier(e.target.value as NewsSourceTier)}
+            >
+              <option value="tier1">Tier 1 — стабильный RSS/API</option>
+              <option value="tier2">Tier 2 — HTML / site recipe</option>
+              <option value="tier3">Tier 3 — paywall / anti-bot / degraded</option>
+            </select>
+          </div>
         </div>
+
+        <div className="grid grid-cols-1 gap-4 mb-4">
+          <div>
+            <label className="label text-sm text-gray-400">Ключевые слова фильтрации</label>
+            <input
+              type="text"
+              className="input bg-white/5 text-gray-200"
+              placeholder="AI, 生成AI, 바이브 코딩, DeepSeek"
+              value={newFilterKeywords}
+              onChange={(e) => { setNewFilterKeywords(e.target.value); setAddError(''); }}
+            />
+            <p className="text-xs text-gray-500 mt-1">Через запятую. Используются для отсеивания нерелевантных заголовков.</p>
+          </div>
+        </div>
+
+        {newType === 'json_api' && (
+          <div className="mb-4">
+            <label className="label text-sm text-gray-400">JSON mapping</label>
+            <textarea
+              className="input min-h-[130px] bg-white/5 text-gray-200 font-mono text-xs"
+              placeholder={'{\n  "itemsPath": "",\n  "titleField": "title",\n  "urlField": "url",\n  "dateField": "published_at"\n}'}
+              value={newJsonMapping}
+              onChange={(e) => { setNewJsonMapping(e.target.value); setAddError(''); }}
+            />
+          </div>
+        )}
+
+        {newType === 'html_scrape' && (
+          <div className="mb-4">
+            <label className="label text-sm text-gray-400">HTML mapping</label>
+            <textarea
+              className="input min-h-[150px] bg-white/5 text-gray-200 font-mono text-xs"
+              placeholder={'{\n  "itemSelectors": ["article", ".news-item"],\n  "titleSelectors": ["h2", "h3", ".entry-title"],\n  "linkSelectors": ["a[href]"],\n  "removeSelectors": ["nav", "footer"]\n}'}
+              value={newHtmlMapping}
+              onChange={(e) => { setNewHtmlMapping(e.target.value); setAddError(''); }}
+            />
+          </div>
+        )}
 
         {addError && (
           <div className="flex items-center gap-2 text-sm text-red-400 mb-3">
@@ -419,15 +619,26 @@ const NewsSourcesPage = () => {
           </div>
         )}
 
-        <button
-          onClick={handleAdd}
-          className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg
-                     text-amber-400 hover:bg-amber-400/10 transition-all"
-          style={{ border: '1px solid rgba(255, 215, 0, 0.3)' }}
-        >
-          <Plus className="w-4 h-4" />
-          Добавить
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            onClick={handleAdd}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg
+                       text-amber-400 hover:bg-amber-400/10 transition-all"
+            style={{ border: '1px solid rgba(255, 215, 0, 0.3)' }}
+          >
+            {editingIndex !== null ? <Pencil className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+            {editingIndex !== null ? 'Сохранить в список' : 'Добавить'}
+          </button>
+
+          {editingIndex !== null && (
+            <button
+              onClick={resetForm}
+              className="px-4 py-2 text-sm text-gray-400 hover:text-white transition-colors"
+            >
+              Отмена
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Save Button */}
@@ -529,7 +740,5 @@ const NewsSourcesPage = () => {
     </div>
   );
 };
-
-const DEFAULT_PRESET_COUNT = 18;
 
 export default NewsSourcesPage;

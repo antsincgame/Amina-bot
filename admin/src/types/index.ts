@@ -14,6 +14,8 @@ export type {
   NewsSourceType,
   NewsSourceCategory,
   NewsSourceLanguage,
+  NewsSourceTier,
   JsonFieldMapping,
+  HtmlFieldMapping,
 } from '../../../shared/types/index.js';
 
