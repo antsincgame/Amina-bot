@@ -14,6 +14,16 @@ import { load } from 'cheerio';
 import type { AnyNode } from 'domhandler';
 import { settingsRepo } from '../db/supabase.js';
 import { appLogger } from '../config/logger.js';
+import {
+  FETCH_TIMEOUT_MS,
+  MAX_HEADLINES_PER_SITE,
+  MIN_TITLE_LENGTH,
+  MAX_TITLE_LENGTH,
+  MAX_NEWS_AGE_HOURS,
+  PARSED_NEWS_CACHE_TTL as PARSED_NEWS_CACHE_TTL_MS,
+  NEWS_FEED_PROBE_TIMEOUT_MS,
+  NEWS_SITE_TIMEOUT_MS,
+} from '../config/constants.js';
 import { ASIA_NEWS_SOURCE_MANIFEST } from './asian-news-sources.js';
 import type {
   NewsSite,
@@ -31,12 +41,6 @@ export type { NewsSite, ParsedHeadline } from '../../../shared/types/index.js';
 // ===== Константы =====
 
 const SETTINGS_KEY = 'digest_news_sites';
-const FETCH_TIMEOUT_MS = 30_000;
-const MAX_HEADLINES_PER_SITE = 200;
-const MIN_TITLE_LENGTH = 4;
-const MAX_TITLE_LENGTH = 800;
-const MAX_NEWS_AGE_HOURS = 336;
-const PARSED_NEWS_CACHE_TTL_MS = 2 * 60 * 1000;
 
 export type NewsPresetGroup = 'all' | 'global' | 'asia';
 
@@ -792,6 +796,28 @@ async function fetchWithTimeout(url: string, timeoutMs: number = FETCH_TIMEOUT_M
   }
 }
 
+function createTimeoutError(scope: string, timeoutMs: number): Error {
+  return new Error(`${scope} timed out after ${Math.ceil(timeoutMs / 1000)}s`);
+}
+
+async function withPromiseTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  scope: string,
+): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  try {
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => reject(createTimeoutError(scope, timeoutMs)), timeoutMs);
+    });
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 // ===== JSON API Parser =====
 
 /**
@@ -996,7 +1022,7 @@ async function tryRssFeed(
   for (const path of RSS_PATHS) {
     try {
       const feedUrl = origin + path;
-      const response = await fetchWithTimeout(feedUrl, FETCH_TIMEOUT_MS);
+      const response = await fetchWithTimeout(feedUrl, NEWS_FEED_PROBE_TIMEOUT_MS);
       if (!response.ok) continue;
 
       const contentType = response.headers.get('content-type') ?? '';
@@ -1038,7 +1064,7 @@ async function tryDirectFeed(
   options?: { category?: NewsSourceCategory; language?: NewsSourceLanguage; filterKeywords?: string[] },
 ): Promise<ParsedHeadline[] | null> {
   try {
-    const response = await fetchWithTimeout(feedUrl, FETCH_TIMEOUT_MS);
+    const response = await fetchWithTimeout(feedUrl, NEWS_FEED_PROBE_TIMEOUT_MS);
     if (!response.ok) return null;
 
     const contentType = response.headers.get('content-type') ?? '';
@@ -1388,7 +1414,7 @@ export async function parseNewsFromSite(siteOrUrl: NewsSite | string): Promise<P
       if (rssLink) {
         const feedUrl = normalizeUrl(rssLink, origin);
         if (feedUrl) {
-          const rssResponse = await fetchWithTimeout(feedUrl, FETCH_TIMEOUT_MS);
+          const rssResponse = await fetchWithTimeout(feedUrl, NEWS_FEED_PROBE_TIMEOUT_MS);
           if (rssResponse.ok) {
             const feedXml = await rssResponse.text();
             const rssHeadlines = parseRssFeed(feedXml, origin, parseOptions);
@@ -1457,7 +1483,11 @@ export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
   const results = await Promise.allSettled(
     enabledSites.map(async (site) => {
       try {
-        const headlines = await parseNewsFromSite(site);
+        const headlines = await withPromiseTimeout(
+          parseNewsFromSite(site),
+          NEWS_SITE_TIMEOUT_MS,
+          `News site "${site.name}"`,
+        );
         appLogger.info(
           { site: site.name, count: headlines.length, type: site.type, category: site.category },
           'Site parsed successfully',

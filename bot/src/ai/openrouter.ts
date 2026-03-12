@@ -11,6 +11,7 @@ import {
   getLMStudioClient,
   checkLMStudioHealth,
 } from './lmstudio.js';
+import { HEALTH_AI_TIMEOUT_MS } from '../config/constants.js';
 
 // --------------------------------------------
 // Динамический поиск бесплатных моделей через OpenRouter API
@@ -682,12 +683,26 @@ export const aiService = {
   /**
    * Test AI connection
    */
-  async testConnection(): Promise<boolean> {
+  async testConnection(timeoutMs = HEALTH_AI_TIMEOUT_MS): Promise<boolean> {
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
     try {
-      const response = await this.complete('Say "OK" if you can hear me.');
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new Error(`AI readiness timeout after ${timeoutMs}ms`));
+        }, timeoutMs);
+      });
+
+      const response = await Promise.race([
+        this.complete('Say "OK" if you can hear me.'),
+        timeoutPromise,
+      ]);
       return response.toLowerCase().includes('ok');
     } catch {
       return false;
+    } finally {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
     }
   },
 };

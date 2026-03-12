@@ -1632,7 +1632,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
           reply: FastifyReply,
         ) => {
           try {
-            const { city = '', firstName = 'Читатель', format = 'html', pipeline = 'legacy', refresh = '0' } = request.query as {
+            const { city = '', firstName = 'Читатель', format = 'html', pipeline = 'hybrid', refresh = '0' } = request.query as {
               city?: string;
               firstName?: string;
               format?: string;

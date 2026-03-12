@@ -81,6 +81,7 @@ describe('OpenRouter AI Service', () => {
     vi.clearAllMocks();
     mockCreate.mockReset();
     mockFetch.mockReset();
+    vi.useRealTimers();
   });
 
   describe('aiService.chat', () => {
@@ -189,6 +190,16 @@ describe('OpenRouter AI Service', () => {
 
       const result = await aiService.testConnection();
       expect(result).toBe(false);
+    });
+
+    it('should return false when readiness check exceeds timeout', async () => {
+      vi.useFakeTimers();
+      mockCreate.mockImplementationOnce(() => new Promise(() => undefined));
+
+      const resultPromise = aiService.testConnection(50);
+      await vi.advanceTimersByTimeAsync(50);
+
+      await expect(resultPromise).resolves.toBe(false);
     });
   });
 

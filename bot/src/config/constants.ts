@@ -49,6 +49,7 @@ export const REQUEST_TIMEOUT_MS = 28_000;
 export const CONNECTION_TIMEOUT_MS = 5_000;
 export const KEEP_ALIVE_TIMEOUT_MS = 30_000;
 export const BODY_LIMIT_BYTES = 10_485_760; // 10MB
+export const HEALTH_AI_TIMEOUT_MS = 2_500;
 
 // ============================================
 // Cache TTL (ms)
@@ -87,6 +88,8 @@ export const MAX_HEADLINES_PER_SITE = 200;
 export const MIN_TITLE_LENGTH = 4;
 export const MAX_TITLE_LENGTH = 800;
 export const MAX_NEWS_AGE_HOURS = 336; // 14 days
+export const NEWS_SITE_TIMEOUT_MS = 12_000;
+export const NEWS_FEED_PROBE_TIMEOUT_MS = 5_000;
 
 // ============================================
 // TTS
@@ -120,4 +123,4 @@ export const DIGEST_TYPING_DELAY_MS = 1_500;
 // ============================================
 // Health / Ready
 // ============================================
-export const HEALTH_CACHE_TTL_MS = 10_000;
+export const HEALTH_CACHE_TTL_MS = 60_000;

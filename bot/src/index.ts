@@ -8,6 +8,7 @@ import {
   KEEP_ALIVE_TIMEOUT_MS,
   BODY_LIMIT_BYTES,
   HEALTH_CACHE_TTL_MS,
+  HEALTH_AI_TIMEOUT_MS,
 } from './config/constants.js';
 import { serverLogger, httpLogger, appLogger } from './config/logger.js';
 import { createBot } from './telegram/bot.js';
@@ -78,6 +79,28 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
   // === ОПТИМИЗАЦИЯ: Health/Ready/Status кешируются ===
   let healthCache: { checks: Record<string, boolean>; ts: number } | null = null;
 
+  const dbCheck = async (): Promise<boolean> => {
+    try {
+      const { error } = await getSupabase().from('settings').select('key').limit(1);
+      return !error;
+    } catch {
+      return false;
+    }
+  };
+
+  const aiCheck = async (): Promise<boolean> => {
+    try {
+      return await aiService.testConnection(HEALTH_AI_TIMEOUT_MS);
+    } catch {
+      return false;
+    }
+  };
+
+  const runReadinessChecks = async (): Promise<Record<string, boolean>> => {
+    const [dbOk, aiOk] = await Promise.all([dbCheck(), aiCheck()]);
+    return { database: dbOk, ai: aiOk };
+  };
+
   server.get('/ready', async () => {
     const now = Date.now();
     if (healthCache && now - healthCache.ts < HEALTH_CACHE_TTL_MS) {
@@ -85,21 +108,7 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
       return { status: allHealthy ? 'ready' : 'degraded', checks: healthCache.checks, timestamp: new Date().toISOString(), cached: true };
     }
 
-    const checks: Record<string, boolean> = { database: false, ai: false };
-
-    // Проверки параллельно
-    const dbCheck = async (): Promise<boolean> => {
-      try {
-        const { error } = await getSupabase().from('settings').select('key').limit(1);
-        return !error;
-      } catch { return false; }
-    };
-    const [dbOk, aiOk] = await Promise.all([
-      dbCheck(),
-      aiService.testConnection().catch(() => false),
-    ]);
-    checks['database'] = dbOk;
-    checks['ai'] = aiOk;
+    const checks = await runReadinessChecks();
     healthCache = { checks, ts: now };
 
     const allHealthy = Object.values(checks).every(Boolean);
@@ -110,17 +119,7 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
     const now = Date.now();
     // Reuse ready cache
     if (!healthCache || now - healthCache.ts >= HEALTH_CACHE_TTL_MS) {
-      const dbCheck = async (): Promise<boolean> => {
-        try {
-          const { error } = await getSupabase().from('settings').select('key').limit(1);
-          return !error;
-        } catch { return false; }
-      };
-      const [dbOk, aiOk] = await Promise.all([
-        dbCheck(),
-        aiService.testConnection().catch(() => false),
-      ]);
-      healthCache = { checks: { database: dbOk, ai: aiOk }, ts: now };
+      healthCache = { checks: await runReadinessChecks(), ts: now };
     }
     return {
       checks: {

@@ -467,17 +467,24 @@ export async function buildDigest(
 ): Promise<string> {
   const rawData: string[] = [];
   const todayStr = new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+  const shouldLoadPersonalData = userId !== 'public';
 
-  const [weatherResult, parsedHeadlinesResult, remindersResult, todosResult] = 
+  const [weatherResult, parsedHeadlinesResult, cityNewsResult, remindersResult, todosResult] =
     await Promise.allSettled([
       webSearchWithRetry(
         `Погода ${city} сегодня ${todayStr}: точная температура сейчас утром днём вечером, осадки, ветер, влажность, давление, ощущается как. Подробный прогноз на весь день.`
       ),
-
       parseAllConfiguredSites(),
-
-      remindersRepo.getByUser(userId),
-      todosRepo.getForDigest(userId),
+      city
+        ? webSearchWithRetry(
+          `Новости ${city} сегодня ${todayStr}: ` +
+          `местные события, происшествия, решения городских властей, транспорт, благоустройство, культурная жизнь ${city}. ` +
+          `Ищи ТОЛЬКО местные городские новости ${city}! Минимум 5 конкретных событий с датами. ` +
+          `НЕ включай мировые новости — ТОЛЬКО ${city}.`
+        )
+        : Promise.resolve(null),
+      shouldLoadPersonalData ? remindersRepo.getByUser(userId) : Promise.resolve([]),
+      shouldLoadPersonalData ? todosRepo.getForDigest(userId) : Promise.resolve([]),
     ]);
 
   const allCitations: string[] = [];
@@ -521,23 +528,17 @@ export async function buildDigest(
     appLogger.info({ count: parsedHeadlines.length, city }, 'Digest: using parsed headlines for city news');
   }
 
-  if (city) {
-    const perplexityCityResult = await webSearchWithRetry(
-      `Новости ${city} сегодня ${todayStr}: ` +
-      `местные события, происшествия, решения городских властей, транспорт, благоустройство, культурная жизнь ${city}. ` +
-      `Ищи ТОЛЬКО местные городские новости ${city}! Минимум 5 конкретных событий с датами. ` +
-      `НЕ включай мировые новости — ТОЛЬКО ${city}.`
-    );
-    if (perplexityCityResult?.answer) {
-      rawData.push(`[МЕСТНЫЕ НОВОСТИ ${city.toUpperCase()} — PERPLEXITY]\n${perplexityCityResult.answer}`);
-      allCitations.push(...(perplexityCityResult.citations ?? []));
-    }
+  if (cityNewsResult.status === 'fulfilled' && cityNewsResult.value?.answer) {
+    rawData.push(`[МЕСТНЫЕ НОВОСТИ ${city.toUpperCase()} — PERPLEXITY]\n${cityNewsResult.value.answer}`);
+    allCitations.push(...(cityNewsResult.value.citations ?? []));
+  } else if (cityNewsResult.status === 'rejected') {
+    appLogger.warn({ error: cityNewsResult.reason, city }, 'Digest: city search failed');
   }
 
   const allAiHeadlines = [...aiTechHeadlines, ...communityHeadlines];
 
   // 5. Напоминания на сегодня
-  if (remindersResult.status === 'fulfilled') {
+  if (shouldLoadPersonalData && remindersResult.status === 'fulfilled') {
     const reminders = remindersResult.value;
     const todayISO = new Date().toLocaleDateString('sv-SE');
     const todayReminders = reminders.filter(r => {
@@ -551,15 +552,19 @@ export async function buildDigest(
       });
       rawData.push(`[НАПОМИНАНИЯ НА СЕГОДНЯ]\n${lines.join('\n')}`);
     }
+  } else if (shouldLoadPersonalData && remindersResult.status === 'rejected') {
+    appLogger.warn({ error: remindersResult.reason, userId }, 'Digest: reminders load failed');
   }
 
   // 6. Активные задачи
-  if (todosResult.status === 'fulfilled') {
+  if (shouldLoadPersonalData && todosResult.status === 'fulfilled') {
     const todos = todosResult.value;
     if (todos.length > 0) {
       const lines = todos.slice(0, 10).map(t => `- ${t.task}`);
       rawData.push(`[ЗАДАЧИ]\n${lines.join('\n')}`);
     }
+  } else if (shouldLoadPersonalData && todosResult.status === 'rejected') {
+    appLogger.warn({ error: todosResult.reason, userId }, 'Digest: todos load failed');
   }
 
   // Дедупликация citations и формирование карты

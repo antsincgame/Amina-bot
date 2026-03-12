@@ -55,6 +55,34 @@ vi.mock('../ai/websearch.js', () => ({
   getSelectedSearchModel: vi.fn().mockResolvedValue(null),
 }));
 
+const { mockParsedHeadlines } = vi.hoisted(() => ({
+  mockParsedHeadlines: [
+    { title: 'AI headline', url: 'https://example.com/ai', source: 'AI Source', category: 'ai_tech', language: 'en' },
+    { title: 'Asia headline', url: 'https://example.com/asia', source: 'Asia Source', category: 'asia_tech', language: 'ja' },
+    { title: 'Community headline', url: 'https://example.com/community', source: 'Community Source', category: 'community', language: 'en' },
+    { title: 'Local headline', url: 'https://example.com/local', source: 'Local Source', category: 'city_local', language: 'ru' },
+  ],
+}));
+
+vi.mock('../features/news-parser.js', () => ({
+  getConfiguredSites: vi.fn().mockResolvedValue([]),
+  saveConfiguredSites: vi.fn().mockResolvedValue(undefined),
+  parseNewsFromSite: vi.fn().mockResolvedValue([]),
+  parseAllConfiguredSites: vi.fn().mockResolvedValue(mockParsedHeadlines),
+  filterByCategory: vi.fn((headlines: Array<{ category?: string }>, category: string) =>
+    headlines.filter(headline => headline.category === category),
+  ),
+  getPresetSources: vi.fn().mockReturnValue([]),
+  getPresetSourceCounts: vi.fn().mockReturnValue({ all: 0, global: 0, asia: 0 }),
+  mergeNewsSites: vi.fn((_existing: unknown[], incoming: unknown[]) => incoming),
+  normalizeNewsSite: vi.fn((site: unknown) => site),
+}));
+
+vi.mock('../features/digest-scheduler.js', () => ({
+  buildDigest: vi.fn().mockResolvedValue('legacy digest'),
+  buildHybridDigestText: vi.fn().mockResolvedValue('hybrid digest'),
+}));
+
 vi.mock('../ai/lmstudio.js', () => ({
   clearLMStudioCache: vi.fn(),
   getLMStudioConfig: vi.fn().mockResolvedValue(null),
@@ -314,6 +342,68 @@ describe('API Routes', () => {
         const body = JSON.parse(response.body);
         expect(body.success).toBe(true);
       }
+    });
+  });
+
+  describe('GET /api/debug/raw-news', () => {
+    it('should return categorized parsed headlines', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/debug/raw-news',
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(true);
+      expect(body.data.total).toBe(4);
+      expect(body.data.byCategory).toEqual({
+        ai_tech: 1,
+        asia_tech: 1,
+        community: 1,
+        city_local: 1,
+      });
+    });
+  });
+
+  describe('GET /api/digest/latest', () => {
+    it('should use hybrid pipeline by default for json format', async () => {
+      const digestScheduler = await import('../features/digest-scheduler.js');
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/digest/latest?format=json&city=Минск',
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(vi.mocked(digestScheduler.buildHybridDigestText)).toHaveBeenCalledWith(
+        'public',
+        'Читатель',
+        'Минск',
+        { forceRefresh: false },
+      );
+      expect(vi.mocked(digestScheduler.buildDigest)).not.toHaveBeenCalled();
+
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(true);
+      expect(body.data.pipeline).toBe('hybrid_supabase');
+      expect(body.data.content).toBe('hybrid digest');
+    });
+
+    it('should still allow explicit legacy pipeline', async () => {
+      const digestScheduler = await import('../features/digest-scheduler.js');
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/digest/latest?format=json&pipeline=legacy&city=Минск',
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(vi.mocked(digestScheduler.buildDigest)).toHaveBeenCalledWith('public', 'Читатель', 'Минск');
+
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(true);
+      expect(body.data.pipeline).toBe('legacy');
+      expect(body.data.content).toBe('legacy digest');
     });
   });
 
