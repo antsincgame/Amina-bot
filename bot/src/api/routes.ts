@@ -155,6 +155,17 @@ function getTunnelUrlValidationError(tunnelUrl: string): string | null {
   return null;
 }
 
+function normalizeTunnelBaseUrl(tunnelUrl: string): string {
+  return tunnelUrl.trim().replace(/\/+$/, '').replace(/\/v1$/i, '');
+}
+
+async function persistRegisteredTunnelUrl(tunnelUrl: string): Promise<void> {
+  await settingsRepo.set('lmstudio_url', tunnelUrl);
+  await recordHeartbeat(tunnelUrl);
+  clearLMStudioCache();
+  settingsRepo.invalidateCache?.();
+}
+
 // --------------------------------------------
 // API Routes
 // --------------------------------------------
@@ -2101,7 +2112,7 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
               });
             }
 
-            const trimmed = tunnelUrl.trim().replace(/\/+$/, '');
+            const trimmed = normalizeTunnelBaseUrl(tunnelUrl);
             const validationError = getTunnelUrlValidationError(trimmed);
             if (validationError) {
               return reply.code(400).send({
@@ -2119,11 +2130,7 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
               });
             }
 
-            await settingsRepo.set('lmstudio_url', trimmed);
-            await recordHeartbeat(trimmed);
-
-            clearLMStudioCache();
-            settingsRepo.invalidateCache?.();
+            await persistRegisteredTunnelUrl(trimmed);
 
             aiLogger.info(
               { url: trimmed, healthy },
@@ -2162,15 +2169,38 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
               return reply.code(400).send({ success: false, error: 'url is required' });
             }
 
-            const cfg = await getLMStudioConfig();
-            if (!cfg) {
-              return reply.code(409).send({ success: false, error: 'LM Studio tunnel is not registered' });
+            const normalizedIncoming = normalizeTunnelBaseUrl(url);
+            const validationError = getTunnelUrlValidationError(normalizedIncoming);
+            if (validationError) {
+              return reply.code(400).send({ success: false, error: validationError });
             }
 
-            const normalizedIncoming = url.trim().replace(/\/+$/, '').replace(/\/v1$/i, '');
-            const normalizedCurrent = cfg.url.replace(/\/+$/, '').replace(/\/v1$/i, '');
-            if (normalizedIncoming !== normalizedCurrent) {
-              return reply.code(409).send({ success: false, error: 'heartbeat url does not match registered tunnel' });
+            const cfg = await getLMStudioConfig();
+            const normalizedCurrent = cfg ? normalizeTunnelBaseUrl(cfg.url) : null;
+            if (!cfg || normalizedIncoming !== normalizedCurrent) {
+              const healthyIncoming = await probeLMStudioTunnelUrl(normalizedIncoming);
+              if (!healthyIncoming) {
+                return reply.code(409).send({
+                  success: false,
+                  error: cfg
+                    ? 'heartbeat url does not match registered tunnel and is not reachable from server'
+                    : 'LM Studio tunnel is not registered and incoming tunnel is not reachable from server',
+                });
+              }
+
+              await persistRegisteredTunnelUrl(normalizedIncoming);
+              aiLogger.info(
+                { previousUrl: normalizedCurrent, url: normalizedIncoming },
+                'Tunnel URL auto-registered via heartbeat',
+              );
+
+              return reply.code(200).send({
+                success: true,
+                data: {
+                  url: normalizedIncoming,
+                  updated: true,
+                },
+              });
             }
 
             const healthy = await probeLMStudioTunnelUrl(normalizedIncoming);

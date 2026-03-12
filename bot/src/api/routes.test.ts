@@ -405,5 +405,47 @@ describe('API Routes', () => {
 
       expect(response.statusCode).toBe(200);
     });
+
+    it('should auto-register tunnel from heartbeat when no tunnel is registered yet', async () => {
+      const lmstudio = await import('../ai/lmstudio.js');
+      vi.mocked(lmstudio.getLMStudioConfig).mockResolvedValueOnce(null);
+      vi.mocked(lmstudio.probeLMStudioTunnelUrl).mockResolvedValueOnce(true);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/tunnel/heartbeat',
+        headers: tunnelHeaders,
+        payload: { url: 'https://fresh.trycloudflare.com' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(true);
+      expect(body.data.updated).toBe(true);
+      expect(body.data.url).toBe('https://fresh.trycloudflare.com');
+    });
+
+    it('should update the registered tunnel when heartbeat arrives from a new reachable url', async () => {
+      const lmstudio = await import('../ai/lmstudio.js');
+      vi.mocked(lmstudio.getLMStudioConfig).mockResolvedValueOnce({
+        url: 'https://stale.trycloudflare.com/v1',
+        model: 'local-model',
+        apiKey: 'lm-studio',
+      });
+      vi.mocked(lmstudio.probeLMStudioTunnelUrl).mockResolvedValueOnce(true);
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/tunnel/heartbeat',
+        headers: tunnelHeaders,
+        payload: { url: 'https://fresh.trycloudflare.com' },
+      });
+
+      expect(response.statusCode).toBe(200);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(true);
+      expect(body.data.updated).toBe(true);
+      expect(body.data.url).toBe('https://fresh.trycloudflare.com');
+    });
   });
 });
