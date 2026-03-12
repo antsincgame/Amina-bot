@@ -268,6 +268,7 @@ const initBotAndServices = async (): Promise<void> => {
       { command: 'done', description: '✔️ Выполнить задачу' },
       { command: 'reminders', description: '⏰ Мои напоминания' },
       { command: 'digest', description: '☀️ Утренний дайджест' },
+      { command: 'digest_all', description: '🧠 Полный дайджест из всех источников' },
       { command: 'help', description: '📋 Справка по боту' },
     ]);
     appLogger.info('📋 Bot commands registered');

@@ -4,7 +4,7 @@
  * Все /command обработчики:
  * /start, /menu, /help, /clear, /reminders, /remind_cancel,
  * /imagine, /search, /note, /notes, /note_delete,
- * /todo, /todos, /done, /digest
+ * /todo, /todos, /done, /digest, /digest_all
  */
 
 import { Bot, InputFile } from 'grammy';
@@ -18,7 +18,7 @@ import { getErrorCode } from '../utils/error-handler.js';
 import { notesRepo } from '../features/notes-repo.js';
 import { todosRepo } from '../features/todos-repo.js';
 import { userPrefsRepo } from '../features/user-prefs-repo.js';
-import { sendDigestNow } from '../features/digest-scheduler.js';
+import { sendDigestNow, sendHybridDigestNow } from '../features/digest-scheduler.js';
 import { parseAllConfiguredSites, getConfiguredSites } from '../features/news-parser.js';
 import { escapeMarkdown, escapeHtml, sendLongMessage } from './format.js';
 import { connectCall, getCallHistory, isTelephonyAllowed, getLiraXConfig } from '../features/telephony/lirax.js';
@@ -63,6 +63,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
       `📌 *Заметки* — «запомни ...» или кнопка\n` +
       `✅ *Задачи* — добавляй и выполняй\n` +
       `☀️ *Дайджест* — утренняя сводка с погодой и новостями\n` +
+      `🧠 *Полный дайджест* — /digest_all для полного Supabase-пайплайна\n` +
       `🔊 *Озвучка* — «скажи голосом...»\n\n` +
       `👇 *Используй кнопки ниже или просто напиши!*`,
       { parse_mode: 'Markdown', reply_markup: buildReplyKeyboard() }
@@ -100,6 +101,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
       `/reminders — напоминания\n` +
       `/remind\\_cancel \\_номер\\_ — отменить\n` +
       `/digest — утренний дайджест\n` +
+      `/digest\\_all — полный дайджест из всех источников\n` +
       `*💡 Быстрые действия (без команд):*\n` +
       `• _Нарисуй кота в космосе_ — картинка\n` +
       `• _Напомни через час позвонить_ — напоминание\n` +
@@ -530,6 +532,34 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     } catch (error) {
       telegramLogger.error({ error, userId }, 'Digest command failed');
       await ctx.reply('😔 Ошибка при работе с дайджестом.');
+    }
+  });
+
+  // /digest_all
+  bot.command('digest_all', async (ctx) => {
+    if (!ctx.from?.id) return;
+    const userId = ctx.from.id.toString();
+    const chatId = ctx.chat.id;
+
+    try {
+      const prefs = await userPrefsRepo.getOrCreate(userId, chatId, ctx.from?.first_name);
+      await ctx.reply('🧠 Готовлю полный дайджест через Supabase-пайплайн... Это может занять до 1-2 минут.');
+      await ctx.replyWithChatAction('typing');
+
+      await sendHybridDigestNow(
+        { api: ctx.api },
+        userId,
+        chatId,
+        prefs.first_name || ctx.from?.first_name || null,
+        prefs.digest_city || '',
+        {
+          forceRefresh: true,
+          deliveryKind: 'manual',
+        },
+      );
+    } catch (error) {
+      telegramLogger.error({ error, userId }, 'Hybrid digest command failed');
+      await ctx.reply('😔 Не удалось собрать полный дайджест через Supabase-пайплайн. Попробуй позже.');
     }
   });
 

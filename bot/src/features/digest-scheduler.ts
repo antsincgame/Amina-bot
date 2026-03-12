@@ -16,12 +16,20 @@ import { InlineKeyboard, type Api, type RawApi } from 'grammy';
 import { userPrefsRepo } from './user-prefs-repo.js';
 import { todosRepo } from './todos-repo.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';
-import { webSearch } from '../ai/websearch.js';
-import { inlineCitations } from '../telegram/format.js';
+import { inlineCitations, markdownToTelegramHtml, splitIntoChunks, stripHtml } from '../telegram/format.js';
 import { parseAllConfiguredSites, filterByCategory, type ParsedHeadline } from './news-parser.js';
 import { aiService } from '../ai/openrouter.js';
 import { config } from '../config/index.js';
 import { appLogger } from '../config/logger.js';
+import { buildDigestClosing, buildHeadlineSections, getTimeGreeting, webSearchWithRetry } from './digest-core.js';
+import { buildHybridDigest, buildHybridDigestDeliveryKey } from './digest-hybrid.js';
+import { digestDeliveryRepo, type DigestDeliveryKind } from './digest-hybrid-repo.js';
+
+export {
+  chunkHeadlinesForDigest,
+  renderFallbackHeadlineBatch,
+  shouldUseFallbackForDigestBatches,
+} from './digest-core.js';
 
 interface BotLike {
   api: Api<RawApi>;
@@ -76,6 +84,8 @@ export function stopDigestScheduler(): void {
 const digestFullTextCache = new Map<string, { text: string; createdAt: number }>();
 const DIGEST_CACHE_TTL_MS = 30 * 60 * 1000; // 30 минут
 let nextDigestId = 1;
+const DIGEST_MESSAGE_DELAY_MS = 250;
+const DIGEST_SEND_RETRY_ATTEMPTS = 4;
 
 /** Сохранить полный текст дайджеста и вернуть ID */
 function cacheDigestText(text: string): string {
@@ -105,6 +115,108 @@ export function getDigestFullText(id: string): string | null {
   return entry.text;
 }
 
+const sleep = (ms: number): Promise<void> =>
+  new Promise(resolve => setTimeout(resolve, ms));
+
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  if (typeof error === 'object' && error && 'description' in error && typeof error.description === 'string') {
+    return error.description;
+  }
+  return String(error);
+}
+
+function getRetryAfterMs(error: unknown): number | null {
+  if (typeof error === 'object' && error !== null && 'parameters' in error) {
+    const parameters = error.parameters as { retry_after?: unknown };
+    if (typeof parameters?.retry_after === 'number' && parameters.retry_after > 0) {
+      return (parameters.retry_after + 1) * 1000;
+    }
+  }
+
+  const message = getErrorMessage(error);
+  const retryMatch = message.match(/retry after\s+(\d+)/i);
+  if (retryMatch?.[1]) {
+    return (Number(retryMatch[1]) + 1) * 1000;
+  }
+
+  if (
+    message.includes('429') ||
+    message.toLowerCase().includes('too many requests') ||
+    message.toLowerCase().includes('rate limit')
+  ) {
+    return 2000;
+  }
+
+  return null;
+}
+
+function isTelegramParseError(error: unknown): boolean {
+  const message = getErrorMessage(error).toLowerCase();
+  return (
+    message.includes("can't parse entities") ||
+    message.includes('parse entities') ||
+    message.includes('unsupported start tag') ||
+    message.includes('entity beginning')
+  );
+}
+
+function isTransientTelegramError(error: unknown): boolean {
+  const message = getErrorMessage(error).toLowerCase();
+  return (
+    message.includes('fetch failed') ||
+    message.includes('timeout') ||
+    message.includes('socket hang up') ||
+    message.includes('econnreset') ||
+    message.includes('bad gateway') ||
+    message.includes('502')
+  );
+}
+
+async function sendTelegramChunk(
+  bot: BotLike,
+  chatId: number,
+  htmlChunk: string,
+  htmlOptions: Record<string, unknown>,
+  plainOptions: Record<string, unknown>,
+): Promise<void> {
+  let usePlainText = false;
+
+  for (let attempt = 1; attempt <= DIGEST_SEND_RETRY_ATTEMPTS; attempt++) {
+    try {
+      if (usePlainText) {
+        await bot.api.sendMessage(chatId, stripHtml(htmlChunk), plainOptions);
+      } else {
+        await bot.api.sendMessage(chatId, htmlChunk, htmlOptions);
+      }
+      return;
+    } catch (error) {
+      const retryAfterMs = getRetryAfterMs(error);
+      if (retryAfterMs) {
+        appLogger.warn({ chatId, attempt, retryAfterMs }, 'Digest chunk rate-limited, retrying');
+        await sleep(retryAfterMs);
+        continue;
+      }
+
+      if (!usePlainText && isTelegramParseError(error)) {
+        appLogger.warn({ chatId, attempt, error: getErrorMessage(error) }, 'Digest chunk HTML parse failed, retrying as plain text');
+        usePlainText = true;
+        continue;
+      }
+
+      if (isTransientTelegramError(error) && attempt < DIGEST_SEND_RETRY_ATTEMPTS) {
+        const backoffMs = attempt * 1000;
+        appLogger.warn({ chatId, attempt, backoffMs, error: getErrorMessage(error) }, 'Digest chunk transient failure, retrying');
+        await sleep(backoffMs);
+        continue;
+      }
+
+      throw error;
+    }
+  }
+}
+
 /**
  * Отправить длинное сообщение, разбивая на части при необходимости.
  * Кнопка "Озвучить весь дайджест" ставится ТОЛЬКО на последнем сообщении.
@@ -116,57 +228,64 @@ async function sendLongMessage(
   text: string,
   parseMode?: 'Markdown' | 'HTML'
 ): Promise<void> {
-  const MAX_LENGTH = 4096;
-  
   // Кэшируем полный текст и создаём кнопку с ID
   const digestId = cacheDigestText(text);
   const keyboard = new InlineKeyboard().text('🔊 Озвучить дайджест', `read_aloud_digest:${digestId}`);
-  
-  // Если текст короткий — отправляем одним сообщением
-  if (text.length <= MAX_LENGTH) {
-    try {
-      await bot.api.sendMessage(chatId, text, { parse_mode: parseMode, reply_markup: keyboard });
-    } catch {
-      const plainText = text.replace(/[*_`~[\]()]/g, '');
-      await bot.api.sendMessage(chatId, plainText, { reply_markup: keyboard });
-    }
-    return;
-  }
-  
-  // Разбиваем на части по абзацам
-  const paragraphs = text.split('\n\n');
-  let chunk = '';
-  const chunks: string[] = [];
-  
-  for (const para of paragraphs) {
-    if (chunk.length + para.length + 2 > MAX_LENGTH) {
-      if (chunk) {
-        chunks.push(chunk.trim());
-        chunk = '';
-      }
-      if (para.length > MAX_LENGTH) {
-        const plainPara = para.replace(/[*_`~[\]()]/g, '').substring(0, MAX_LENGTH);
-        chunks.push(plainPara);
-        continue;
-      }
-    }
-    chunk += (chunk ? '\n\n' : '') + para;
-  }
-  if (chunk.trim()) chunks.push(chunk.trim());
-  
-  // Отправляем все чанки: без кнопки, КРОМЕ последнего — с кнопкой озвучки
+
+  const htmlText = parseMode === 'Markdown' ? markdownToTelegramHtml(text) : text;
+  const chunks = splitIntoChunks(htmlText);
+
   for (let i = 0; i < chunks.length; i++) {
     const isLast = i === chunks.length - 1;
-    const opts: Record<string, unknown> = { parse_mode: parseMode };
-    if (isLast) opts.reply_markup = keyboard;
-    
-    try {
-      await bot.api.sendMessage(chatId, chunks[i]!, opts);
-    } catch {
-      const plain = chunks[i]!.replace(/[*_`~[\]()]/g, '');
-      await bot.api.sendMessage(chatId, plain, isLast ? { reply_markup: keyboard } : {});
+    const htmlOptions: Record<string, unknown> = { parse_mode: 'HTML' };
+    const plainOptions: Record<string, unknown> = {};
+    if (isLast) {
+      htmlOptions.reply_markup = keyboard;
+      plainOptions.reply_markup = keyboard;
+    }
+
+    await sendTelegramChunk(bot, chatId, chunks[i]!, htmlOptions, plainOptions);
+
+    if (!isLast) {
+      await sleep(DIGEST_MESSAGE_DELAY_MS);
     }
   }
+}
+
+interface HybridDigestSendOptions {
+  forceRefresh?: boolean;
+  deliveryKind?: DigestDeliveryKind;
+}
+
+async function recordHybridDelivery(
+  userId: string,
+  chatId: number,
+  city: string,
+  digestDate: string,
+  cacheKey: string,
+  status: 'sending' | 'sent' | 'failed',
+  deliveryKind: DigestDeliveryKind,
+  lastError?: string,
+): Promise<void> {
+  const deliveryKey = buildHybridDigestDeliveryKey(userId, deliveryKind, city, digestDate);
+  const existing = await digestDeliveryRepo.getByKey(deliveryKey);
+  const nextAttemptCount = status === 'sending'
+    ? (existing?.attempt_count ?? 0) + 1
+    : (existing?.attempt_count ?? 1);
+
+  await digestDeliveryRepo.upsert({
+    delivery_key: deliveryKey,
+    delivery_kind: deliveryKind,
+    user_id: userId,
+    chat_id: chatId,
+    city,
+    digest_date: digestDate,
+    cache_key: cacheKey,
+    status,
+    attempt_count: nextAttemptCount,
+    last_error: lastError ?? null,
+    sent_at: status === 'sent' ? new Date().toISOString() : null,
+  });
 }
 
 /**
@@ -181,6 +300,67 @@ export async function sendDigestNow(
 ): Promise<void> {
   const digestText = await buildDigest(userId, firstName, city);
   await sendLongMessage(bot, chatId, digestText, 'Markdown');
+}
+
+export async function buildHybridDigestText(
+  userId: string,
+  firstName: string | null,
+  city: string,
+  options?: { forceRefresh?: boolean },
+): Promise<string> {
+  const { digestText } = await buildHybridDigest(userId, firstName, city, options);
+  return digestText;
+}
+
+export async function sendHybridDigestNow(
+  bot: BotLike,
+  userId: string,
+  chatId: number,
+  firstName: string | null,
+  city: string,
+  options?: HybridDigestSendOptions,
+): Promise<void> {
+  const { cacheKey, digestText, payload } = await buildHybridDigest(userId, firstName, city, {
+    forceRefresh: options?.forceRefresh,
+  });
+  const deliveryKind = options?.deliveryKind ?? 'manual';
+
+  try {
+    await recordHybridDelivery(
+      userId,
+      chatId,
+      payload.city,
+      payload.digest_date,
+      cacheKey,
+      'sending',
+      deliveryKind,
+    );
+    await sendLongMessage(bot, chatId, digestText, 'Markdown');
+    await recordHybridDelivery(
+      userId,
+      chatId,
+      payload.city,
+      payload.digest_date,
+      cacheKey,
+      'sent',
+      deliveryKind,
+    );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await recordHybridDelivery(
+      userId,
+      chatId,
+      payload.city,
+      payload.digest_date,
+      cacheKey,
+      'failed',
+      deliveryKind,
+      message,
+    ).catch(repoError => {
+      appLogger.warn({ error: repoError, userId, cacheKey }, 'Failed to persist hybrid delivery error');
+    });
+    throw error;
+  }
 }
 
 /**
@@ -207,7 +387,7 @@ function resetSentCacheAtMidnight(): void {
  * Обёртка с таймаутом для buildDigest
  */
 async function buildDigestWithTimeout(
-  userId: string, firstName: string | null, city: string | null, timeoutMs = 90_000,
+  userId: string, firstName: string | null, city: string | null, timeoutMs = 180_000,
 ): Promise<string> {
   return Promise.race([
     buildDigest(userId, firstName, city ?? ''),
@@ -268,38 +448,6 @@ async function processDigests(bot: BotLike): Promise<void> {
 // --------------------------------------------
 // Digest Builder: Perplexity → LLM
 // --------------------------------------------
-
-/**
- * Результат поиска с citations
- */
-interface DigestSearchResult {
-  answer: string;
-  citations: string[];
-}
-
-/**
- * Поиск с повторной попыткой при ошибке. Сохраняет citations.
- */
-async function webSearchWithRetry(
-  query: string,
-  retries = 2
-): Promise<DigestSearchResult | null> {
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      const result = await webSearch(query, { forDigest: true });
-      if (result.answer && result.answer.length > 10) {
-        return { answer: result.answer, citations: result.citations ?? [] };
-      }
-      appLogger.warn({ query: query.substring(0, 50), attempt, answerLength: result.answer?.length ?? 0 }, 'Digest: search returned weak result');
-    } catch (error) {
-      appLogger.warn({ error, query: query.substring(0, 50), attempt }, `Digest: search attempt ${attempt} failed`);
-      if (attempt < retries) {
-        await new Promise(resolve => setTimeout(resolve, 1500));
-      }
-    }
-  }
-  return null;
-}
 
 /**
  * Собрать дайджест:
@@ -386,38 +534,7 @@ export async function buildDigest(
     }
   }
 
-  // AI/TECH НОВОСТИ — из парсера (международные англоязычные источники)
   const allAiHeadlines = [...aiTechHeadlines, ...communityHeadlines];
-  if (allAiHeadlines.length > 0) {
-    const aiLines = allAiHeadlines.map((h, idx) =>
-      `${idx + 1}. [${h.title}](${h.url}) (source: ${h.source})`
-    );
-    rawData.push(
-      `[ТЕХНОЛОГИИ И AI — МЕЖДУНАРОДНЫЕ ИСТОЧНИКИ] (${allAiHeadlines.length} заголовков)\n` +
-      `Ты ОБЯЗАНА включить ВСЕ ${allAiHeadlines.length} заголовков! Для каждого: перевод + 1 предложение комментария.\n` +
-      `Группируй по категориям: 🚀 Релиз | 🔬 Исследование | 🛠 Инструмент | 💡 Тренд | 📊 Бенчмарк\n` +
-      `ВАЖНО: Входные данные уже содержат ссылки [Title](URL). Твоя задача — перевести Title на русский, СОХРАНИВ ссылку!\n` +
-      `Формат вывода: **1. [Заголовок на русском](url)** — комментарий\n\n` +
-      aiLines.join('\n')
-    );
-    appLogger.info({ total: allAiHeadlines.length }, 'Digest: AI/Tech headlines added (ALL, no slice)');
-  }
-
-  // АЗИАТСКИЕ AI/TECH ИСТОЧНИКИ — китайские, японские, корейские
-  if (asiaAiHeadlines.length > 0) {
-    const asiaLines = asiaAiHeadlines.map((h, idx) => {
-      const langLabel = h.language === 'zh' ? '🇨🇳' : h.language === 'ja' ? '🇯🇵' : h.language === 'ko' ? '🇰🇷' : '';
-      return `${idx + 1}. ${langLabel} [${h.title}](${h.url}) (source: ${h.source})`;
-    });
-    rawData.push(
-      `[AI НОВОСТИ ИЗ АЗИИ — КИТАЙ, ЯПОНИЯ, КОРЕЯ] (${asiaAiHeadlines.length} заголовков)\n` +
-      `Ты ОБЯЗАНА включить ВСЕ ${asiaAiHeadlines.length} заголовков!\n` +
-      `ВАЖНО: Входные данные уже содержат ссылки. Переведи заголовок, СОХРАНИВ ссылку!\n` +
-      `Формат вывода: **1. [Перевод заголовка](url)** — комментарий\n\n` +
-      asiaLines.join('\n')
-    );
-    appLogger.info({ total: asiaAiHeadlines.length }, 'Digest: Asia AI headlines added (ALL, no slice)');
-  }
 
   // 5. Напоминания на сегодня
   if (remindersResult.status === 'fulfilled') {
@@ -457,63 +574,32 @@ export async function buildDigest(
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   });
 
-  const digestPrompt = `Ты — Amina, персональный AI-ассистент И эксперт-журналист в области искусственного интеллекта и технологий вайбкодинга.
-Ты глубоко разбираешься в: LLM, open-source моделях, AI-агентах, code generation, промпт-инжиниринге, Cursor, Copilot, локальных моделях (GGUF, llama.cpp), RAG, fine-tuning, MLOps.
-Ты следишь за азиатским AI-рынком: DeepSeek, Qwen, китайские open-source модели, японские и корейские AI-стартапы.
+  const digestPrompt = `Ты — Amina, персональный AI-ассистент и редактор утреннего дайджеста.
 
 Сейчас ${todayDate}.
-Составь ПОДРОБНЫЙ УТРЕННИЙ ДАЙДЖЕСТ для ${nameStr} из города ${city}.
+Составь вступительную часть дайджеста для ${nameStr} из города ${city}.
+
+ВАЖНО:
+- Включай ТОЛЬКО разделы из данных ниже.
+- НЕ создавай разделы "Технологии и AI" и "AI из Азии" — они будут добавлены отдельно.
+- НЕ добавляй финальный раздел "Настрой на день" — он будет добавлен отдельно.
+- Если в городских данных есть Markdown-ссылки, ОБЯЗАТЕЛЬНО сохрани их.
+- Если у факта есть ссылки вида [N], сохрани их.
+- Не пиши фразы про отсутствие данных — просто пропускай пустые разделы.
 
 Вот собранные данные:
 
 ${rawData.join('\n\n')}${citationsBlock}
 
----
+Нужные разделы:
+1. **Приветствие**
+2. **Погода в ${city}**
+3. **Новости ${city}**
+4. **Напоминания и задачи**
 
-ЗАДАЧА: Подробный, живой, эмоциональный утренний дайджест с ЭКСПЕРТНЫМ разбором AI-новостей.
+Формат: Markdown для Telegram.`;
 
-СТРУКТУРА ДАЙДЖЕСТА:
-Включай ТОЛЬКО те разделы, для которых есть данные выше. Если раздела НЕТ в данных — МОЛЧА ПРОПУСТИ его.
-
-1. **Приветствие** — тёплое, по имени, с упоминанием дня недели и даты
-
-2. **Погода в ${city}** — подробно: температура (утро/день/вечер), осадки, ветер, давление, что надеть, совет
-
-3. **Новости ${city}** — Каждую новость пронумеруй и прокомментируй с эмоцией (1-2 предложения авторского комментария). Это МЕСТНЫЕ городские новости!
-   ВАЖНО: Если в данных есть заголовки со ссылками — ОБЯЗАТЕЛЬНО оформи как Markdown-ссылку: [заголовок](url).
-   Если данных по городу нет — ПРОПУСТИ этот раздел целиком.
-
-4. **Технологии и AI** — САМЫЙ ВАЖНЫЙ И ОБЪЁМНЫЙ РАЗДЕЛ:
-   - Пронумеруй ВСЕ заголовки из данных выше (их пронумерованный список).
-   - Для КАЖДОГО: переведи на русский + 1 предложение комментария.
-   - Группируй: 🚀 Релизы, 🔬 Исследования, 🛠 Инструменты, 💡 Тренды.
-   - Формат: **1. [Заголовок на русском](url)** — комментарий
-   - ЗАПРЕЩЕНО пропускать заголовки! Каждый номер из данных ДОЛЖЕН быть в ответе.
-   - Этот раздел должен занимать 60-70% всего дайджеста.
-   Если данных нет — ПРОПУСТИ.
-
-5. **AI из Азии** — если есть азиатские заголовки:
-   - Пронумеруй ВСЕ заголовки и включи КАЖДЫЙ.
-   - ПЕРЕВЕДИ каждый на русский, оригинал в скобках.
-   - Формат: **1. [Перевод (原标题)](url)** — комментарий
-   - ЗАПРЕЩЕНО пропускать заголовки!
-   Если данных нет — ПРОПУСТИ.
-
-6. **Напоминания и задачи** — если есть в данных, подбодри и дай совет по приоритетам
-
-7. **Настрой на день** — позитивное мотивирующее завершение (КОРОТКО, 1-2 предложения)
-
-ЖЁСТКИЕ ПРАВИЛА:
-- ЗАПРЕЩЕНО писать "к сожалению, данных нет", "не удалось найти" — просто ПРОПУСТИ пустой раздел!
-- Раздел "Технологии и AI" — САМЫЙ БОЛЬШОЙ. Он должен содержать КАЖДЫЙ пронумерованный заголовок из данных!
-- Если AI-заголовков больше 50 — ВСЁ РАВНО включи каждый! Пиши кратко: 1 строка = перевод + ссылка + мини-комментарий.
-- Допустимо опустить подробный комментарий если заголовков > 50, но сам заголовок + ссылка ОБЯЗАТЕЛЬНЫ!
-- При переводе AI-терминов: оставляй английские термины как есть (LLM, RAG, fine-tuning, RLHF, benchmark)
-- НЕ ПРИДУМЫВАЙ новости — только из данных выше
-- ОБЯЗАТЕЛЬНО ставь ссылки [N] после фактов из Perplexity
-- Формат: Markdown для Telegram (*bold*, _italic_)
-- НЕ добавляй в конце инструкции вроде "/digest"`;
-
+  let narrativeDigest = '';
   try {
     const llmResponse = await aiService.chat(
       [{ role: 'user', content: digestPrompt }],
@@ -521,30 +607,39 @@ ${rawData.join('\n\n')}${citationsBlock}
     );
     
     // Пост-обработка: заменяем [N] на кликабельные Markdown-ссылки
-    let finalDigest = llmResponse.content;
+    narrativeDigest = llmResponse.content;
     if (uniqueCitations.length > 0) {
-      finalDigest = inlineCitations(finalDigest, uniqueCitations);
+      narrativeDigest = inlineCitations(narrativeDigest, uniqueCitations);
     }
-    
-    return finalDigest;
   } catch (error) {
-    appLogger.error({ error, userId }, 'LLM failed to process digest, using raw data');
+    appLogger.error({ error, userId }, 'LLM failed to process narrative digest, using raw data');
     
     // Fallback: сырые данные с приветствием
     const greeting = getTimeGreeting(firstName);
-    return `${greeting}\n\n${rawData.join('\n\n')}`;
+    narrativeDigest = `${greeting}\n\n${rawData.join('\n\n')}`;
+    if (uniqueCitations.length > 0) {
+      narrativeDigest = inlineCitations(narrativeDigest, uniqueCitations);
+    }
   }
+
+  const [aiSections, asiaSections] = await Promise.all([
+    buildHeadlineSections('Технологии и AI', 'ai', allAiHeadlines),
+    buildHeadlineSections('AI из Азии', 'asia', asiaAiHeadlines),
+  ]);
+
+  appLogger.info({
+    narrativeLength: narrativeDigest.length,
+    aiHeadlines: allAiHeadlines.length,
+    aiBatches: aiSections.length,
+    asiaHeadlines: asiaAiHeadlines.length,
+    asiaBatches: asiaSections.length,
+  }, 'Digest: compiled narrative and headline batches');
+
+  return [
+    narrativeDigest.trim(),
+    ...aiSections,
+    ...asiaSections,
+    buildDigestClosing(firstName),
+  ].filter(Boolean).join('\n\n');
 }
 
-/**
- * Приветствие по времени суток (fallback)
- */
-function getTimeGreeting(name: string | null): string {
-  const hour = new Date().getHours();
-  const nameStr = name ? `, ${name}` : '';
-
-  if (hour >= 5 && hour < 12) return `☀️ *Доброе утро${nameStr}!*`;
-  if (hour >= 12 && hour < 17) return `🌤 *Добрый день${nameStr}!*`;
-  if (hour >= 17 && hour < 22) return `🌆 *Добрый вечер${nameStr}!*`;
-  return `🌙 *Доброй ночи${nameStr}!*`;
-}

@@ -212,12 +212,19 @@ export interface SettingsUpdate {
 }
 
 // --------------------------------------------
+// Digest Types
+// --------------------------------------------
+
+export type DigestPipelineMode = 'legacy' | 'hybrid_supabase';
+
+// --------------------------------------------
 // News Sources Types
 // --------------------------------------------
 
 export type NewsSourceType = 'rss' | 'json_api' | 'html_scrape';
 export type NewsSourceCategory = 'ai_tech' | 'city_local' | 'community' | 'asia_tech';
 export type NewsSourceLanguage = 'ru' | 'en' | 'zh' | 'ja' | 'ko';
+export type NewsSourceTier = 'tier1' | 'tier2' | 'tier3';
 
 export interface JsonFieldMapping {
   /** Путь к массиву элементов (пустая строка = корневой массив) */
@@ -230,6 +237,21 @@ export interface JsonFieldMapping {
   dateField?: string;
 }
 
+export interface HtmlFieldMapping {
+  /** Список селекторов контейнеров карточек/статей */
+  itemSelectors?: string[];
+  /** Список селекторов ссылок внутри контейнера */
+  linkSelectors?: string[];
+  /** Список селекторов заголовка внутри контейнера */
+  titleSelectors?: string[];
+  /** Список селекторов даты внутри контейнера */
+  dateSelectors?: string[];
+  /** Атрибут для извлечения даты, если текст пуст */
+  dateAttribute?: string;
+  /** Селекторы мусорных блоков, которые нужно удалить перед парсингом */
+  removeSelectors?: string[];
+}
+
 export interface NewsSite {
   name: string;
   url: string;
@@ -240,8 +262,12 @@ export interface NewsSite {
   category?: NewsSourceCategory;
   /** Язык контента */
   language?: NewsSourceLanguage;
+  /** Надёжность/сложность источника */
+  tier?: NewsSourceTier;
   /** Маппинг полей для JSON API источников */
   jsonMapping?: JsonFieldMapping;
+  /** Маппинг для HTML-скрейпинга нестандартных сайтов */
+  htmlMapping?: HtmlFieldMapping;
   /** Ключевые слова для фильтрации заголовков (хотя бы одно должно совпасть) */
   filterKeywords?: string[];
 }

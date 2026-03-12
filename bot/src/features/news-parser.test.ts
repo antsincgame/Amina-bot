@@ -24,7 +24,7 @@ describe('News Parser — Headline Filtering', () => {
    * Симулируем логику addHeadline для проверки фильтров.
    * Это точная копия логики из news-parser.ts
    */
-  const MAX_HEADLINES_PER_SITE = 100;
+  const MAX_HEADLINES_PER_SITE = 200;
   const MIN_TITLE_LENGTH = 4;
   const MAX_TITLE_LENGTH = 800;
   const MAX_NEWS_AGE_HOURS = 336;
@@ -151,13 +151,13 @@ describe('News Parser — Headline Filtering', () => {
     expect(headlines).toHaveLength(1);
   });
 
-  it('останавливается при достижении MAX_HEADLINES_PER_SITE (100)', () => {
+  it('останавливается при достижении MAX_HEADLINES_PER_SITE (200)', () => {
     const headlines: ParsedHeadline[] = [];
     const seen = new Set<string>();
-    for (let i = 0; i < 110; i++) {
+    for (let i = 0; i < 210; i++) {
       addHeadline(headlines, seen, `Headline number ${i} about AI technology`, `https://example.com/${i}`);
     }
-    expect(headlines).toHaveLength(100);
+    expect(headlines).toHaveLength(200);
   });
 
   it('сохраняет category и language из options', () => {
@@ -268,7 +268,7 @@ describe('News Parser — Category Routing in Digest', () => {
 });
 
 describe('News Parser — JSON API Parsing', () => {
-  const MAX_HEADLINES_PER_SITE = 100;
+  const MAX_HEADLINES_PER_SITE = 200;
   const MIN_TITLE_LENGTH = 4;
 
   function cleanTitle(raw: string): string {

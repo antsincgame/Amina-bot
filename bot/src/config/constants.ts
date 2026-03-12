@@ -83,9 +83,9 @@ export const MINUTE_MS = 60 * 1000;
 // ============================================
 // News Parser
 // ============================================
-export const MAX_HEADLINES_PER_SITE = 25;
+export const MAX_HEADLINES_PER_SITE = 200;
 export const MIN_TITLE_LENGTH = 4;
-export const MAX_TITLE_LENGTH = 300;
+export const MAX_TITLE_LENGTH = 800;
 export const MAX_NEWS_AGE_HOURS = 336; // 14 days
 
 // ============================================

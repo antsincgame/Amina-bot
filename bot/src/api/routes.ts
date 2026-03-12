@@ -9,10 +9,21 @@ import { getAllAudioModels, getFreeVisionModels, refreshFreeVisionModelsCache, g
 import { getSearchModelInfo, getAvailableModels, isWebSearchEnabled, clearPerplexityCache } from '../ai/websearch.js';
 import { userProfileRepo, userMemoryRepo, userLogsRepo, type UserLog } from '../memory/user-memory.js';
 import { config, clearApiKeysCache, getApiKeys } from '../config/index.js';
-import { getConfiguredSites, saveConfiguredSites, parseNewsFromSite, parseAllConfiguredSites, filterByCategory, DEFAULT_AI_TECH_SOURCES } from '../features/news-parser.js';
-import { buildDigest } from '../features/digest-scheduler.js';
+import {
+  getConfiguredSites,
+  saveConfiguredSites,
+  parseNewsFromSite,
+  parseAllConfiguredSites,
+  filterByCategory,
+  getPresetSources,
+  getPresetSourceCounts,
+  mergeNewsSites,
+  normalizeNewsSite,
+  type NewsPresetGroup,
+} from '../features/news-parser.js';
+import { buildDigest, buildHybridDigestText } from '../features/digest-scheduler.js';
 import { markdownToTelegramHtml } from '../telegram/format.js';
-import type { NewsSite } from '../../../shared/types/index.js';
+import type { DigestPipelineMode, NewsSite } from '../../../shared/types/index.js';
 import { invalidateTTSConfig } from '../features/tts.js';
 import { voiceMessagesRepo } from '../features/voice-messages-repo.js';
 import {
@@ -1440,7 +1451,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
       apiServer.post(
         '/news-sites',
         async (
-          request: FastifyRequest<{ Body: Array<{ name: string; url: string; enabled: boolean; type?: string; category?: string; language?: string; jsonMapping?: unknown; filterKeywords?: unknown }> }>,
+          request: FastifyRequest<{ Body: NewsSite[] }>,
           reply: FastifyReply,
         ) => {
           try {
@@ -1449,56 +1460,16 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
               return reply.code(400).send({ success: false, error: 'Body must be an array of sites' });
             }
 
-            const validTypes = ['rss', 'json_api', 'html_scrape'];
-            const validCategories = ['ai_tech', 'city_local', 'community', 'asia_tech'];
-            const validLanguages = ['ru', 'en', 'zh', 'ja', 'ko'];
-
-            for (const site of sites) {
-              if (!site.name || typeof site.name !== 'string') {
-                return reply.code(400).send({ success: false, error: 'Each site must have a name' });
-              }
-              if (!site.url || typeof site.url !== 'string') {
-                return reply.code(400).send({ success: false, error: 'Each site must have a url' });
-              }
-              try {
-                const parsed = new URL(site.url);
-                if (!['http:', 'https:'].includes(parsed.protocol)) {
-                  return reply.code(400).send({ success: false, error: `Unsupported protocol in URL: ${site.url}` });
-                }
-              } catch {
-                return reply.code(400).send({ success: false, error: `Invalid URL: ${site.url}` });
-              }
-              if (site.type && !validTypes.includes(site.type)) {
-                return reply.code(400).send({ success: false, error: `Invalid type: ${site.type}. Must be one of: ${validTypes.join(', ')}` });
-              }
-              if (site.category && !validCategories.includes(site.category)) {
-                return reply.code(400).send({ success: false, error: `Invalid category: ${site.category}` });
-              }
-              if (site.language && !validLanguages.includes(site.language)) {
-                return reply.code(400).send({ success: false, error: `Invalid language: ${site.language}` });
-              }
-            }
-
-            const normalized = sites.map(s => {
-              const base: Record<string, unknown> = {
-                name: s.name.trim(),
-                url: s.url.trim(),
-                enabled: s.enabled !== false,
-              };
-              if (s.type) base.type = s.type;
-              if (s.category) base.category = s.category;
-              if (s.language) base.language = s.language;
-              if (s.jsonMapping && typeof s.jsonMapping === 'object') base.jsonMapping = s.jsonMapping;
-              if (Array.isArray(s.filterKeywords)) base.filterKeywords = s.filterKeywords;
-              return base;
-            });
-
-            await saveConfiguredSites(normalized as unknown as NewsSite[]);
+            const normalized = sites.map(site => normalizeNewsSite(site));
+            await saveConfiguredSites(normalized);
             settingsRepo.invalidateCache?.();
 
             aiLogger.info({ count: normalized.length }, 'News sites updated');
             return reply.code(200).send({ success: true, message: 'News sites saved', data: normalized });
           } catch (error) {
+            if (error instanceof Error) {
+              return reply.code(400).send({ success: false, error: error.message });
+            }
             aiLogger.error({ error }, 'Save news sites error');
             return reply.code(500).send({ success: false, error: 'Failed to save news sites' });
           }
@@ -1512,34 +1483,38 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
       apiServer.post(
         '/news-sites/test',
         async (
-          request: FastifyRequest<{ Body: { url: string } }>,
+          request: FastifyRequest<{ Body: Partial<NewsSite> & { url?: string } }>,
           reply: FastifyReply,
         ) => {
           try {
-            const { url } = request.body as { url: string };
-            if (!url) {
+            const payload = request.body as Partial<NewsSite> & { url?: string };
+            if (!payload?.url) {
               return reply.code(400).send({ success: false, error: 'URL is required' });
             }
 
-            try {
-              const parsed = new URL(url);
-              if (!['http:', 'https:'].includes(parsed.protocol)) {
-                return reply.code(400).send({ success: false, error: 'Only http/https URLs are supported' });
-              }
-            } catch {
-              return reply.code(400).send({ success: false, error: 'Invalid URL format' });
-            }
+            const testSite = normalizeNewsSite({
+              name: payload.name?.trim() || 'Test source',
+              url: payload.url,
+              enabled: payload.enabled !== false,
+              type: payload.type,
+              category: payload.category,
+              language: payload.language,
+              tier: payload.tier,
+              jsonMapping: payload.jsonMapping,
+              htmlMapping: payload.htmlMapping,
+              filterKeywords: payload.filterKeywords,
+            });
 
             const startTime = Date.now();
-            const headlines = await parseNewsFromSite(url);
+            const headlines = await parseNewsFromSite(testSite);
             const parseTimeMs = Date.now() - startTime;
 
-            aiLogger.info({ url, headlinesFound: headlines.length, parseTimeMs }, 'News site test parse');
+            aiLogger.info({ url: testSite.url, headlinesFound: headlines.length, parseTimeMs }, 'News site test parse');
 
             return reply.code(200).send({
               success: true,
               data: {
-                url,
+                url: testSite.url,
                 headlines,
                 count: headlines.length,
                 parseTimeMs,
@@ -1562,10 +1537,16 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
        * Получить список пресетных AI/Tech источников для быстрого добавления
        */
       apiServer.get('/news-sites/presets', async (_request: FastifyRequest, reply: FastifyReply) => {
+        const counts = getPresetSourceCounts();
         return reply.code(200).send({
           success: true,
-          data: DEFAULT_AI_TECH_SOURCES,
-          count: DEFAULT_AI_TECH_SOURCES.length,
+          data: {
+            all: getPresetSources('all'),
+            global: getPresetSources('global'),
+            asia: getPresetSources('asia'),
+          },
+          count: counts.all,
+          counts,
         });
       });
 
@@ -1573,22 +1554,28 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
        * POST /api/news-sites/add-presets
        * Добавить пресетные источники к существующим (без дубликатов по URL)
        */
-      apiServer.post('/news-sites/add-presets', async (_request: FastifyRequest, reply: FastifyReply) => {
+      apiServer.post('/news-sites/add-presets', async (
+        request: FastifyRequest<{ Body: { group?: NewsPresetGroup } }>,
+        reply: FastifyReply,
+      ) => {
         try {
+          const requestedGroup = request.body?.group;
+          const group: NewsPresetGroup =
+            requestedGroup === 'asia' || requestedGroup === 'global' ? requestedGroup : 'all';
           const existing = await getConfiguredSites();
-          const existingUrls = new Set(existing.map(s => s.url));
-
-          const newSites = DEFAULT_AI_TECH_SOURCES.filter(s => !existingUrls.has(s.url));
-          const merged = [...existing, ...newSites];
+          const existingUrls = new Set(existing.map(site => site.url.trim().replace(/\/+$/, '').toLowerCase()));
+          const presetSites = getPresetSources(group);
+          const newSites = presetSites.filter(site => !existingUrls.has(site.url.trim().replace(/\/+$/, '').toLowerCase()));
+          const merged = mergeNewsSites(existing, presetSites);
 
           await saveConfiguredSites(merged);
           settingsRepo.invalidateCache?.();
 
-          aiLogger.info({ added: newSites.length, total: merged.length }, 'Preset AI/Tech sources added');
+          aiLogger.info({ added: newSites.length, total: merged.length, group }, 'Preset news sources added');
           return reply.code(200).send({
             success: true,
             message: `Добавлено ${newSites.length} новых источников`,
-            data: { added: newSites.length, total: merged.length, sites: merged },
+            data: { added: newSites.length, total: merged.length, sites: merged, group },
           });
         } catch (error) {
           aiLogger.error({ error }, 'Add preset sources error');
@@ -1640,23 +1627,32 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
         '/digest/latest',
         async (
           request: FastifyRequest<{
-            Querystring: { city?: string; firstName?: string; format?: string };
+            Querystring: { city?: string; firstName?: string; format?: string; pipeline?: string; refresh?: string };
           }>,
           reply: FastifyReply,
         ) => {
           try {
-            const { city = '', firstName = 'Читатель', format = 'html' } = request.query as {
+            const { city = '', firstName = 'Читатель', format = 'html', pipeline = 'legacy', refresh = '0' } = request.query as {
               city?: string;
               firstName?: string;
               format?: string;
+              pipeline?: string;
+              refresh?: string;
             };
+            const selectedPipeline: DigestPipelineMode =
+              pipeline === 'hybrid' || pipeline === 'hybrid_supabase'
+                ? 'hybrid_supabase'
+                : 'legacy';
+            const forceRefresh = refresh === '1' || refresh.toLowerCase() === 'true';
 
-            const digestText = await buildDigest('public', firstName, city);
+            const digestText = selectedPipeline === 'hybrid_supabase'
+              ? await buildHybridDigestText('public', firstName, city, { forceRefresh })
+              : await buildDigest('public', firstName, city);
 
             if (format === 'json') {
               return reply.code(200).send({
                 success: true,
-                data: { content: digestText, format: 'markdown', city, firstName },
+                data: { content: digestText, format: 'markdown', city, firstName, pipeline: selectedPipeline },
               });
             }
 
@@ -1676,7 +1672,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
   </style>
 </head>
 <body>
-  <div class="meta">Дайджест Амины · ${escapeHtmlSimple(city)} · ${new Date().toLocaleDateString('ru-RU')}</div>
+  <div class="meta">Дайджест Амины · ${escapeHtmlSimple(city)} · ${selectedPipeline} · ${new Date().toLocaleDateString('ru-RU')}</div>
   <div>${htmlBody}</div>
 </body>
 </html>`;
