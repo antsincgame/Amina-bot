@@ -72,7 +72,7 @@ describe('Web Search Service', () => {
     it('should detect weather queries', () => {
       expect(needsWebSearch('какая погода в Москве?')).toBe(true);
       expect(needsWebSearch('прогноз погоды на завтра')).toBe(true);
-      expect(needsWebSearch('температура в Гродно')).toBe(true);
+      expect(needsWebSearch('температура в Берлине')).toBe(true);
       expect(needsWebSearch('будет ли дождь?')).toBe(true);
     });
 
@@ -101,7 +101,7 @@ describe('Web Search Service', () => {
 
     // --- Новые паттерны (назови/посоветуй/рекомендуй) ---
     it('should detect recommendation queries', () => {
-      expect(needsWebSearch('назови лучшие кофейни гродно')).toBe(true);
+      expect(needsWebSearch('назови лучшие кофейни города')).toBe(true);
       expect(needsWebSearch('посоветуй хороший ресторан')).toBe(true);
       expect(needsWebSearch('порекомендуй фильм')).toBe(true);
       expect(needsWebSearch('подбери мне ноутбук')).toBe(true);
@@ -127,7 +127,7 @@ describe('Web Search Service', () => {
     // --- Факты о мире ---
     it('should detect factual queries', () => {
       expect(needsWebSearch('кто президент Франции?')).toBe(true);
-      expect(needsWebSearch('население Минска')).toBe(true);
+      expect(needsWebSearch('население Берлина')).toBe(true);
       expect(needsWebSearch('расскажи про новый ChatGPT')).toBe(true);
     });
 

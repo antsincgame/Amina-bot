@@ -84,6 +84,10 @@ const HEALTH_CHECK_HEADERS: Record<string, string> = {
   Accept: 'application/json',
 };
 
+function normalizeLMStudioBaseUrl(url: string): string {
+  return url.trim().replace(/\/+$/, '').replace(/\/v1$/i, '');
+}
+
 function getModelsUrl(cfg: LMStudioConfig, useNativeApi: boolean): string {
   const base = cfg.url.replace(/\/v1\/?$/, '');
   if (useNativeApi) {
@@ -93,14 +97,27 @@ function getModelsUrl(cfg: LMStudioConfig, useNativeApi: boolean): string {
 }
 
 const HEARTBEAT_KEY = 'lmstudio_url_updated_at';
+const HEARTBEAT_URL_KEY = 'lmstudio_url_heartbeat_url';
 
-export async function recordHeartbeat(): Promise<void> {
+export async function recordHeartbeat(url?: string): Promise<void> {
   await settingsRepo.set(HEARTBEAT_KEY, new Date().toISOString());
+  if (url) {
+    await settingsRepo.set(HEARTBEAT_URL_KEY, normalizeLMStudioBaseUrl(url));
+  }
 }
 
-async function isHeartbeatRecent(): Promise<boolean> {
+async function isHeartbeatRecent(expectedUrl?: string): Promise<boolean> {
   const raw = await settingsRepo.get(HEARTBEAT_KEY);
   if (!raw) return false;
+
+  if (expectedUrl) {
+    const heartbeatUrl = await settingsRepo.get(HEARTBEAT_URL_KEY);
+    if (!heartbeatUrl) return false;
+    if (normalizeLMStudioBaseUrl(heartbeatUrl) !== normalizeLMStudioBaseUrl(expectedUrl)) {
+      return false;
+    }
+  }
+
   try {
     const ts = new Date(raw).getTime();
     return Date.now() - ts < HEARTBEAT_VALID_MS;
@@ -114,6 +131,11 @@ export async function getHeartbeatAt(): Promise<string | null> {
   return raw && typeof raw === 'string' ? raw.trim() || null : null;
 }
 
+export async function getHeartbeatUrl(): Promise<string | null> {
+  const raw = await settingsRepo.get(HEARTBEAT_URL_KEY);
+  return raw && typeof raw === 'string' ? raw.trim() || null : null;
+}
+
 export interface LMStudioHealthStatus {
   healthy: boolean;
   source: 'heartbeat' | 'direct' | null;
@@ -122,9 +144,7 @@ export interface LMStudioHealthStatus {
 
 export async function getLMStudioHealthStatus(cfg: LMStudioConfig): Promise<LMStudioHealthStatus> {
   const heartbeatAt = await getHeartbeatAt();
-  const viaHeartbeat = heartbeatAt
-    ? Date.now() - new Date(heartbeatAt).getTime() < HEARTBEAT_VALID_MS
-    : false;
+  const viaHeartbeat = await isHeartbeatRecent(cfg.url);
 
   if (viaHeartbeat) {
     healthCache.set(true);
@@ -147,7 +167,7 @@ export async function checkLMStudioHealth(cfg: LMStudioConfig): Promise<boolean>
 }
 
 async function checkLMStudioHealthDirect(cfg: LMStudioConfig): Promise<boolean> {
-  if (await isHeartbeatRecent()) {
+  if (await isHeartbeatRecent(cfg.url)) {
     healthCache.set(true);
     aiLogger.debug({ url: cfg.url }, 'LM Studio healthy via heartbeat');
     return true;

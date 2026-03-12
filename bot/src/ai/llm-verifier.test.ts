@@ -143,22 +143,20 @@ describe('LLM Verifier', () => {
 
     it('should detect and replace search refusal when context provided', async () => {
       mockWebSearch.mockResolvedValueOnce({
-        answer: 'Вот актуальные новости Гродно: 1. Открылся новый парк...',
-        citations: ['https://newgrodno.by'],
+        answer: 'Вот актуальные новости Берлина: 1. Открылся новый парк...',
+        citations: ['https://berlin-news.de'],
         model: 'sonar',
         tokens_used: { prompt: 100, completion: 200, total: 300 },
       });
 
       const result = await verifyResponse(
-        'новости Гродно',
-        // Текст который является отказом от поиска, но НЕ симуляцией
+        'новости Берлина',
         'У меня нет доступа к актуальным данным из интернета. Я могу рассказать только то что знаю из обучения. Для актуальных новостей рекомендую обратиться к новостным сайтам.',
         '=== ДАННЫЕ ИЗ ИНТЕРНЕТА === ...'
       );
 
       expect(result.isValid).toBe(false);
-      expect(result.correctedResponse).toContain('Гродно');
-      // Может быть "симуляция" или "отказ" — зависит от того какой паттерн сработал первым
+      expect(result.correctedResponse).toContain('Берлин');
       expect(result.reason).toBeDefined();
     });
 

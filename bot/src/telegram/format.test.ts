@@ -316,7 +316,7 @@ describe('buildTimeContext', () => {
   it('should include date and time', () => {
     const ctx = buildTimeContext('Дмитрий');
     expect(ctx).toContain('Контекст:');
-    expect(ctx).toContain('МСК');
+    expect(ctx).toContain('TZ');
     expect(ctx).toContain('Дмитрий');
   });
 

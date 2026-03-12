@@ -2,16 +2,14 @@
  * Morning Digest Scheduler
  * 
  * Каждую минуту проверяет, не пора ли отправить утренний дайджест.
- * Сервер работает в TZ=Europe/Minsk — new Date() уже в минском времени.
+ * TZ берётся из переменной окружения TZ (по умолчанию UTC).
  * 
  * Логика:
- * 1. Perplexity ищет: погоду, новости ГОРОДА, новости БЕЛАРУСИ (4 отдельных запроса)
- * 2. Из БД: напоминания на сегодня, задачи
- * 3. Всё передаётся в основную LLM с промптом "обработай эмоционально"
- * 4. LLM формирует живой, авторский дайджест с комментариями
- * 
- * ВАЖНО: Новости СТРОГО по Беларуси. Мировые новости ИСКЛЮЧЕНЫ.
- * Для этого: системный промпт Perplexity, белорусские СМИ, жёсткий LLM-промпт.
+ * 1. Perplexity ищет: погоду, местные новости города
+ * 2. Парсер собирает AI/Tech заголовки из настроенных RSS/JSON/HTML источников
+ * 3. Из БД: напоминания на сегодня, задачи
+ * 4. Всё передаётся в основную LLM с промптом "обработай эмоционально"
+ * 5. LLM формирует живой, авторский дайджест с комментариями
  */
 
 import { InlineKeyboard, type Api, type RawApi } from 'grammy';
@@ -22,6 +20,7 @@ import { webSearch } from '../ai/websearch.js';
 import { inlineCitations } from '../telegram/format.js';
 import { parseAllConfiguredSites, filterByCategory, type ParsedHeadline } from './news-parser.js';
 import { aiService } from '../ai/openrouter.js';
+import { config } from '../config/index.js';
 import { appLogger } from '../config/logger.js';
 
 interface BotLike {
@@ -44,10 +43,7 @@ export function startDigestScheduler(bot: BotLike): void {
     return;
   }
 
-  if (!process.env.TZ || process.env.TZ !== 'Europe/Minsk') {
-    appLogger.warn({ TZ: process.env.TZ }, 'TZ is not set to Europe/Minsk — digest times may be incorrect!');
-  }
-  appLogger.info('Starting morning digest scheduler (TZ=Europe/Minsk)');
+  appLogger.info({ TZ: config.server.timeZone }, 'Starting morning digest scheduler');
 
   // Очищаем sent-кеш в полночь
   resetSentCacheAtMidnight();
@@ -188,20 +184,20 @@ export async function sendDigestNow(
 }
 
 /**
- * Сбросить кеш отправленных дайджестов в полночь
- * TZ=Europe/Minsk → new Date().getHours() возвращает минское время
+ * Сбросить кеш отправленных дайджестов в полночь (по серверному TZ)
  */
 function resetSentCacheAtMidnight(): void {
-  const minskHour = () => Number(new Intl.DateTimeFormat('en', { timeZone: 'Europe/Minsk', hour: 'numeric', hour12: false }).format(new Date()));
+  const serverTZ = config.server.timeZone;
+  const currentHour = () => Number(new Intl.DateTimeFormat('en', { timeZone: serverTZ, hour: 'numeric', hour12: false }).format(new Date()));
 
-  if (minskHour() === 0) {
+  if (currentHour() === 0) {
     SENT_TODAY.clear();
   }
 
   midnightResetInterval = setInterval(() => {
-    if (minskHour() === 0) {
+    if (currentHour() === 0) {
       SENT_TODAY.clear();
-      appLogger.debug('Digest SENT_TODAY cache cleared at midnight (Minsk)');
+      appLogger.debug('Digest SENT_TODAY cache cleared at midnight');
     }
   }, 5 * 60 * 1000);
   midnightResetInterval.unref();
@@ -214,7 +210,7 @@ async function buildDigestWithTimeout(
   userId: string, firstName: string | null, city: string | null, timeoutMs = 90_000,
 ): Promise<string> {
   return Promise.race([
-    buildDigest(userId, firstName, city ?? 'Гродно'),
+    buildDigest(userId, firstName, city ?? ''),
     new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error(`buildDigest timeout after ${timeoutMs}ms`)), timeoutMs),
     ),
@@ -307,18 +303,16 @@ async function webSearchWithRetry(
 
 /**
  * Собрать дайджест:
- * 1. Perplexity собирает БЕЛОРУССКИЕ данные ПАРАЛЛЕЛЬНО:
- *    - Погода города
- *    - Новости ГОРОДА (локальные)
- *    - Новости БЕЛАРУСИ (экономика, политика, общество)
- *    - Спорт/культура БЕЛАРУСИ
- * 2. БД: напоминания, задачи
- * 3. LLM формирует живой, подробный текст
- * 
- * КЛЮЧЕВОЕ: Все запросы содержат белорусские СМИ и ЖЁСТКИЙ фильтр по стране.
- * Мировые новости полностью исключены на ВСЕХ уровнях.
+ * 1. Perplexity: погода, местные новости города
+ * 2. Парсер: AI/Tech/Asia заголовки из настроенных источников
+ * 3. БД: напоминания, задачи
+ * 4. LLM формирует живой, подробный текст
  */
-async function buildDigest(
+/**
+ * Собрать полный дайджест (экспорт для публичного API).
+ * userId='public' — без персональных напоминаний/задач.
+ */
+export async function buildDigest(
   userId: string,
   firstName: string | null,
   city: string
@@ -326,59 +320,20 @@ async function buildDigest(
   const rawData: string[] = [];
   const todayStr = new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
 
-  // Белорусские СМИ — ИСКЛЮЧАЕМ минск-ориентированные если город не Минск
-  const isGrodno = city.toLowerCase().includes('гродно') || city.toLowerCase().includes('grodno');
-  const isMinsk = city.toLowerCase().includes('минск') || city.toLowerCase().includes('minsk');
-  const bySources = isMinsk
-    ? 'сайт belta.by, ont.by, tvr.by, sb.by, minsknews.by'
-    : 'сайт belta.by, ont.by, tvr.by, sb.by' + (isGrodno ? ', grodnonews.by, newgrodno.by' : '');
-
-  // Фильтр упоминания Минска для не-минских городов
-  const minskFilter = !isMinsk
-    ? ` СТРОГО ЗАПРЕЩЕНО включать новости про Минск, минские события, минский транспорт! Только общебелорусские новости без привязки к Минску!`
-    : '';
-
-  // --- Запускаем ВСЕ запросы параллельно ---
-  // Парсер городских новостей ЗАМЕНЯЕТ Perplexity для местных новостей.
-  // Perplexity остаётся для общих новостей Беларуси, погоды и спорта/культуры.
-  const [weatherResult, parsedHeadlinesResult, belarusNewsResult, belarusSportCultureResult, remindersResult, todosResult] = 
+  const [weatherResult, parsedHeadlinesResult, remindersResult, todosResult] = 
     await Promise.allSettled([
-      // 1. Погода — подробно с прогнозом
       webSearchWithRetry(
-        `Погода ${city} Беларусь сегодня ${todayStr}: точная температура сейчас утром днём вечером, осадки, ветер, влажность, давление, ощущается как. Подробный прогноз на весь день.`
+        `Погода ${city} сегодня ${todayStr}: точная температура сейчас утром днём вечером, осадки, ветер, влажность, давление, ощущается как. Подробный прогноз на весь день.`
       ),
 
-      // 2. ПАРСИНГ ЗАГОЛОВКОВ с настроенных новостных сайтов
       parseAllConfiguredSites(),
 
-      // 3. Новости БЕЛАРУСИ — экономика, политика, общество (Perplexity)
-      webSearchWithRetry(
-        `Внутренние новости Беларуси ${todayStr} (${bySources}): ` +
-        `белорусская экономика, решения правительства, законы, социальная политика, образование, здравоохранение, ` +
-        `инфраструктура, строительство, IT-сектор Беларуси, курс белорусского рубля, цены` +
-        (isGrodno ? `, Гродненская область, регионы Беларуси` : '') + `. ` +
-        `СТРОГО только внутренние белорусские новости! НЕ включай мировые, российские, украинские новости!${minskFilter} ` +
-        `Минимум 5-7 пунктов о жизни внутри Беларуси с конкретными фактами и цифрами.`
-      ),
-
-      // 4. Спорт и культура БЕЛАРУСИ — отдельный запрос для полноты
-      webSearchWithRetry(
-        `Спорт культура Беларусь ${city} сегодня ${todayStr}: белорусские спортсмены, ` +
-        (isGrodno ? 'Неман Гродно, ' : '') +
-        `БАТЭ, белорусский футбол хоккей биатлон, театры Беларуси, концерты, фестивали, выставки в ${city} и Беларуси. ` +
-        `Только белорусский спорт и культура!${minskFilter} Минимум 3-5 событий.`
-      ),
-
-      // 5. Напоминания из БД
       remindersRepo.getByUser(userId),
-      // 6. Задачи из БД
       todosRepo.getForDigest(userId),
     ]);
 
-  // Собираем ВСЕ citations из всех поисковых запросов
   const allCitations: string[] = [];
 
-  // Обрабатываем результаты поиска
   if (weatherResult.status === 'fulfilled' && weatherResult.value?.answer) {
     rawData.push(`[ПОГОДА ${city.toUpperCase()}]\n${weatherResult.value.answer}`);
     allCitations.push(...(weatherResult.value.citations ?? []));
@@ -389,7 +344,6 @@ async function buildDigest(
     }
   }
 
-  // ГОРОДСКИЕ НОВОСТИ — из парсера настроенных сайтов
   let parsedHeadlines: ParsedHeadline[] = [];
   let aiTechHeadlines: ParsedHeadline[] = [];
   let asiaAiHeadlines: ParsedHeadline[] = [];
@@ -397,35 +351,12 @@ async function buildDigest(
   
   if (parsedHeadlinesResult.status === 'fulfilled') {
     const allParsed = parsedHeadlinesResult.value;
-    // Разделяем по категориям
     parsedHeadlines = allParsed.filter(h => !h.category || h.category === 'city_local');
     aiTechHeadlines = filterByCategory(allParsed, 'ai_tech');
     asiaAiHeadlines = filterByCategory(allParsed, 'asia_tech');
     communityHeadlines = filterByCategory(allParsed, 'community');
   } else {
     appLogger.warn({ error: parsedHeadlinesResult.reason }, 'Digest: news parser failed');
-  }
-
-  // ФИЛЬТРАЦИЯ: убираем заголовки с упоминанием Минска, если город НЕ Минск
-  if (city !== 'Минск') {
-    const originalCount = parsedHeadlines.length;
-    parsedHeadlines = parsedHeadlines.filter(h => {
-      const titleLower = h.title.toLowerCase();
-      const urlLower = h.url.toLowerCase();
-      // Исключаем если заголовок/URL содержит "минск", "minsk", "минчан", "минский"
-      return !(
-        titleLower.includes('минск') ||
-        titleLower.includes('минчан') ||
-        titleLower.includes('minsk') ||
-        urlLower.includes('minsk')
-      );
-    });
-    if (originalCount !== parsedHeadlines.length) {
-      appLogger.info(
-        { city, filtered: originalCount - parsedHeadlines.length, remaining: parsedHeadlines.length },
-        'Digest: filtered out Minsk news'
-      );
-    }
   }
 
   if (parsedHeadlines.length > 0) {
@@ -442,63 +373,17 @@ async function buildDigest(
     appLogger.info({ count: parsedHeadlines.length, city }, 'Digest: using parsed headlines for city news');
   }
 
-  // ВСЕГДА используем Perplexity для городских новостей как дополнение
-  {
+  if (city) {
     const perplexityCityResult = await webSearchWithRetry(
-      `Новости ${city} Беларусь сегодня ${todayStr}: ` +
-      (isGrodno ? 'grodnonews.by, newgrodno.by, grodno.in, ' : '') +
+      `Новости ${city} сегодня ${todayStr}: ` +
       `местные события, происшествия, решения городских властей, транспорт, благоустройство, культурная жизнь ${city}. ` +
       `Ищи ТОЛЬКО местные городские новости ${city}! Минимум 5 конкретных событий с датами. ` +
-      `НЕ включай мировые или российские новости — ТОЛЬКО ${city}.`
+      `НЕ включай мировые новости — ТОЛЬКО ${city}.`
     );
     if (perplexityCityResult?.answer) {
       rawData.push(`[МЕСТНЫЕ НОВОСТИ ${city.toUpperCase()} — PERPLEXITY]\n${perplexityCityResult.answer}`);
       allCitations.push(...(perplexityCityResult.citations ?? []));
     }
-  }
-
-  if (belarusNewsResult.status === 'fulfilled' && belarusNewsResult.value?.answer) {
-    let belarusNews = belarusNewsResult.value.answer;
-    allCitations.push(...(belarusNewsResult.value.citations ?? []));
-    // Фильтрация: убираем предложения с упоминанием Минска если город НЕ Минск
-    if (!isMinsk) {
-      const sentences = belarusNews.split(/(?<=[.!?])\s+/);
-      const filtered = sentences.filter(s => {
-        const lower = s.toLowerCase();
-        // Расширенный фильтр: "мнс минска", "минский район", etc.
-        return !lower.includes('минск') && !lower.includes('minsk') && !lower.includes('минчан');
-      });
-      if (filtered.length < sentences.length) {
-        appLogger.info({ filtered: sentences.length - filtered.length }, 'Digest: filtered Minsk from Belarus news');
-        belarusNews = filtered.join(' ');
-      }
-    }
-    if (belarusNews.trim()) {
-      rawData.push(`[НОВОСТИ БЕЛАРУСИ — ЭКОНОМИКА, ПОЛИТИКА, ОБЩЕСТВО]\n${belarusNews}`);
-    }
-  } else if (belarusNewsResult.status === 'rejected') {
-    appLogger.warn({ error: belarusNewsResult.reason }, 'Digest: Belarus news failed');
-  }
-
-  if (belarusSportCultureResult.status === 'fulfilled' && belarusSportCultureResult.value?.answer) {
-    let sportCulture = belarusSportCultureResult.value.answer;
-    allCitations.push(...(belarusSportCultureResult.value.citations ?? []));
-    // Фильтрация Минска из спорта/культуры
-    if (!isMinsk) {
-      const sentences = sportCulture.split(/(?<=[.!?])\s+/);
-      const filtered = sentences.filter(s => {
-        const lower = s.toLowerCase();
-        return !lower.includes('минск') && !lower.includes('minsk') && !lower.includes('минчан');
-      });
-      if (filtered.length < sentences.length) {
-        sportCulture = filtered.join(' ');
-      }
-    }
-    if (sportCulture.trim()) {
-      rawData.push(`[СПОРТ И КУЛЬТУРА БЕЛАРУСИ]\n${sportCulture}`);
-    }
-  } else if (belarusSportCultureResult.status === 'rejected') {
-    appLogger.warn({ error: belarusSportCultureResult.reason }, 'Digest: Belarus sport/culture failed');
   }
 
   // AI/TECH НОВОСТИ — из парсера (международные англоязычные источники)
@@ -577,7 +462,7 @@ async function buildDigest(
 Ты следишь за азиатским AI-рынком: DeepSeek, Qwen, китайские open-source модели, японские и корейские AI-стартапы.
 
 Сейчас ${todayDate}.
-Составь ПОДРОБНЫЙ УТРЕННИЙ ДАЙДЖЕСТ для ${nameStr} из города ${city}, Беларусь.
+Составь ПОДРОБНЫЙ УТРЕННИЙ ДАЙДЖЕСТ для ${nameStr} из города ${city}.
 
 Вот собранные данные:
 
@@ -598,11 +483,7 @@ ${rawData.join('\n\n')}${citationsBlock}
    ВАЖНО: Если в данных есть заголовки со ссылками — ОБЯЗАТЕЛЬНО оформи как Markdown-ссылку: [заголовок](url).
    Если данных по городу нет — ПРОПУСТИ этот раздел целиком.
 
-4. **Новости Беларуси** — экономика, политика, общество, спорт, культура. Каждую с кратким комментарием.
-   ОБЯЗАТЕЛЬНО: после каждой новости ставь ссылку на источник в формате [N].
-   Если данных нет — ПРОПУСТИ. НЕ ИЗВИНЯЙСЯ!
-
-5. **Технологии и AI** — САМЫЙ ВАЖНЫЙ И ОБЪЁМНЫЙ РАЗДЕЛ:
+4. **Технологии и AI** — САМЫЙ ВАЖНЫЙ И ОБЪЁМНЫЙ РАЗДЕЛ:
    - Пронумеруй ВСЕ заголовки из данных выше (их пронумерованный список).
    - Для КАЖДОГО: переведи на русский + 1 предложение комментария.
    - Группируй: 🚀 Релизы, 🔬 Исследования, 🛠 Инструменты, 💡 Тренды.
@@ -611,23 +492,19 @@ ${rawData.join('\n\n')}${citationsBlock}
    - Этот раздел должен занимать 60-70% всего дайджеста.
    Если данных нет — ПРОПУСТИ.
 
-6. **AI из Азии** — если есть азиатские заголовки:
+5. **AI из Азии** — если есть азиатские заголовки:
    - Пронумеруй ВСЕ заголовки и включи КАЖДЫЙ.
    - ПЕРЕВЕДИ каждый на русский, оригинал в скобках.
    - Формат: **1. [Перевод (原标题)](url)** — комментарий
    - ЗАПРЕЩЕНО пропускать заголовки!
    Если данных нет — ПРОПУСТИ.
 
-7. **Напоминания и задачи** — если есть в данных, подбодри и дай совет по приоритетам
+6. **Напоминания и задачи** — если есть в данных, подбодри и дай совет по приоритетам
 
-8. **Настрой на день** — позитивное мотивирующее завершение (КОРОТКО, 1-2 предложения)
+7. **Настрой на день** — позитивное мотивирующее завершение (КОРОТКО, 1-2 предложения)
 
 ЖЁСТКИЕ ПРАВИЛА:
 - ЗАПРЕЩЕНО писать "к сожалению, данных нет", "не удалось найти" — просто ПРОПУСТИ пустой раздел!
-- ЗАПРЕЩЕНО включать мировые ПОЛИТИЧЕСКИЕ новости (Россия, Украина, США)!
-- ЗАПРЕЩЕНО включать новости о войнах, конфликтах в других странах!${!isMinsk ? `
-- ЗАПРЕЩЕНО включать новости Минска!
-- Упоминание "Минск", "минский", "минчан" в дайджесте = ОШИБКА!` : ''}
 - Раздел "Технологии и AI" — САМЫЙ БОЛЬШОЙ. Он должен содержать КАЖДЫЙ пронумерованный заголовок из данных!
 - Если AI-заголовков больше 50 — ВСЁ РАВНО включи каждый! Пиши кратко: 1 строка = перевод + ссылка + мини-комментарий.
 - Допустимо опустить подробный комментарий если заголовков > 50, но сам заголовок + ссылка ОБЯЗАТЕЛЬНЫ!
@@ -661,7 +538,6 @@ ${rawData.join('\n\n')}${citationsBlock}
 
 /**
  * Приветствие по времени суток (fallback)
- * TZ=Europe/Minsk → getHours() = минское время
  */
 function getTimeGreeting(name: string | null): string {
   const hour = new Date().getHours();

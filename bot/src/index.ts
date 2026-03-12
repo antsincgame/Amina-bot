@@ -2,6 +2,13 @@ import type { FastifyInstance } from 'fastify';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import { config } from './config/index.js';
+import {
+  REQUEST_TIMEOUT_MS,
+  CONNECTION_TIMEOUT_MS,
+  KEEP_ALIVE_TIMEOUT_MS,
+  BODY_LIMIT_BYTES,
+  HEALTH_CACHE_TTL_MS,
+} from './config/constants.js';
 import { serverLogger, httpLogger, appLogger } from './config/logger.js';
 import { createBot } from './telegram/bot.js';
 import { getSupabase, settingsRepo } from './db/supabase.js';
@@ -17,13 +24,12 @@ import { ensureVoiceMessagesInfra } from './features/voice-messages-repo.js';
 // --------------------------------------------
 
 const app = Fastify({
-  logger: false, // We use pino separately
+  logger: false,
   trustProxy: true,
-  // Таймауты для Render Starter plan (30 сек лимит)
-  requestTimeout: 28000,        // 28 секунд (меньше лимита Render)
-  connectionTimeout: 5000,      // 5 секунд на установку соединения
-  keepAliveTimeout: 30000,      // 30 секунд keep-alive
-  bodyLimit: 10485760,          // 10MB лимит тела запроса
+  requestTimeout: REQUEST_TIMEOUT_MS,
+  connectionTimeout: CONNECTION_TIMEOUT_MS,
+  keepAliveTimeout: KEEP_ALIVE_TIMEOUT_MS,
+  bodyLimit: BODY_LIMIT_BYTES,
 });
 
 // Bot instance
@@ -34,12 +40,7 @@ let bot: ReturnType<typeof createBot> | null = null;
 // --------------------------------------------
 
 const setupRoutes = async (server: FastifyInstance): Promise<void> => {
-  // Register CORS
-  const DEFAULT_ADMIN_ORIGIN = 'https://amina-admin.onrender.com';
-  const allowedOrigins: string[] = [DEFAULT_ADMIN_ORIGIN];
-  if (process.env.ADMIN_URL && process.env.ADMIN_URL !== DEFAULT_ADMIN_ORIGIN) {
-    allowedOrigins.push(process.env.ADMIN_URL);
-  }
+  const allowedOrigins: string[] = [config.adminUrl];
   const leadOrigins = (process.env.LEAD_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
   allowedOrigins.push(...leadOrigins);
 
@@ -58,7 +59,7 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
         health: '/health',
         ready: '/ready',
         api: '/api/*',
-        admin: 'https://amina-admin.onrender.com',
+        admin: config.adminUrl,
       },
       documentation: 'https://github.com/antsincgame/Amina-bot',
     };
@@ -73,13 +74,12 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
     };
   });
 
-  // === ОПТИМИЗАЦИЯ: Health/Ready/Status кешируются на 10 секунд ===
-  const HEALTH_CACHE_TTL = 10_000;
+  // === ОПТИМИЗАЦИЯ: Health/Ready/Status кешируются ===
   let healthCache: { checks: Record<string, boolean>; ts: number } | null = null;
 
   server.get('/ready', async () => {
     const now = Date.now();
-    if (healthCache && now - healthCache.ts < HEALTH_CACHE_TTL) {
+    if (healthCache && now - healthCache.ts < HEALTH_CACHE_TTL_MS) {
       const allHealthy = Object.values(healthCache.checks).every(Boolean);
       return { status: allHealthy ? 'ready' : 'degraded', checks: healthCache.checks, timestamp: new Date().toISOString(), cached: true };
     }
@@ -108,7 +108,7 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
   server.get('/api/status', async () => {
     const now = Date.now();
     // Reuse ready cache
-    if (!healthCache || now - healthCache.ts >= HEALTH_CACHE_TTL) {
+    if (!healthCache || now - healthCache.ts >= HEALTH_CACHE_TTL_MS) {
       const dbCheck = async (): Promise<boolean> => {
         try {
           const { error } = await getSupabase().from('settings').select('key').limit(1);
@@ -167,7 +167,7 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
 // Background initialization (runs after HTTP server is up)
 // --------------------------------------------
 
-const initBotAndServices = async (webhookAlreadySet: boolean): Promise<void> => {
+const initBotAndServices = async (): Promise<void> => {
   if (shuttingDown) return;
 
   // Database check
@@ -203,8 +203,10 @@ const initBotAndServices = async (webhookAlreadySet: boolean): Promise<void> => 
     appLogger.info('✓ Telegram bot created');
   }
 
+  const shouldUseWebhook = Boolean(config.isProd && config.telegram.token && config.telegram.webhook.url);
+
   // Activate webhook or start polling
-  if (webhookAlreadySet && config.telegram.webhook.url) {
+  if (shouldUseWebhook && config.telegram.webhook.url) {
     try {
       await bot.api.setWebhook(`${config.telegram.webhook.url}/webhook/telegram`, {
         secret_token: config.telegram.webhook.secret,
@@ -292,8 +294,7 @@ const start = async (): Promise<void> => {
 
     // Задержка перед фоновой инициализацией — даём Render подтвердить health check
     setTimeout(() => {
-      const useWebhook = !!(config.isProd && config.telegram.token && config.telegram.webhook.url);
-      initBotAndServices(useWebhook).catch(err => {
+      initBotAndServices().catch(err => {
         appLogger.error({ error: err }, 'Background init error');
       });
     }, 5000);

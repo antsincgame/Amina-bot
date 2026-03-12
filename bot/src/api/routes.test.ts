@@ -55,6 +55,22 @@ vi.mock('../ai/websearch.js', () => ({
   getSelectedSearchModel: vi.fn().mockResolvedValue(null),
 }));
 
+vi.mock('../ai/lmstudio.js', () => ({
+  clearLMStudioCache: vi.fn(),
+  getLMStudioConfig: vi.fn().mockResolvedValue(null),
+  checkLMStudioHealth: vi.fn().mockResolvedValue(true),
+  checkLMStudioReachable: vi.fn().mockResolvedValue(true),
+  getLMStudioHealthStatus: vi.fn().mockResolvedValue({
+    healthy: true,
+    source: 'direct',
+    heartbeatAt: null,
+  }),
+  fetchLMStudioModels: vi.fn().mockResolvedValue([
+    { id: 'local-model', name: 'Local Model', owned_by: 'local' },
+  ]),
+  recordHeartbeat: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('../db/supabase.js', () => ({
   settingsRepo: {
     get: vi.fn().mockResolvedValue(null),
@@ -256,6 +272,43 @@ describe('API Routes', () => {
         const body = JSON.parse(response.body);
         expect(body.success).toBe(true);
       }
+    });
+  });
+
+  describe('POST /api/tunnel/register', () => {
+    it('should reject non-https tunnel url', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/tunnel/register',
+        payload: { url: 'http://example.com' },
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
+
+    it('should reject tunnel url when models API is invalid', async () => {
+      const lmstudio = await import('../ai/lmstudio.js');
+      vi.mocked(lmstudio.fetchLMStudioModels).mockRejectedValueOnce(new Error('invalid api'));
+
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/tunnel/register',
+        payload: { url: 'https://bad.trycloudflare.com' },
+      });
+
+      expect(response.statusCode).toBe(400);
+    });
+  });
+
+  describe('POST /api/tunnel/heartbeat', () => {
+    it('should require tunnel url in heartbeat body', async () => {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/tunnel/heartbeat',
+        payload: {},
+      });
+
+      expect(response.statusCode).toBe(400);
     });
   });
 });

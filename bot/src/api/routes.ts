@@ -9,7 +9,9 @@ import { getAllAudioModels, getFreeVisionModels, refreshFreeVisionModelsCache, g
 import { getSearchModelInfo, getAvailableModels, isWebSearchEnabled, clearPerplexityCache } from '../ai/websearch.js';
 import { userProfileRepo, userMemoryRepo, userLogsRepo, type UserLog } from '../memory/user-memory.js';
 import { config, clearApiKeysCache, getApiKeys } from '../config/index.js';
-import { getConfiguredSites, saveConfiguredSites, parseNewsFromSite, DEFAULT_AI_TECH_SOURCES } from '../features/news-parser.js';
+import { getConfiguredSites, saveConfiguredSites, parseNewsFromSite, parseAllConfiguredSites, filterByCategory, DEFAULT_AI_TECH_SOURCES } from '../features/news-parser.js';
+import { buildDigest } from '../features/digest-scheduler.js';
+import { markdownToTelegramHtml } from '../telegram/format.js';
 import type { NewsSite } from '../../../shared/types/index.js';
 import { invalidateTTSConfig } from '../features/tts.js';
 import { voiceMessagesRepo } from '../features/voice-messages-repo.js';
@@ -34,6 +36,7 @@ import {
 } from '../ai/lmstudio.js';
 import archiver from 'archiver';
 import type { Message, AIMessage, Conversation, LogLevel } from '../../../shared/types/index.js';
+import { LEADS_MESSAGE_MAX_LENGTH, LEADS_COMMENT_MAX_LENGTH } from '../config/constants.js';
 
 // --------------------------------------------
 // Request Schemas
@@ -41,7 +44,7 @@ import type { Message, AIMessage, Conversation, LogLevel } from '../../../shared
 
 const chatRequestSchema = z.object({
   userId: z.string().min(1),
-  message: z.string().min(1).max(10000),
+  message: z.string().min(1).max(LEADS_MESSAGE_MAX_LENGTH),
   conversationId: z.string().uuid().optional(),
   channel: z.enum(['telegram', 'voice', 'all']).default('telegram'),
 });
@@ -1498,6 +1501,99 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
       });
 
       // ============================================
+      // Public Digest & Raw News API
+      // ============================================
+
+      /**
+       * GET /api/debug/raw-news
+       * Сырые заголовки с парсера (для отладки). Публичный.
+       */
+      apiServer.get('/debug/raw-news', async (_request: FastifyRequest, reply: FastifyReply) => {
+        try {
+          const headlines = await parseAllConfiguredSites();
+          const byCategory = {
+            ai_tech: filterByCategory(headlines, 'ai_tech'),
+            asia_tech: filterByCategory(headlines, 'asia_tech'),
+            community: filterByCategory(headlines, 'community'),
+            city_local: headlines.filter(h => !h.category || h.category === 'city_local'),
+          };
+          return reply.code(200).send({
+            success: true,
+            data: {
+              total: headlines.length,
+              byCategory: {
+                ai_tech: byCategory.ai_tech.length,
+                asia_tech: byCategory.asia_tech.length,
+                community: byCategory.community.length,
+                city_local: byCategory.city_local.length,
+              },
+              headlines,
+            },
+          });
+        } catch (error) {
+          aiLogger.error({ error }, 'Raw news API error');
+          return reply.code(500).send({ success: false, error: 'Failed to parse news' });
+        }
+      });
+
+      /**
+       * GET /api/digest/latest
+       * Публичный дайджест. Query: city, firstName, format=html|json
+       */
+      apiServer.get(
+        '/digest/latest',
+        async (
+          request: FastifyRequest<{
+            Querystring: { city?: string; firstName?: string; format?: string };
+          }>,
+          reply: FastifyReply,
+        ) => {
+          try {
+            const { city = '', firstName = 'Читатель', format = 'html' } = request.query as {
+              city?: string;
+              firstName?: string;
+              format?: string;
+            };
+
+            const digestText = await buildDigest('public', firstName, city);
+
+            if (format === 'json') {
+              return reply.code(200).send({
+                success: true,
+                data: { content: digestText, format: 'markdown', city, firstName },
+              });
+            }
+
+            const htmlBody = markdownToTelegramHtml(digestText).replace(/\n/g, '<br>\n');
+            const html = `<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Дайджест Амины — ${escapeHtmlSimple(city)}</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; line-height: 1.6; margin: 20px; max-width: 800px; margin-left: auto; margin-right: auto; }
+    a { color: #007bff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    h1, h2 { margin-top: 1.5em; }
+    .meta { color: #666; font-size: 0.9em; margin-bottom: 1em; }
+  </style>
+</head>
+<body>
+  <div class="meta">Дайджест Амины · ${escapeHtmlSimple(city)} · ${new Date().toLocaleDateString('ru-RU')}</div>
+  <div>${htmlBody}</div>
+</body>
+</html>`;
+
+            return reply.type('text/html').code(200).send(html);
+          } catch (error) {
+            aiLogger.error({ error }, 'Digest API error');
+            return reply.code(500).send({ success: false, error: 'Failed to build digest' });
+          }
+        },
+      );
+
+      // ============================================
       // Database Migration (self-service)
       // ============================================
 
@@ -1634,7 +1730,7 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
         phone: z.string().min(1).max(50),
         email: z.string().email().optional().or(z.literal('')),
         tariff: z.string().max(200).optional(),
-        comment: z.string().max(2000).optional(),
+        comment: z.string().max(LEADS_COMMENT_MAX_LENGTH).optional(),
         source: z.string().max(200).optional(),
       });
 
@@ -1661,7 +1757,7 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
             }
 
             // Формируем сообщение
-            const now = new Date().toLocaleString('ru-RU', { timeZone: 'Europe/Minsk' });
+            const now = new Date().toLocaleString('ru-RU', { timeZone: config.server.timeZone });
             const lines = [
               '📩 <b>Новая заявка!</b>',
               '',
@@ -1943,19 +2039,38 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
               });
             }
 
+            const settings = await settingsRepo.getMany([
+              'lmstudio_model',
+              'lmstudio_api_key',
+            ]);
+            const candidateCfg = {
+              url: trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`,
+              model: settings['lmstudio_model']?.trim() || '',
+              apiKey: process.env.LMSTUDIO_API_KEY?.trim()
+                || settings['lmstudio_api_key']?.trim()
+                || 'lm-studio',
+            };
+
+            let healthy = false;
+            try {
+              const models = await fetchLMStudioModels(candidateCfg);
+              healthy = models.length > 0;
+            } catch {
+              healthy = false;
+            }
+
+            if (!healthy) {
+              return reply.code(400).send({
+                success: false,
+                error: 'Tunnel URL is reachable, but does not expose a valid LM Studio models API',
+              });
+            }
+
             await settingsRepo.set('lmstudio_url', trimmed);
-            await recordHeartbeat();
+            await recordHeartbeat(trimmed);
 
             clearLMStudioCache();
             settingsRepo.invalidateCache?.();
-
-            // Прямая проверка: Render реально стучится в tunnel URL
-            // (обходит heartbeat и кэш — иначе всегда true)
-            const cfg = await getLMStudioConfig();
-            let healthy = false;
-            if (cfg) {
-              healthy = await checkLMStudioReachable(cfg);
-            }
 
             aiLogger.info(
               { url: trimmed, healthy },
@@ -1981,7 +2096,28 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
           reply: FastifyReply
         ) => {
           try {
-            await recordHeartbeat();
+            const { url } = (request.body ?? {}) as { url?: string };
+            if (!url || typeof url !== 'string') {
+              return reply.code(400).send({ success: false, error: 'url is required' });
+            }
+
+            const cfg = await getLMStudioConfig();
+            if (!cfg) {
+              return reply.code(409).send({ success: false, error: 'LM Studio tunnel is not registered' });
+            }
+
+            const normalizedIncoming = url.trim().replace(/\/+$/, '').replace(/\/v1$/i, '');
+            const normalizedCurrent = cfg.url.replace(/\/+$/, '').replace(/\/v1$/i, '');
+            if (normalizedIncoming !== normalizedCurrent) {
+              return reply.code(409).send({ success: false, error: 'heartbeat url does not match registered tunnel' });
+            }
+
+            const healthy = await checkLMStudioReachable(cfg);
+            if (!healthy) {
+              return reply.code(409).send({ success: false, error: 'registered tunnel is not reachable from server' });
+            }
+
+            await recordHeartbeat(normalizedIncoming);
             return reply.code(200).send({ success: true });
           } catch (error) {
             const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -2000,7 +2136,7 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
        * LiraX шлёт сюда события звонков (event, record, contact, staton, makecall_finished).
        * Формат: application/x-www-form-urlencoded
        *
-       * Настройка в LiraX: раздел "Интеграция General" → поле "API URL-адрес" = https://amina-bot.onrender.com/api/lirax
+       * Настройка в LiraX: раздел "Интеграция General" → поле "API URL-адрес" = {BOT_URL}/api/lirax
        */
       apiServer.post(
         '/lirax',
@@ -2138,7 +2274,7 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
               configured: hasToken,
               url,
               defaultExt,
-              webhookUrl: 'https://amina-bot.onrender.com/api/lirax',
+              webhookUrl: `${config.botUrl}/api/lirax`,
               hasWebhookToken: !!(settings['lirax_webhook_token'] || process.env.LIRAX_WEBHOOK_TOKEN),
             },
           });

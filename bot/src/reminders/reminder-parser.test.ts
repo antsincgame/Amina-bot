@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { detectReminderIntent } from './reminder-parser.js';
+import { detectReminderIntent, extractReminder } from './reminder-parser.js';
 
 describe('reminder-parser', () => {
   describe('detectReminderIntent', () => {
@@ -108,7 +108,7 @@ describe('reminder-parser', () => {
     });
 
     it('should NOT detect questions about recommendations', () => {
-      expect(detectReminderIntent('назови лучшие кофейни гродно')).toBe(false);
+      expect(detectReminderIntent('назови лучшие кофейни города')).toBe(false);
     });
 
     it('should NOT detect code-related queries', () => {
@@ -116,7 +116,7 @@ describe('reminder-parser', () => {
     });
 
     it('should NOT detect "расскажи"', () => {
-      expect(detectReminderIntent('расскажи про историю Минска')).toBe(false);
+      expect(detectReminderIntent('расскажи про историю Москвы')).toBe(false);
     });
 
     it('should NOT detect search queries', () => {
@@ -131,6 +131,17 @@ describe('reminder-parser', () => {
       expect(detectReminderIntent('да')).toBe(false);
       expect(detectReminderIntent('ок')).toBe(false);
       expect(detectReminderIntent('спасибо')).toBe(false);
+    });
+  });
+
+  describe('extractReminder', () => {
+    it('should build ISO date with current server timezone offset', async () => {
+      const now = new Date('2026-03-10T10:00:00Z');
+      const result = await extractReminder('напомни через 2 часа позвонить маме', now);
+
+      expect(result).not.toBeNull();
+      expect(result?.task).toBe('Позвонить маме');
+      expect(result?.scheduled_at).toBe('2026-03-10T12:00:00+00:00');
     });
   });
 });

@@ -19,7 +19,7 @@ services:
       - key: LOG_LEVEL
         value: info
       - key: TZ
-        value: Europe/Minsk
+        value: UTC
       # Secrets — set in Render Dashboard
       - key: TELEGRAM_BOT_TOKEN
         sync: false
@@ -34,7 +34,7 @@ services:
         value: https://amina-admin.onrender.com
       # Домены сайтов для /api/leads (CORS)
       - key: LEAD_ORIGINS
-        value: https://vibecoding.by,https://grodno.vibecoding.by
+        value: https://vibecoding.by
       # LiraX АТС интеграция
       - key: LIRAX_URL
         value: https://api.lirax.net/general

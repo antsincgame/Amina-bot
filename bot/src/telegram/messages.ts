@@ -178,7 +178,7 @@ const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Record<strin
         await ctx.reply('⏰ Нет активных напоминаний.\n\nНапиши: _напомни через 2 часа ..._', { parse_mode: 'Markdown' });
       } else {
         const lines = reminders.map((r, i) => {
-          const d = new Date(r.scheduled_at).toLocaleString('ru-RU', { timeZone: 'Europe/Minsk', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+          const d = new Date(r.scheduled_at).toLocaleString('ru-RU', { timeZone: config.server.timeZone, day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
           return `${i + 1}. ${escapeHtml(r.task)} — ⏰ ${d}`;
         });
         await ctx.reply(`⏰ <b>Напоминания (${reminders.length}):</b>\n\n${lines.join('\n')}\n\n<i>/remind_cancel номер</i>`, { parse_mode: 'HTML' });
@@ -193,7 +193,7 @@ const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Record<strin
       const prefs = await userPrefsRepo.get(userId);
       const status = prefs?.digest_enabled ? '✅ Включён' : '❌ Выключен';
       await ctx.reply(
-        `☀️ <b>Дайджест:</b> ${status}\n\nВремя: ${prefs?.digest_hour ?? 10}:00 | Город: ${escapeHtml(prefs?.digest_city ?? 'Гродно')}`,
+        `☀️ <b>Дайджест:</b> ${status}\n\nВремя: ${prefs?.digest_hour ?? 10}:00 | Город: ${escapeHtml(prefs?.digest_city ?? '')}`,
         { parse_mode: 'HTML', reply_markup: digestToggleKeyboard(prefs?.digest_enabled ?? false) }
       );
     } catch (err) {
@@ -210,7 +210,7 @@ const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Record<strin
       await sendDigestNow(
         { api: ctx.api }, userId, chatId,
         prefs.first_name || ctx.from?.first_name || null,
-        prefs.digest_city || 'Гродно'
+        prefs.digest_city || ''
       );
     } catch (err) {
       telegramLogger.warn({ error: err, userId }, 'Digest now failed via button');
@@ -242,7 +242,7 @@ const handleAutoDetections = async (
       } else {
         const lines = reminders.map((r, i) => {
           const dateStr = new Date(r.scheduled_at).toLocaleString('ru-RU', {
-            day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Minsk',
+            day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: config.server.timeZone,
           });
           return `${i + 1}. ${escapeHtml(r.task)}\n   ⏰ ${dateStr}`;
         });
@@ -611,27 +611,27 @@ const addSearchWarning = (fullContext: string, userMessage: string, webSearchCon
 };
 
 /** Маппинг кодов ошибок → сообщения для пользователя */
-const AI_ERROR_MESSAGES: Record<string, string> = {
-  MODEL_NOT_FOUND: '❌ Модель AI не найдена!\n\nТекущая модель не существует на OpenRouter.\nАдминистратор должен изменить модель в настройках:\nhttps://amina-admin.onrender.com/settings',
+const getAIErrorMessages = (): Record<string, string> => ({
+  MODEL_NOT_FOUND: `❌ Модель AI не найдена!\n\nТекущая модель не существует на OpenRouter.\nАдминистратор должен изменить модель в настройках:\n${config.adminUrl}/settings`,
   AUTH_ERROR: '🔑 Ошибка авторизации AI!\n\nНеверный API ключ OpenRouter.\nАдминистратор должен проверить настройки в Render.',
   RATE_LIMIT: '⏳ Слишком много запросов!\n\nЛимит OpenRouter превышен. Подожди минуту и попробуй снова.',
   PAYMENT_REQUIRED: '💳 Пополни баланс на OpenRouter или выбери бесплатную модель в админке.',
   ALL_MODELS_FAILED: '🔄 Все бесплатные модели AI заняты.\n\nПопробуй через 30 секунд или напиши /start для сброса.',
   RACE_TIMEOUT: '⏰ AI отвечает слишком долго.\n\nПопробуй ещё раз — может повезёт быстрее!',
   SERVER_ERROR: '🔧 Сервер AI временно недоступен.\n\nПопробуй через несколько минут.',
-};
+});
 
 const AI_ERROR_DEFAULT = '😔 Извини, произошла ошибка. Попробуй ещё раз.';
 
 /** Форматирует ошибку AI для пользователя */
 const formatAIError = (errorCode: string | undefined, errorMessage: string): string => {
-  if (errorCode && AI_ERROR_MESSAGES[errorCode]) return AI_ERROR_MESSAGES[errorCode];
-  // Fallback: ищем код в тексте ошибки
-  for (const [code, msg] of Object.entries(AI_ERROR_MESSAGES)) {
+  const messages = getAIErrorMessages();
+  if (errorCode && messages[errorCode]) return messages[errorCode];
+  for (const [code, msg] of Object.entries(messages)) {
     if (errorMessage.includes(code)) return msg;
   }
-  if (errorMessage.includes('429') || errorMessage.includes('rate limit')) return AI_ERROR_MESSAGES.RATE_LIMIT ?? AI_ERROR_DEFAULT;
-  if (errorMessage.includes('500') || errorMessage.includes('502')) return AI_ERROR_MESSAGES.SERVER_ERROR ?? AI_ERROR_DEFAULT;
+  if (errorMessage.includes('429') || errorMessage.includes('rate limit')) return messages.RATE_LIMIT ?? AI_ERROR_DEFAULT;
+  if (errorMessage.includes('500') || errorMessage.includes('502')) return messages.SERVER_ERROR ?? AI_ERROR_DEFAULT;
   return AI_ERROR_DEFAULT;
 };
 
@@ -658,7 +658,7 @@ const processMessageThroughAI = async (
 
   // Определяем — здоровалась ли Амина сегодня (из БД, не session)
   const now = new Date();
-  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Minsk' }).format(now);
+  const todayStr = new Intl.DateTimeFormat('en-CA', { timeZone: config.server.timeZone }).format(now);
   const lastGreetingDate = await userProfileRepo.getLastGreetingDate(userId);
   const alreadyGreetedToday = lastGreetingDate === todayStr;
 

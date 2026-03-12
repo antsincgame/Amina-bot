@@ -223,7 +223,7 @@ describe('News Parser — Category Routing in Digest', () => {
     { title: 'Vibecoding trend on HN', url: 'https://hn.com/1', source: 'Hacker News', category: 'community', language: 'en' },
     { title: '大模型编程助手', url: 'https://rsshub.app/1', source: '机器之心', category: 'asia_tech', language: 'zh' },
     { title: 'AIプログラミング', url: 'https://zenn.dev/1', source: 'Zenn.dev', category: 'asia_tech', language: 'ja' },
-    { title: 'Новости Гродно', url: 'https://grodnonews.by/1', source: 'Гродно Ньюз', category: 'city_local', language: 'ru' },
+    { title: 'Local city news', url: 'https://localnews.com/1', source: 'Local News', category: 'city_local', language: 'ru' },
     { title: 'Orphan headline', url: 'https://unknown.com/1', source: 'Unknown' },
   ];
 
@@ -253,7 +253,7 @@ describe('News Parser — Category Routing in Digest', () => {
     const parsedHeadlines = sampleHeadlines.filter(h => !h.category || h.category === 'city_local');
     expect(parsedHeadlines).toHaveLength(2);
     expect(parsedHeadlines.map(h => h.title)).toContain('Orphan headline');
-    expect(parsedHeadlines.map(h => h.title)).toContain('Новости Гродно');
+    expect(parsedHeadlines.map(h => h.title)).toContain('Local city news');
   });
 
   it('все заголовки аккаунтятся (ни один не потерян)', () => {
@@ -560,7 +560,7 @@ describe('News Parser — End-to-End Digest Data Flow', () => {
       { title: 'GitHub trending repo', url: 'https://github.com/1', source: 'GitHub Trending', category: 'ai_tech', language: 'en' },
       { title: 'Vibecoding on HN', url: 'https://hn.com/1', source: 'Hacker News', category: 'community', language: 'en' },
       { title: '大模型最新进展', url: 'https://rsshub.app/1', source: '机器之心', category: 'asia_tech', language: 'zh' },
-      { title: 'Новости Гродно', url: 'https://grodnonews.by/1', source: 'Гродно Ньюз', category: 'city_local', language: 'ru' },
+      { title: 'Local city news', url: 'https://localnews.com/1', source: 'Local News', category: 'city_local', language: 'ru' },
     ];
 
     const parsedHeadlines = allParsed.filter(h => !h.category || h.category === 'city_local');
@@ -569,7 +569,7 @@ describe('News Parser — End-to-End Digest Data Flow', () => {
     const communityHeadlines = filterByCategory(allParsed, 'community');
 
     expect(parsedHeadlines).toHaveLength(1);
-    expect(parsedHeadlines[0]?.title).toBe('Новости Гродно');
+    expect(parsedHeadlines[0]?.title).toBe('Local city news');
 
     expect(aiTechHeadlines).toHaveLength(3);
     expect(asiaAiHeadlines).toHaveLength(1);

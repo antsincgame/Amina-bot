@@ -43,7 +43,8 @@ export type BotContext = Context & SessionFlavor<SessionData>;
 // ============================================
 
 export const MAX_HISTORY_MESSAGES = 20;
-export const MAX_MESSAGE_LENGTH = 4096;
+import { TELEGRAM_MAX_MESSAGE_LENGTH } from '../config/constants.js';
+export const MAX_MESSAGE_LENGTH = TELEGRAM_MAX_MESSAGE_LENGTH;
 
 // ============================================
 // Create Bot Instance

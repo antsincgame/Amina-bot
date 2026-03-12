@@ -11,12 +11,10 @@
 
 import { InlineKeyboard } from 'grammy';
 import type { Context } from 'grammy';
+import { config } from '../config/index.js';
+import { TELEGRAM_MAX_MESSAGE_LENGTH, FULL_TEXT_CACHE_TTL } from '../config/constants.js';
 
-// ============================================
-// Constants
-// ============================================
-
-const MAX_MESSAGE_LENGTH = 4096; // Telegram limit
+const MAX_MESSAGE_LENGTH = TELEGRAM_MAX_MESSAGE_LENGTH;
 
 // ============================================
 // Markdown / HTML Conversion
@@ -151,7 +149,7 @@ export const splitIntoChunks = (text: string): string[] => {
 
 // ---- Кэш полного текста для озвучки (все длинные сообщения) ----
 const fullTextCache = new Map<string, { text: string; createdAt: number }>();
-const FULL_TEXT_CACHE_TTL_MS = 30 * 60 * 1000; // 30 минут
+const FULL_TEXT_CACHE_TTL_MS = FULL_TEXT_CACHE_TTL;
 const MAX_CACHE_SIZE = 100; // Максимум 100 записей
 let nextFullTextId = 1;
 
@@ -253,11 +251,11 @@ export const sendLongMessage = async (
 
 /**
  * Контекст времени суток + день недели + имя для system prompt.
- * Явно использует Europe/Minsk (МСК) независимо от серверной TZ.
+ * Использует серверную TZ (из env.TZ).
  */
 export const buildTimeContext = (firstName?: string): string => {
   const now = new Date();
-  const TZ = 'Europe/Minsk';
+  const TZ = config.server.timeZone;
 
   // Intl.DateTimeFormat гарантирует правильную TZ независимо от серверных настроек
   const parts = new Intl.DateTimeFormat('ru-RU', {
@@ -280,7 +278,7 @@ export const buildTimeContext = (firstName?: string): string => {
 
   const nameStr = firstName ? `Имя пользователя: ${firstName}.` : '';
 
-  return `[Контекст: ${dateStr}, ${day}, ${greeting} (${hour}:${minute} МСК). ${nameStr}]`;
+  return `[Контекст: ${dateStr}, ${day}, ${greeting} (${hour}:${minute}, TZ ${TZ}). ${nameStr}]`;
 };
 
 // ============================================

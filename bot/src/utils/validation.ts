@@ -3,12 +3,14 @@
  */
 
 import { z } from 'zod';
+import {
+  MAX_MESSAGE_LENGTH,
+  MAX_CONVERSATION_MESSAGES,
+  VALIDATE_LIMIT_MIN,
+  VALIDATE_LIMIT_MAX,
+} from '../config/constants.js';
 
-// Maximum message length (Telegram limit is 4096, AI models typically accept 10k-100k)
-export const MAX_MESSAGE_LENGTH = 10000;
-
-// Maximum conversation history size (prevent memory issues)
-export const MAX_CONVERSATION_MESSAGES = 1000;
+export { MAX_MESSAGE_LENGTH, MAX_CONVERSATION_MESSAGES };
 
 // User ID validation (Telegram IDs are numeric strings)
 export const userIdSchema = z.string().regex(/^\d+$/).or(z.literal('unknown'));
@@ -85,7 +87,7 @@ export function validateEventType(eventType: string): z.infer<typeof eventTypeSc
 /**
  * Validate limit parameter
  */
-export function validateLimit(limit: number, min = 1, max = 1000): number {
+export function validateLimit(limit: number, min = VALIDATE_LIMIT_MIN, max = VALIDATE_LIMIT_MAX): number {
   if (!Number.isFinite(limit) || limit < min || limit > max) {
     throw new Error(`Limit must be between ${min} and ${max}`);
   }

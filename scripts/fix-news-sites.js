@@ -7,12 +7,6 @@
 const BOT_URL = process.env.BOT_URL || 'https://amina-bot.onrender.com';
 
 const ALL_SITES = [
-  // --- Городские ---
-  { name: 'Гродно Плюм', url: 'https://grodnoplustv.by/', enabled: true, type: 'rss', category: 'city_local', language: 'ru' },
-  { name: 'Новый Гродно', url: 'https://newgrodno.by/', enabled: true, type: 'rss', category: 'city_local', language: 'ru' },
-  { name: 'ВГР', url: 'https://vgr.by/', enabled: true, type: 'rss', category: 'city_local', language: 'ru' },
-  { name: 'Гродно Ньюз', url: 'https://grodnonews.by/', enabled: true, type: 'rss', category: 'city_local', language: 'ru' },
-  { name: 'Авто Гродно', url: 'https://autogrodno.by/', enabled: true, type: 'rss', category: 'city_local', language: 'ru' },
   // --- AI Labs & Research ---
   { name: 'Hugging Face Blog', url: 'https://huggingface.co/blog/feed.xml', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },
   { name: 'OpenAI News', url: 'https://openai.com/news/rss.xml', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },

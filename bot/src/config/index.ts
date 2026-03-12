@@ -35,6 +35,7 @@ const envSchema = z.object({
   // Server
   PORT: z.string().default('3000').transform(Number),
   HOST: z.string().default('0.0.0.0'),
+  TZ: z.string().default('UTC'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
 
@@ -44,6 +45,16 @@ const envSchema = z.object({
     z.string().url().optional(),
   ),
   WEBHOOK_SECRET: z.string().optional(),
+
+  // URLs для CORS, HTTP-Referer, ссылок в сообщениях (опционально)
+  ADMIN_URL: z.preprocess(
+    (v) => (typeof v === 'string' && v !== '' ? v : undefined),
+    z.string().url().optional(),
+  ),
+  BOT_URL: z.preprocess(
+    (v) => (typeof v === 'string' && v !== '' ? v : undefined),
+    z.string().url().optional(),
+  ),
 
   // LiraX telephony (optional — can also be set via admin panel settings)
   LIRAX_URL: z.preprocess(
@@ -117,8 +128,15 @@ export const config = {
   server: {
     port: env.PORT,
     host: env.HOST,
+    timeZone: env.TZ,
     logLevel: env.LOG_LEVEL,
   },
+
+  /** URL админки (для CORS, ссылок в сообщениях). По умолчанию Render. */
+  adminUrl: env.ADMIN_URL ?? 'https://amina-admin.onrender.com',
+
+  /** URL бота (для HTTP-Referer, webhook LiraX). По умолчанию Render. */
+  botUrl: env.BOT_URL ?? env.WEBHOOK_URL ?? 'https://amina-bot.onrender.com',
 
   // Telegram Bot — token из env или админки
   telegram: {

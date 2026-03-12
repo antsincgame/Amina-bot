@@ -4,16 +4,12 @@
     Amina LM Studio Tunnel Supervisor (Windows)
 
 .DESCRIPTION
-    1. Убивает stale cloudflared перед стартом
-    2. Ждёт запуска LM Studio на localhost
-    3. Поднимает cloudflared quick tunnel (HTTP/2, с retry до 3 раз)
-    4. Регистрирует URL туннеля на боте (Render)
-    5. Мониторит: процесс + LM Studio + реальную доступность туннеля
-    6. Рестартит при любом из: процесс умер / LM Studio offline / URL протух
-
-.EXAMPLE
-    .\tunnel.ps1
-    $env:LMSTUDIO_PORT = 8080; .\tunnel.ps1
+    1. Kills stale cloudflared before start
+    2. Waits for LM Studio on localhost
+    3. Starts cloudflared quick tunnel (HTTP/2, with retry)
+    4. Registers tunnel URL with bot (Render)
+    5. Monitors: process + LM Studio + real reachability
+    6. Restarts on: process death / LM Studio offline / URL expired
 #>
 
 [CmdletBinding()]
@@ -170,7 +166,7 @@ function Register-TunnelUrl {
     return ($null -ne $result)
 }
 
-# Heartbeat: register + проверка healthy
+# Heartbeat: register + check healthy
 function Send-Heartbeat {
     $result = Send-Register -Url $script:CurrentUrl
     if ($null -eq $result) { return $null }
@@ -275,14 +271,14 @@ function Watch-Tunnel {
     while ($true) {
         Start-Sleep -Seconds $HEALTH_INTERVAL
 
-        # 1. cloudflared процесс жив?
+        # 1. cloudflared process alive?
         if (-not $script:TunnelProcess -or $script:TunnelProcess.HasExited) {
             Write-Warn 'cloudflared process died'
             $script:TunnelProcess = $null
             return 1
         }
 
-        # 2. LM Studio жив?
+        # 2. LM Studio alive?
         if (-not (Test-LMStudioOk)) {
             Write-Warn 'LM Studio went offline'
             if ($script:TunnelProcess -and -not $script:TunnelProcess.HasExited) {
@@ -293,7 +289,7 @@ function Watch-Tunnel {
             return 2
         }
 
-        # 3. Heartbeat + проверка реальной доступности через register(healthy)
+        # 3. Heartbeat + reachability check
         $healthy = Send-Heartbeat
         $ts = Get-Date -Format 'HH:mm:ss'
 
@@ -306,7 +302,7 @@ function Watch-Tunnel {
             Write-Warn "$ts tunnel: ok | lmstudio: ok | render: UNHEALTHY ($($script:UnhealthyCount)/$UNHEALTHY_THRESHOLD)"
 
             if ($script:UnhealthyCount -ge $UNHEALTHY_THRESHOLD) {
-                Write-Err "Tunnel URL unreachable from Render for $UNHEALTHY_THRESHOLD checks — restarting with new URL"
+                Write-Err "Tunnel URL unreachable from Render for $UNHEALTHY_THRESHOLD checks - restarting with new URL"
                 if ($script:TunnelProcess -and -not $script:TunnelProcess.HasExited) {
                     $script:TunnelProcess.Kill()
                     $script:TunnelProcess.WaitForExit(3000) | Out-Null
@@ -344,21 +340,21 @@ function Start-TunnelSupervisor {
 
                 switch ($exitReason) {
                     2 {
-                        Write-Log 'LM Studio offline — waiting for it to come back...'
+                        Write-Log 'LM Studio offline - waiting for it to come back...'
                         continue
                     }
                     3 {
-                        Write-Warn 'Tunnel URL expired — getting new one...'
+                        Write-Warn 'Tunnel URL expired - getting new one...'
                         Start-Sleep -Seconds $RESTART_DELAY
                         continue
                     }
                     default {
-                        Write-Warn "Tunnel crashed — restarting in ${RESTART_DELAY}s..."
+                        Write-Warn "Tunnel crashed - restarting in ${RESTART_DELAY}s..."
                         Start-Sleep -Seconds $RESTART_DELAY
                     }
                 }
             } else {
-                Write-Warn "Failed to start tunnel — retrying in ${RESTART_DELAY}s..."
+                Write-Warn "Failed to start tunnel - retrying in ${RESTART_DELAY}s..."
                 Start-Sleep -Seconds $RESTART_DELAY
             }
         }

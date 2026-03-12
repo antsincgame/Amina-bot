@@ -169,7 +169,7 @@ const getClient = async (): Promise<OpenAI> => {
       baseURL: config.ai.baseUrl,
       timeout: 30000,
       defaultHeaders: {
-        'HTTP-Referer': 'https://amina-bot.render.com',
+        'HTTP-Referer': config.botUrl,
         'X-Title': 'Amina AI Bot',
       },
     });

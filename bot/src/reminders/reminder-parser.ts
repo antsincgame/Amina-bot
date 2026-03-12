@@ -8,6 +8,7 @@
  */
 
 import { aiService } from '../ai/openrouter.js';
+import { config } from '../config/index.js';
 import { aiLogger } from '../config/logger.js';
 
 // --------------------------------------------
@@ -85,7 +86,7 @@ function extractTaskFromText(text: string): string {
     // Убираем конструкцию "напомни мне/нам/..."
     .replace(/^(напомни|напомнить|напоминание|не забыть|не забудь)\s*(мне|нам|себе)?\s*/i, '')
     // Убираем временные фразы
-    .replace(/через\s+\d+\s*(минут\w*|час\w*|секунд\w*|дн\w*|дней|недел\w*)\s*/i, '')
+    .replace(/через\s+\d+\s*(минут[а-яё]*|час[а-яё]*|секунд[а-яё]*|дн[а-яё]*|дней|недел[а-яё]*)\s*/i, '')
     .replace(/завтра\s*(в\s+\d{1,2}[:.]\d{2})?\s*/i, '')
     .replace(/послезавтра\s*(в\s+\d{1,2}[:.]\d{2})?\s*/i, '')
     .replace(/в\s+\d{1,2}[:.]\d{2}\s*/i, '')
@@ -103,30 +104,49 @@ function extractTaskFromText(text: string): string {
   return task.charAt(0).toUpperCase() + task.slice(1);
 }
 
+const SERVER_TZ = config.server.timeZone;
+
+function getTimeZoneOffsetString(date: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone,
+    timeZoneName: 'shortOffset',
+  }).formatToParts(date);
+  const timeZoneName = parts.find((part) => part.type === 'timeZoneName')?.value ?? 'GMT';
+  const match = timeZoneName.match(/^GMT(?:(\+|-)(\d{1,2})(?::(\d{2}))?)?$/);
+
+  if (!match || !match[1]) {
+    return '+00:00';
+  }
+
+  const sign = match[1];
+  const hours = (match[2] ?? '0').padStart(2, '0');
+  const minutes = (match[3] ?? '0').padStart(2, '0');
+  return `${sign}${hours}:${minutes}`;
+}
+
 /**
  * Форматировать время для пользователя.
- * TZ=Europe/Minsk → toLocaleString уже в минском времени (UTC+3).
  */
-function formatMinskTime(date: Date): string {
+function formatLocalTime(date: Date): string {
   return date.toLocaleString('ru-RU', {
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: SERVER_TZ,
   });
 }
 
 /**
- * Форматировать ISO 8601 с минским часовым поясом (+03:00).
- * Явно указываем timeZone: 'Europe/Minsk' для надёжности (не зависим от TZ env).
+ * Форматировать ISO 8601 с серверным часовым поясом.
  */
-function toMinskISO(date: Date): string {
+function toLocalISO(date: Date): string {
   const fmt = new Intl.DateTimeFormat('sv-SE', {
-    timeZone: 'Europe/Minsk',
+    timeZone: SERVER_TZ,
     year: 'numeric', month: '2-digit', day: '2-digit',
     hour: '2-digit', minute: '2-digit', second: '2-digit',
     hour12: false,
   });
-  const minskStr = fmt.format(date);
-  return minskStr.replace(' ', 'T') + '+03:00';
+  const localStr = fmt.format(date);
+  return localStr.replace(' ', 'T') + getTimeZoneOffsetString(date, SERVER_TZ);
 }
 
 interface RegexTimeMatch {
@@ -143,7 +163,7 @@ function parseSimpleTime(text: string): RegexTimeMatch | null {
   const HOUR_MS = 60 * MINUTE_MS;
 
   // "через N минут(у/ы)"
-  const minuteMatch = text.match(/через\s+(\d+)\s*(минут\w*|мин)/i);
+  const minuteMatch = text.match(/через\s+(\d+)\s*(минут[а-яё]*|мин)/i);
   if (minuteMatch) {
     const n = parseInt(minuteMatch[1]!, 10);
     if (n >= 1 && n <= MAX_MINUTES_RANGE) {
@@ -152,7 +172,7 @@ function parseSimpleTime(text: string): RegexTimeMatch | null {
   }
 
   // "через N час(ов/а)"
-  const hourMatch = text.match(/через\s+(\d+)\s*(час\w*)/i);
+  const hourMatch = text.match(/через\s+(\d+)\s*(час[а-яё]*)/i);
   if (hourMatch) {
     const n = parseInt(hourMatch[1]!, 10);
     if (n >= 1 && n <= MAX_HOURS_RANGE) {
@@ -191,16 +211,16 @@ function parseReminderRegex(text: string, now: Date): ExtractedReminder | null {
   if (task.length < 2) return null;
 
   const scheduledDate = new Date(now.getTime() + timeMatch.offsetMs);
-  const timeStr = formatMinskTime(scheduledDate);
+  const timeStr = formatLocalTime(scheduledDate);
 
   aiLogger.info(
-    { task, offset: timeMatch.label, scheduledAt: toMinskISO(scheduledDate) },
+    { task, offset: timeMatch.label, scheduledAt: toLocalISO(scheduledDate) },
     'Reminder parsed by regex (no AI needed)'
   );
 
   return {
     task,
-    scheduled_at: toMinskISO(scheduledDate),
+    scheduled_at: toLocalISO(scheduledDate),
     reply: `Конечно! Напомню ${timeMatch.label}, в ${timeStr}. 📝`,
   };
 }
@@ -211,7 +231,7 @@ function parseReminderRegex(text: string, now: Date): ExtractedReminder | null {
 
 export interface ExtractedReminder {
   task: string;
-  scheduled_at: string; // ISO 8601 with +03:00
+  scheduled_at: string; // ISO 8601 with server offset
   reply: string;        // Ответ пользователю
 }
 
@@ -235,24 +255,26 @@ export async function extractReminder(
   // ========= ЭТАП 2: AI с retry (для сложных случаев) =========
   aiLogger.debug({ text }, 'Regex could not parse reminder, trying AI');
 
-  // TZ=Europe/Minsk → toLocaleString уже в минском времени
-  const minskTime = now.toLocaleString('sv-SE').replace(' ', 'T') + '+03:00';
-  const minskReadable = now.toLocaleString('ru-RU', {
+  // Серверная TZ
+  const localTime = toLocalISO(now);
+  const offsetString = getTimeZoneOffsetString(now, SERVER_TZ);
+  const localReadable = now.toLocaleString('ru-RU', {
     weekday: 'long',
     day: 'numeric',
     month: 'long',
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone: SERVER_TZ,
   });
 
   const systemPrompt = `Ты — парсер напоминаний. Твоя задача — извлечь из текста пользователя:
 1. task — что нужно напомнить (кратко, 1-2 предложения)
-2. scheduled_at — когда напомнить (ISO 8601, часовой пояс +03:00 Минск)
+2. scheduled_at — когда напомнить (ISO 8601, часовой пояс сервера)
 3. reply — дружелюбный ответ пользователю с подтверждением
 
-Текущее время (Минск): ${minskReadable}
-ISO: ${minskTime}
+Текущее время: ${localReadable}
+ISO: ${localTime}
 
 Правила:
 - Если время не указано явно — используй разумное значение (утро=09:00, вечер=19:00, обед=13:00)
@@ -260,11 +282,11 @@ ISO: ${minskTime}
 - "завтра" = следующий день
 - "послезавтра" = через 2 дня
 - "в понедельник" = ближайший понедельник (если сегодня понедельник — следующий)
-- Всегда используй часовой пояс +03:00
+- Всегда используй часовой пояс ${offsetString}
 - reply должен быть кратким и содержать время в человекочитаемом формате
 
 Верни ТОЛЬКО валидный JSON (без markdown):
-{"task":"...","scheduled_at":"YYYY-MM-DDTHH:MM:SS+03:00","reply":"..."}
+{"task":"...","scheduled_at":"YYYY-MM-DDTHH:MM:SS${offsetString}","reply":"..."}
 
 Если не удаётся определить время — верни:
 {"task":null,"scheduled_at":null,"reply":null}`;

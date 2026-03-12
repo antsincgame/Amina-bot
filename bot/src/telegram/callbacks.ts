@@ -273,7 +273,7 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
       await sendDigestNow(
         { api: ctx.api }, userId, chatId,
         prefs.first_name || ctx.from?.first_name || null,
-        prefs.digest_city || 'Гродно'
+        prefs.digest_city || ''
       );
     } catch (err) {
       telegramLogger.warn({ error: err, userId }, 'Failed to send digest now (callback)');
@@ -283,7 +283,7 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
 
   bot.callbackQuery('digest_city_help', async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply('🏙 *Изменить город:*\n\n`/digest город Минск`\n`/digest город Гродно`', { parse_mode: 'Markdown' });
+    await ctx.reply('🏙 *Изменить город:*\n\n`/digest город Москва`\n`/digest город Берлин`', { parse_mode: 'Markdown' });
   });
 
   bot.callbackQuery('digest_time_help', async (ctx) => {
@@ -299,10 +299,10 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
       const prefs = await userPrefsRepo.get(userId);
       const status = prefs?.digest_enabled ? '✅ Включён' : '❌ Выключен';
       const hour = prefs?.digest_hour ?? 10;
-      const city = prefs?.digest_city ?? 'Гродно';
+      const city = prefs?.digest_city ?? '';
 
       await ctx.reply(
-        `☀️ *Утренний дайджест*\n\nСтатус: ${status}\nВремя: ${hour}:00 по Минску\nГород: ${city}\n\n📰 Включает: погоду, новости, напоминания и задачи`,
+        `☀️ *Утренний дайджест*\n\nСтатус: ${status}\nВремя: ${hour}:00\nГород: ${city || 'не задан'}\n\n📰 Включает: погоду, новости, напоминания и задачи`,
         { parse_mode: 'Markdown', reply_markup: digestControlsKeyboard(prefs?.digest_enabled ?? false) }
       );
     } catch (err) {

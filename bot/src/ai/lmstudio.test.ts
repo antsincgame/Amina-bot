@@ -4,6 +4,7 @@ import {
   getLMStudioConfig,
   recordHeartbeat,
   getHeartbeatAt,
+  getHeartbeatUrl,
   getLMStudioHealthStatus,
   checkLMStudioReachable,
 } from './lmstudio.js';
@@ -117,6 +118,12 @@ describe('lmstudio', () => {
       const at = await getHeartbeatAt();
       expect(at).toBeNull();
     });
+
+    it('should store heartbeat url when provided', async () => {
+      await recordHeartbeat('https://tunnel.trycloudflare.com');
+      const url = await getHeartbeatUrl();
+      expect(url).toBe('https://tunnel.trycloudflare.com');
+    });
   });
 
   describe('getLMStudioHealthStatus', () => {
@@ -125,6 +132,7 @@ describe('lmstudio', () => {
       const store = (settingsRepo as unknown as { _store: Map<string, string> })._store;
       store.set('lmstudio_url', 'https://tunnel.trycloudflare.com');
       store.set('lmstudio_url_updated_at', new Date().toISOString());
+      store.set('lmstudio_url_heartbeat_url', 'https://tunnel.trycloudflare.com');
 
       clearLMStudioCache();
       const cfg = await getLMStudioConfig();
@@ -141,6 +149,26 @@ describe('lmstudio', () => {
         'lmstudio_url_updated_at',
         new Date(Date.now() - 300_000).toISOString()
       );
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockRejectedValue(new Error('connection refused'));
+
+      try {
+        clearLMStudioCache();
+        const cfg = await getLMStudioConfig();
+        const status = await getLMStudioHealthStatus(cfg!);
+        expect(status.healthy).toBe(false);
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
+
+    it('should ignore heartbeat when it belongs to another tunnel url', async () => {
+      const { settingsRepo } = await import('../db/supabase.js');
+      const store = (settingsRepo as unknown as { _store: Map<string, string> })._store;
+      store.set('lmstudio_url', 'https://tunnel-a.trycloudflare.com');
+      store.set('lmstudio_url_updated_at', new Date().toISOString());
+      store.set('lmstudio_url_heartbeat_url', 'https://tunnel-b.trycloudflare.com');
 
       const originalFetch = globalThis.fetch;
       globalThis.fetch = vi.fn().mockRejectedValue(new Error('connection refused'));

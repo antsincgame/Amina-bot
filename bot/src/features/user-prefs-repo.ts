@@ -62,7 +62,7 @@ export const userPrefsRepo = {
         chat_id: chatId,
         first_name: firstName ?? null,
         digest_hour: 10,
-        digest_city: 'Гродно',
+        digest_city: '',
       })
       .select()
       .single();

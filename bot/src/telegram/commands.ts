@@ -484,7 +484,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
           await sendDigestNow(
             { api: ctx.api }, userId, chatId,
             prefs.first_name || ctx.from?.first_name || null,
-            prefs.digest_city || 'Гродно'
+            prefs.digest_city || ''
           );
         } catch (digestError) {
           telegramLogger.error({ error: digestError, userId }, 'Digest now failed');
@@ -493,11 +493,11 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
         return;
       }
 
-      // /digest город Минск
+      // /digest город Москва
       if (arg?.startsWith('город') || arg?.startsWith('city')) {
         const city = arg.replace(/^(город|city)\s*/i, '').trim();
         if (!city) {
-          await ctx.reply('Использование: `/digest город Минск`', { parse_mode: 'Markdown' });
+          await ctx.reply('Использование: `/digest город Москва`', { parse_mode: 'Markdown' });
           return;
         }
         await userPrefsRepo.getOrCreate(userId, chatId, ctx.from?.first_name);
@@ -511,7 +511,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
       if (!isNaN(hour) && hour >= 0 && hour <= 23) {
         await userPrefsRepo.getOrCreate(userId, chatId, ctx.from?.first_name);
         await userPrefsRepo.update(userId, { digest_hour: hour });
-        await ctx.reply(`🕐 Дайджест будет приходить в *${hour}:00* по Минску`, { parse_mode: 'Markdown' });
+        await ctx.reply(`🕐 Дайджест будет приходить в *${hour}:00*`, { parse_mode: 'Markdown' });
         return;
       }
 
@@ -522,7 +522,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
       await ctx.reply(
         `☀️ *Утренний дайджест*\n\n` +
         `Статус: ${status}\n` +
-        `Время: ${prefs.digest_hour}:00 по Минску\n` +
+        `Время: ${prefs.digest_hour}:00\n` +
         `Город: ${prefs.digest_city}\n\n` +
         `📰 Включает: погоду, новости, напоминания и задачи`,
         { parse_mode: 'Markdown', reply_markup: digestControlsKeyboard(prefs.digest_enabled) }
