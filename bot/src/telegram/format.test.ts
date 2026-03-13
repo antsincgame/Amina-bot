@@ -173,6 +173,21 @@ describe('markdownToTelegramHtml', () => {
     expect(markdownToTelegramHtml('[click](https://example.com)')).toBe('<a href="https://example.com">click</a>');
   });
 
+  it('should preserve digest links with markdown-like CJK titles', () => {
+    const markdown = '**417. [### Korean Translation 구현할까요? 아니요 ... `text - 새로운 코드만`](https://example.com/417)**';
+    const html = markdownToTelegramHtml(markdown);
+
+    expect(html).toContain('<b>417. <a href="https://example.com/417">### Korean Translation 구현할까요? 아니요 ... `text - 새로운 코드만`</a></b>');
+    expect(html).not.toContain('<code>');
+  });
+
+  it('should support nested brackets inside link labels', () => {
+    const markdown = '[[단독] page-agent - 코드 1줄로 웹페이지에 AI 에이전트 추가하기](https://example.com/page-agent)';
+    const html = markdownToTelegramHtml(markdown);
+
+    expect(html).toBe('<a href="https://example.com/page-agent">[단독] page-agent - 코드 1줄로 웹페이지에 AI 에이전트 추가하기</a>');
+  });
+
   it('should escape HTML entities', () => {
     expect(markdownToTelegramHtml('a < b & c > d')).toContain('&lt;');
     expect(markdownToTelegramHtml('a < b & c > d')).toContain('&amp;');
@@ -277,6 +292,11 @@ describe('stripMarkdown', () => {
   it('should convert links to text + url', () => {
     expect(stripMarkdown('[click](https://example.com)')).toBe('click (https://example.com)');
   });
+
+  it('should keep url when markdown link label has nested brackets', () => {
+    expect(stripMarkdown('**[[단독] page-agent](https://example.com/page-agent)**'))
+      .toBe('[단독] page-agent (https://example.com/page-agent)');
+  });
 });
 
 describe('stripHtml', () => {
@@ -286,6 +306,11 @@ describe('stripHtml', () => {
 
   it('should decode HTML entities', () => {
     expect(stripHtml('a &amp; b &lt; c')).toBe('a & b < c');
+  });
+
+  it('should preserve href when stripping html links', () => {
+    expect(stripHtml('<b>1. <a href="https://example.com/news">AI headline</a></b>'))
+      .toBe('1. AI headline (https://example.com/news)');
   });
 });
 

@@ -23,7 +23,7 @@ const mockedTodosRepo = vi.mocked(todosRepo);
 
 function buildPreparedPayload(): PreparedDigestCachePayload {
   return {
-    version: 'hybrid-v2',
+    version: 'hybrid-v3',
     city: 'Tokyo',
     generated_at: '2026-03-12T07:00:00.000Z',
     digest_date: '2026-03-12',
@@ -145,7 +145,7 @@ describe('digest hybrid pipeline', () => {
   it('builds stable delivery keys for hybrid pipeline', () => {
     const key = buildHybridDigestDeliveryKey('42', 'manual', '  New York  ', '2026-03-12');
 
-    expect(key).toBe('digest:manual:42:2026-03-12:new-york:hybrid-v2');
+    expect(key).toBe('digest:manual:42:2026-03-12:new-york:hybrid-v3');
   });
 
   it('renders full prepared digest for public consumer without losing cached sections', async () => {

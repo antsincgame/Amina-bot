@@ -138,7 +138,7 @@ vi.mock('../features/digest-hybrid.js', () => ({
     cacheKey: 'cache-1',
     digestText: 'hybrid digest',
     payload: {
-      version: 'hybrid-v2',
+      version: 'hybrid-v3',
       city: 'Минск',
       generated_at: '2026-03-09T07:00:00.000Z',
       digest_date: '2026-03-09',

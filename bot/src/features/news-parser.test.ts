@@ -803,6 +803,104 @@ describe('News Parser — Russian description localization', () => {
     expect(localized[1]?.description).toContain('Японский стартап');
   });
 
+  it('дожимает пропущенные descriptions повторным batched retry', async () => {
+    mockedAiService.chat
+      .mockResolvedValueOnce({
+        content: JSON.stringify([
+          { id: 0, description: 'OpenAI выпустила нового AI-агента для enterprise-команд.' },
+        ]),
+        model: 'test-model',
+        tokens_used: { prompt: 10, completion: 10, total: 20 },
+        finish_reason: 'stop',
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify([
+          { id: 1, description: 'Метод позволяет сравнивать данные Google Trends между странами без ручной нормализации.' },
+          { id: 2, description: 'Фреймворк помогает строить строгие и воспроизводимые AI search benchmarks до дорогих инфраструктурных решений.' },
+        ]),
+        model: 'test-model',
+        tokens_used: { prompt: 10, completion: 10, total: 20 },
+        finish_reason: 'stop',
+      });
+
+    const localized = await localizeParsedHeadlines([
+      buildLocalizedHeadline({ fingerprint: 'fp-0' }),
+      buildLocalizedHeadline({
+        title: 'Google Trends comparison',
+        url: 'https://example.com/google-trends',
+        canonicalUrl: 'https://example.com/google-trends',
+        description: 'A methodology for comparing Google Trends data across countries.',
+        fingerprint: 'fp-1',
+      }),
+      buildLocalizedHeadline({
+        title: 'AI search evaluation',
+        url: 'https://example.com/search-eval',
+        canonicalUrl: 'https://example.com/search-eval',
+        description: 'A five-step framework for building rigorous, reproducible AI search benchmarks.',
+        fingerprint: 'fp-2',
+      }),
+    ]);
+
+    expect(mockedAiService.chat).toHaveBeenCalledTimes(2);
+    expect(localized[0]?.description).toContain('AI-агента');
+    expect(localized[1]?.description).toContain('Google Trends');
+    expect(localized[2]?.description).toContain('воспроизводимые');
+  });
+
+  it('повторно переводит description, если первый ответ оставил длинный английский хвост', async () => {
+    mockedAiService.chat
+      .mockResolvedValueOnce({
+        content: JSON.stringify([
+          {
+            id: 0,
+            description: 'OpenAI выпустила новый инструмент для кода. The post OpenAI released a new coding agent appeared first on Example Source.',
+          },
+          {
+            id: 1,
+            description: 'Japanese startup unveiled a collaborative AI coding platform for teams.',
+          },
+        ]),
+        model: 'test-model',
+        tokens_used: { prompt: 10, completion: 10, total: 20 },
+        finish_reason: 'stop',
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify([
+          {
+            id: 0,
+            description: 'OpenAI выпустила новый инструмент для кода и убрала лишний RSS-хвост из описания.',
+          },
+          {
+            id: 1,
+            description: 'Японский стартап представил совместную AI-платформу для командной разработки.',
+          },
+        ]),
+        model: 'test-model',
+        tokens_used: { prompt: 10, completion: 10, total: 20 },
+        finish_reason: 'stop',
+      });
+
+    const localized = await localizeParsedHeadlines([
+      buildLocalizedHeadline({ fingerprint: 'fp-tail-1' }),
+      buildLocalizedHeadline({
+        title: 'Japanese startup platform',
+        url: 'https://example.jp/platform',
+        canonicalUrl: 'https://example.jp/platform',
+        source: 'Japan Source',
+        sourceDomain: 'example.jp',
+        description: 'Japanese startup unveiled a collaborative AI coding platform for teams.',
+        fingerprint: 'fp-tail-2',
+        category: 'asia_tech',
+        language: 'ja',
+      }),
+    ]);
+
+    expect(mockedAiService.chat).toHaveBeenCalledTimes(2);
+    expect(localized[0]?.description).not.toContain('The post OpenAI released');
+    expect(localized[0]?.description).toContain('RSS-хвост');
+    expect(localized[1]?.description).toContain('Японский стартап');
+  });
+
   it('возвращает исходное description, если LLM вернула невалидный формат', async () => {
     mockedAiService.chat.mockResolvedValue({
       content: 'not-json',

@@ -9,7 +9,7 @@ import { buildDigestClosing, buildParserOnlyNewsBundle, getTimeGreeting, type Di
 import { digestCacheRepo, type DigestDeliveryKind, type PreparedDigestCachePayload } from './digest-hybrid-repo.js';
 import { escapeMarkdown, inlineCitations } from '../telegram/format.js';
 
-const HYBRID_DIGEST_VERSION = 'hybrid-v2';
+const HYBRID_DIGEST_VERSION = 'hybrid-v3';
 const HYBRID_CACHE_TTL_MS = 90 * 60 * 1000;
 export type HybridDigestSearchMode = 'full' | 'skip';
 

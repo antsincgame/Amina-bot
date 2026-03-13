@@ -15,6 +15,117 @@ import { config } from '../config/index.js';
 import { TELEGRAM_MAX_MESSAGE_LENGTH, FULL_TEXT_CACHE_TTL } from '../config/constants.js';
 
 const MAX_MESSAGE_LENGTH = TELEGRAM_MAX_MESSAGE_LENGTH;
+const LINK_PLACEHOLDER_PREFIX = '%%TG_LINK_';
+
+interface ExtractedMarkdownLink {
+  placeholder: string;
+  label: string;
+  url: string;
+}
+
+function escapeHtmlAttribute(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function unescapeMarkdownText(text: string): string {
+  return text.replace(/\\([\\`*_\[\]()~>#+\-=|{}.!])/g, '$1');
+}
+
+function readBalancedSegment(
+  text: string,
+  startIndex: number,
+  openChar: string,
+  closeChar: string,
+): { value: string; endIndex: number } | null {
+  if (text[startIndex] !== openChar) return null;
+
+  let depth = 1;
+  let value = '';
+
+  for (let index = startIndex + 1; index < text.length; index += 1) {
+    const currentChar = text[index]!;
+
+    if (currentChar === '\\' && index + 1 < text.length) {
+      value += currentChar + text[index + 1]!;
+      index += 1;
+      continue;
+    }
+
+    if (currentChar === openChar) {
+      depth += 1;
+      value += currentChar;
+      continue;
+    }
+
+    if (currentChar === closeChar) {
+      depth -= 1;
+      if (depth === 0) {
+        return { value, endIndex: index + 1 };
+      }
+      value += currentChar;
+      continue;
+    }
+
+    value += currentChar;
+  }
+
+  return null;
+}
+
+function extractMarkdownLinks(text: string): { text: string; links: ExtractedMarkdownLink[] } {
+  const links: ExtractedMarkdownLink[] = [];
+  let normalizedText = '';
+
+  for (let index = 0; index < text.length; index += 1) {
+    const currentChar = text[index]!;
+
+    if (currentChar !== '[') {
+      normalizedText += currentChar;
+      continue;
+    }
+
+    const labelSegment = readBalancedSegment(text, index, '[', ']');
+    if (!labelSegment || text[labelSegment.endIndex] !== '(') {
+      normalizedText += currentChar;
+      continue;
+    }
+
+    const urlSegment = readBalancedSegment(text, labelSegment.endIndex, '(', ')');
+    if (!urlSegment) {
+      normalizedText += currentChar;
+      continue;
+    }
+
+    const label = labelSegment.value;
+    const url = urlSegment.value.trim();
+    if (!label || !url) {
+      normalizedText += currentChar;
+      continue;
+    }
+
+    const placeholder = `${LINK_PLACEHOLDER_PREFIX}${links.length}%%`;
+    links.push({ placeholder, label, url });
+    normalizedText += placeholder;
+    index = urlSegment.endIndex - 1;
+  }
+
+  return { text: normalizedText, links };
+}
+
+function restoreMarkdownLinks(
+  text: string,
+  links: ExtractedMarkdownLink[],
+  render: (link: ExtractedMarkdownLink) => string,
+): string {
+  return links.reduce(
+    (result, link) => result.split(link.placeholder).join(render(link)),
+    text,
+  );
+}
 
 // ============================================
 // Markdown / HTML Conversion
@@ -33,7 +144,8 @@ export const escapeHtml = (text: string): string =>
  * Telegram HTML поддерживает: <b>, <i>, <code>, <pre>, <a>, <s>.
  */
 export const markdownToTelegramHtml = (text: string): string => {
-  let html = text;
+  const extracted = extractMarkdownLinks(text);
+  let html = extracted.text;
 
   // Экранируем HTML-сущности (до конвертации)
   html = html.replace(/&/g, '&amp;');
@@ -61,15 +173,15 @@ export const markdownToTelegramHtml = (text: string): string => {
   // ~~strikethrough~~ → <s>
   html = html.replace(/~~(.+?)~~/g, '<s>$1</s>');
 
-  // [text](url) → <a href="url">text</a>
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
-
-  return html;
+  return restoreMarkdownLinks(html, extracted.links, (link) =>
+    `<a href="${escapeHtmlAttribute(unescapeMarkdownText(link.url).trim())}">${escapeHtml(unescapeMarkdownText(link.label))}</a>`,
+  );
 };
 
 /** Удаляет Markdown-форматирование, оставляя чистый текст */
 export const stripMarkdown = (text: string): string => {
-  let clean = text;
+  const extracted = extractMarkdownLinks(text);
+  let clean = extracted.text;
   clean = clean.replace(/```[\w]*\n?([\s\S]*?)```/g, '$1');
   clean = clean.replace(/`([^`]+)`/g, '$1');
   clean = clean.replace(/\*\*(.+?)\*\*/g, '$1');
@@ -77,14 +189,23 @@ export const stripMarkdown = (text: string): string => {
   clean = clean.replace(/__(.+?)__/g, '$1');
   clean = clean.replace(/(?<![<\w])_([^_]+?)_(?![>\w])/g, '$1');
   clean = clean.replace(/~~(.+?)~~/g, '$1');
-  clean = clean.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)');
   clean = clean.replace(/^#{1,6}\s+/gm, '');
-  return clean;
+  return restoreMarkdownLinks(clean, extracted.links, (link) =>
+    `${unescapeMarkdownText(link.label)} (${unescapeMarkdownText(link.url).trim()})`,
+  );
 };
 
 /** Удаляет HTML-теги и декодирует сущности */
 export const stripHtml = (text: string): string => {
   let clean = text;
+  clean = clean.replace(/<a\b[^>]*href=(?:"([^"]+)"|'([^']+)')[^>]*>([\s\S]*?)<\/a>/gi, (_match, doubleQuotedUrl, singleQuotedUrl, label) => {
+    const href = typeof doubleQuotedUrl === 'string' && doubleQuotedUrl
+      ? doubleQuotedUrl
+      : typeof singleQuotedUrl === 'string'
+        ? singleQuotedUrl
+        : '';
+    return `${label} (${href})`;
+  });
   clean = clean.replace(/<[^>]+>/g, '');
   clean = clean.replace(/&amp;/g, '&');
   clean = clean.replace(/&lt;/g, '<');

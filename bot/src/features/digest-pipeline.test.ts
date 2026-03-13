@@ -161,4 +161,19 @@ describe('Digest pipeline — headline batching', () => {
 
     expect(validateAnnotatedBatch(invalid, headlines)).toBe(false);
   });
+
+  it('validateAnnotatedBatch отклоняет description с длинным английским хвостом после русского начала', () => {
+    const headlines = [
+      buildHeadline(1, { description: 'OpenAI released a new coding agent for enterprise teams.', language: 'en' }),
+    ];
+    const invalid = [
+      '## Технологии и AI',
+      '',
+      `**1. [${headlines[0].title}](${headlines[0].url})**`,
+      'Источник: Source 1 · Категория: AI/Tech',
+      'Описание: OpenAI выпустила нового агента для кода. The post OpenAI released a new coding agent appeared first on Example Source.',
+    ].join('\n');
+
+    expect(validateAnnotatedBatch(invalid, headlines)).toBe(false);
+  });
 });

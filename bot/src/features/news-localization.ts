@@ -3,6 +3,7 @@ import { appLogger } from '../config/logger.js';
 import type { ParsedHeadline } from '../../../shared/types/index.js';
 
 const DESCRIPTION_TRANSLATION_BATCH_SIZE = 12;
+const DESCRIPTION_TRANSLATION_RETRY_BATCH_SIZE = 4;
 const DESCRIPTION_TRANSLATION_TIMEOUT_MS = 45_000;
 const MAX_LOCALIZED_DESCRIPTION_LENGTH = 320;
 
@@ -32,6 +33,14 @@ function countMatches(text: string, pattern: RegExp): number {
   return text.match(pattern)?.length ?? 0;
 }
 
+function hasLongLatinPhrase(text: string): boolean {
+  const normalized = normalizeDescriptionText(text);
+  if (!normalized) return false;
+
+  const matches = normalized.match(/[A-Za-z][A-Za-z0-9+/.-]*(?:\s+[A-Za-z0-9+/.-]+){3,}/g) ?? [];
+  return matches.some(match => countMatches(match, /[a-z]/gi) >= 12);
+}
+
 export function hasMostlyRussianText(text: string): boolean {
   const normalized = normalizeDescriptionText(text);
   if (!normalized) return false;
@@ -43,10 +52,19 @@ export function hasMostlyRussianText(text: string): boolean {
   return cyrillicCount >= 6 || cyrillicCount >= latinCount;
 }
 
+function needsRussianLocalization(text: string): boolean {
+  const normalized = normalizeDescriptionText(text);
+  if (!normalized) return false;
+
+  if (!hasMostlyRussianText(normalized)) {
+    return true;
+  }
+
+  return hasLongLatinPhrase(normalized);
+}
+
 export function shouldTranslateHeadlineDescription(headline: ParsedHeadline): boolean {
-  const normalizedDescription = normalizeDescriptionText(headline.description);
-  if (!normalizedDescription) return false;
-  return !hasMostlyRussianText(normalizedDescription);
+  return needsRussianLocalization(headline.description);
 }
 
 function stripMarkdownFences(text: string): string {
@@ -127,6 +145,7 @@ function buildTranslationPrompt(items: DescriptionTranslationInput[]): string {
     '- Не выдумывай новые факты, причины, выводы и детали.',
     '- Сохраняй смысл, степень уверенности и фактические формулировки исходника.',
     '- Названия компаний, моделей, продуктов, библиотек и городов оставляй в оригинальном написании, если так точнее.',
+    '- Убирай RSS-боилерплейт и хвосты вроде "The post ... appeared first on ...", "Read more", "Continue reading", если они не добавляют сути новости.',
     '- Если описание уже на русском, только нормализуй формулировку.',
     `- Максимум ${MAX_LOCALIZED_DESCRIPTION_LENGTH} символов на description.`,
     '- Верни только JSON-массив без markdown fences.',
@@ -137,7 +156,52 @@ function buildTranslationPrompt(items: DescriptionTranslationInput[]): string {
   ].join('\n');
 }
 
-async function translateDescriptionBatch(items: DescriptionTranslationInput[]): Promise<Map<number, string>> {
+function acceptTranslatedDescriptions(
+  items: DescriptionTranslationInput[],
+  translations: DescriptionTranslationOutput[],
+): Map<number, string> {
+  const translationsById = new Map(translations.map(item => [item.id, item.description]));
+  const accepted = new Map<number, string>();
+
+  items.forEach(({ id, headline }) => {
+    const translatedDescription = translationsById.get(id);
+    if (!translatedDescription) return;
+    if (needsRussianLocalization(translatedDescription)) {
+      appLogger.warn(
+        { id, source: headline.source, category: headline.category },
+        'News localization: translated description still contains long English fragment',
+      );
+      return;
+    }
+    accepted.set(id, translatedDescription);
+  });
+
+  return accepted;
+}
+
+function chunkTranslationInputs(
+  items: DescriptionTranslationInput[],
+  batchSize: number,
+): DescriptionTranslationInput[][] {
+  const batches: DescriptionTranslationInput[][] = [];
+
+  for (let index = 0; index < items.length; index += batchSize) {
+    batches.push(items.slice(index, index + batchSize));
+  }
+
+  return batches;
+}
+
+function mergeTranslationMaps(target: Map<number, string>, source: Map<number, string>): void {
+  source.forEach((description, id) => {
+    target.set(id, description);
+  });
+}
+
+async function translateDescriptionBatch(
+  items: DescriptionTranslationInput[],
+  scope: 'batch' | 'retry_batch' | 'single',
+): Promise<Map<number, string>> {
   if (items.length === 0) return new Map<number, string>();
 
   try {
@@ -156,20 +220,64 @@ async function translateDescriptionBatch(items: DescriptionTranslationInput[]): 
         'telegram',
       ),
       DESCRIPTION_TRANSLATION_TIMEOUT_MS,
-      'News description localization batch',
+      `News description localization ${scope}`,
     );
 
     const parsed = parseTranslationResponse(response.content);
     if (parsed.length === 0) {
-      appLogger.warn({ batchSize: items.length }, 'News localization: model returned empty translation batch');
+      appLogger.warn({ batchSize: items.length, scope }, 'News localization: model returned empty translation batch');
       return new Map<number, string>();
     }
 
-    return new Map(parsed.map(item => [item.id, item.description]));
+    const accepted = acceptTranslatedDescriptions(items, parsed);
+    if (accepted.size === 0) {
+      appLogger.warn({ batchSize: items.length, scope }, 'News localization: batch returned no acceptable Russian descriptions');
+      return new Map<number, string>();
+    }
+
+    return accepted;
   } catch (error) {
-    appLogger.warn({ error, batchSize: items.length }, 'News localization: translation batch failed');
+    appLogger.warn({ error, batchSize: items.length, scope }, 'News localization: translation batch failed');
     return new Map<number, string>();
   }
+}
+
+async function translateDescriptionBatchWithFallback(
+  items: DescriptionTranslationInput[],
+): Promise<Map<number, string>> {
+  const translated = await translateDescriptionBatch(items, 'batch');
+  if (translated.size === items.length || items.length <= 1) {
+    return translated;
+  }
+
+  let missingItems = items.filter(({ id }) => !translated.has(id));
+  if (missingItems.length > 1) {
+    const retryBatches = chunkTranslationInputs(missingItems, DESCRIPTION_TRANSLATION_RETRY_BATCH_SIZE);
+    for (const retryBatch of retryBatches) {
+      mergeTranslationMaps(translated, await translateDescriptionBatch(retryBatch, 'retry_batch'));
+    }
+  }
+
+  missingItems = items.filter(({ id }) => !translated.has(id));
+  if (missingItems.length > 0) {
+    for (const missingItem of missingItems) {
+      mergeTranslationMaps(translated, await translateDescriptionBatch([missingItem], 'single'));
+    }
+  }
+
+  const unresolvedItems = items.filter(({ id }) => !translated.has(id));
+  if (unresolvedItems.length > 0) {
+    appLogger.warn(
+      {
+        total: items.length,
+        unresolved: unresolvedItems.length,
+        sources: unresolvedItems.map(({ headline }) => headline.source),
+      },
+      'News localization: some descriptions stayed untranslated after retries',
+    );
+  }
+
+  return translated;
 }
 
 export async function localizeParsedHeadlines(headlines: ParsedHeadline[]): Promise<ParsedHeadline[]> {
@@ -192,7 +300,7 @@ export async function localizeParsedHeadlines(headlines: ParsedHeadline[]): Prom
 
   for (let index = 0; index < translationQueue.length; index += DESCRIPTION_TRANSLATION_BATCH_SIZE) {
     const batch = translationQueue.slice(index, index + DESCRIPTION_TRANSLATION_BATCH_SIZE);
-    const translatedBatch = await translateDescriptionBatch(batch);
+    const translatedBatch = await translateDescriptionBatchWithFallback(batch);
 
     batch.forEach(({ id, headline }) => {
       const translatedDescription = translatedBatch.get(id);

@@ -15,7 +15,7 @@ import { load, type Cheerio } from 'cheerio';
 import type { AnyNode } from 'domhandler';
 import { settingsRepo } from '../db/supabase.js';
 import { appLogger } from '../config/logger.js';
-import { localizeParsedHeadlines } from './news-localization.js';
+import { hasMostlyRussianText, localizeParsedHeadlines } from './news-localization.js';
 import {
   FETCH_TIMEOUT_MS,
   MAX_HEADLINES_PER_SITE,
@@ -762,7 +762,7 @@ function buildDescriptionFallback(
 ): string {
   const titleParts = title.split(':').map(part => cleanTitle(part));
   const titleSuffix = titleParts.length > 1 ? titleParts.slice(1).join(': ') : '';
-  if (titleSuffix && titleSuffix.length >= 20) {
+  if (titleSuffix && titleSuffix.length >= 20 && hasMostlyRussianText(titleSuffix)) {
     return titleSuffix.slice(0, 240);
   }
 
@@ -1751,9 +1751,13 @@ function mergeParsedHeadlineEntry(current: ParsedHeadline, incoming: ParsedHeadl
     ? primary.category
     : secondary.category;
   const alternateSources = mergeSourceNames(current, incoming, primary.source);
-  const richerDescription = getDescriptionScore(primary) >= getDescriptionScore(secondary)
-    ? primary.description
-    : secondary.description;
+  const primaryDescriptionIsRussian = hasMostlyRussianText(primary.description);
+  const secondaryDescriptionIsRussian = hasMostlyRussianText(secondary.description);
+  const richerDescription = primaryDescriptionIsRussian !== secondaryDescriptionIsRussian
+    ? (primaryDescriptionIsRussian ? primary.description : secondary.description)
+    : getDescriptionScore(primary) >= getDescriptionScore(secondary)
+      ? primary.description
+      : secondary.description;
 
   return {
     ...primary,

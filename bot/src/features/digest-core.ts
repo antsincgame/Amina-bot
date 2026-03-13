@@ -2,7 +2,7 @@ import { webSearch } from '../ai/websearch.js';
 import { aiService } from '../ai/openrouter.js';
 import { appLogger } from '../config/logger.js';
 import { countMergedDuplicates, groupHeadlinesByCategory } from './news-parser.js';
-import { hasMostlyRussianText } from './news-localization.js';
+import { shouldTranslateHeadlineDescription } from './news-localization.js';
 import type { ParsedHeadline } from '../../../shared/types/index.js';
 
 export interface DigestSearchResult {
@@ -200,11 +200,11 @@ export function validateAnnotatedBatch(text: string, headlines: ParsedHeadline[]
     text.includes(headline.source) &&
     text.includes(headline.url) &&
     text.includes(formatCategoryLabel(headline.category)),
-  ) && descriptionLines.every((description, index) =>
-    hasMostlyRussianText(headlines[index]?.description ?? '')
-      ? true
-      : hasMostlyRussianText(description),
-  );
+  ) && descriptionLines.every((description, index) => {
+    const headline = headlines[index];
+    if (!headline) return false;
+    return !shouldTranslateHeadlineDescription({ ...headline, description });
+  });
 }
 
 export function shouldUseFallbackForDigestBatches(totalBatches: number): boolean {
