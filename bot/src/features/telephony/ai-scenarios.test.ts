@@ -114,6 +114,35 @@ describe('telephony ai scenarios', () => {
     );
   });
 
+  it('reuses provided preview plan without extra AI call', async () => {
+    askQuestionMock.mockResolvedValue({ id: 'ask-2', mode: 'ask_question' });
+
+    const { startTelephonyAiCall } = await import('./ai-scenarios.js');
+
+    const result = await startTelephonyAiCall({
+      scenarioId: 'confirm-meeting',
+      phone: '+375291234567',
+      task: 'Подтверди встречу на завтра в 14:00.',
+      ownerTelegramId: '7867087040',
+      initiatedBy: 'Амина',
+      plan: {
+        summary: 'Подтвердить встречу',
+        callMode: 'ask_question',
+        speechText: null,
+        helloText: 'Здравствуйте. Вас беспокоит AI-ассистент Амина.',
+        askText: 'Подтвердите, пожалуйста, встречу завтра в 14:00.',
+        okText: 'Спасибо, фиксирую подтверждение.',
+        byeText: 'Благодарю за ответ, до свидания.',
+        successHint: 'Нужно понять, подтверждена ли встреча.',
+      },
+    });
+
+    expect(chatMock).not.toHaveBeenCalled();
+    expect(result.plan.callMode).toBe('ask_question');
+    expect(result.plan.askText).toContain('встречу');
+    expect(askQuestionMock).toHaveBeenCalledTimes(1);
+  });
+
   it('falls back to connectCall for speech mode', async () => {
     settingsGetMock.mockResolvedValue(
       JSON.stringify([

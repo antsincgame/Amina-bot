@@ -27,7 +27,7 @@ import { buildDigest } from '../features/digest-scheduler.js';
 import { buildHybridDigest, PreparedDigestUnavailableError } from '../features/digest-hybrid.js';
 import { markdownToTelegramHtml } from '../telegram/format.js';
 import type { DigestPipelineMode, NewsSite } from '../../../shared/types/index.js';
-import type { TelephonyAiScenario } from '../../../shared/types/telephony.js';
+import type { TelephonyAiCallPlan, TelephonyAiScenario } from '../../../shared/types/telephony.js';
 import { invalidateTTSConfig } from '../features/tts.js';
 import { voiceMessagesRepo } from '../features/voice-messages-repo.js';
 import {
@@ -2648,7 +2648,13 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
         '/lirax/ai-calls/start',
         async (
           request: FastifyRequest<{
-            Body: { scenarioId: string; phone: string; task: string; ownerTelegramId?: string };
+            Body: {
+              scenarioId: string;
+              phone: string;
+              task: string;
+              ownerTelegramId?: string;
+              plan?: TelephonyAiCallPlan;
+            };
           }>,
           reply: FastifyReply,
         ) => {
@@ -2658,7 +2664,7 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
               return;
             }
 
-            const { scenarioId, phone, task, ownerTelegramId } = request.body;
+            const { scenarioId, phone, task, ownerTelegramId, plan } = request.body;
             if (!scenarioId || !phone || !task) {
               return reply
                 .code(400)
@@ -2678,6 +2684,7 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
               task,
               ownerTelegramId: effectiveOwnerId,
               initiatedBy: admin.email ?? admin.userId,
+              plan,
             });
 
             return reply.code(200).send({ success: true, data: result });

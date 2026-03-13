@@ -180,11 +180,12 @@ async function startAiCall(
   scenarioId: string,
   phone: string,
   task: string,
+  plan?: TelephonyAiCallPlan,
 ): Promise<TelephonyAiStartResponse> {
   const response = await fetchBotApi('/api/lirax/ai-calls/start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ scenarioId, phone, task }),
+    body: JSON.stringify({ scenarioId, phone, task, plan }),
   });
   const json = await readJson<{ data: TelephonyAiStartResponse }>(response);
   return json.data;
@@ -276,6 +277,11 @@ const TelephonyPage = () => {
     }
   }, [studioScenarioId, scenarios]);
 
+  useEffect(() => {
+    setPreviewData(null);
+    setStartSuccess(null);
+  }, [studioScenarioId, studioPhone, studioTask]);
+
   const enabledScenarios = useMemo(
     () => scenarios.filter((scenario) => scenario.enabled),
     [scenarios],
@@ -361,7 +367,10 @@ const TelephonyPage = () => {
   });
 
   const { mutate: executeCall, isPending: startingCall } = useMutation({
-    mutationFn: () => startAiCall(studioScenarioId, studioPhone, studioTask),
+    mutationFn: async () => {
+      const preview = previewData ?? await previewAiCall(studioScenarioId, studioPhone, studioTask);
+      return startAiCall(studioScenarioId, studioPhone, studioTask, preview.plan);
+    },
     onSuccess: (data) => {
       setPreviewData(data);
       setStartSuccess(`Звонок инициирован. ID: ${data.result.id || 'pending'}`);

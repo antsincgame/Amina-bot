@@ -20,6 +20,7 @@ interface StartTelephonyAiCallParams {
   task: string;
   ownerTelegramId: string;
   initiatedBy: string;
+  plan?: TelephonyAiCallPlan;
 }
 
 interface TelephonyAiCallResult {
@@ -357,6 +358,18 @@ function normalizePlan(
   };
 }
 
+function toPlanInput(plan: TelephonyAiCallPlan): Record<string, unknown> {
+  return {
+    summary: plan.summary,
+    speechText: plan.speechText,
+    helloText: plan.helloText,
+    askText: plan.askText,
+    okText: plan.okText,
+    byeText: plan.byeText,
+    successHint: plan.successHint,
+  };
+}
+
 export async function previewTelephonyAiCall(
   scenarioId: string,
   task: string,
@@ -386,7 +399,10 @@ export async function previewTelephonyAiCall(
 export async function startTelephonyAiCall(
   params: StartTelephonyAiCallParams,
 ): Promise<{ scenario: TelephonyAiScenario; plan: TelephonyAiCallPlan; result: TelephonyAiCallResult }> {
-  const { scenario, plan } = await previewTelephonyAiCall(params.scenarioId, params.task, params.phone);
+  const scenario = await resolveScenarioById(params.scenarioId);
+  const plan = params.plan
+    ? normalizePlan(scenario, toPlanInput(params.plan), params.task)
+    : (await previewTelephonyAiCall(params.scenarioId, params.task, params.phone)).plan;
 
   let result: TelephonyAiCallResult;
   if (plan.callMode === 'speech') {

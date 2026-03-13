@@ -10,6 +10,7 @@
 
 import { telegramLogger } from '../../config/logger.js';
 import { settingsRepo } from '../../db/supabase.js';
+import { LIRAX_FETCH_TIMEOUT_MS } from '../../config/constants.js';
 
 // ---------------------------------------------------------------
 // Config helpers
@@ -85,11 +86,21 @@ async function liraXRequest(
   const { token: _redacted, ...safeParams } = Object.fromEntries(body);
   telegramLogger.info({ cmd, params: safeParams }, '[LiraX] → request');
 
-  const response = await fetch(cfg.url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
-  });
+  let response: Response;
+  try {
+    response = await fetch(cfg.url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+      signal: AbortSignal.timeout(LIRAX_FETCH_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`LiraX API timeout after ${LIRAX_FETCH_TIMEOUT_MS}ms`);
+    }
+
+    throw error;
+  }
 
   const text = await response.text();
 
@@ -196,8 +207,10 @@ export async function askQuestion(params: {
     ? result as Record<string, unknown>
     : null;
 
-  const id = typeof payload?.['id_askquestion'] === 'string'
-    ? payload['id_askquestion']
+  const id = typeof payload?.['id_make2calls'] === 'string'
+    ? payload['id_make2calls']
+    : typeof payload?.['id_askquestion'] === 'string'
+      ? payload['id_askquestion']
     : typeof payload?.['id_makecall'] === 'string'
       ? payload['id_makecall']
       : typeof payload?.['id'] === 'string'
