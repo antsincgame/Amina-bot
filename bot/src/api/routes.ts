@@ -1627,27 +1627,49 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
         '/digest/latest',
         async (
           request: FastifyRequest<{
-            Querystring: { city?: string; firstName?: string; format?: string; pipeline?: string; refresh?: string };
+            Querystring: { city?: string; firstName?: string; format?: string; pipeline?: string; refresh?: string; search?: string };
           }>,
           reply: FastifyReply,
         ) => {
           try {
-            const { city = '', firstName = 'Читатель', format = 'html', pipeline = 'hybrid', refresh = '0' } = request.query as {
+            const { city = '', firstName = 'Читатель', format = 'html', pipeline = 'hybrid', refresh = '0', search = '0' } = request.query as {
               city?: string;
               firstName?: string;
               format?: string;
               pipeline?: string;
               refresh?: string;
+              search?: string;
             };
             const selectedPipeline: DigestPipelineMode =
               pipeline === 'hybrid' || pipeline === 'hybrid_supabase'
                 ? 'hybrid_supabase'
                 : 'legacy';
             const forceRefresh = refresh === '1' || refresh.toLowerCase() === 'true';
+            const requestedSearchMode = search === '1' || search.toLowerCase() === 'true'
+              ? 'full'
+              : 'skip';
+            let resolvedSearchMode = requestedSearchMode;
 
-            const hybridResult = selectedPipeline === 'hybrid_supabase'
-              ? await buildHybridDigest('public', firstName, city, { forceRefresh })
-              : null;
+            let hybridResult = null;
+            if (selectedPipeline === 'hybrid_supabase') {
+              try {
+                hybridResult = await buildHybridDigest('public', firstName, city, {
+                  forceRefresh,
+                  searchMode: requestedSearchMode,
+                });
+              } catch (error) {
+                if (requestedSearchMode === 'full') {
+                  aiLogger.warn({ error, city }, 'Digest API full-search mode failed, retrying searchless hybrid');
+                  resolvedSearchMode = 'skip';
+                  hybridResult = await buildHybridDigest('public', firstName, city, {
+                    forceRefresh,
+                    searchMode: 'skip',
+                  });
+                } else {
+                  throw error;
+                }
+              }
+            }
             const legacyDigestText = selectedPipeline === 'legacy'
               ? await buildDigest('public', firstName, city)
               : null;
@@ -1669,6 +1691,9 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
                   city,
                   firstName,
                   pipeline: selectedPipeline,
+                  searchMode: selectedPipeline === 'hybrid_supabase'
+                    ? resolvedSearchMode
+                    : 'full',
                   generatedAt: hybridResult?.payload.generated_at ?? new Date().toISOString(),
                   digestDate: hybridResult?.payload.digest_date ?? new Date().toISOString().slice(0, 10),
                   news: hybridResult

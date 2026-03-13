@@ -11,6 +11,12 @@ import { escapeMarkdown, inlineCitations } from '../telegram/format.js';
 
 const HYBRID_DIGEST_VERSION = 'hybrid-v1';
 const HYBRID_CACHE_TTL_MS = 90 * 60 * 1000;
+export type HybridDigestSearchMode = 'full' | 'skip';
+
+interface HybridDigestBuildOptions {
+  forceRefresh?: boolean;
+  searchMode?: HybridDigestSearchMode;
+}
 
 function getCurrentDateKey(): string {
   const dateKey = new Intl.DateTimeFormat('en-CA', {
@@ -59,10 +65,19 @@ function normalizeDigestCity(city: string | null | undefined): string {
   return trimmed || 'Москва';
 }
 
-async function buildSourceHash(city: string, digestDate: string): Promise<string> {
-  const rawSites = await settingsRepo.get('digest_news_sites');
+async function buildSourceHash(
+  city: string,
+  digestDate: string,
+  searchMode: HybridDigestSearchMode,
+): Promise<string> {
+  let rawSites = '';
+  try {
+    rawSites = await settingsRepo.get('digest_news_sites') ?? '';
+  } catch (error) {
+    appLogger.warn({ error, city, digestDate, searchMode }, 'Hybrid digest source hash fallback: settings unavailable');
+  }
   return createHash('sha256')
-    .update([HYBRID_DIGEST_VERSION, digestDate, city, rawSites ?? ''].join('|'))
+    .update([HYBRID_DIGEST_VERSION, digestDate, city, searchMode, rawSites].join('|'))
     .digest('hex')
     .slice(0, 20);
 }
@@ -180,30 +195,39 @@ function buildPersonalSection(
 
 export async function prepareHybridDigestBase(
   city: string,
-  options?: { forceRefresh?: boolean },
+  options?: HybridDigestBuildOptions,
 ): Promise<{ cacheKey: string; payload: PreparedDigestCachePayload }> {
   const normalizedCity = normalizeDigestCity(city);
   const digestDate = getCurrentDateKey();
-  const sourceHash = await buildSourceHash(normalizedCity, digestDate);
+  const searchMode = options?.searchMode ?? 'full';
+  const sourceHash = await buildSourceHash(normalizedCity, digestDate, searchMode);
   const cacheKey = buildCacheKey(normalizedCity, digestDate, sourceHash);
 
   if (!options?.forceRefresh) {
-    const cached = await digestCacheRepo.getByKey(cacheKey);
-    if (cached && isCacheFresh(cached.expires_at) && cached.payload?.source_hash === sourceHash) {
-      appLogger.info({ city: normalizedCity, cacheKey, digestDate }, 'Hybrid digest cache hit');
-      return { cacheKey, payload: cached.payload };
+    try {
+      const cached = await digestCacheRepo.getByKey(cacheKey);
+      if (cached && isCacheFresh(cached.expires_at) && cached.payload?.source_hash === sourceHash) {
+        appLogger.info({ city: normalizedCity, cacheKey, digestDate, searchMode }, 'Hybrid digest cache hit');
+        return { cacheKey, payload: cached.payload };
+      }
+    } catch (error) {
+      appLogger.warn({ error, city: normalizedCity, cacheKey, searchMode }, 'Hybrid digest cache read failed, continuing uncached');
     }
   }
 
   const todayLabel = getTodayLabel();
   const [weatherResult, parsedHeadlinesResult, localSearchResult] = await Promise.allSettled([
-    webSearchWithRetry(
-      `Погода ${normalizedCity} сегодня ${todayLabel}: точная температура сейчас утром днём вечером, осадки, ветер, влажность, давление, ощущается как. Подробный прогноз на весь день.`,
-    ),
+    searchMode === 'skip'
+      ? Promise.resolve(null)
+      : webSearchWithRetry(
+        `Погода ${normalizedCity} сегодня ${todayLabel}: точная температура сейчас утром днём вечером, осадки, ветер, влажность, давление, ощущается как. Подробный прогноз на весь день.`,
+      ),
     parseAllConfiguredSites(),
-    webSearchWithRetry(
-      `Новости ${normalizedCity} сегодня ${todayLabel}: местные события, транспорт, благоустройство, культурная жизнь, решения властей и важные городские обновления. Верни только реальные локальные новости ${normalizedCity}.`,
-    ),
+    searchMode === 'skip'
+      ? Promise.resolve(null)
+      : webSearchWithRetry(
+        `Новости ${normalizedCity} сегодня ${todayLabel}: местные события, транспорт, благоустройство, культурная жизнь, решения властей и важные городские обновления. Верни только реальные локальные новости ${normalizedCity}.`,
+      ),
   ]);
 
   const headlines = parsedHeadlinesResult.status === 'fulfilled' ? parsedHeadlinesResult.value : [];
@@ -253,20 +277,25 @@ export async function prepareHybridDigestBase(
   };
 
   const expiresAt = new Date(Date.now() + HYBRID_CACHE_TTL_MS).toISOString();
-  await digestCacheRepo.upsert({
-    cache_key: cacheKey,
-    digest_date: digestDate,
-    city: normalizedCity,
-    source_hash: sourceHash,
-    payload,
-    expires_at: expiresAt,
-  });
+  try {
+    await digestCacheRepo.upsert({
+      cache_key: cacheKey,
+      digest_date: digestDate,
+      city: normalizedCity,
+      source_hash: sourceHash,
+      payload,
+      expires_at: expiresAt,
+    });
+  } catch (error) {
+    appLogger.warn({ error, city: normalizedCity, cacheKey, searchMode }, 'Hybrid digest cache write failed, returning uncached payload');
+  }
 
   appLogger.info(
     {
       city: normalizedCity,
       cacheKey,
       digestDate,
+      searchMode,
       totalHeadlines: payload.counts.total,
       aiSections: payload.ai_sections.length,
       asiaSections: payload.asia_sections.length,
@@ -320,7 +349,7 @@ export async function buildHybridDigest(
   userId: string,
   firstName: string | null,
   city: string,
-  options?: { forceRefresh?: boolean },
+  options?: HybridDigestBuildOptions,
 ): Promise<{ cacheKey: string; digestText: string; payload: PreparedDigestCachePayload }> {
   const prepared = await prepareHybridDigestBase(city, options);
   const digestText = await renderHybridDigestFromPreparedBase(userId, firstName, prepared.payload);

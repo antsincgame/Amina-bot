@@ -51,7 +51,20 @@ export async function webSearchWithRetry(
         'Digest: search returned weak result',
       );
     } catch (error) {
-      appLogger.warn({ error, query: query.substring(0, 50), attempt }, `Digest: search attempt ${attempt} failed`);
+      const errorCode = typeof error === 'object' && error !== null && 'code' in error
+        ? String((error as { code?: string }).code ?? '')
+        : '';
+      appLogger.warn({ error, errorCode, query: query.substring(0, 50), attempt }, `Digest: search attempt ${attempt} failed`);
+
+      if (
+        errorCode === 'PERPLEXITY_NOT_CONFIGURED'
+        || errorCode === 'PERPLEXITY_AUTH_ERROR'
+        || errorCode === 'PERPLEXITY_PAYMENT_REQUIRED'
+        || errorCode === 'SEARCH_CIRCUIT_OPEN'
+      ) {
+        return null;
+      }
+
       if (attempt < retries) {
         await new Promise(resolve => setTimeout(resolve, 1500));
       }

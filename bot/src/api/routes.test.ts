@@ -266,6 +266,10 @@ const tunnelHeaders = {
 describe('API Routes', () => {
   let app: FastifyInstance;
 
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   beforeAll(async () => {
     app = Fastify();
     await registerApiRoutes(app);
@@ -469,15 +473,82 @@ describe('API Routes', () => {
         'public',
         'Читатель',
         'Минск',
-        { forceRefresh: false },
+        { forceRefresh: false, searchMode: 'skip' },
       );
 
       const body = JSON.parse(response.body);
       expect(body.success).toBe(true);
       expect(body.data.pipeline).toBe('hybrid_supabase');
+      expect(body.data.searchMode).toBe('skip');
       expect(body.data.content).toBe('hybrid digest');
       expect(body.data.news.counts.merged_duplicates).toBe(1);
       expect(body.data.news.sections.ai_tech[0].description).toBe('AI description');
+    });
+
+    it('should retry searchless hybrid when explicit full search fails', async () => {
+      const digestHybrid = await import('../features/digest-hybrid.js');
+      vi.mocked(digestHybrid.buildHybridDigest)
+        .mockRejectedValueOnce(new Error('perplexity failed'))
+        .mockResolvedValueOnce({
+          cacheKey: 'cache-2',
+          digestText: 'hybrid digest fallback',
+          payload: {
+            version: 'hybrid-v1',
+            city: 'Минск',
+            generated_at: '2026-03-09T07:00:00.000Z',
+            digest_date: '2026-03-09',
+            source_hash: 'hash-2',
+            counts: {
+              total: 4,
+              ai: 1,
+              community: 1,
+              asia: 1,
+              local: 1,
+              uncategorized: 0,
+              merged_duplicates: 1,
+            },
+            weather: null,
+            local_search: null,
+            headlines: mockParsedHeadlines,
+            sections: {
+              ai_tech: [mockParsedHeadlines[0]],
+              asia_tech: [mockParsedHeadlines[1]],
+              community: [mockParsedHeadlines[2]],
+              city_local: [mockParsedHeadlines[3]],
+              uncategorized: [],
+            },
+            local_section: '## Новости Минск',
+            uncategorized_section: '',
+            ai_sections: ['## Технологии и AI'],
+            asia_sections: ['## AI из Азии'],
+          },
+        });
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/digest/latest?format=json&city=Минск&search=1',
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(vi.mocked(digestHybrid.buildHybridDigest)).toHaveBeenNthCalledWith(
+        1,
+        'public',
+        'Читатель',
+        'Минск',
+        { forceRefresh: false, searchMode: 'full' },
+      );
+      expect(vi.mocked(digestHybrid.buildHybridDigest)).toHaveBeenNthCalledWith(
+        2,
+        'public',
+        'Читатель',
+        'Минск',
+        { forceRefresh: false, searchMode: 'skip' },
+      );
+
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(true);
+      expect(body.data.searchMode).toBe('skip');
+      expect(body.data.content).toBe('hybrid digest fallback');
     });
 
     it('should still allow explicit legacy pipeline', async () => {
