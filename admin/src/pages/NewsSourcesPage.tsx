@@ -710,12 +710,17 @@ const NewsSourcesPage = () => {
                 {testResult.error}
               </div>
             ) : (
-              <p className="text-sm text-gray-400 mb-4">
-                Найдено заголовков: <span className="text-amber-400 font-bold">{testResult.count}</span>
-                {testResult.parseTimeMs != null && (
-                  <span className="ml-2">({testResult.parseTimeMs}ms)</span>
-                )}
-              </p>
+              <div className="mb-4">
+                <p className="text-sm text-gray-400">
+                  Найдено заголовков: <span className="text-amber-400 font-bold">{testResult.count}</span>
+                  {testResult.parseTimeMs != null && (
+                    <span className="ml-2">({testResult.parseTimeMs}ms)</span>
+                  )}
+                </p>
+                <p className="mt-1 text-xs text-gray-500">
+                  Preview уже показывает parser-only descriptions в русском виде, как они попадут в structured digest.
+                </p>
+              </div>
             )}
 
             {testResult.headlines.length > 0 ? (

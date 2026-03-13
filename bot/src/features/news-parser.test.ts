@@ -12,13 +12,31 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+vi.mock('../ai/openrouter.js', () => ({
+  aiService: {
+    chat: vi.fn(),
+  },
+}));
+
 import type { ParsedHeadline } from '../../../shared/types/index.js';
+import { aiService } from '../ai/openrouter.js';
 import {
   buildHeadlineFingerprint,
   canonicalizeHeadlineUrl,
   dedupeParsedHeadlines,
   groupHeadlinesByCategory,
 } from './news-parser.js';
+import { localizeParsedHeadlines } from './news-localization.js';
+
+const mockedAiService = vi.mocked(aiService);
+
+beforeEach(() => {
+  mockedAiService.chat.mockReset();
+});
+
+afterEach(() => {
+  mockedAiService.chat.mockReset();
+});
 
 // ============================================
 // Для тестирования приватных функций нам нужно
@@ -720,5 +738,82 @@ describe('News Parser — Real structured helpers', () => {
     expect(grouped.city_local).toHaveLength(1);
     expect(grouped.uncategorized).toHaveLength(1);
     expect(grouped.uncategorized[0]?.title).toBe('Unknown headline');
+  });
+});
+
+describe('News Parser — Russian description localization', () => {
+  function buildLocalizedHeadline(overrides: Partial<ParsedHeadline> = {}): ParsedHeadline {
+    return {
+      title: 'AI release headline',
+      url: 'https://example.com/article',
+      canonicalUrl: 'https://example.com/article',
+      source: 'Example Source',
+      sourceDomain: 'example.com',
+      description: 'OpenAI released a new coding agent for enterprise teams.',
+      fingerprint: 'fp-localized',
+      alternateSources: [],
+      category: 'ai_tech',
+      language: 'en',
+      ...overrides,
+    };
+  }
+
+  it('не вызывает LLM для уже русских descriptions', async () => {
+    const headlines = [
+      buildLocalizedHeadline({
+        description: 'Новый AI-агент автоматизирует код-ревью и рутинные задачи команды.',
+        language: 'ru',
+      }),
+    ];
+
+    const localized = await localizeParsedHeadlines(headlines);
+
+    expect(mockedAiService.chat).not.toHaveBeenCalled();
+    expect(localized[0]?.description).toBe('Новый AI-агент автоматизирует код-ревью и рутинные задачи команды.');
+  });
+
+  it('переводит mixed-language descriptions в русский через основную LLM', async () => {
+    mockedAiService.chat.mockResolvedValue({
+      content: JSON.stringify([
+        { id: 0, description: 'OpenAI выпустила нового coding-агента для enterprise-команд.' },
+        { id: 1, description: 'Японский стартап представил платформу для AI-разработки и совместного тестирования.' },
+      ]),
+      model: 'test-model',
+      tokens_used: { prompt: 10, completion: 10, total: 20 },
+      finish_reason: 'stop',
+    });
+
+    const localized = await localizeParsedHeadlines([
+      buildLocalizedHeadline(),
+      buildLocalizedHeadline({
+        title: '日本のAIスタートアップ',
+        url: 'https://example.jp/article',
+        canonicalUrl: 'https://example.jp/article',
+        source: 'Asia Source',
+        sourceDomain: 'example.jp',
+        description: 'Japanese startup unveiled a collaborative AI coding platform.',
+        fingerprint: 'fp-japan',
+        category: 'asia_tech',
+        language: 'ja',
+      }),
+    ]);
+
+    expect(mockedAiService.chat).toHaveBeenCalledTimes(1);
+    expect(localized[0]?.description).toContain('выпустила нового coding-агента');
+    expect(localized[1]?.description).toContain('Японский стартап');
+  });
+
+  it('возвращает исходное description, если LLM вернула невалидный формат', async () => {
+    mockedAiService.chat.mockResolvedValue({
+      content: 'not-json',
+      model: 'test-model',
+      tokens_used: { prompt: 5, completion: 5, total: 10 },
+      finish_reason: 'stop',
+    });
+
+    const headlines = [buildLocalizedHeadline()];
+    const localized = await localizeParsedHeadlines(headlines);
+
+    expect(localized[0]?.description).toBe('OpenAI released a new coding agent for enterprise teams.');
   });
 });

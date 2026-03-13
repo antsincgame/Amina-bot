@@ -14,6 +14,7 @@ vi.mock('./todos-repo.js', () => ({
 
 import { remindersRepo } from '../reminders/reminders-repo.js';
 import { todosRepo } from './todos-repo.js';
+import { buildParserOnlyNewsBundle } from './digest-core.js';
 import { buildHybridDigestDeliveryKey, renderHybridDigestFromPreparedBase } from './digest-hybrid.js';
 import type { PreparedDigestCachePayload } from './digest-hybrid-repo.js';
 
@@ -22,7 +23,7 @@ const mockedTodosRepo = vi.mocked(todosRepo);
 
 function buildPreparedPayload(): PreparedDigestCachePayload {
   return {
-    version: 'hybrid-v1',
+    version: 'hybrid-v2',
     city: 'Tokyo',
     generated_at: '2026-03-12T07:00:00.000Z',
     digest_date: '2026-03-12',
@@ -39,10 +40,6 @@ function buildPreparedPayload(): PreparedDigestCachePayload {
     weather: {
       answer: 'Солнечно и ясно [1]',
       citations: ['https://weather.example/tokyo'],
-    },
-    local_search: {
-      answer: 'Открыли новую AI-лабораторию [1]',
-      citations: ['https://city.example/tokyo-ai'],
     },
     headlines: [
       {
@@ -148,7 +145,7 @@ describe('digest hybrid pipeline', () => {
   it('builds stable delivery keys for hybrid pipeline', () => {
     const key = buildHybridDigestDeliveryKey('42', 'manual', '  New York  ', '2026-03-12');
 
-    expect(key).toBe('digest:manual:42:2026-03-12:new-york:hybrid-v1');
+    expect(key).toBe('digest:manual:42:2026-03-12:new-york:hybrid-v2');
   });
 
   it('renders full prepared digest for public consumer without losing cached sections', async () => {
@@ -197,5 +194,42 @@ describe('digest hybrid pipeline', () => {
     expect(rendered).toContain('## Напоминания и задачи');
     expect(rendered).toContain('Позвонить партнёру');
     expect(rendered).toContain('Проверить все AI\\-источники');
+  });
+
+  it('builds parser-only local sections without local search payload', async () => {
+    const bundle = await buildParserOnlyNewsBundle('Минск', [
+      {
+        title: 'Минск открыл городской AI-хаб',
+        url: 'https://city.example/minsk-ai',
+        canonicalUrl: 'https://city.example/minsk-ai',
+        source: 'Minsk City',
+        sourceDomain: 'city.example',
+        description: 'В Минске открыли городской AI-хаб для стартапов и образовательных программ.',
+        fingerprint: 'fp-minsk',
+        alternateSources: [],
+        category: 'city_local',
+        language: 'ru',
+      },
+      {
+        title: 'Редкий источник без категории',
+        url: 'https://misc.example/item',
+        canonicalUrl: 'https://misc.example/item',
+        source: 'Misc Source',
+        sourceDomain: 'misc.example',
+        description: 'Материал без категории уже приходит из parser-only потока.',
+        fingerprint: 'fp-misc',
+        alternateSources: [],
+        category: 'uncategorized',
+        language: 'ru',
+      },
+    ]);
+
+    expect(bundle.counts.local).toBe(1);
+    expect(bundle.counts.uncategorized).toBe(1);
+    expect(bundle.localSection).toContain('## Новости Минск');
+    expect(bundle.localSection).toContain('Минск открыл городской AI-хаб');
+    expect(bundle.uncategorizedSection).toContain('Редкий источник без категории');
+    expect(bundle.aiSections).toEqual([]);
+    expect(bundle.asiaSections).toEqual([]);
   });
 });

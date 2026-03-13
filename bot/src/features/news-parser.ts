@@ -15,6 +15,7 @@ import { load, type Cheerio } from 'cheerio';
 import type { AnyNode } from 'domhandler';
 import { settingsRepo } from '../db/supabase.js';
 import { appLogger } from '../config/logger.js';
+import { localizeParsedHeadlines } from './news-localization.js';
 import {
   FETCH_TIMEOUT_MS,
   MAX_HEADLINES_PER_SITE,
@@ -1872,15 +1873,16 @@ export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
   });
 
   const deduped = dedupeParsedHeadlines(allHeadlines);
-  const grouped = groupHeadlinesByCategory(deduped.headlines);
+  const localizedHeadlines = await localizeParsedHeadlines(deduped.headlines);
+  const grouped = groupHeadlinesByCategory(localizedHeadlines);
 
   appLogger.info(
     {
-      totalHeadlines: deduped.headlines.length,
+      totalHeadlines: localizedHeadlines.length,
       totalSites: enabledSites.length,
       failedSites,
       duplicatesFiltered: deduped.duplicatesFiltered,
-      mergedDuplicates: countMergedDuplicates(deduped.headlines),
+      mergedDuplicates: countMergedDuplicates(localizedHeadlines),
       byCategory: {
         ai_tech: grouped.ai_tech.length,
         community: grouped.community.length,
@@ -1892,8 +1894,8 @@ export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
     'News parsing complete',
   );
 
-  parsedNewsCache = { headlines: deduped.headlines, ts: Date.now() };
-  return deduped.headlines;
+  parsedNewsCache = { headlines: localizedHeadlines, ts: Date.now() };
+  return localizedHeadlines;
 }
 
 /**

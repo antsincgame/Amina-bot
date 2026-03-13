@@ -63,7 +63,7 @@ const { mockParsedHeadlines } = vi.hoisted(() => ({
       canonicalUrl: 'https://example.com/ai',
       source: 'AI Source',
       sourceDomain: 'example.com',
-      description: 'AI description',
+      description: 'Русское описание AI-новости',
       fingerprint: 'fp-ai',
       alternateSources: [],
       category: 'ai_tech',
@@ -75,7 +75,7 @@ const { mockParsedHeadlines } = vi.hoisted(() => ({
       canonicalUrl: 'https://example.com/asia',
       source: 'Asia Source',
       sourceDomain: 'example.com',
-      description: 'Asia description',
+      description: 'Русское описание азиатской AI-новости',
       fingerprint: 'fp-asia',
       alternateSources: [],
       category: 'asia_tech',
@@ -87,7 +87,7 @@ const { mockParsedHeadlines } = vi.hoisted(() => ({
       canonicalUrl: 'https://example.com/community',
       source: 'Community Source',
       sourceDomain: 'example.com',
-      description: 'Community description',
+      description: 'Русское описание новости сообщества',
       fingerprint: 'fp-community',
       alternateSources: [],
       category: 'community',
@@ -99,7 +99,7 @@ const { mockParsedHeadlines } = vi.hoisted(() => ({
       canonicalUrl: 'https://example.com/local',
       source: 'Local Source',
       sourceDomain: 'example.com',
-      description: 'Local description',
+      description: 'Русское описание локальной новости',
       fingerprint: 'fp-local',
       alternateSources: ['Mirror Source'],
       category: 'city_local',
@@ -138,7 +138,7 @@ vi.mock('../features/digest-hybrid.js', () => ({
     cacheKey: 'cache-1',
     digestText: 'hybrid digest',
     payload: {
-      version: 'hybrid-v1',
+      version: 'hybrid-v2',
       city: 'Минск',
       generated_at: '2026-03-09T07:00:00.000Z',
       digest_date: '2026-03-09',
@@ -153,7 +153,6 @@ vi.mock('../features/digest-hybrid.js', () => ({
         merged_duplicates: 1,
       },
       weather: null,
-      local_search: null,
       headlines: mockParsedHeadlines,
       sections: {
         ai_tech: [mockParsedHeadlines[0]],
@@ -479,76 +478,11 @@ describe('API Routes', () => {
       const body = JSON.parse(response.body);
       expect(body.success).toBe(true);
       expect(body.data.pipeline).toBe('hybrid_supabase');
-      expect(body.data.searchMode).toBe('skip');
+      expect(body.data.news.mode).toBe('parser_only');
       expect(body.data.content).toBe('hybrid digest');
       expect(body.data.news.counts.merged_duplicates).toBe(1);
-      expect(body.data.news.sections.ai_tech[0].description).toBe('AI description');
-    });
-
-    it('should retry searchless hybrid when explicit full search fails', async () => {
-      const digestHybrid = await import('../features/digest-hybrid.js');
-      vi.mocked(digestHybrid.buildHybridDigest)
-        .mockRejectedValueOnce(new Error('perplexity failed'))
-        .mockResolvedValueOnce({
-          cacheKey: 'cache-2',
-          digestText: 'hybrid digest fallback',
-          payload: {
-            version: 'hybrid-v1',
-            city: 'Минск',
-            generated_at: '2026-03-09T07:00:00.000Z',
-            digest_date: '2026-03-09',
-            source_hash: 'hash-2',
-            counts: {
-              total: 4,
-              ai: 1,
-              community: 1,
-              asia: 1,
-              local: 1,
-              uncategorized: 0,
-              merged_duplicates: 1,
-            },
-            weather: null,
-            local_search: null,
-            headlines: mockParsedHeadlines,
-            sections: {
-              ai_tech: [mockParsedHeadlines[0]],
-              asia_tech: [mockParsedHeadlines[1]],
-              community: [mockParsedHeadlines[2]],
-              city_local: [mockParsedHeadlines[3]],
-              uncategorized: [],
-            },
-            local_section: '## Новости Минск',
-            uncategorized_section: '',
-            ai_sections: ['## Технологии и AI'],
-            asia_sections: ['## AI из Азии'],
-          },
-        });
-
-      const response = await app.inject({
-        method: 'GET',
-        url: '/api/digest/latest?format=json&city=Минск&search=1',
-      });
-
-      expect(response.statusCode).toBe(200);
-      expect(vi.mocked(digestHybrid.buildHybridDigest)).toHaveBeenNthCalledWith(
-        1,
-        'public',
-        'Читатель',
-        'Минск',
-        { forceRefresh: false, searchMode: 'full' },
-      );
-      expect(vi.mocked(digestHybrid.buildHybridDigest)).toHaveBeenNthCalledWith(
-        2,
-        'public',
-        'Читатель',
-        'Минск',
-        { forceRefresh: false, searchMode: 'skip' },
-      );
-
-      const body = JSON.parse(response.body);
-      expect(body.success).toBe(true);
-      expect(body.data.searchMode).toBe('skip');
-      expect(body.data.content).toBe('hybrid digest fallback');
+      expect(body.data.news.sections.ai_tech[0].description).toBe('Русское описание AI-новости');
+      expect(body.data.localSearch).toBeUndefined();
     });
 
     it('should still allow explicit legacy pipeline', async () => {
@@ -565,6 +499,7 @@ describe('API Routes', () => {
       const body = JSON.parse(response.body);
       expect(body.success).toBe(true);
       expect(body.data.pipeline).toBe('legacy');
+      expect(body.data.news.mode).toBe('parser_only');
       expect(body.data.content).toBe('legacy digest');
       expect(body.data.news.counts.merged_duplicates).toBe(1);
       expect(body.data.news.sections.city_local[0].source).toBe('Local Source');

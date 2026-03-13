@@ -4,12 +4,12 @@ import { appLogger } from '../config/logger.js';
 import { config } from '../config/index.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';
 import { todosRepo } from './todos-repo.js';
-import { countMergedDuplicates, groupHeadlinesByCategory, parseAllConfiguredSites, type ParsedHeadline } from './news-parser.js';
-import { buildDigestClosing, buildHeadlineSections, getTimeGreeting, renderStructuredHeadlineList, type DigestSearchResult, webSearchWithRetry } from './digest-core.js';
+import { parseAllConfiguredSites } from './news-parser.js';
+import { buildDigestClosing, buildParserOnlyNewsBundle, getTimeGreeting, type DigestSearchResult, webSearchWithRetry } from './digest-core.js';
 import { digestCacheRepo, type DigestDeliveryKind, type PreparedDigestCachePayload } from './digest-hybrid-repo.js';
 import { escapeMarkdown, inlineCitations } from '../telegram/format.js';
 
-const HYBRID_DIGEST_VERSION = 'hybrid-v1';
+const HYBRID_DIGEST_VERSION = 'hybrid-v2';
 const HYBRID_CACHE_TTL_MS = 90 * 60 * 1000;
 export type HybridDigestSearchMode = 'full' | 'skip';
 
@@ -93,33 +93,6 @@ export function buildHybridDigestDeliveryKey(
   digestDate: string,
 ): string {
   return `digest:${deliveryKind}:${userId}:${digestDate}:${toSlug(city)}:${HYBRID_DIGEST_VERSION}`;
-}
-
-function buildLocalSection(
-  city: string,
-  headlines: ParsedHeadline[],
-  localSearch: DigestSearchResult | null,
-): string {
-  const blocks: string[] = [];
-
-  if (localSearch?.answer) {
-    const localAnswer = localSearch.citations.length > 0
-      ? inlineCitations(localSearch.answer, localSearch.citations)
-      : localSearch.answer;
-    blocks.push(localAnswer);
-  }
-
-  if (headlines.length > 0) {
-    blocks.push(`### Лента локальных источников\n\n${renderStructuredHeadlineList(headlines)}`);
-  }
-
-  if (blocks.length === 0) return '';
-  return `## Новости ${city}\n\n${blocks.join('\n\n')}`;
-}
-
-function buildUncategorizedSection(headlines: ParsedHeadline[]): string {
-  if (headlines.length === 0) return '';
-  return `## Некатегоризированные источники\n\n${renderStructuredHeadlineList(headlines)}`;
 }
 
 function buildWeatherSection(city: string, weather: DigestSearchResult | null): string {
@@ -216,36 +189,19 @@ export async function prepareHybridDigestBase(
   }
 
   const todayLabel = getTodayLabel();
-  const [weatherResult, parsedHeadlinesResult, localSearchResult] = await Promise.allSettled([
+  const [weatherResult, parsedHeadlinesResult] = await Promise.allSettled([
     searchMode === 'skip'
       ? Promise.resolve(null)
       : webSearchWithRetry(
         `Погода ${normalizedCity} сегодня ${todayLabel}: точная температура сейчас утром днём вечером, осадки, ветер, влажность, давление, ощущается как. Подробный прогноз на весь день.`,
       ),
     parseAllConfiguredSites(),
-    searchMode === 'skip'
-      ? Promise.resolve(null)
-      : webSearchWithRetry(
-        `Новости ${normalizedCity} сегодня ${todayLabel}: местные события, транспорт, благоустройство, культурная жизнь, решения властей и важные городские обновления. Верни только реальные локальные новости ${normalizedCity}.`,
-      ),
   ]);
 
   const headlines = parsedHeadlinesResult.status === 'fulfilled' ? parsedHeadlinesResult.value : [];
-  const sections = groupHeadlinesByCategory(headlines);
-  const localHeadlines = sections.city_local;
-  const aiTechHeadlines = sections.ai_tech;
-  const communityHeadlines = sections.community;
-  const asiaHeadlines = sections.asia_tech;
-  const uncategorizedHeadlines = sections.uncategorized;
-  const allAiHeadlines = [...aiTechHeadlines, ...communityHeadlines];
-
-  const [aiSections, asiaSections] = await Promise.all([
-    buildHeadlineSections('Технологии и AI', 'ai', allAiHeadlines),
-    buildHeadlineSections('AI из Азии', 'asia', asiaHeadlines),
-  ]);
+  const newsBundle = await buildParserOnlyNewsBundle(normalizedCity, headlines);
 
   const weather = weatherResult.status === 'fulfilled' ? weatherResult.value : null;
-  const localSearch = localSearchResult.status === 'fulfilled' ? localSearchResult.value : null;
 
   if (parsedHeadlinesResult.status === 'rejected') {
     appLogger.warn({ error: parsedHeadlinesResult.reason, city: normalizedCity }, 'Hybrid digest parser failed');
@@ -257,23 +213,14 @@ export async function prepareHybridDigestBase(
     generated_at: new Date().toISOString(),
     digest_date: digestDate,
     source_hash: sourceHash,
-    counts: {
-      total: headlines.length,
-      ai: aiTechHeadlines.length,
-      community: communityHeadlines.length,
-      asia: asiaHeadlines.length,
-      local: localHeadlines.length,
-      uncategorized: uncategorizedHeadlines.length,
-      merged_duplicates: countMergedDuplicates(headlines),
-    },
+    counts: newsBundle.counts,
     weather,
-    local_search: localSearch,
     headlines,
-    sections,
-    local_section: buildLocalSection(normalizedCity, localHeadlines, localSearch),
-    uncategorized_section: buildUncategorizedSection(uncategorizedHeadlines),
-    ai_sections: aiSections,
-    asia_sections: asiaSections,
+    sections: newsBundle.sections,
+    local_section: newsBundle.localSection,
+    uncategorized_section: newsBundle.uncategorizedSection,
+    ai_sections: newsBundle.aiSections,
+    asia_sections: newsBundle.asiaSections,
   };
 
   const expiresAt = new Date(Date.now() + HYBRID_CACHE_TTL_MS).toISOString();

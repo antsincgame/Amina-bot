@@ -5,11 +5,11 @@
  * TZ берётся из переменной окружения TZ (по умолчанию UTC).
  * 
  * Логика:
- * 1. Perplexity ищет: погоду, местные новости города
- * 2. Парсер собирает AI/Tech заголовки из настроенных RSS/JSON/HTML источников
+ * 1. Опционально подтягивает погоду
+ * 2. Парсер собирает все news sections из настроенных RSS/JSON/HTML источников
  * 3. Из БД: напоминания на сегодня, задачи
- * 4. Всё передаётся в основную LLM с промптом "обработай эмоционально"
- * 5. LLM формирует живой, авторский дайджест с комментариями
+ * 4. Всё передаётся в основную LLM с промптом только для narrative-части
+ * 5. Структурированные news sections добавляются детерминированно
  */
 
 import { InlineKeyboard, type Api, type RawApi } from 'grammy';
@@ -17,11 +17,11 @@ import { userPrefsRepo } from './user-prefs-repo.js';
 import { todosRepo } from './todos-repo.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';
 import { inlineCitations, markdownToTelegramHtml, splitIntoChunks, stripHtml } from '../telegram/format.js';
-import { countMergedDuplicates, groupHeadlinesByCategory, parseAllConfiguredSites, type ParsedHeadline } from './news-parser.js';
+import { parseAllConfiguredSites } from './news-parser.js';
 import { aiService } from '../ai/openrouter.js';
 import { config } from '../config/index.js';
 import { appLogger } from '../config/logger.js';
-import { buildDigestClosing, buildHeadlineSections, getTimeGreeting, renderStructuredHeadlineList, webSearchWithRetry } from './digest-core.js';
+import { buildDigestClosing, buildParserOnlyNewsBundle, getTimeGreeting, webSearchWithRetry } from './digest-core.js';
 import { buildHybridDigest, buildHybridDigestDeliveryKey } from './digest-hybrid.js';
 import { digestDeliveryRepo, type DigestDeliveryKind } from './digest-hybrid-repo.js';
 
@@ -446,25 +446,15 @@ async function processDigests(bot: BotLike): Promise<void> {
 }
 
 // --------------------------------------------
-// Digest Builder: Perplexity → LLM
+// Digest Builder: parser-only news + optional weather
 // --------------------------------------------
-
-function buildStructuredLocalSection(city: string, headlines: ParsedHeadline[]): string {
-  if (headlines.length === 0) return '';
-  return `## Новости ${city} из источников\n\n${renderStructuredHeadlineList(headlines)}`;
-}
-
-function buildUncategorizedNewsSection(headlines: ParsedHeadline[]): string {
-  if (headlines.length === 0) return '';
-  return `## Некатегоризированные источники\n\n${renderStructuredHeadlineList(headlines)}`;
-}
 
 /**
  * Собрать дайджест:
- * 1. Perplexity: погода, местные новости города
- * 2. Парсер: AI/Tech/Asia заголовки из настроенных источников
+ * 1. Опционально: погода
+ * 2. Парсер: все news sections из настроенных источников
  * 3. БД: напоминания, задачи
- * 4. LLM формирует живой, подробный текст
+ * 4. LLM формирует только narrative-часть без news lists
  */
 /**
  * Собрать полный дайджест (экспорт для публичного API).
@@ -479,20 +469,12 @@ export async function buildDigest(
   const todayStr = new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
   const shouldLoadPersonalData = userId !== 'public';
 
-  const [weatherResult, parsedHeadlinesResult, cityNewsResult, remindersResult, todosResult] =
+  const [weatherResult, parsedHeadlinesResult, remindersResult, todosResult] =
     await Promise.allSettled([
       webSearchWithRetry(
         `Погода ${city} сегодня ${todayStr}: точная температура сейчас утром днём вечером, осадки, ветер, влажность, давление, ощущается как. Подробный прогноз на весь день.`
       ),
       parseAllConfiguredSites(),
-      city
-        ? webSearchWithRetry(
-          `Новости ${city} сегодня ${todayStr}: ` +
-          `местные события, происшествия, решения городских властей, транспорт, благоустройство, культурная жизнь ${city}. ` +
-          `Ищи ТОЛЬКО местные городские новости ${city}! Минимум 5 конкретных событий с датами. ` +
-          `НЕ включай мировые новости — ТОЛЬКО ${city}.`
-        )
-        : Promise.resolve(null),
       shouldLoadPersonalData ? remindersRepo.getByUser(userId) : Promise.resolve([]),
       shouldLoadPersonalData ? todosRepo.getForDigest(userId) : Promise.resolve([]),
     ]);
@@ -509,34 +491,15 @@ export async function buildDigest(
     }
   }
 
-  let parsedHeadlines: ParsedHeadline[] = [];
-  let aiTechHeadlines: ParsedHeadline[] = [];
-  let asiaAiHeadlines: ParsedHeadline[] = [];
-  let communityHeadlines: ParsedHeadline[] = [];
-  let uncategorizedHeadlines: ParsedHeadline[] = [];
-  
-  if (parsedHeadlinesResult.status === 'fulfilled') {
-    const allParsed = parsedHeadlinesResult.value;
-    const sections = groupHeadlinesByCategory(allParsed);
-    parsedHeadlines = sections.city_local;
-    aiTechHeadlines = sections.ai_tech;
-    asiaAiHeadlines = sections.asia_tech;
-    communityHeadlines = sections.community;
-    uncategorizedHeadlines = sections.uncategorized;
-  } else {
+  const parsedHeadlines = parsedHeadlinesResult.status === 'fulfilled'
+    ? parsedHeadlinesResult.value
+    : [];
+
+  if (parsedHeadlinesResult.status === 'rejected') {
     appLogger.warn({ error: parsedHeadlinesResult.reason }, 'Digest: news parser failed');
   }
 
-  if (cityNewsResult.status === 'fulfilled' && cityNewsResult.value?.answer) {
-    rawData.push(`[МЕСТНЫЕ НОВОСТИ ${city.toUpperCase()} — PERPLEXITY]\n${cityNewsResult.value.answer}`);
-    allCitations.push(...(cityNewsResult.value.citations ?? []));
-  } else if (cityNewsResult.status === 'rejected') {
-    appLogger.warn({ error: cityNewsResult.reason, city }, 'Digest: city search failed');
-  }
-
-  const allAiHeadlines = [...aiTechHeadlines, ...communityHeadlines];
-  const localSection = buildStructuredLocalSection(city, parsedHeadlines);
-  const uncategorizedSection = buildUncategorizedNewsSection(uncategorizedHeadlines);
+  const newsBundle = await buildParserOnlyNewsBundle(city, parsedHeadlines);
 
   // 5. Напоминания на сегодня
   if (shouldLoadPersonalData && remindersResult.status === 'fulfilled') {
@@ -588,6 +551,8 @@ export async function buildDigest(
 ВАЖНО:
 - Включай ТОЛЬКО разделы из данных ниже.
 - НЕ пересказывай ленту новостных источников списком: структурированные секции со ссылками будут добавлены отдельно.
+- НЕ создавай раздел "Новости ${city}" — он будет добавлен отдельно из parser-only источников.
+- НЕ создавай раздел "Некатегоризированные источники" — он будет добавлен отдельно.
 - НЕ создавай разделы "Технологии и AI" и "AI из Азии" — они будут добавлены отдельно.
 - НЕ добавляй финальный раздел "Настрой на день" — он будет добавлен отдельно.
 - Если в городских данных есть Markdown-ссылки, ОБЯЗАТЕЛЬНО сохрани их.
@@ -601,8 +566,7 @@ ${rawData.join('\n\n')}${citationsBlock}
 Нужные разделы:
 1. **Приветствие**
 2. **Погода в ${city}**
-3. **Новости ${city}**
-4. **Напоминания и задачи**
+3. **Напоминания и задачи**
 
 Формат: Markdown для Telegram.`;
 
@@ -629,28 +593,23 @@ ${rawData.join('\n\n')}${citationsBlock}
     }
   }
 
-  const [aiSections, asiaSections] = await Promise.all([
-    buildHeadlineSections('Технологии и AI', 'ai', allAiHeadlines),
-    buildHeadlineSections('AI из Азии', 'asia', asiaAiHeadlines),
-  ]);
-
   appLogger.info({
     narrativeLength: narrativeDigest.length,
-    localStructured: parsedHeadlines.length,
-    uncategorizedStructured: uncategorizedHeadlines.length,
-    aiHeadlines: allAiHeadlines.length,
-    aiBatches: aiSections.length,
-    asiaHeadlines: asiaAiHeadlines.length,
-    asiaBatches: asiaSections.length,
-    mergedDuplicates: countMergedDuplicates([...parsedHeadlines, ...allAiHeadlines, ...uncategorizedHeadlines]),
+    localStructured: newsBundle.localHeadlines.length,
+    uncategorizedStructured: newsBundle.uncategorizedHeadlines.length,
+    aiHeadlines: newsBundle.allAiHeadlines.length,
+    aiBatches: newsBundle.aiSections.length,
+    asiaHeadlines: newsBundle.asiaHeadlines.length,
+    asiaBatches: newsBundle.asiaSections.length,
+    mergedDuplicates: newsBundle.counts.merged_duplicates,
   }, 'Digest: compiled narrative and headline batches');
 
   return [
     narrativeDigest.trim(),
-    localSection,
-    uncategorizedSection,
-    ...aiSections,
-    ...asiaSections,
+    newsBundle.localSection,
+    newsBundle.uncategorizedSection,
+    ...newsBundle.aiSections,
+    ...newsBundle.asiaSections,
     buildDigestClosing(firstName),
   ].filter(Boolean).join('\n\n');
 }

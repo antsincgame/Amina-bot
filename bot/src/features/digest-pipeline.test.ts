@@ -15,7 +15,7 @@ function buildHeadline(index: number, overrides: Partial<ParsedHeadline> = {}): 
     canonicalUrl: `https://example.com/news/${index}`,
     source: `Source ${index}`,
     sourceDomain: 'example.com',
-    description: `Description ${index} about AI agents and vibecoding`,
+    description: `Описание ${index} о новых AI-агентах, локальных LLM и vibecoding-инструментах`,
     fingerprint: `fp-${index}`,
     alternateSources: [],
     category: 'ai_tech',
@@ -79,7 +79,7 @@ describe('Digest pipeline — headline batching', () => {
     expect(rendered).toContain(headlines[1].url);
     expect(rendered).toContain(headlines[2].url);
     expect(rendered).toContain('Источник: Source 1 · Категория: AI/Tech');
-    expect(rendered).toContain('Описание: Description 1 about AI agents and vibecoding');
+    expect(rendered).toContain('Описание: Описание 1 о новых AI-агентах, локальных LLM и vibecoding-инструментах');
   });
 
   it('renderFallbackHeadlineBatch keeps all markdown links in Asia batch', () => {
@@ -145,5 +145,20 @@ describe('Digest pipeline — headline batching', () => {
     ].join('\n');
 
     expect(validateAnnotatedBatch(valid, headlines)).toBe(true);
+  });
+
+  it('validateAnnotatedBatch отклоняет англоязычное описание после локализации', () => {
+    const headlines = [
+      buildHeadline(1, { description: 'AI release with translated russian summary expected', language: 'en' }),
+    ];
+    const invalid = [
+      '## Технологии и AI',
+      '',
+      `**1. [${headlines[0].title}](${headlines[0].url})**`,
+      'Источник: Source 1 · Категория: AI/Tech',
+      'Описание: English summary that should have been translated to Russian',
+    ].join('\n');
+
+    expect(validateAnnotatedBatch(invalid, headlines)).toBe(false);
   });
 });

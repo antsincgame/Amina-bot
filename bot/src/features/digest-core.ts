@@ -1,6 +1,8 @@
 import { webSearch } from '../ai/websearch.js';
 import { aiService } from '../ai/openrouter.js';
 import { appLogger } from '../config/logger.js';
+import { countMergedDuplicates, groupHeadlinesByCategory } from './news-parser.js';
+import { hasMostlyRussianText } from './news-localization.js';
 import type { ParsedHeadline } from '../../../shared/types/index.js';
 
 export interface DigestSearchResult {
@@ -18,6 +20,29 @@ export interface HeadlineBatch {
 export interface ChunkHeadlinesOptions {
   maxItems?: number;
   maxChars?: number;
+}
+
+export interface ParserOnlyNewsBundle {
+  sections: ReturnType<typeof groupHeadlinesByCategory>;
+  counts: {
+    total: number;
+    ai: number;
+    community: number;
+    asia: number;
+    local: number;
+    uncategorized: number;
+    merged_duplicates: number;
+  };
+  localHeadlines: ParsedHeadline[];
+  aiTechHeadlines: ParsedHeadline[];
+  communityHeadlines: ParsedHeadline[];
+  asiaHeadlines: ParsedHeadline[];
+  uncategorizedHeadlines: ParsedHeadline[];
+  allAiHeadlines: ParsedHeadline[];
+  localSection: string;
+  uncategorizedSection: string;
+  aiSections: string[];
+  asiaSections: string[];
 }
 
 const DIGEST_HEADLINE_BATCH_MAX_ITEMS = 18;
@@ -151,16 +176,34 @@ export function renderStructuredHeadlineList(headlines: ParsedHeadline[], startN
     .join('\n\n');
 }
 
+export function buildParserOnlyLocalSection(city: string, headlines: ParsedHeadline[]): string {
+  if (headlines.length === 0) return '';
+  return `## Новости ${city}\n\n${renderStructuredHeadlineList(headlines)}`;
+}
+
+export function buildParserOnlyUncategorizedSection(headlines: ParsedHeadline[]): string {
+  if (headlines.length === 0) return '';
+  return `## Некатегоризированные источники\n\n${renderStructuredHeadlineList(headlines)}`;
+}
+
 export function validateAnnotatedBatch(text: string, headlines: ParsedHeadline[]): boolean {
   const links = [...text.matchAll(MARKDOWN_LINK_REGEX)].map(match => match[2]);
   if (links.length !== headlines.length) return false;
   if (new Set(links).size !== links.length) return false;
   if (links.some((link, index) => link !== headlines[index]?.url)) return false;
 
+  const descriptionLines = [...text.matchAll(/^Описание:\s*(.+)$/gm)].map(match => match[1]?.trim() ?? '');
+  if (descriptionLines.length !== headlines.length) return false;
+  if (descriptionLines.some(description => !description)) return false;
+
   return headlines.every(headline =>
     text.includes(headline.source) &&
     text.includes(headline.url) &&
     text.includes(formatCategoryLabel(headline.category)),
+  ) && descriptionLines.every((description, index) =>
+    hasMostlyRussianText(headlines[index]?.description ?? '')
+      ? true
+      : hasMostlyRussianText(description),
   );
 }
 
@@ -206,7 +249,7 @@ async function annotateHeadlineBatch(
 Формат каждого пункта:
 **N. [Перевод заголовка (оригинал можно оставить в скобках)](url)**
 Источник: <source> · Категория: <category>
-Описание: 1 короткое предложение: что это и почему важно.
+Описание: 1-2 точных предложения на русском языке: что произошло и почему это важно.
 Если есть alternate_sources, добавь отдельную строку "Альтернативные источники: ...".
 
 Заголовок раздела:
@@ -222,7 +265,7 @@ ${inputLines}`
 Формат каждого пункта:
 **N. [Перевод заголовка](url)**
 Источник: <source> · Категория: <category>
-Описание: 1 короткое предложение: что произошло и почему это важно для AI, локальных LLM или vibecoding.
+Описание: 1-2 точных предложения на русском языке: что произошло и почему это важно для AI, локальных LLM или vibecoding.
 Если есть alternate_sources, добавь отдельную строку "Альтернативные источники: ...".
 
 Заголовок раздела:
@@ -280,6 +323,47 @@ export async function buildHeadlineSections(
   }
 
   return rendered;
+}
+
+export async function buildParserOnlyNewsBundle(
+  city: string,
+  headlines: ParsedHeadline[],
+): Promise<ParserOnlyNewsBundle> {
+  const sections = groupHeadlinesByCategory(headlines);
+  const localHeadlines = sections.city_local;
+  const aiTechHeadlines = sections.ai_tech;
+  const communityHeadlines = sections.community;
+  const asiaHeadlines = sections.asia_tech;
+  const uncategorizedHeadlines = sections.uncategorized;
+  const allAiHeadlines = [...aiTechHeadlines, ...communityHeadlines];
+
+  const [aiSections, asiaSections] = await Promise.all([
+    buildHeadlineSections('Технологии и AI', 'ai', allAiHeadlines),
+    buildHeadlineSections('AI из Азии', 'asia', asiaHeadlines),
+  ]);
+
+  return {
+    sections,
+    counts: {
+      total: headlines.length,
+      ai: aiTechHeadlines.length,
+      community: communityHeadlines.length,
+      asia: asiaHeadlines.length,
+      local: localHeadlines.length,
+      uncategorized: uncategorizedHeadlines.length,
+      merged_duplicates: countMergedDuplicates(headlines),
+    },
+    localHeadlines,
+    aiTechHeadlines,
+    communityHeadlines,
+    asiaHeadlines,
+    uncategorizedHeadlines,
+    allAiHeadlines,
+    localSection: buildParserOnlyLocalSection(city, localHeadlines),
+    uncategorizedSection: buildParserOnlyUncategorizedSection(uncategorizedHeadlines),
+    aiSections,
+    asiaSections,
+  };
 }
 
 export function buildDigestClosing(firstName: string | null): string {

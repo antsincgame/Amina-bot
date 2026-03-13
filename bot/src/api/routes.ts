@@ -22,6 +22,7 @@ import {
   normalizeNewsSite,
   type NewsPresetGroup,
 } from '../features/news-parser.js';
+import { localizeParsedHeadlines } from '../features/news-localization.js';
 import { buildDigest } from '../features/digest-scheduler.js';
 import { buildHybridDigest } from '../features/digest-hybrid.js';
 import { markdownToTelegramHtml } from '../telegram/format.js';
@@ -1508,7 +1509,8 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
             });
 
             const startTime = Date.now();
-            const headlines = await parseNewsFromSite(testSite);
+            const rawHeadlines = await parseNewsFromSite(testSite);
+            const headlines = await localizeParsedHeadlines(rawHeadlines);
             const parseTimeMs = Date.now() - startTime;
 
             aiLogger.info({ url: testSite.url, headlinesFound: headlines.length, parseTimeMs }, 'News site test parse');
@@ -1627,48 +1629,30 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
         '/digest/latest',
         async (
           request: FastifyRequest<{
-            Querystring: { city?: string; firstName?: string; format?: string; pipeline?: string; refresh?: string; search?: string };
+            Querystring: { city?: string; firstName?: string; format?: string; pipeline?: string; refresh?: string };
           }>,
           reply: FastifyReply,
         ) => {
           try {
-            const { city = '', firstName = 'Читатель', format = 'html', pipeline = 'hybrid', refresh = '0', search = '0' } = request.query as {
+            const { city = '', firstName = 'Читатель', format = 'html', pipeline = 'hybrid', refresh = '0' } = request.query as {
               city?: string;
               firstName?: string;
               format?: string;
               pipeline?: string;
               refresh?: string;
-              search?: string;
             };
             const selectedPipeline: DigestPipelineMode =
               pipeline === 'hybrid' || pipeline === 'hybrid_supabase'
                 ? 'hybrid_supabase'
                 : 'legacy';
             const forceRefresh = refresh === '1' || refresh.toLowerCase() === 'true';
-            const requestedSearchMode = search === '1' || search.toLowerCase() === 'true'
-              ? 'full'
-              : 'skip';
-            let resolvedSearchMode = requestedSearchMode;
 
             let hybridResult = null;
             if (selectedPipeline === 'hybrid_supabase') {
-              try {
-                hybridResult = await buildHybridDigest('public', firstName, city, {
-                  forceRefresh,
-                  searchMode: requestedSearchMode,
-                });
-              } catch (error) {
-                if (requestedSearchMode === 'full') {
-                  aiLogger.warn({ error, city }, 'Digest API full-search mode failed, retrying searchless hybrid');
-                  resolvedSearchMode = 'skip';
-                  hybridResult = await buildHybridDigest('public', firstName, city, {
-                    forceRefresh,
-                    searchMode: 'skip',
-                  });
-                } else {
-                  throw error;
-                }
-              }
+              hybridResult = await buildHybridDigest('public', firstName, city, {
+                forceRefresh,
+                searchMode: 'skip',
+              });
             }
             const legacyDigestText = selectedPipeline === 'legacy'
               ? await buildDigest('public', firstName, city)
@@ -1691,18 +1675,17 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
                   city,
                   firstName,
                   pipeline: selectedPipeline,
-                  searchMode: selectedPipeline === 'hybrid_supabase'
-                    ? resolvedSearchMode
-                    : 'full',
                   generatedAt: hybridResult?.payload.generated_at ?? new Date().toISOString(),
                   digestDate: hybridResult?.payload.digest_date ?? new Date().toISOString().slice(0, 10),
                   news: hybridResult
                     ? {
+                      mode: 'parser_only',
                       counts: hybridResult.payload.counts,
                       sections: hybridResult.payload.sections,
                       mergedDuplicates: hybridResult.payload.counts.merged_duplicates,
                     }
                     : {
+                      mode: 'parser_only',
                       counts: {
                         total: legacyHeadlines.length,
                         ai: legacySections?.ai_tech.length ?? 0,
@@ -1716,7 +1699,6 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
                       mergedDuplicates: countMergedDuplicates(legacyHeadlines),
                     },
                   weather: hybridResult?.payload.weather ?? null,
-                  localSearch: hybridResult?.payload.local_search ?? null,
                 },
               });
             }

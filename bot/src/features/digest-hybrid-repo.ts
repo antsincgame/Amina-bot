@@ -22,7 +22,6 @@ export interface PreparedDigestCachePayload {
     merged_duplicates: number;
   };
   weather: DigestSearchResult | null;
-  local_search: DigestSearchResult | null;
   headlines: ParsedHeadline[];
   sections: Record<ParsedHeadlineCategory, ParsedHeadline[]>;
   local_section: string;
