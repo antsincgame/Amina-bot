@@ -136,6 +136,32 @@ export const userPrefsRepo = {
     return (data ?? []) as UserPreferences[];
   },
 
+  async listDigestCities(limit = 20): Promise<string[]> {
+    const { data, error } = await getSupabase()
+      .from('user_preferences')
+      .select('digest_city, updated_at')
+      .neq('digest_city', '')
+      .order('updated_at', { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      dbLogger.error({ error, limit }, 'Failed to list digest cities');
+      return [];
+    }
+
+    const seenCities = new Set<string>();
+    const orderedCities: string[] = [];
+
+    ((data as Array<{ digest_city: string | null }> | null) ?? []).forEach(item => {
+      const normalizedCity = item.digest_city?.trim();
+      if (!normalizedCity || seenCities.has(normalizedCity)) return;
+      seenCities.add(normalizedCity);
+      orderedCities.push(normalizedCity);
+    });
+
+    return orderedCities;
+  },
+
   /**
    * Получить настройки пользователя (или null)
    * FIX: Различаем "не найдено" от реальных ошибок БД

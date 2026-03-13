@@ -19,6 +19,7 @@ import { registerApiRoutes } from './api/routes.js';
 import { stopCleanupInterval } from './utils/rate-limiter.js';
 import { startReminderScheduler, stopReminderScheduler } from './reminders/reminder-scheduler.js';
 import { startDigestScheduler, stopDigestScheduler } from './features/digest-scheduler.js';
+import { scheduleHybridDigestPrewarm, stopHybridDigestPrewarm } from './features/digest-hybrid-prewarm.js';
 import { ensureVoiceMessagesInfra } from './features/voice-messages-repo.js';
 
 // --------------------------------------------
@@ -185,6 +186,8 @@ const initBotAndServices = async (): Promise<void> => {
     appLogger.warn({ error }, '⚠️ Database not available');
   }
 
+  scheduleHybridDigestPrewarm();
+
   // Create bot if not yet created (non-webhook mode)
   if (!bot) {
     if (!config.telegram.token) {
@@ -326,6 +329,7 @@ const shutdown = async (signal: string): Promise<void> => {
   stopCleanupInterval();
   stopReminderScheduler();
   stopDigestScheduler();
+  stopHybridDigestPrewarm();
 
   if (bot) {
     appLogger.info('Stopping bot...');

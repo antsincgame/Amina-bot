@@ -104,6 +104,32 @@ export const digestCacheRepo = {
     return (data as DigestCacheRecord | null) ?? null;
   },
 
+  async listRecentCities(limit = 20): Promise<string[]> {
+    const { data, error } = await getSupabase()
+      .from('digest_caches')
+      .select('city, updated_at')
+      .eq('pipeline', HYBRID_PIPELINE)
+      .order('updated_at', { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      dbLogger.error({ error, limit }, 'Failed to list recent digest cache cities');
+      throw error;
+    }
+
+    const seenCities = new Set<string>();
+    const orderedCities: string[] = [];
+
+    ((data as Array<{ city: string | null }> | null) ?? []).forEach(item => {
+      const normalizedCity = item.city?.trim();
+      if (!normalizedCity || seenCities.has(normalizedCity)) return;
+      seenCities.add(normalizedCity);
+      orderedCities.push(normalizedCity);
+    });
+
+    return orderedCities;
+  },
+
   async getLatestByCity(city: string): Promise<DigestCacheRecord | null> {
     const { data, error } = await getSupabase()
       .from('digest_caches')
