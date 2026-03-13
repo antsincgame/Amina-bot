@@ -28,11 +28,13 @@ function buildPreparedPayload(): PreparedDigestCachePayload {
     digest_date: '2026-03-12',
     source_hash: 'abc123',
     counts: {
-      total: 6,
-      ai: 3,
-      community: 1,
-      asia: 2,
+      total: 3,
+      ai: 1,
+      community: 0,
+      asia: 0,
       local: 1,
+      uncategorized: 1,
+      merged_duplicates: 1,
     },
     weather: {
       answer: 'Солнечно и ясно [1]',
@@ -46,24 +48,93 @@ function buildPreparedPayload(): PreparedDigestCachePayload {
       {
         title: 'Tokyo local AI lab opens',
         url: 'https://city.example/tokyo-ai',
+        canonicalUrl: 'https://city.example/tokyo-ai',
         source: 'Tokyo City',
+        sourceDomain: 'city.example',
+        description: 'В Токио открыли новую AI-лабораторию для локальных стартапов.',
+        fingerprint: 'fp-local',
+        alternateSources: ['City Mirror'],
         category: 'city_local',
         language: 'en',
       },
       {
         title: 'New vibecoding release',
         url: 'https://ai.example/release',
+        canonicalUrl: 'https://ai.example/release',
         source: 'AI Source',
+        sourceDomain: 'ai.example',
+        description: 'Новый релиз инструмента для AI-разработки и vibecoding.',
+        fingerprint: 'fp-ai',
+        alternateSources: [],
         category: 'ai_tech',
         language: 'en',
       },
+      {
+        title: 'Orphan source headline',
+        url: 'https://misc.example/orphan',
+        canonicalUrl: 'https://misc.example/orphan',
+        source: 'Misc Source',
+        sourceDomain: 'misc.example',
+        description: 'Материал без явной категории, но со структурированным описанием.',
+        fingerprint: 'fp-orphan',
+        alternateSources: [],
+        category: 'uncategorized',
+        language: 'en',
+      },
     ],
-    local_section: '## Новости Tokyo\n\n1. [Tokyo local AI lab opens](https://city.example/tokyo-ai) — Tokyo City',
+    sections: {
+      ai_tech: [
+        {
+          title: 'New vibecoding release',
+          url: 'https://ai.example/release',
+          canonicalUrl: 'https://ai.example/release',
+          source: 'AI Source',
+          sourceDomain: 'ai.example',
+          description: 'Новый релиз инструмента для AI-разработки и vibecoding.',
+          fingerprint: 'fp-ai',
+          alternateSources: [],
+          category: 'ai_tech',
+          language: 'en',
+        },
+      ],
+      community: [],
+      asia_tech: [],
+      city_local: [
+        {
+          title: 'Tokyo local AI lab opens',
+          url: 'https://city.example/tokyo-ai',
+          canonicalUrl: 'https://city.example/tokyo-ai',
+          source: 'Tokyo City',
+          sourceDomain: 'city.example',
+          description: 'В Токио открыли новую AI-лабораторию для локальных стартапов.',
+          fingerprint: 'fp-local',
+          alternateSources: ['City Mirror'],
+          category: 'city_local',
+          language: 'en',
+        },
+      ],
+      uncategorized: [
+        {
+          title: 'Orphan source headline',
+          url: 'https://misc.example/orphan',
+          canonicalUrl: 'https://misc.example/orphan',
+          source: 'Misc Source',
+          sourceDomain: 'misc.example',
+          description: 'Материал без явной категории, но со структурированным описанием.',
+          fingerprint: 'fp-orphan',
+          alternateSources: [],
+          category: 'uncategorized',
+          language: 'en',
+        },
+      ],
+    },
+    local_section: '## Новости Tokyo\n\n**1. [Tokyo local AI lab opens](https://city.example/tokyo-ai)**\nИсточник: Tokyo City · Категория: Город\nОписание: В Токио открыли новую AI-лабораторию для локальных стартапов.\nАльтернативные источники: City Mirror.',
+    uncategorized_section: '## Некатегоризированные источники\n\n**1. [Orphan source headline](https://misc.example/orphan)**\nИсточник: Misc Source · Категория: Без категории\nОписание: Материал без явной категории, но со структурированным описанием.',
     ai_sections: [
-      '## Технологии и AI\n\n**1. [New vibecoding release](https://ai.example/release)** — важный релиз для AI-разработки.',
+      '## Технологии и AI\n\n**1. [New vibecoding release](https://ai.example/release)**\nИсточник: AI Source · Категория: AI/Tech\nОписание: Новый релиз инструмента для AI-разработки и vibecoding.',
     ],
     asia_sections: [
-      '## AI из Азии\n\n**1. [生成AIの最新動向](https://asia.example/jp)** — важная новость для мониторинга рынка.',
+      '## AI из Азии\n\n**1. [生成AIの最新動向](https://asia.example/jp)**\nИсточник: Asia Wire · Категория: AI Азия\nОписание: Важная новость для мониторинга рынка.',
     ],
   };
 }
@@ -87,9 +158,10 @@ describe('digest hybrid pipeline', () => {
     const rendered = await renderHybridDigestFromPreparedBase('public', 'Dzmitry', buildPreparedPayload());
 
     expect(rendered).toContain('## Полный дайджест из всех источников');
-    expect(rendered).toContain('Всего заголовков: 6');
+    expect(rendered).toContain('Всего заголовков: 3');
     expect(rendered).toContain('https://weather.example/tokyo');
     expect(rendered).toContain('## Новости Tokyo');
+    expect(rendered).toContain('## Некатегоризированные источники');
     expect(rendered).toContain('## Технологии и AI');
     expect(rendered).toContain('## AI из Азии');
     expect(rendered).toContain('## Настрой на день');

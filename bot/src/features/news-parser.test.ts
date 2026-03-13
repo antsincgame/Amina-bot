@@ -12,6 +12,13 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { ParsedHeadline } from '../../../shared/types/index.js';
+import {
+  buildHeadlineFingerprint,
+  canonicalizeHeadlineUrl,
+  dedupeParsedHeadlines,
+  groupHeadlinesByCategory,
+} from './news-parser.js';
 
 // ============================================
 // Для тестирования приватных функций нам нужно
@@ -627,5 +634,91 @@ describe('News Parser — End-to-End Digest Data Flow', () => {
 
     const asiaTech = filterByCategory(headlines, 'asia_tech');
     expect(asiaTech).toHaveLength(100);
+  });
+});
+
+describe('News Parser — Real structured helpers', () => {
+  function buildStructuredHeadline(overrides: Partial<ParsedHeadline> = {}): ParsedHeadline {
+    return {
+      title: 'Structured AI headline',
+      url: 'https://example.com/news?id=1&utm_source=rss#top',
+      canonicalUrl: 'https://example.com/news?id=1',
+      source: 'Primary Source',
+      sourceDomain: 'example.com',
+      description: 'Полноценное описание новости для структурированного дайджеста.',
+      fingerprint: 'fp-1',
+      alternateSources: [],
+      category: 'ai_tech',
+      language: 'en',
+      ...overrides,
+    };
+  }
+
+  it('canonicalizeHeadlineUrl убирает tracking query params и fragment', () => {
+    expect(canonicalizeHeadlineUrl('https://example.com/news?id=1&utm_source=rss&utm_medium=email#top'))
+      .toBe('https://example.com/news?id=1');
+  });
+
+  it('buildHeadlineFingerprint стабилен для одного canonical url и даты', () => {
+    const fingerprint = buildHeadlineFingerprint(
+      'AI Agents launch',
+      'https://example.com/news?id=1',
+      '2026-03-09T08:00:00.000Z',
+      'ai_tech',
+    );
+
+    expect(fingerprint).toBe(
+      buildHeadlineFingerprint(
+        'AI Agents launch',
+        'https://example.com/news?id=1',
+        '2026-03-09T08:00:00.000Z',
+        'ai_tech',
+      ),
+    );
+  });
+
+  it('dedupeParsedHeadlines объединяет канонические дубли и сохраняет alternateSources', () => {
+    const primary = buildStructuredHeadline({
+      source: 'Primary Source',
+      sourceTier: 'tier3',
+      description: 'Короткое описание.',
+      pubDate: '2026-03-09T08:00:00.000Z',
+      fingerprint: 'fp-1',
+    });
+    const richerDuplicate = buildStructuredHeadline({
+      url: 'https://www.example.com/news?id=1&utm_medium=email',
+      canonicalUrl: 'https://example.com/news?id=1',
+      source: 'Trusted Source',
+      sourceDomain: 'example.com',
+      sourceTier: 'tier1',
+      description: 'Более полное описание новости, которое должно стать основным после merge.',
+      fingerprint: 'fp-1',
+      pubDate: '2026-03-09T09:00:00.000Z',
+    });
+
+    const result = dedupeParsedHeadlines([primary, richerDuplicate]);
+
+    expect(result.duplicatesFiltered).toBe(1);
+    expect(result.headlines).toHaveLength(1);
+    expect(result.headlines[0]?.source).toBe('Trusted Source');
+    expect(result.headlines[0]?.alternateSources).toContain('Primary Source');
+    expect(result.headlines[0]?.description).toContain('Более полное описание');
+  });
+
+  it('groupHeadlinesByCategory держит uncategorized отдельно от city_local', () => {
+    const grouped = groupHeadlinesByCategory([
+      buildStructuredHeadline({ category: 'city_local', title: 'Local headline', fingerprint: 'fp-local' }),
+      buildStructuredHeadline({
+        category: 'uncategorized',
+        title: 'Unknown headline',
+        fingerprint: 'fp-unknown',
+        url: 'https://unknown.example/news',
+        canonicalUrl: 'https://unknown.example/news',
+      }),
+    ]);
+
+    expect(grouped.city_local).toHaveLength(1);
+    expect(grouped.uncategorized).toHaveLength(1);
+    expect(grouped.uncategorized[0]?.title).toBe('Unknown headline');
   });
 });

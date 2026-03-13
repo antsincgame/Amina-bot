@@ -57,10 +57,54 @@ vi.mock('../ai/websearch.js', () => ({
 
 const { mockParsedHeadlines } = vi.hoisted(() => ({
   mockParsedHeadlines: [
-    { title: 'AI headline', url: 'https://example.com/ai', source: 'AI Source', category: 'ai_tech', language: 'en' },
-    { title: 'Asia headline', url: 'https://example.com/asia', source: 'Asia Source', category: 'asia_tech', language: 'ja' },
-    { title: 'Community headline', url: 'https://example.com/community', source: 'Community Source', category: 'community', language: 'en' },
-    { title: 'Local headline', url: 'https://example.com/local', source: 'Local Source', category: 'city_local', language: 'ru' },
+    {
+      title: 'AI headline',
+      url: 'https://example.com/ai',
+      canonicalUrl: 'https://example.com/ai',
+      source: 'AI Source',
+      sourceDomain: 'example.com',
+      description: 'AI description',
+      fingerprint: 'fp-ai',
+      alternateSources: [],
+      category: 'ai_tech',
+      language: 'en',
+    },
+    {
+      title: 'Asia headline',
+      url: 'https://example.com/asia',
+      canonicalUrl: 'https://example.com/asia',
+      source: 'Asia Source',
+      sourceDomain: 'example.com',
+      description: 'Asia description',
+      fingerprint: 'fp-asia',
+      alternateSources: [],
+      category: 'asia_tech',
+      language: 'ja',
+    },
+    {
+      title: 'Community headline',
+      url: 'https://example.com/community',
+      canonicalUrl: 'https://example.com/community',
+      source: 'Community Source',
+      sourceDomain: 'example.com',
+      description: 'Community description',
+      fingerprint: 'fp-community',
+      alternateSources: [],
+      category: 'community',
+      language: 'en',
+    },
+    {
+      title: 'Local headline',
+      url: 'https://example.com/local',
+      canonicalUrl: 'https://example.com/local',
+      source: 'Local Source',
+      sourceDomain: 'example.com',
+      description: 'Local description',
+      fingerprint: 'fp-local',
+      alternateSources: ['Mirror Source'],
+      category: 'city_local',
+      language: 'ru',
+    },
   ],
 }));
 
@@ -69,8 +113,15 @@ vi.mock('../features/news-parser.js', () => ({
   saveConfiguredSites: vi.fn().mockResolvedValue(undefined),
   parseNewsFromSite: vi.fn().mockResolvedValue([]),
   parseAllConfiguredSites: vi.fn().mockResolvedValue(mockParsedHeadlines),
-  filterByCategory: vi.fn((headlines: Array<{ category?: string }>, category: string) =>
-    headlines.filter(headline => headline.category === category),
+  groupHeadlinesByCategory: vi.fn((headlines: Array<{ category: string }>) => ({
+    ai_tech: headlines.filter(headline => headline.category === 'ai_tech'),
+    asia_tech: headlines.filter(headline => headline.category === 'asia_tech'),
+    community: headlines.filter(headline => headline.category === 'community'),
+    city_local: headlines.filter(headline => headline.category === 'city_local'),
+    uncategorized: headlines.filter(headline => headline.category === 'uncategorized'),
+  })),
+  countMergedDuplicates: vi.fn((headlines: Array<{ alternateSources: string[] }>) =>
+    headlines.reduce((total, headline) => total + headline.alternateSources.length, 0),
   ),
   getPresetSources: vi.fn().mockReturnValue([]),
   getPresetSourceCounts: vi.fn().mockReturnValue({ all: 0, global: 0, asia: 0 }),
@@ -80,7 +131,43 @@ vi.mock('../features/news-parser.js', () => ({
 
 vi.mock('../features/digest-scheduler.js', () => ({
   buildDigest: vi.fn().mockResolvedValue('legacy digest'),
-  buildHybridDigestText: vi.fn().mockResolvedValue('hybrid digest'),
+}));
+
+vi.mock('../features/digest-hybrid.js', () => ({
+  buildHybridDigest: vi.fn().mockResolvedValue({
+    cacheKey: 'cache-1',
+    digestText: 'hybrid digest',
+    payload: {
+      version: 'hybrid-v1',
+      city: 'Минск',
+      generated_at: '2026-03-09T07:00:00.000Z',
+      digest_date: '2026-03-09',
+      source_hash: 'hash-1',
+      counts: {
+        total: 4,
+        ai: 1,
+        community: 1,
+        asia: 1,
+        local: 1,
+        uncategorized: 0,
+        merged_duplicates: 1,
+      },
+      weather: null,
+      local_search: null,
+      headlines: mockParsedHeadlines,
+      sections: {
+        ai_tech: [mockParsedHeadlines[0]],
+        asia_tech: [mockParsedHeadlines[1]],
+        community: [mockParsedHeadlines[2]],
+        city_local: [mockParsedHeadlines[3]],
+        uncategorized: [],
+      },
+      local_section: '## Новости Минск',
+      uncategorized_section: '',
+      ai_sections: ['## Технологии и AI'],
+      asia_sections: ['## AI из Азии'],
+    },
+  }),
 }));
 
 vi.mock('../ai/lmstudio.js', () => ({
@@ -361,13 +448,16 @@ describe('API Routes', () => {
         asia_tech: 1,
         community: 1,
         city_local: 1,
+        uncategorized: 0,
       });
+      expect(body.data.mergedDuplicates).toBe(1);
+      expect(body.data.sections.city_local[0].alternateSources).toContain('Mirror Source');
     });
   });
 
   describe('GET /api/digest/latest', () => {
     it('should use hybrid pipeline by default for json format', async () => {
-      const digestScheduler = await import('../features/digest-scheduler.js');
+      const digestHybrid = await import('../features/digest-hybrid.js');
 
       const response = await app.inject({
         method: 'GET',
@@ -375,18 +465,19 @@ describe('API Routes', () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(vi.mocked(digestScheduler.buildHybridDigestText)).toHaveBeenCalledWith(
+      expect(vi.mocked(digestHybrid.buildHybridDigest)).toHaveBeenCalledWith(
         'public',
         'Читатель',
         'Минск',
         { forceRefresh: false },
       );
-      expect(vi.mocked(digestScheduler.buildDigest)).not.toHaveBeenCalled();
 
       const body = JSON.parse(response.body);
       expect(body.success).toBe(true);
       expect(body.data.pipeline).toBe('hybrid_supabase');
       expect(body.data.content).toBe('hybrid digest');
+      expect(body.data.news.counts.merged_duplicates).toBe(1);
+      expect(body.data.news.sections.ai_tech[0].description).toBe('AI description');
     });
 
     it('should still allow explicit legacy pipeline', async () => {
@@ -404,6 +495,8 @@ describe('API Routes', () => {
       expect(body.success).toBe(true);
       expect(body.data.pipeline).toBe('legacy');
       expect(body.data.content).toBe('legacy digest');
+      expect(body.data.news.counts.merged_duplicates).toBe(1);
+      expect(body.data.news.sections.city_local[0].source).toBe('Local Source');
     });
   });
 

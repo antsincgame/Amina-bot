@@ -25,9 +25,15 @@ const DIGEST_HEADLINE_BATCH_MAX_CHARS = 4500;
 const DIGEST_FALLBACK_BATCH_MAX_ITEMS = 42;
 const DIGEST_FALLBACK_BATCH_MAX_CHARS = 11000;
 const DIGEST_HEADLINE_LLM_MAX_BATCHES = 8;
+const MARKDOWN_LINK_REGEX = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
 
 function estimateHeadlineSize(headline: ParsedHeadline): number {
-  return headline.title.length + headline.url.length + headline.source.length + 80;
+  return headline.title.length
+    + headline.url.length
+    + headline.source.length
+    + headline.description.length
+    + headline.alternateSources.join(', ').length
+    + 180;
 }
 
 export async function webSearchWithRetry(
@@ -93,8 +99,56 @@ function formatBatchHeading(sectionTitle: string, batchIndex: number, totalBatch
   return totalBatches > 1 ? `${sectionTitle} (${batchIndex + 1}/${totalBatches})` : sectionTitle;
 }
 
-function validateAnnotatedBatch(text: string, headlines: ParsedHeadline[]): boolean {
-  return headlines.every(headline => text.includes(headline.url));
+function formatCategoryLabel(category: ParsedHeadline['category']): string {
+  switch (category) {
+    case 'ai_tech':
+      return 'AI/Tech';
+    case 'community':
+      return 'Сообщество';
+    case 'asia_tech':
+      return 'AI Азия';
+    case 'city_local':
+      return 'Город';
+    default:
+      return 'Без категории';
+  }
+}
+
+function buildAlternateSourcesText(headline: ParsedHeadline): string {
+  if (headline.alternateSources.length === 0) return '';
+  return `Альтернативные источники: ${headline.alternateSources.join(', ')}.`;
+}
+
+export function renderStructuredHeadlineItem(headline: ParsedHeadline, number: number): string {
+  const metaLine = `Источник: ${headline.source} · Категория: ${formatCategoryLabel(headline.category)}`;
+  const descriptionLine = `Описание: ${headline.description}`;
+  const alternateSources = buildAlternateSourcesText(headline);
+
+  return [
+    `**${number}. [${headline.title}](${headline.url})**`,
+    metaLine,
+    descriptionLine,
+    alternateSources,
+  ].filter(Boolean).join('\n');
+}
+
+export function renderStructuredHeadlineList(headlines: ParsedHeadline[], startNumber = 1): string {
+  return headlines
+    .map((headline, index) => renderStructuredHeadlineItem(headline, startNumber + index))
+    .join('\n\n');
+}
+
+export function validateAnnotatedBatch(text: string, headlines: ParsedHeadline[]): boolean {
+  const links = [...text.matchAll(MARKDOWN_LINK_REGEX)].map(match => match[2]);
+  if (links.length !== headlines.length) return false;
+  if (new Set(links).size !== links.length) return false;
+  if (links.some((link, index) => link !== headlines[index]?.url)) return false;
+
+  return headlines.every(headline =>
+    text.includes(headline.source) &&
+    text.includes(headline.url) &&
+    text.includes(formatCategoryLabel(headline.category)),
+  );
 }
 
 export function shouldUseFallbackForDigestBatches(totalBatches: number): boolean {
@@ -103,21 +157,14 @@ export function shouldUseFallbackForDigestBatches(totalBatches: number): boolean
 
 export function renderFallbackHeadlineBatch(
   sectionTitle: string,
-  mode: DigestHeadlineMode,
+  _mode: DigestHeadlineMode,
   batchIndex: number,
   totalBatches: number,
   batch: HeadlineBatch,
 ): string {
   const heading = formatBatchHeading(sectionTitle, batchIndex, totalBatches);
-  const lines = batch.headlines.map((headline, index) => {
-    const number = batch.startNumber + index;
-    const context = mode === 'asia'
-      ? `${headline.source}: важная азиатская новость для мониторинга AI-программирования и локального рынка.`
-      : `${headline.source}: важный сигнал для AI, локальных LLM и vibecoding-инструментов.`;
-    return `**${number}. [${headline.title}](${headline.url})** — ${context}`;
-  });
-
-  return `## ${heading}\n\n${lines.join('\n')}`;
+  const body = renderStructuredHeadlineList(batch.headlines, batch.startNumber);
+  return `## ${heading}\n\n${body}`;
 }
 
 async function annotateHeadlineBatch(
@@ -131,7 +178,10 @@ async function annotateHeadlineBatch(
   const inputLines = batch.headlines.map((headline, index) => {
     const number = batch.startNumber + index;
     const language = headline.language ? ` | language=${headline.language}` : '';
-    return `${number}. [${headline.title}](${headline.url}) | source=${headline.source}${language}`;
+    const alternateSources = headline.alternateSources.length > 0
+      ? ` | alternate_sources=${headline.alternateSources.join(', ')}`
+      : '';
+    return `${number}. [${headline.title}](${headline.url}) | source=${headline.source} | category=${formatCategoryLabel(headline.category)} | description=${headline.description}${language}${alternateSources}`;
   }).join('\n');
 
   const prompt = mode === 'asia'
@@ -140,8 +190,11 @@ async function annotateHeadlineBatch(
 Верни ТОЛЬКО готовый Markdown-раздел без вступления и без заключения.
 ЗАПРЕЩЕНО пропускать пункты, менять номера и менять URL.
 Каждый входной пункт должен появиться ровно один раз.
-Формат каждой строки:
-**N. [Перевод заголовка (оригинал можно оставить в скобках)](url)** — 1 короткое предложение: что это и почему важно.
+Формат каждого пункта:
+**N. [Перевод заголовка (оригинал можно оставить в скобках)](url)**
+Источник: <source> · Категория: <category>
+Описание: 1 короткое предложение: что это и почему важно.
+Если есть alternate_sources, добавь отдельную строку "Альтернативные источники: ...".
 
 Заголовок раздела:
 ## ${heading}
@@ -153,8 +206,11 @@ ${inputLines}`
 Верни ТОЛЬКО готовый Markdown-раздел без вступления и без заключения.
 ЗАПРЕЩЕНО пропускать пункты, менять номера и менять URL.
 Каждый входной пункт должен появиться ровно один раз.
-Формат каждой строки:
-**N. [Перевод заголовка](url)** — 1 короткое предложение: что произошло и почему это важно для AI, локальных LLM или vibecoding.
+Формат каждого пункта:
+**N. [Перевод заголовка](url)**
+Источник: <source> · Категория: <category>
+Описание: 1 короткое предложение: что произошло и почему это важно для AI, локальных LLM или vibecoding.
+Если есть alternate_sources, добавь отдельную строку "Альтернативные источники: ...".
 
 Заголовок раздела:
 ## ${heading}
@@ -165,11 +221,12 @@ ${inputLines}`;
   try {
     const response = await aiService.chat([{ role: 'user', content: prompt }], 'telegram');
     const content = response.content.trim();
-    if (!content || !validateAnnotatedBatch(content, batch.headlines)) {
+    const normalizedContent = content.startsWith('##') ? content : `## ${heading}\n\n${content}`;
+    if (!content || !validateAnnotatedBatch(normalizedContent, batch.headlines)) {
       appLogger.warn({ sectionTitle, batchIndex, totalBatches }, 'Digest: annotated batch validation failed, using fallback');
       return renderFallbackHeadlineBatch(sectionTitle, mode, batchIndex, totalBatches, batch);
     }
-    return content.startsWith('##') ? content : `## ${heading}\n\n${content}`;
+    return normalizedContent;
   } catch (error) {
     appLogger.warn({ error, sectionTitle, batchIndex, totalBatches }, 'Digest: batch annotation failed, using fallback');
     return renderFallbackHeadlineBatch(sectionTitle, mode, batchIndex, totalBatches, batch);

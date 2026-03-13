@@ -17,11 +17,11 @@ import { userPrefsRepo } from './user-prefs-repo.js';
 import { todosRepo } from './todos-repo.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';
 import { inlineCitations, markdownToTelegramHtml, splitIntoChunks, stripHtml } from '../telegram/format.js';
-import { parseAllConfiguredSites, filterByCategory, type ParsedHeadline } from './news-parser.js';
+import { countMergedDuplicates, groupHeadlinesByCategory, parseAllConfiguredSites, type ParsedHeadline } from './news-parser.js';
 import { aiService } from '../ai/openrouter.js';
 import { config } from '../config/index.js';
 import { appLogger } from '../config/logger.js';
-import { buildDigestClosing, buildHeadlineSections, getTimeGreeting, webSearchWithRetry } from './digest-core.js';
+import { buildDigestClosing, buildHeadlineSections, getTimeGreeting, renderStructuredHeadlineList, webSearchWithRetry } from './digest-core.js';
 import { buildHybridDigest, buildHybridDigestDeliveryKey } from './digest-hybrid.js';
 import { digestDeliveryRepo, type DigestDeliveryKind } from './digest-hybrid-repo.js';
 
@@ -449,6 +449,16 @@ async function processDigests(bot: BotLike): Promise<void> {
 // Digest Builder: Perplexity → LLM
 // --------------------------------------------
 
+function buildStructuredLocalSection(city: string, headlines: ParsedHeadline[]): string {
+  if (headlines.length === 0) return '';
+  return `## Новости ${city} из источников\n\n${renderStructuredHeadlineList(headlines)}`;
+}
+
+function buildUncategorizedNewsSection(headlines: ParsedHeadline[]): string {
+  if (headlines.length === 0) return '';
+  return `## Некатегоризированные источники\n\n${renderStructuredHeadlineList(headlines)}`;
+}
+
 /**
  * Собрать дайджест:
  * 1. Perplexity: погода, местные новости города
@@ -503,29 +513,18 @@ export async function buildDigest(
   let aiTechHeadlines: ParsedHeadline[] = [];
   let asiaAiHeadlines: ParsedHeadline[] = [];
   let communityHeadlines: ParsedHeadline[] = [];
+  let uncategorizedHeadlines: ParsedHeadline[] = [];
   
   if (parsedHeadlinesResult.status === 'fulfilled') {
     const allParsed = parsedHeadlinesResult.value;
-    parsedHeadlines = allParsed.filter(h => !h.category || h.category === 'city_local');
-    aiTechHeadlines = filterByCategory(allParsed, 'ai_tech');
-    asiaAiHeadlines = filterByCategory(allParsed, 'asia_tech');
-    communityHeadlines = filterByCategory(allParsed, 'community');
+    const sections = groupHeadlinesByCategory(allParsed);
+    parsedHeadlines = sections.city_local;
+    aiTechHeadlines = sections.ai_tech;
+    asiaAiHeadlines = sections.asia_tech;
+    communityHeadlines = sections.community;
+    uncategorizedHeadlines = sections.uncategorized;
   } else {
     appLogger.warn({ error: parsedHeadlinesResult.reason }, 'Digest: news parser failed');
-  }
-
-  if (parsedHeadlines.length > 0) {
-    const headlineLines = parsedHeadlines.map(h =>
-      `- [${h.title}](${h.url}) (source: ${h.source})`
-    );
-    rawData.push(
-      `[МЕСТНЫЕ НОВОСТИ — ЗАГОЛОВКИ С НОВОСТНЫХ САЙТОВ ${city.toUpperCase()}]\n` +
-      `Ниже — актуальные заголовки новостей, спарсенные с местных новостных сайтов.\n` +
-      `Входные данные уже содержат ссылки. Сохрани их!\n` +
-      `Для каждой новости ОБЯЗАТЕЛЬНО сохрани ссылку в формате Markdown: [заголовок](url)\n\n` +
-      headlineLines.join('\n')
-    );
-    appLogger.info({ count: parsedHeadlines.length, city }, 'Digest: using parsed headlines for city news');
   }
 
   if (cityNewsResult.status === 'fulfilled' && cityNewsResult.value?.answer) {
@@ -536,6 +535,8 @@ export async function buildDigest(
   }
 
   const allAiHeadlines = [...aiTechHeadlines, ...communityHeadlines];
+  const localSection = buildStructuredLocalSection(city, parsedHeadlines);
+  const uncategorizedSection = buildUncategorizedNewsSection(uncategorizedHeadlines);
 
   // 5. Напоминания на сегодня
   if (shouldLoadPersonalData && remindersResult.status === 'fulfilled') {
@@ -586,6 +587,7 @@ export async function buildDigest(
 
 ВАЖНО:
 - Включай ТОЛЬКО разделы из данных ниже.
+- НЕ пересказывай ленту новостных источников списком: структурированные секции со ссылками будут добавлены отдельно.
 - НЕ создавай разделы "Технологии и AI" и "AI из Азии" — они будут добавлены отдельно.
 - НЕ добавляй финальный раздел "Настрой на день" — он будет добавлен отдельно.
 - Если в городских данных есть Markdown-ссылки, ОБЯЗАТЕЛЬНО сохрани их.
@@ -634,14 +636,19 @@ ${rawData.join('\n\n')}${citationsBlock}
 
   appLogger.info({
     narrativeLength: narrativeDigest.length,
+    localStructured: parsedHeadlines.length,
+    uncategorizedStructured: uncategorizedHeadlines.length,
     aiHeadlines: allAiHeadlines.length,
     aiBatches: aiSections.length,
     asiaHeadlines: asiaAiHeadlines.length,
     asiaBatches: asiaSections.length,
+    mergedDuplicates: countMergedDuplicates([...parsedHeadlines, ...allAiHeadlines, ...uncategorizedHeadlines]),
   }, 'Digest: compiled narrative and headline batches');
 
   return [
     narrativeDigest.trim(),
+    localSection,
+    uncategorizedSection,
     ...aiSections,
     ...asiaSections,
     buildDigestClosing(firstName),

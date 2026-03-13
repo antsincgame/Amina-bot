@@ -1,6 +1,6 @@
 import { getSupabase } from '../db/supabase.js';
 import { dbLogger } from '../config/logger.js';
-import type { ParsedHeadline, DigestPipelineMode } from '../../../shared/types/index.js';
+import type { ParsedHeadline, ParsedHeadlineCategory, DigestPipelineMode } from '../../../shared/types/index.js';
 import type { DigestSearchResult } from './digest-core.js';
 
 export type DigestDeliveryKind = 'manual' | 'scheduled' | 'api';
@@ -18,11 +18,15 @@ export interface PreparedDigestCachePayload {
     community: number;
     asia: number;
     local: number;
+    uncategorized: number;
+    merged_duplicates: number;
   };
   weather: DigestSearchResult | null;
   local_search: DigestSearchResult | null;
   headlines: ParsedHeadline[];
+  sections: Record<ParsedHeadlineCategory, ParsedHeadline[]>;
   local_section: string;
+  uncategorized_section: string;
   ai_sections: string[];
   asia_sections: string[];
 }

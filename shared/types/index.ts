@@ -223,6 +223,7 @@ export type DigestPipelineMode = 'legacy' | 'hybrid_supabase';
 
 export type NewsSourceType = 'rss' | 'json_api' | 'html_scrape';
 export type NewsSourceCategory = 'ai_tech' | 'city_local' | 'community' | 'asia_tech';
+export type ParsedHeadlineCategory = NewsSourceCategory | 'uncategorized';
 export type NewsSourceLanguage = 'ru' | 'en' | 'zh' | 'ja' | 'ko';
 export type NewsSourceTier = 'tier1' | 'tier2' | 'tier3';
 
@@ -235,6 +236,8 @@ export interface JsonFieldMapping {
   urlField: string;
   /** Поле даты публикации */
   dateField?: string;
+  /** Поле краткого описания/сниппета */
+  descriptionField?: string;
 }
 
 export interface HtmlFieldMapping {
@@ -244,6 +247,8 @@ export interface HtmlFieldMapping {
   linkSelectors?: string[];
   /** Список селекторов заголовка внутри контейнера */
   titleSelectors?: string[];
+  /** Список селекторов описания/сниппета внутри контейнера */
+  descriptionSelectors?: string[];
   /** Список селекторов даты внутри контейнера */
   dateSelectors?: string[];
   /** Атрибут для извлечения даты, если текст пуст */
@@ -275,8 +280,15 @@ export interface NewsSite {
 export interface ParsedHeadline {
   title: string;
   url: string;
+  canonicalUrl: string;
   source: string;
+  sourceDomain: string;
+  description: string;
+  fingerprint: string;
+  alternateSources: string[];
   pubDate?: string;
-  category?: NewsSourceCategory;
+  category: ParsedHeadlineCategory;
   language?: NewsSourceLanguage;
+  sourceUrl?: string;
+  sourceTier?: NewsSourceTier;
 }

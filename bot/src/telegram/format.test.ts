@@ -223,6 +223,20 @@ describe('splitIntoChunks', () => {
     const chunks = splitIntoChunks(text);
     expect(chunks.length).toBeGreaterThan(1);
   });
+
+  it('should preserve complete HTML links when splitting many linked paragraphs', () => {
+    const paragraph = '<b>1. <a href="https://example.com/news/1">AI headline</a></b>\nИсточник: Source · Категория: AI/Tech\nОписание: Структурированная новость.';
+    const html = Array.from({ length: 120 }, () => paragraph).join('\n\n');
+
+    const chunks = splitIntoChunks(html);
+
+    expect(chunks.length).toBeGreaterThan(1);
+    chunks.forEach(chunk => {
+      const openingLinks = (chunk.match(/<a href=/g) ?? []).length;
+      const closingLinks = (chunk.match(/<\/a>/g) ?? []).length;
+      expect(openingLinks).toBe(closingLinks);
+    });
+  });
 });
 
 // ============================================

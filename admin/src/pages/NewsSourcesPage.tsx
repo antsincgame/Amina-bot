@@ -9,6 +9,7 @@ import type {
   NewsSourceTier,
   JsonFieldMapping,
   HtmlFieldMapping,
+  ParsedHeadline,
 } from '../../../shared/types/index.js';
 import {
   Newspaper,
@@ -47,6 +48,11 @@ const CATEGORY_LABELS: Record<NewsSourceCategory, { label: string; color: string
   city_local: { label: 'Город', color: 'text-blue-400 bg-blue-400/10 border-blue-400/20' },
   community: { label: 'Сообщество', color: 'text-green-400 bg-green-400/10 border-green-400/20' },
   asia_tech: { label: 'Азия', color: 'text-red-400 bg-red-400/10 border-red-400/20' },
+};
+
+const UNCATEGORIZED_BADGE = {
+  label: 'Без категории',
+  color: 'text-gray-300 bg-gray-500/10 border-gray-500/20',
 };
 
 const LANGUAGE_FLAGS: Record<NewsSourceLanguage, string> = {
@@ -97,7 +103,7 @@ const NewsSourcesPage = () => {
 
   const [testResult, setTestResult] = useState<{
     url: string;
-    headlines: Array<{ title: string; url: string; source: string }>;
+    headlines: ParsedHeadline[];
     count: number;
     parseTimeMs?: number;
     error?: string;
@@ -593,10 +599,13 @@ const NewsSourcesPage = () => {
             <label className="label text-sm text-gray-400">JSON mapping</label>
             <textarea
               className="input min-h-[130px] bg-white/5 text-gray-200 font-mono text-xs"
-              placeholder={'{\n  "itemsPath": "",\n  "titleField": "title",\n  "urlField": "url",\n  "dateField": "published_at"\n}'}
+              placeholder={'{\n  "itemsPath": "",\n  "titleField": "title",\n  "urlField": "url",\n  "dateField": "published_at",\n  "descriptionField": "description|summary"\n}'}
               value={newJsonMapping}
               onChange={(e) => { setNewJsonMapping(e.target.value); setAddError(''); }}
             />
+            <p className="mt-2 text-xs text-gray-500">
+              Можно указать `descriptionField` с fallback через `|`, например `description|summary|content_text`.
+            </p>
           </div>
         )}
 
@@ -605,10 +614,13 @@ const NewsSourcesPage = () => {
             <label className="label text-sm text-gray-400">HTML mapping</label>
             <textarea
               className="input min-h-[150px] bg-white/5 text-gray-200 font-mono text-xs"
-              placeholder={'{\n  "itemSelectors": ["article", ".news-item"],\n  "titleSelectors": ["h2", "h3", ".entry-title"],\n  "linkSelectors": ["a[href]"],\n  "removeSelectors": ["nav", "footer"]\n}'}
+              placeholder={'{\n  "itemSelectors": ["article", ".news-item"],\n  "titleSelectors": ["h2", "h3", ".entry-title"],\n  "descriptionSelectors": [".summary", "p"],\n  "linkSelectors": ["a[href]"],\n  "removeSelectors": ["nav", "footer"]\n}'}
               value={newHtmlMapping}
               onChange={(e) => { setNewHtmlMapping(e.target.value); setAddError(''); }}
             />
+            <p className="mt-2 text-xs text-gray-500">
+              Для HTML-источников добавляйте `descriptionSelectors`, чтобы preview сразу показывал описание новости.
+            </p>
           </div>
         )}
 
@@ -717,6 +729,25 @@ const NewsSourcesPage = () => {
                       <span className="flex-1">{h.title}</span>
                       <ExternalLink className="w-3.5 h-3.5 mt-0.5 flex-shrink-0 text-gray-500" />
                     </a>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+                      <span className="text-gray-400">Источник: {h.source}</span>
+                      <span className={`px-2 py-0.5 rounded-full border ${
+                        h.category && h.category in CATEGORY_LABELS
+                          ? CATEGORY_LABELS[h.category as NewsSourceCategory].color
+                          : UNCATEGORIZED_BADGE.color
+                      }`}>
+                        {h.category && h.category in CATEGORY_LABELS
+                          ? CATEGORY_LABELS[h.category as NewsSourceCategory].label
+                          : UNCATEGORIZED_BADGE.label}
+                      </span>
+                      {h.alternateSources.length > 0 && (
+                        <span className="text-gray-500">Дублей схлопнуто: {h.alternateSources.length}</span>
+                      )}
+                    </div>
+                    <p className="mt-2 text-xs text-gray-400 leading-relaxed">{h.description}</p>
+                    <div className="mt-1 text-[11px] text-gray-500 break-all">
+                      canonical: {h.canonicalUrl}
+                    </div>
                   </div>
                 ))}
               </div>

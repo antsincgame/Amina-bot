@@ -4,8 +4,8 @@ import { appLogger } from '../config/logger.js';
 import { config } from '../config/index.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';
 import { todosRepo } from './todos-repo.js';
-import { parseAllConfiguredSites, filterByCategory, type ParsedHeadline } from './news-parser.js';
-import { buildDigestClosing, buildHeadlineSections, getTimeGreeting, type DigestSearchResult, webSearchWithRetry } from './digest-core.js';
+import { countMergedDuplicates, groupHeadlinesByCategory, parseAllConfiguredSites, type ParsedHeadline } from './news-parser.js';
+import { buildDigestClosing, buildHeadlineSections, getTimeGreeting, renderStructuredHeadlineList, type DigestSearchResult, webSearchWithRetry } from './digest-core.js';
 import { digestCacheRepo, type DigestDeliveryKind, type PreparedDigestCachePayload } from './digest-hybrid-repo.js';
 import { escapeMarkdown, inlineCitations } from '../telegram/format.js';
 
@@ -95,14 +95,16 @@ function buildLocalSection(
   }
 
   if (headlines.length > 0) {
-    const lines = headlines.map((headline, index) =>
-      `${index + 1}. [${headline.title}](${headline.url}) — ${headline.source}`,
-    );
-    blocks.push(`### Лента локальных источников\n${lines.join('\n')}`);
+    blocks.push(`### Лента локальных источников\n\n${renderStructuredHeadlineList(headlines)}`);
   }
 
   if (blocks.length === 0) return '';
   return `## Новости ${city}\n\n${blocks.join('\n\n')}`;
+}
+
+function buildUncategorizedSection(headlines: ParsedHeadline[]): string {
+  if (headlines.length === 0) return '';
+  return `## Некатегоризированные источники\n\n${renderStructuredHeadlineList(headlines)}`;
 }
 
 function buildWeatherSection(city: string, weather: DigestSearchResult | null): string {
@@ -128,6 +130,8 @@ function buildOverviewSection(firstName: string | null, payload: PreparedDigestC
     `Сообщество: ${payload.counts.community}`,
     `AI из Азии: ${payload.counts.asia}`,
     `Локальные новости: ${payload.counts.local}`,
+    `Без категории: ${payload.counts.uncategorized}`,
+    `Схлопнуто дублей: ${payload.counts.merged_duplicates}`,
   ].join('\n');
 }
 
@@ -203,10 +207,12 @@ export async function prepareHybridDigestBase(
   ]);
 
   const headlines = parsedHeadlinesResult.status === 'fulfilled' ? parsedHeadlinesResult.value : [];
-  const localHeadlines = headlines.filter(headline => !headline.category || headline.category === 'city_local');
-  const aiTechHeadlines = filterByCategory(headlines, 'ai_tech');
-  const communityHeadlines = filterByCategory(headlines, 'community');
-  const asiaHeadlines = filterByCategory(headlines, 'asia_tech');
+  const sections = groupHeadlinesByCategory(headlines);
+  const localHeadlines = sections.city_local;
+  const aiTechHeadlines = sections.ai_tech;
+  const communityHeadlines = sections.community;
+  const asiaHeadlines = sections.asia_tech;
+  const uncategorizedHeadlines = sections.uncategorized;
   const allAiHeadlines = [...aiTechHeadlines, ...communityHeadlines];
 
   const [aiSections, asiaSections] = await Promise.all([
@@ -233,11 +239,15 @@ export async function prepareHybridDigestBase(
       community: communityHeadlines.length,
       asia: asiaHeadlines.length,
       local: localHeadlines.length,
+      uncategorized: uncategorizedHeadlines.length,
+      merged_duplicates: countMergedDuplicates(headlines),
     },
     weather,
     local_search: localSearch,
     headlines,
+    sections,
     local_section: buildLocalSection(normalizedCity, localHeadlines, localSearch),
+    uncategorized_section: buildUncategorizedSection(uncategorizedHeadlines),
     ai_sections: aiSections,
     asia_sections: asiaSections,
   };
@@ -298,6 +308,7 @@ export async function renderHybridDigestFromPreparedBase(
     buildOverviewSection(firstName, prepared),
     buildWeatherSection(prepared.city, prepared.weather),
     prepared.local_section,
+    prepared.uncategorized_section,
     buildPersonalSection(reminders, todos),
     ...prepared.ai_sections,
     ...prepared.asia_sections,

@@ -14,14 +14,16 @@ import {
   saveConfiguredSites,
   parseNewsFromSite,
   parseAllConfiguredSites,
-  filterByCategory,
+  countMergedDuplicates,
+  groupHeadlinesByCategory,
   getPresetSources,
   getPresetSourceCounts,
   mergeNewsSites,
   normalizeNewsSite,
   type NewsPresetGroup,
 } from '../features/news-parser.js';
-import { buildDigest, buildHybridDigestText } from '../features/digest-scheduler.js';
+import { buildDigest } from '../features/digest-scheduler.js';
+import { buildHybridDigest } from '../features/digest-hybrid.js';
 import { markdownToTelegramHtml } from '../telegram/format.js';
 import type { DigestPipelineMode, NewsSite } from '../../../shared/types/index.js';
 import { invalidateTTSConfig } from '../features/tts.js';
@@ -1594,22 +1596,20 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
       apiServer.get('/debug/raw-news', async (_request: FastifyRequest, reply: FastifyReply) => {
         try {
           const headlines = await parseAllConfiguredSites();
-          const byCategory = {
-            ai_tech: filterByCategory(headlines, 'ai_tech'),
-            asia_tech: filterByCategory(headlines, 'asia_tech'),
-            community: filterByCategory(headlines, 'community'),
-            city_local: headlines.filter(h => !h.category || h.category === 'city_local'),
-          };
+          const sections = groupHeadlinesByCategory(headlines);
           return reply.code(200).send({
             success: true,
             data: {
               total: headlines.length,
               byCategory: {
-                ai_tech: byCategory.ai_tech.length,
-                asia_tech: byCategory.asia_tech.length,
-                community: byCategory.community.length,
-                city_local: byCategory.city_local.length,
+                ai_tech: sections.ai_tech.length,
+                asia_tech: sections.asia_tech.length,
+                community: sections.community.length,
+                city_local: sections.city_local.length,
+                uncategorized: sections.uncategorized.length,
               },
+              mergedDuplicates: countMergedDuplicates(headlines),
+              sections,
               headlines,
             },
           });
@@ -1645,14 +1645,54 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
                 : 'legacy';
             const forceRefresh = refresh === '1' || refresh.toLowerCase() === 'true';
 
-            const digestText = selectedPipeline === 'hybrid_supabase'
-              ? await buildHybridDigestText('public', firstName, city, { forceRefresh })
-              : await buildDigest('public', firstName, city);
+            const hybridResult = selectedPipeline === 'hybrid_supabase'
+              ? await buildHybridDigest('public', firstName, city, { forceRefresh })
+              : null;
+            const legacyDigestText = selectedPipeline === 'legacy'
+              ? await buildDigest('public', firstName, city)
+              : null;
+            const digestText = hybridResult?.digestText ?? legacyDigestText ?? '';
 
             if (format === 'json') {
+              const legacyHeadlines = selectedPipeline === 'legacy'
+                ? await parseAllConfiguredSites()
+                : [];
+              const legacySections = selectedPipeline === 'legacy'
+                ? groupHeadlinesByCategory(legacyHeadlines)
+                : null;
+
               return reply.code(200).send({
                 success: true,
-                data: { content: digestText, format: 'markdown', city, firstName, pipeline: selectedPipeline },
+                data: {
+                  content: digestText,
+                  format: 'markdown',
+                  city,
+                  firstName,
+                  pipeline: selectedPipeline,
+                  generatedAt: hybridResult?.payload.generated_at ?? new Date().toISOString(),
+                  digestDate: hybridResult?.payload.digest_date ?? new Date().toISOString().slice(0, 10),
+                  news: hybridResult
+                    ? {
+                      counts: hybridResult.payload.counts,
+                      sections: hybridResult.payload.sections,
+                      mergedDuplicates: hybridResult.payload.counts.merged_duplicates,
+                    }
+                    : {
+                      counts: {
+                        total: legacyHeadlines.length,
+                        ai: legacySections?.ai_tech.length ?? 0,
+                        community: legacySections?.community.length ?? 0,
+                        asia: legacySections?.asia_tech.length ?? 0,
+                        local: legacySections?.city_local.length ?? 0,
+                        uncategorized: legacySections?.uncategorized.length ?? 0,
+                        merged_duplicates: countMergedDuplicates(legacyHeadlines),
+                      },
+                      sections: legacySections,
+                      mergedDuplicates: countMergedDuplicates(legacyHeadlines),
+                    },
+                  weather: hybridResult?.payload.weather ?? null,
+                  localSearch: hybridResult?.payload.local_search ?? null,
+                },
               });
             }
 

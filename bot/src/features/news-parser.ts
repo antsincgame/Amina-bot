@@ -10,7 +10,8 @@
  * Языки: ru, en, zh, ja, ko
  */
 
-import { load } from 'cheerio';
+import { createHash } from 'node:crypto';
+import { load, type Cheerio } from 'cheerio';
 import type { AnyNode } from 'domhandler';
 import { settingsRepo } from '../db/supabase.js';
 import { appLogger } from '../config/logger.js';
@@ -28,6 +29,7 @@ import { ASIA_NEWS_SOURCE_MANIFEST } from './asian-news-sources.js';
 import type {
   NewsSite,
   ParsedHeadline,
+  ParsedHeadlineCategory,
   NewsSourceCategory,
   NewsSourceLanguage,
   NewsSourceTier,
@@ -49,6 +51,9 @@ interface ParseOptions {
   language?: NewsSourceLanguage;
   filterKeywords?: string[];
   htmlMapping?: HtmlFieldMapping;
+  source?: string;
+  sourceUrl?: string;
+  sourceTier?: NewsSourceTier;
 }
 
 const USER_AGENT =
@@ -475,6 +480,7 @@ function normalizeJsonMapping(mapping: unknown): JsonFieldMapping | undefined {
   const titleField = typeof mapping.titleField === 'string' ? mapping.titleField.trim() : '';
   const urlField = typeof mapping.urlField === 'string' ? mapping.urlField.trim() : '';
   const dateField = typeof mapping.dateField === 'string' ? mapping.dateField.trim() : undefined;
+  const descriptionField = typeof mapping.descriptionField === 'string' ? mapping.descriptionField.trim() : undefined;
 
   if (!titleField || !urlField) {
     throw new Error('jsonMapping must include titleField and urlField');
@@ -485,6 +491,7 @@ function normalizeJsonMapping(mapping: unknown): JsonFieldMapping | undefined {
     titleField,
     urlField,
     ...(dateField ? { dateField } : {}),
+    ...(descriptionField ? { descriptionField } : {}),
   };
 }
 
@@ -494,11 +501,12 @@ function normalizeHtmlMapping(mapping: unknown): HtmlFieldMapping | undefined {
   const itemSelectors = normalizeStringArray(Array.isArray(mapping.itemSelectors) ? mapping.itemSelectors.map(String) : undefined);
   const linkSelectors = normalizeStringArray(Array.isArray(mapping.linkSelectors) ? mapping.linkSelectors.map(String) : undefined);
   const titleSelectors = normalizeStringArray(Array.isArray(mapping.titleSelectors) ? mapping.titleSelectors.map(String) : undefined);
+  const descriptionSelectors = normalizeStringArray(Array.isArray(mapping.descriptionSelectors) ? mapping.descriptionSelectors.map(String) : undefined);
   const dateSelectors = normalizeStringArray(Array.isArray(mapping.dateSelectors) ? mapping.dateSelectors.map(String) : undefined);
   const removeSelectors = normalizeStringArray(Array.isArray(mapping.removeSelectors) ? mapping.removeSelectors.map(String) : undefined);
   const dateAttribute = typeof mapping.dateAttribute === 'string' ? mapping.dateAttribute.trim() : undefined;
 
-  if (!itemSelectors && !linkSelectors && !titleSelectors) {
+  if (!itemSelectors && !linkSelectors && !titleSelectors && !descriptionSelectors) {
     throw new Error('htmlMapping must include at least one selector array');
   }
 
@@ -506,6 +514,7 @@ function normalizeHtmlMapping(mapping: unknown): HtmlFieldMapping | undefined {
     ...(itemSelectors ? { itemSelectors } : {}),
     ...(linkSelectors ? { linkSelectors } : {}),
     ...(titleSelectors ? { titleSelectors } : {}),
+    ...(descriptionSelectors ? { descriptionSelectors } : {}),
     ...(dateSelectors ? { dateSelectors } : {}),
     ...(removeSelectors ? { removeSelectors } : {}),
     ...(dateAttribute ? { dateAttribute } : {}),
@@ -662,9 +671,57 @@ function normalizeUrl(href: string, baseUrl: string): string | null {
     }
     const resolved = new URL(href, baseUrl);
     if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') return null;
+    resolved.hash = '';
     return resolved.href;
   } catch {
     return null;
+  }
+}
+
+const TRACKING_QUERY_PARAMS = new Set([
+  'utm_source',
+  'utm_medium',
+  'utm_campaign',
+  'utm_term',
+  'utm_content',
+  'utm_id',
+  'utm_name',
+  'gclid',
+  'fbclid',
+  'mc_cid',
+  'mc_eid',
+  'igshid',
+  'ref',
+  'ref_src',
+  'feature',
+  'source',
+  'rss',
+  'output',
+]);
+
+export function canonicalizeHeadlineUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    parsed.hash = '';
+    parsed.hostname = parsed.hostname.replace(/^www\./i, '').toLowerCase();
+    parsed.pathname = parsed.pathname.replace(/\/{2,}/g, '/');
+    if (parsed.pathname !== '/' && parsed.pathname.endsWith('/')) {
+      parsed.pathname = parsed.pathname.slice(0, -1);
+    }
+    const keptParams = [...parsed.searchParams.entries()]
+      .filter(([key, value]) =>
+        !TRACKING_QUERY_PARAMS.has(key.toLowerCase()) &&
+        !key.toLowerCase().startsWith('utm_') &&
+        value.trim().length > 0,
+      )
+      .sort(([left], [right]) => left.localeCompare(right));
+    parsed.search = '';
+    for (const [key, value] of keptParams) {
+      parsed.searchParams.append(key, value);
+    }
+    return parsed.toString();
+  } catch {
+    return url;
   }
 }
 
@@ -673,6 +730,103 @@ function cleanTitle(text: string): string {
     .replace(/\s+/g, ' ')
     .replace(/[\n\r\t]/g, ' ')
     .trim();
+}
+
+function cleanHtmlSnippet(text: string): string {
+  if (!text) return '';
+  const withoutTags = text
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/<[^>]+>/g, ' ');
+  return cleanTitle(withoutTags)
+    .replace(/\s+[|·•-]\s*$/, '')
+    .slice(0, 400);
+}
+
+function extractDomain(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./i, '').toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+function resolveHeadlineCategory(category?: NewsSourceCategory): ParsedHeadlineCategory {
+  return category ?? 'uncategorized';
+}
+
+function buildDescriptionFallback(
+  title: string,
+  source: string,
+  category: ParsedHeadlineCategory,
+): string {
+  const titleParts = title.split(':').map(part => cleanTitle(part));
+  const titleSuffix = titleParts.length > 1 ? titleParts.slice(1).join(': ') : '';
+  if (titleSuffix && titleSuffix.length >= 20) {
+    return titleSuffix.slice(0, 240);
+  }
+
+  switch (category) {
+    case 'ai_tech':
+      return `${source}: материал о новых AI-инструментах, моделях или продуктах для разработки.`;
+    case 'community':
+      return `${source}: практический материал или обсуждение из сообщества разработчиков и AI-энтузиастов.`;
+    case 'asia_tech':
+      return `${source}: важная новость про AI-рынок, продукты или экосистему Азии.`;
+    case 'city_local':
+      return `${source}: локальная новость о событиях города, транспорте, инфраструктуре или решениях властей.`;
+    default:
+      return `${source}: структурированная новость из источника без явной категории.`;
+  }
+}
+
+export function buildHeadlineFingerprint(
+  title: string,
+  canonicalUrl: string,
+  pubDate: string | undefined,
+  category: ParsedHeadlineCategory,
+): string {
+  const parsedCanonical = canonicalizeHeadlineUrl(canonicalUrl);
+  const parsedDomain = extractDomain(parsedCanonical);
+  const normalizedDate = pubDate ? pubDate.slice(0, 10) : 'no-date';
+  return createHash('sha1')
+    .update([normalizeTitle(title), parsedDomain, normalizedDate, category].join('|'))
+    .digest('hex');
+}
+
+function createParsedHeadline(
+  title: string,
+  url: string,
+  options?: {
+    pubDate?: Date;
+    category?: NewsSourceCategory;
+    language?: NewsSourceLanguage;
+    source?: string;
+    sourceUrl?: string;
+    sourceTier?: NewsSourceTier;
+    description?: string;
+  },
+): ParsedHeadline {
+  const category = resolveHeadlineCategory(options?.category);
+  const source = options?.source?.trim() || extractDomain(options?.sourceUrl ?? url) || 'Unknown source';
+  const sourceUrl = options?.sourceUrl?.trim() || undefined;
+  const canonicalUrl = canonicalizeHeadlineUrl(url);
+  const description = cleanHtmlSnippet(options?.description ?? '') || buildDescriptionFallback(title, source, category);
+  const pubDate = options?.pubDate?.toISOString();
+  return {
+    title,
+    url,
+    canonicalUrl,
+    source,
+    sourceDomain: extractDomain(sourceUrl ?? url),
+    description,
+    fingerprint: buildHeadlineFingerprint(title, canonicalUrl, pubDate, category),
+    alternateSources: [],
+    pubDate,
+    category,
+    language: options?.language,
+    sourceUrl,
+    sourceTier: options?.sourceTier,
+  };
 }
 
 function isArticleUrl(url: string, siteOrigin: string): boolean {
@@ -744,6 +898,10 @@ function addHeadline(
     category?: NewsSourceCategory;
     language?: NewsSourceLanguage;
     filterKeywords?: string[];
+    source?: string;
+    sourceUrl?: string;
+    sourceTier?: NewsSourceTier;
+    description?: string;
   },
 ): boolean {
   if (headlines.length >= MAX_HEADLINES_PER_SITE) return false;
@@ -765,14 +923,7 @@ function addHeadline(
   if (seenTitles.has(titleNormalized)) return false;
 
   seenTitles.add(titleNormalized);
-  headlines.push({
-    title,
-    url,
-    source: '',
-    pubDate: options?.pubDate?.toISOString(),
-    category: options?.category,
-    language: options?.language,
-  });
+  headlines.push(createParsedHeadline(title, url, options));
   return true;
 }
 
@@ -833,16 +984,25 @@ function getNestedValue(obj: unknown, path: string): unknown {
   }, obj);
 }
 
+function extractStringField(item: Record<string, unknown>, fieldSpec: string | undefined): string {
+  if (!fieldSpec) return '';
+  for (const rawField of fieldSpec.split('|')) {
+    const field = rawField.trim();
+    if (!field) continue;
+    const value = getNestedValue(item, field);
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return '';
+}
+
 /**
  * Извлечь URL из объекта с поддержкой fallback (pipe-separated): "url|story_url"
  */
 function extractUrl(item: Record<string, unknown>, urlField: string): string | null {
-  const fields = urlField.split('|');
-  for (const field of fields) {
-    const value = item[field.trim()];
-    if (typeof value === 'string' && value.startsWith('http')) return value;
-  }
-  return null;
+  const value = extractStringField(item, urlField);
+  return value.startsWith('http') ? value : null;
 }
 
 /**
@@ -868,9 +1028,11 @@ function parseJsonApiResponse(
     if (!item || typeof item !== 'object') continue;
 
     const record = item as Record<string, unknown>;
-    const title = cleanTitle(String(record[mapping.titleField] ?? ''));
-    const url = extractUrl(record, mapping.urlField);
-    const pubDate = mapping.dateField ? parsePubDate(String(record[mapping.dateField] ?? '')) : undefined;
+    const title = cleanTitle(extractStringField(record, mapping.titleField));
+    const rawUrl = extractUrl(record, mapping.urlField);
+    const url = rawUrl ? normalizeUrl(rawUrl, baseUrl) : null;
+    const pubDate = parsePubDate(extractStringField(record, mapping.dateField));
+    const description = cleanHtmlSnippet(extractStringField(record, mapping.descriptionField));
 
     if (!url) continue;
 
@@ -879,6 +1041,10 @@ function parseJsonApiResponse(
       category: options?.category,
       language: options?.language,
       filterKeywords: options?.filterKeywords,
+      source: options?.source,
+      sourceUrl: options?.sourceUrl,
+      sourceTier: options?.sourceTier,
+      description,
     });
   }
 
@@ -909,7 +1075,7 @@ async function parseJsonApi(site: NewsSite): Promise<ParsedHeadline[]> {
 
 // ===== GitHub Trending Parser =====
 
-function parseGitHubTrending(html: string): ParsedHeadline[] {
+function parseGitHubTrending(html: string, options?: ParseOptions): ParsedHeadline[] {
   const $ = load(html);
   const headlines: ParsedHeadline[] = [];
   const seenTitles = new Set<string>();
@@ -926,13 +1092,15 @@ function parseGitHubTrending(html: string): ParsedHeadline[] {
     if (!href || !repoName) return;
 
     const url = `https://github.com${href}`;
-    const title = description
-      ? `${repoName}: ${description}`
-      : repoName;
+    const title = repoName;
 
     addHeadline(headlines, seenTitles, title, url, {
-      category: 'ai_tech',
-      language: 'en',
+      category: options?.category ?? 'ai_tech',
+      language: options?.language ?? 'en',
+      source: options?.source,
+      sourceUrl: options?.sourceUrl,
+      sourceTier: options?.sourceTier,
+      description,
     });
   });
 
@@ -942,7 +1110,7 @@ function parseGitHubTrending(html: string): ParsedHeadline[] {
 
 // ===== TLDR AI Archives Parser =====
 
-function parseTldrArchives(html: string, baseUrl: string): ParsedHeadline[] {
+function parseTldrArchives(html: string, baseUrl: string, options?: ParseOptions): ParsedHeadline[] {
   const $ = load(html);
   const headlines: ParsedHeadline[] = [];
   const seenTitles = new Set<string>();
@@ -957,8 +1125,11 @@ function parseTldrArchives(html: string, baseUrl: string): ParsedHeadline[] {
     if (!url) return;
 
     addHeadline(headlines, seenTitles, title, url, {
-      category: 'ai_tech',
-      language: 'en',
+      category: options?.category ?? 'ai_tech',
+      language: options?.language ?? 'en',
+      source: options?.source,
+      sourceUrl: options?.sourceUrl,
+      sourceTier: options?.sourceTier,
     });
   });
 
@@ -989,9 +1160,14 @@ function parseRssFeed(
       || $item.find('dc\\:date').first().text()
       || $item.find('date').first().text();
     const pubDate = parsePubDate(pubDateStr);
+    const description = cleanHtmlSnippet(
+      $item.find('description').first().text()
+      || $item.find('content\\:encoded').first().text()
+      || $item.find('summary').first().text(),
+    );
 
     const url = normalizeUrl(link, baseUrl);
-    if (url) addHeadline(headlines, seenTitles, title, url, { pubDate, ...options });
+    if (url) addHeadline(headlines, seenTitles, title, url, { pubDate, description, ...options });
   });
 
   // Atom
@@ -1004,9 +1180,13 @@ function parseRssFeed(
       const pubDateStr = $entry.find('published').first().text()
         || $entry.find('updated').first().text();
       const pubDate = parsePubDate(pubDateStr);
+      const description = cleanHtmlSnippet(
+        $entry.find('summary').first().text()
+        || $entry.find('content').first().text(),
+      );
 
       const url = normalizeUrl(link, baseUrl);
-      if (url) addHeadline(headlines, seenTitles, title, url, { pubDate, ...options });
+      if (url) addHeadline(headlines, seenTitles, title, url, { pubDate, description, ...options });
     });
   }
 
@@ -1089,7 +1269,15 @@ async function tryDirectFeed(
     // JSON Feed fallback
     if (contentType.includes('json') || text.trimStart().startsWith('{')) {
       try {
-        const json = JSON.parse(text) as { items?: Array<{ title?: string; url?: string; external_url?: string }> };
+        const json = JSON.parse(text) as {
+          items?: Array<{
+            title?: string;
+            url?: string;
+            external_url?: string;
+            summary?: string;
+            content_text?: string;
+          }>;
+        };
         if (json.items && Array.isArray(json.items)) {
           const headlines: ParsedHeadline[] = [];
           const seenTitles = new Set<string>();
@@ -1097,7 +1285,8 @@ async function tryDirectFeed(
             if (headlines.length >= MAX_HEADLINES_PER_SITE) break;
             const title = cleanTitle(item.title ?? '');
             const url = item.url ?? item.external_url ?? '';
-            if (url) addHeadline(headlines, seenTitles, title, url, options);
+            const description = cleanHtmlSnippet(item.summary ?? item.content_text ?? '');
+            if (url) addHeadline(headlines, seenTitles, title, url, { ...options, description });
           }
           if (headlines.length > 0) {
             appLogger.info({ feedUrl, count: headlines.length }, 'JSON Feed parsed');
@@ -1115,6 +1304,32 @@ async function tryDirectFeed(
 }
 
 // ===== HTML парсинг =====
+
+function extractDescriptionFromContainer(
+  $container: Cheerio<AnyNode>,
+  titleText: string,
+  selectors?: string[],
+): string {
+  if (selectors && selectors.length > 0) {
+    for (const selector of selectors) {
+      const text = cleanHtmlSnippet($container.find(selector).first().text());
+      if (text) return text;
+    }
+  }
+
+  const paragraphText = cleanHtmlSnippet($container.find('p').first().text());
+  if (paragraphText && paragraphText !== titleText) {
+    return paragraphText;
+  }
+
+  const containerText = cleanHtmlSnippet($container.text());
+  if (!containerText) return '';
+  if (containerText === titleText) return '';
+  if (containerText.startsWith(titleText)) {
+    return cleanTitle(containerText.slice(titleText.length));
+  }
+  return containerText;
+}
 
 function parseHtmlWithMapping(
   html: string,
@@ -1169,6 +1384,7 @@ function parseHtmlWithMapping(
 
     const url = normalizeUrl(href, origin);
     if (!url || seenUrls.has(url)) return;
+    const description = extractDescriptionFromContainer($container, titleText, mapping.descriptionSelectors);
 
     let pubDate: Date | undefined;
     if (mapping.dateSelectors && mapping.dateSelectors.length > 0) {
@@ -1183,7 +1399,7 @@ function parseHtmlWithMapping(
       }
     }
 
-    if (addHeadline(headlines, seenTitles, titleText, url, { ...options, pubDate })) {
+    if (addHeadline(headlines, seenTitles, titleText, url, { ...options, pubDate, description })) {
       seenUrls.add(url);
     }
   };
@@ -1214,10 +1430,10 @@ function parseHtmlContent(
 ): ParsedHeadline[] {
   // Специальные парсеры
   if (siteUrl.includes('github.com/trending')) {
-    return parseGitHubTrending(html);
+    return parseGitHubTrending(html, options);
   }
   if (siteUrl.includes('tldr.tech')) {
-    return parseTldrArchives(html, origin);
+    return parseTldrArchives(html, origin, options);
   }
 
   if (options?.htmlMapping) {
@@ -1233,6 +1449,10 @@ function parseHtmlContent(
   const headlines: ParsedHeadline[] = [];
   const seenTitles = new Set<string>();
   const seenUrls = new Set<string>();
+  const getContainerDescription = ($node: Cheerio<AnyNode>, title: string): string => {
+    const $container = $node.closest('article, li, section, div');
+    return extractDescriptionFromContainer($container.length > 0 ? $container : $node.parent(), title);
+  };
 
   // Стратегия A: ссылки внутри h1-h3
   $('h1 a, h2 a, h3 a').each((_i: number, _el: AnyNode) => {
@@ -1241,7 +1461,8 @@ function parseHtmlContent(
     const href = $el.attr('href');
     const url = normalizeUrl(href ?? '', origin);
     if (url && !seenUrls.has(url)) {
-      if (addHeadline(headlines, seenTitles, title, url, options)) {
+      const description = getContainerDescription($el, title);
+      if (addHeadline(headlines, seenTitles, title, url, { ...options, description })) {
         seenUrls.add(url);
       }
     }
@@ -1255,7 +1476,8 @@ function parseHtmlContent(
     const href = $link.attr('href');
     const url = normalizeUrl(href ?? '', origin);
     if (url && !seenUrls.has(url)) {
-      if (addHeadline(headlines, seenTitles, title, url, options)) {
+      const description = getContainerDescription($heading, title);
+      if (addHeadline(headlines, seenTitles, title, url, { ...options, description })) {
         seenUrls.add(url);
       }
     }
@@ -1278,7 +1500,8 @@ function parseHtmlContent(
     if (parentLink) {
       const url = normalizeUrl(parentLink, origin);
       if (url && !seenUrls.has(url)) {
-        if (addHeadline(headlines, seenTitles, title, url, options)) seenUrls.add(url);
+        const description = getContainerDescription($heading, title);
+        if (addHeadline(headlines, seenTitles, title, url, { ...options, description })) seenUrls.add(url);
       }
       return;
     }
@@ -1294,7 +1517,8 @@ function parseHtmlContent(
     if (siblingLink) {
       const url = normalizeUrl(siblingLink, origin);
       if (url && !seenUrls.has(url)) {
-        if (addHeadline(headlines, seenTitles, title, url, options)) seenUrls.add(url);
+        const description = getContainerDescription($heading, title);
+        if (addHeadline(headlines, seenTitles, title, url, { ...options, description })) seenUrls.add(url);
       }
       return;
     }
@@ -1310,7 +1534,8 @@ function parseHtmlContent(
     if (gpLink) {
       const url = normalizeUrl(gpLink, origin);
       if (url && !seenUrls.has(url)) {
-        if (addHeadline(headlines, seenTitles, title, url, options)) seenUrls.add(url);
+        const description = getContainerDescription($heading, title);
+        if (addHeadline(headlines, seenTitles, title, url, { ...options, description })) seenUrls.add(url);
       }
     }
   });
@@ -1330,7 +1555,8 @@ function parseHtmlContent(
       if (!url || seenUrls.has(url)) return;
       if (!isArticleUrl(url, origin)) return;
 
-      if (addHeadline(headlines, seenTitles, title, url, options)) seenUrls.add(url);
+      const description = getContainerDescription($el, title);
+      if (addHeadline(headlines, seenTitles, title, url, { ...options, description })) seenUrls.add(url);
     });
   }
 
@@ -1344,7 +1570,7 @@ export async function parseNewsFromSite(site: NewsSite): Promise<ParsedHeadline[
 export async function parseNewsFromSite(siteUrl: string): Promise<ParsedHeadline[]>;
 export async function parseNewsFromSite(siteOrUrl: NewsSite | string): Promise<ParsedHeadline[]> {
   const site: NewsSite = typeof siteOrUrl === 'string'
-    ? { name: '', url: siteOrUrl, enabled: true }
+    ? { name: extractDomain(siteOrUrl) || 'Unknown source', url: siteOrUrl, enabled: true }
     : siteOrUrl;
 
   const siteUrl = site.url;
@@ -1353,6 +1579,9 @@ export async function parseNewsFromSite(siteOrUrl: NewsSite | string): Promise<P
     language: site.language,
     filterKeywords: site.filterKeywords,
     htmlMapping: site.htmlMapping,
+    source: site.name,
+    sourceUrl: site.url,
+    sourceTier: site.tier,
   };
 
   // JSON API — специальный путь
@@ -1464,6 +1693,129 @@ export async function parseNewsFromSite(siteOrUrl: NewsSite | string): Promise<P
 
 let parsedNewsCache: { headlines: ParsedHeadline[]; ts: number } | null = null;
 
+function getTierScore(tier?: NewsSourceTier): number {
+  switch (tier) {
+    case 'tier1':
+      return 3;
+    case 'tier2':
+      return 2;
+    case 'tier3':
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function getDescriptionScore(headline: ParsedHeadline): number {
+  const description = cleanTitle(headline.description);
+  if (!description || description === headline.title) return 0;
+  if (description.length >= 120) return 3;
+  if (description.length >= 60) return 2;
+  return 1;
+}
+
+function parseHeadlineTimestamp(headline: ParsedHeadline): number {
+  if (!headline.pubDate) return 0;
+  const timestamp = new Date(headline.pubDate).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function shouldReplacePrimaryHeadline(current: ParsedHeadline, incoming: ParsedHeadline): boolean {
+  const tierDiff = getTierScore(incoming.sourceTier) - getTierScore(current.sourceTier);
+  if (tierDiff !== 0) return tierDiff > 0;
+
+  const descriptionDiff = getDescriptionScore(incoming) - getDescriptionScore(current);
+  if (descriptionDiff !== 0) return descriptionDiff > 0;
+
+  const timestampDiff = parseHeadlineTimestamp(incoming) - parseHeadlineTimestamp(current);
+  return timestampDiff > 0;
+}
+
+function mergeSourceNames(headline: ParsedHeadline, incoming: ParsedHeadline, primarySource: string): string[] {
+  const merged = new Set<string>([
+    headline.source,
+    ...headline.alternateSources,
+    incoming.source,
+    ...incoming.alternateSources,
+  ].filter(Boolean));
+  merged.delete(primarySource);
+  return [...merged];
+}
+
+function mergeParsedHeadlineEntry(current: ParsedHeadline, incoming: ParsedHeadline): ParsedHeadline {
+  const replacePrimary = shouldReplacePrimaryHeadline(current, incoming);
+  const primary = replacePrimary ? incoming : current;
+  const secondary = replacePrimary ? current : incoming;
+  const category = primary.category !== 'uncategorized'
+    ? primary.category
+    : secondary.category;
+  const alternateSources = mergeSourceNames(current, incoming, primary.source);
+  const richerDescription = getDescriptionScore(primary) >= getDescriptionScore(secondary)
+    ? primary.description
+    : secondary.description;
+
+  return {
+    ...primary,
+    category,
+    description: richerDescription,
+    alternateSources,
+    sourceDomain: primary.sourceDomain || secondary.sourceDomain,
+    sourceUrl: primary.sourceUrl || secondary.sourceUrl,
+    pubDate: primary.pubDate || secondary.pubDate,
+    language: primary.language || secondary.language,
+  };
+}
+
+export function dedupeParsedHeadlines(headlines: ParsedHeadline[]): {
+  headlines: ParsedHeadline[];
+  duplicatesFiltered: number;
+} {
+  const deduped: ParsedHeadline[] = [];
+  const canonicalMap = new Map<string, number>();
+  const fingerprintMap = new Map<string, number>();
+  let duplicatesFiltered = 0;
+
+  for (const headline of headlines) {
+    const canonicalKey = headline.canonicalUrl.toLowerCase();
+    const fingerprintKey = headline.fingerprint;
+    const existingIndex = canonicalMap.get(canonicalKey) ?? fingerprintMap.get(fingerprintKey);
+
+    if (existingIndex == null) {
+      const nextIndex = deduped.push(headline) - 1;
+      canonicalMap.set(canonicalKey, nextIndex);
+      fingerprintMap.set(fingerprintKey, nextIndex);
+      continue;
+    }
+
+    duplicatesFiltered += 1;
+    const mergedHeadline = mergeParsedHeadlineEntry(deduped[existingIndex]!, headline);
+    deduped[existingIndex] = mergedHeadline;
+    canonicalMap.set(canonicalKey, existingIndex);
+    canonicalMap.set(mergedHeadline.canonicalUrl.toLowerCase(), existingIndex);
+    fingerprintMap.set(fingerprintKey, existingIndex);
+    fingerprintMap.set(mergedHeadline.fingerprint, existingIndex);
+  }
+
+  return { headlines: deduped, duplicatesFiltered };
+}
+
+export function groupHeadlinesByCategory(headlines: ParsedHeadline[]): Record<ParsedHeadlineCategory, ParsedHeadline[]> {
+  return headlines.reduce<Record<ParsedHeadlineCategory, ParsedHeadline[]>>((groups, headline) => {
+    groups[headline.category].push(headline);
+    return groups;
+  }, {
+    ai_tech: [],
+    asia_tech: [],
+    community: [],
+    city_local: [],
+    uncategorized: [],
+  });
+}
+
+export function countMergedDuplicates(headlines: ParsedHeadline[]): number {
+  return headlines.reduce((total, headline) => total + headline.alternateSources.length, 0);
+}
+
 export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
   if (parsedNewsCache && Date.now() - parsedNewsCache.ts < PARSED_NEWS_CACHE_TTL_MS) {
     appLogger.debug({ cached: parsedNewsCache.headlines.length }, 'Returning cached news headlines');
@@ -1492,7 +1844,7 @@ export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
           { site: site.name, count: headlines.length, type: site.type, category: site.category },
           'Site parsed successfully',
         );
-        return headlines.map(h => ({ ...h, source: site.name }));
+        return headlines;
       } catch (err) {
         appLogger.warn(
           { site: site.name, url: site.url, error: err instanceof Error ? err.message : String(err) },
@@ -1504,27 +1856,12 @@ export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
   );
 
   const allHeadlines: ParsedHeadline[] = [];
-  const seenTitles = new Set<string>();
-  const seenUrls = new Set<string>();
-  let duplicatesFiltered = 0;
   let failedSites = 0;
 
   results.forEach((result, i) => {
     const site = enabledSites[i]!;
     if (result.status === 'fulfilled') {
-      for (const headline of result.value) {
-        const titleNorm = normalizeTitle(headline.title);
-        const urlNorm = headline.url.toLowerCase();
-
-        if (seenTitles.has(titleNorm) || seenUrls.has(urlNorm)) {
-          duplicatesFiltered++;
-          continue;
-        }
-
-        seenTitles.add(titleNorm);
-        seenUrls.add(urlNorm);
-        allHeadlines.push(headline);
-      }
+      allHeadlines.push(...result.value);
     } else {
       failedSites++;
       appLogger.warn(
@@ -1534,25 +1871,29 @@ export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
     }
   });
 
+  const deduped = dedupeParsedHeadlines(allHeadlines);
+  const grouped = groupHeadlinesByCategory(deduped.headlines);
+
   appLogger.info(
     {
-      totalHeadlines: allHeadlines.length,
+      totalHeadlines: deduped.headlines.length,
       totalSites: enabledSites.length,
       failedSites,
-      duplicatesFiltered,
+      duplicatesFiltered: deduped.duplicatesFiltered,
+      mergedDuplicates: countMergedDuplicates(deduped.headlines),
       byCategory: {
-        ai_tech: allHeadlines.filter(h => h.category === 'ai_tech').length,
-        community: allHeadlines.filter(h => h.category === 'community').length,
-        asia_tech: allHeadlines.filter(h => h.category === 'asia_tech').length,
-        city_local: allHeadlines.filter(h => h.category === 'city_local').length,
-        uncategorized: allHeadlines.filter(h => !h.category).length,
+        ai_tech: grouped.ai_tech.length,
+        community: grouped.community.length,
+        asia_tech: grouped.asia_tech.length,
+        city_local: grouped.city_local.length,
+        uncategorized: grouped.uncategorized.length,
       },
     },
     'News parsing complete',
   );
 
-  parsedNewsCache = { headlines: allHeadlines, ts: Date.now() };
-  return allHeadlines;
+  parsedNewsCache = { headlines: deduped.headlines, ts: Date.now() };
+  return deduped.headlines;
 }
 
 /**
