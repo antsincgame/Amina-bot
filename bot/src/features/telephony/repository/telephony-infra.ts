@@ -79,7 +79,15 @@ CREATE TABLE IF NOT EXISTS telephony_call_artifacts (
   artifact_type TEXT NOT NULL,
   status TEXT NOT NULL,
   url TEXT,
+  storage_path TEXT,
   content TEXT,
+  mime_type TEXT,
+  size_bytes BIGINT,
+  duration_ms INTEGER,
+  checksum_sha256 TEXT,
+  archive_status TEXT,
+  retention_until TIMESTAMPTZ,
+  version INTEGER NOT NULL DEFAULT 1,
   metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -117,8 +125,23 @@ CREATE INDEX IF NOT EXISTS idx_telephony_call_sessions_request_id
   ON telephony_call_sessions(request_id);
 CREATE INDEX IF NOT EXISTS idx_telephony_call_sessions_call_id
   ON telephony_call_sessions(call_id);
+CREATE INDEX IF NOT EXISTS idx_telephony_call_sessions_status_created
+  ON telephony_call_sessions(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_telephony_call_events_session_type
+  ON telephony_call_events(session_id, event_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_telephony_call_artifacts_archive_status
+  ON telephony_call_artifacts(archive_status);
 CREATE INDEX IF NOT EXISTS idx_telephony_call_jobs_status_due
   ON telephony_call_jobs(status, next_run_at);
+
+ALTER TABLE telephony_call_artifacts ADD COLUMN IF NOT EXISTS storage_path TEXT;
+ALTER TABLE telephony_call_artifacts ADD COLUMN IF NOT EXISTS mime_type TEXT;
+ALTER TABLE telephony_call_artifacts ADD COLUMN IF NOT EXISTS size_bytes BIGINT;
+ALTER TABLE telephony_call_artifacts ADD COLUMN IF NOT EXISTS duration_ms INTEGER;
+ALTER TABLE telephony_call_artifacts ADD COLUMN IF NOT EXISTS checksum_sha256 TEXT;
+ALTER TABLE telephony_call_artifacts ADD COLUMN IF NOT EXISTS archive_status TEXT;
+ALTER TABLE telephony_call_artifacts ADD COLUMN IF NOT EXISTS retention_until TIMESTAMPTZ;
+ALTER TABLE telephony_call_artifacts ADD COLUMN IF NOT EXISTS version INTEGER NOT NULL DEFAULT 1;
 `;
 
 export async function ensureTelephonyInfra(): Promise<void> {

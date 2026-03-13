@@ -55,4 +55,20 @@ export const callOutcomeRepo = {
 
     return mapRowToOutcome(data as TelephonyCallOutcomeRow);
   },
+
+  async getBySession(sessionId: string): Promise<TelephonyCallOutcome | null> {
+    await ensureTelephonyInfra();
+
+    const { data, error } = await getSupabase()
+      .from('telephony_call_outcomes')
+      .select('*')
+      .eq('session_id', sessionId)
+      .maybeSingle();
+
+    if (error) {
+      throw error;
+    }
+
+    return data ? mapRowToOutcome(data as TelephonyCallOutcomeRow) : null;
+  },
 };

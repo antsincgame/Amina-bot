@@ -29,6 +29,7 @@ import {
 } from '../features/telephony/ai-scenarios.js';
 import { aiService } from '../ai/openrouter.js';
 import type { AIMessage } from '../../../shared/types/index.js';
+import type { TelephonyRuntimeMode } from '../../../shared/types/telephony.js';
 import {
   buildMainMenu,
   buildReplyKeyboard,
@@ -736,6 +737,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
       '📞 <b>AI-звонок</b>\n\n' +
       'Формат:\n' +
       '<code>/callai scenario_id | +375291234567 | задача для ИИ</code>\n\n' +
+      'Формат с runtime override:\n' +
+      '<code>/callai scenario_id | +375291234567 | задача | realtime</code>\n\n' +
       'Быстрый режим по умолчанию:\n' +
       '<code>/callai +375291234567 | напомни о встрече и попроси подтвердить время</code>\n\n' +
       'Доступные сценарии:\n' +
@@ -754,18 +757,37 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
     const parts = input.split('|').map((part) => part.trim()).filter(Boolean);
     const looksLikePhone = (value: string): boolean => /(\+?\d[\d\s\-()]{6,})/.test(value);
+    const parseRuntimeOverride = (value: string | undefined): TelephonyRuntimeMode | null => {
+      switch ((value ?? '').trim().toLowerCase()) {
+        case 'scripted':
+          return 'scripted';
+        case 'shadow':
+          return 'shadow';
+        case 'hybrid':
+          return 'hybrid';
+        case 'realtime':
+          return 'realtime';
+        default:
+          return null;
+      }
+    };
 
     let scenarioId = scenarios[0]!.id;
     let phoneRaw = '';
     let task = '';
+    let runtimeOverride: TelephonyRuntimeMode | null = null;
 
-    if (parts.length >= 2 && looksLikePhone(parts[0] ?? '')) {
-      phoneRaw = parts[0] ?? '';
-      task = parts.slice(1).join(' | ');
-    } else if (parts.length >= 3) {
-      scenarioId = parts[0] ?? scenarioId;
-      phoneRaw = parts[1] ?? '';
-      task = parts.slice(2).join(' | ');
+    const explicitRuntime = parseRuntimeOverride(parts.at(-1));
+    const effectiveParts = explicitRuntime ? parts.slice(0, -1) : parts;
+    runtimeOverride = explicitRuntime;
+
+    if (effectiveParts.length >= 2 && looksLikePhone(effectiveParts[0] ?? '')) {
+      phoneRaw = effectiveParts[0] ?? '';
+      task = effectiveParts.slice(1).join(' | ');
+    } else if (effectiveParts.length >= 3) {
+      scenarioId = effectiveParts[0] ?? scenarioId;
+      phoneRaw = effectiveParts[1] ?? '';
+      task = effectiveParts.slice(2).join(' | ');
     } else {
       await ctx.reply(helpText, { parse_mode: 'HTML' });
       return;
@@ -800,6 +822,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
         task,
         ownerTelegramId: userId,
         initiatedBy: ctx.from.first_name || userId,
+        runtimeOverride: runtimeOverride ?? undefined,
       });
 
       const details = plan.callMode === 'speech'
@@ -813,7 +836,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
         `📋 План: ${escapeHtml(plan.summary)}\n` +
         `${details}\n` +
         `🆔 ID: <code>${escapeHtml(result.id || 'pending')}</code>\n` +
-        `⚙️ Режим: <code>${escapeHtml(result.mode)}</code>\n\n` +
+        `⚙️ Режим: <code>${escapeHtml(result.mode)}</code>\n` +
+        `🎚 Override: <code>${escapeHtml(runtimeOverride ?? 'scenario-default')}</code>\n\n` +
         `После записи разговора я пришлю тебе расшифровку и итог в Telegram.`,
         { parse_mode: 'HTML' },
       );

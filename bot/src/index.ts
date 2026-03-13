@@ -23,6 +23,7 @@ import { scheduleHybridDigestPrewarm, stopHybridDigestPrewarm } from './features
 import { ensureVoiceMessagesInfra } from './features/voice-messages-repo.js';
 import { ensureTelephonyInfra } from './features/telephony/repository/telephony-infra.js';
 import { startTelephonyJobWorker, stopTelephonyJobWorker } from './features/telephony/service/postcall-job-worker.js';
+import { ensureTelephonyRecordingsInfra } from './features/telephony/telephony-recordings-repo.js';
 
 // --------------------------------------------
 // Application Entry Point (v1.0.1)
@@ -260,6 +261,9 @@ const initBotAndServices = async (): Promise<void> => {
 
   ensureTelephonyInfra().catch(err =>
     appLogger.warn({ error: err }, 'Telephony infra init failed')
+  );
+  ensureTelephonyRecordingsInfra().catch(err =>
+    appLogger.warn({ error: err }, 'Telephony recordings infra init failed')
   );
   startTelephonyJobWorker();
 

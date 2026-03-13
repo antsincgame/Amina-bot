@@ -85,6 +85,28 @@ describe('call runtime router', () => {
     expect(result.metadata.executedRuntime).toBe('realtime');
   });
 
+  it('marks hybrid runtime as realtime when bridge is available', async () => {
+    isRealtimeBridgeAvailableMock.mockResolvedValue(true);
+    const { startThroughRuntimeRouter } = await import('./call-runtime-router.js');
+
+    const result = await startThroughRuntimeRouter({
+      session: {
+        id: 'session-1',
+      } as never,
+      scenario: {
+        runtimeMode: 'hybrid',
+        policy: { fallbackMode: 'scripted' },
+      } as never,
+      plan: { callMode: 'ask_question' } as never,
+      phone: '+375291234567',
+      task: 'task',
+    });
+
+    expect(realtimeStartMock).toHaveBeenCalledTimes(1);
+    expect(result.metadata.selectedRuntime).toBe('hybrid');
+    expect(result.metadata.executedRuntime).toBe('realtime');
+  });
+
   it('throws when realtime is required and fallback is disabled', async () => {
     isRealtimeBridgeAvailableMock.mockResolvedValue(false);
     const { startThroughRuntimeRouter } = await import('./call-runtime-router.js');

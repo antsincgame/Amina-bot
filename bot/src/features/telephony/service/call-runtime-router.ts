@@ -46,5 +46,9 @@ export async function startThroughRuntimeRouter(
   }
 
   const result = await realtimeRuntime.start(context);
-  return withRuntimeMetadata(result, selectedRuntime, selectedRuntime);
+  return withRuntimeMetadata(
+    result,
+    selectedRuntime,
+    selectedRuntime === 'hybrid' ? 'realtime' : selectedRuntime,
+  );
 }

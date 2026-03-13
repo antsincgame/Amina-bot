@@ -1,22 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const chatMock = vi.fn();
 const transcribeAudioMock = vi.fn();
 const logMock = vi.fn();
 const upsertArtifactMock = vi.fn();
 const recordEventMock = vi.fn();
-const listEventsMock = vi.fn();
-const saveOutcomeMock = vi.fn();
 const getSessionByIdMock = vi.fn();
 const updateSessionMock = vi.fn();
-const replaceTurnsMock = vi.fn();
+const uploadRecordingMock = vi.fn();
+const getRealtimeBridgeConfigMock = vi.fn();
+const finalizeTranscriptMock = vi.fn();
 const sendOwnerMessageMock = vi.fn();
-
-vi.mock('../../../ai/openrouter.js', () => ({
-  aiService: {
-    chat: chatMock,
-  },
-}));
 
 vi.mock('../../../ai/multimodal.js', () => ({
   transcribeAudio: transcribeAudioMock,
@@ -37,13 +30,6 @@ vi.mock('../repository/call-artifact-repo.js', () => ({
 vi.mock('../repository/call-event-repo.js', () => ({
   callEventRepo: {
     record: recordEventMock,
-    listBySession: listEventsMock,
-  },
-}));
-
-vi.mock('../repository/call-outcome-repo.js', () => ({
-  callOutcomeRepo: {
-    saveForSession: saveOutcomeMock,
   },
 }));
 
@@ -54,10 +40,18 @@ vi.mock('../repository/call-session-repo.js', () => ({
   },
 }));
 
-vi.mock('../repository/call-turn-repo.js', () => ({
-  callTurnRepo: {
-    replaceForSession: replaceTurnsMock,
+vi.mock('../telephony-recordings-repo.js', () => ({
+  telephonyRecordingsRepo: {
+    uploadFromBuffer: uploadRecordingMock,
   },
+}));
+
+vi.mock('./realtime-bridge-config.js', () => ({
+  getRealtimeBridgeConfig: getRealtimeBridgeConfigMock,
+}));
+
+vi.mock('./telephony-session-finalizer.js', () => ({
+  finalizeTelephonyTranscript: finalizeTranscriptMock,
 }));
 
 vi.mock('./notification-service.js', () => ({
@@ -70,18 +64,27 @@ describe('postcall analysis service', () => {
   });
 
   beforeEach(() => {
-    chatMock.mockReset();
     transcribeAudioMock.mockReset();
     logMock.mockReset();
     upsertArtifactMock.mockReset();
     recordEventMock.mockReset();
-    listEventsMock.mockReset();
-    saveOutcomeMock.mockReset();
     getSessionByIdMock.mockReset();
     updateSessionMock.mockReset();
-    replaceTurnsMock.mockReset();
+    uploadRecordingMock.mockReset();
+    getRealtimeBridgeConfigMock.mockReset();
+    finalizeTranscriptMock.mockReset();
     sendOwnerMessageMock.mockReset();
+
     logMock.mockResolvedValue(undefined);
+    getRealtimeBridgeConfigMock.mockResolvedValue({ recordingRetentionDays: 30 });
+    uploadRecordingMock.mockResolvedValue({
+      bucket: 'telephony-recordings',
+      path: '2026/03/09/session-1.mp3',
+      mimeType: 'audio/mpeg',
+      sizeBytes: 3,
+      checksumSha256: 'abc',
+      signedUrl: 'https://signed.example.com/record.mp3',
+    });
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: true,
@@ -90,7 +93,7 @@ describe('postcall analysis service', () => {
     }));
   });
 
-  it('processes recording end-to-end and stores transcript, turns and summary', async () => {
+  it('archives recording and delegates transcript finalization', async () => {
     getSessionByIdMock.mockResolvedValue({
       id: 'session-1',
       ownerTelegramId: '7867087040',
@@ -102,78 +105,55 @@ describe('postcall analysis service', () => {
       task: 'Подтвердить встречу',
       targetPhone: '+375291234567',
       runtimeMode: 'hybrid',
+      createdAt: '2026-03-09T10:00:00.000Z',
       status: 'linked',
     });
-    updateSessionMock
-      .mockResolvedValueOnce({
-        id: 'session-1',
-        ownerTelegramId: '7867087040',
-        scenarioId: 'confirm-meeting',
-        scenarioName: 'Подтверждение встречи',
-        scenarioGoal: 'Подтвердить встречу',
-        successCriteria: 'Услышать подтверждение',
-        resultPrompt: 'Краткий итог',
-        task: 'Подтвердить встречу',
-        targetPhone: '+375291234567',
-        runtimeMode: 'hybrid',
-        status: 'recorded',
-      })
-      .mockResolvedValueOnce({
-        id: 'session-1',
-        ownerTelegramId: '7867087040',
-        scenarioId: 'confirm-meeting',
-        scenarioName: 'Подтверждение встречи',
-        scenarioGoal: 'Подтвердить встречу',
-        successCriteria: 'Услышать подтверждение',
-        resultPrompt: 'Краткий итог',
-        task: 'Подтвердить встречу',
-        targetPhone: '+375291234567',
-        runtimeMode: 'hybrid',
-        resultSummary: 'Встреча подтверждена.',
-        outcomeLabel: 'успех',
-        status: 'processed',
-      });
-    listEventsMock.mockResolvedValue([
-      {
-        payload: {
-          plan: {
-            summary: 'Подтвердить встречу',
-            callMode: 'ask_question',
-            helloText: 'Здравствуйте.',
-            askText: 'Подтверждаете встречу?',
-            okText: 'Спасибо.',
-            byeText: 'До свидания.',
-            successHint: 'Подтверждение встречи',
-          },
-        },
-      },
-    ]);
-    transcribeAudioMock.mockResolvedValue({ text: 'Да, подтверждаю.' });
-    chatMock.mockResolvedValue({
-      content: '{"outcomeLabel":"успех","resultSummary":"Встреча подтверждена."}',
+    updateSessionMock.mockResolvedValue({
+      id: 'session-1',
+      status: 'recorded',
+    });
+    transcribeAudioMock.mockResolvedValue({
+      text: 'Да, подтверждаю.',
+      model: 'groq/whisper-large-v3-turbo',
+      duration_seconds: 4,
+    });
+    finalizeTranscriptMock.mockResolvedValue({
+      id: 'session-1',
+      status: 'processed',
+      outcomeLabel: 'успех',
     });
 
     const { processRecordingForSession } = await import('./postcall-analysis-service.js');
-
     const result = await processRecordingForSession('session-1', 'https://example.com/record.mp3');
 
     expect(result.status).toBe('processed');
-    expect(upsertArtifactMock).toHaveBeenCalled();
-    expect(replaceTurnsMock).toHaveBeenCalledWith(
+    expect(uploadRecordingMock).toHaveBeenCalledTimes(1);
+    expect(upsertArtifactMock).toHaveBeenCalledWith(
       'session-1',
-      expect.arrayContaining([
-        expect.objectContaining({ speaker: 'agent', source: 'script' }),
-        expect.objectContaining({ speaker: 'customer', source: 'transcript' }),
-      ]),
+      'recording',
+      expect.objectContaining({
+        archiveStatus: 'archived',
+        storagePath: '2026/03/09/session-1.mp3',
+      }),
     );
-    expect(saveOutcomeMock).toHaveBeenCalledWith('session-1', expect.objectContaining({
-      outcomeLabel: 'успех',
-    }));
-    expect(recordEventMock).toHaveBeenCalledWith('session-1', 'record_processed', expect.any(Object));
-    expect(sendOwnerMessageMock).toHaveBeenCalledTimes(1);
+    expect(recordEventMock).toHaveBeenCalledWith(
+      'session-1',
+      'recording_archived',
+      expect.objectContaining({
+        storagePath: '2026/03/09/session-1.mp3',
+      }),
+    );
+    expect(finalizeTranscriptMock).toHaveBeenCalledWith(
+      'session-1',
+      'Да, подтверждаю.',
+      expect.objectContaining({
+        recordLink: 'https://signed.example.com/record.mp3',
+        finalStatus: 'processed',
+      }),
+    );
   });
 
-  it('marks session failed when analysis throws', async () => {
+  it('marks session failed when archive or stt fails', async () => {
     getSessionByIdMock.mockResolvedValue({
       id: 'session-2',
       ownerTelegramId: '7867087040',
@@ -185,33 +165,16 @@ describe('postcall analysis service', () => {
       task: 'Подтвердить встречу',
       targetPhone: '+375291234567',
       runtimeMode: 'hybrid',
+      createdAt: '2026-03-09T10:00:00.000Z',
       status: 'linked',
     });
     updateSessionMock
+      .mockResolvedValueOnce({ id: 'session-2', status: 'recorded' })
       .mockResolvedValueOnce({
         id: 'session-2',
         ownerTelegramId: '7867087040',
-        scenarioId: 'confirm-meeting',
         scenarioName: 'Подтверждение встречи',
-        scenarioGoal: 'Подтвердить встречу',
-        successCriteria: 'Услышать подтверждение',
-        resultPrompt: 'Краткий итог',
-        task: 'Подтвердить встречу',
         targetPhone: '+375291234567',
-        runtimeMode: 'hybrid',
-        status: 'recorded',
-      })
-      .mockResolvedValueOnce({
-        id: 'session-2',
-        ownerTelegramId: '7867087040',
-        scenarioId: 'confirm-meeting',
-        scenarioName: 'Подтверждение встречи',
-        scenarioGoal: 'Подтвердить встречу',
-        successCriteria: 'Услышать подтверждение',
-        resultPrompt: 'Краткий итог',
-        task: 'Подтвердить встречу',
-        targetPhone: '+375291234567',
-        runtimeMode: 'hybrid',
         status: 'failed',
       });
     transcribeAudioMock.mockRejectedValue(new Error('stt failed'));
@@ -220,6 +183,13 @@ describe('postcall analysis service', () => {
 
     await expect(processRecordingForSession('session-2', 'https://example.com/record.mp3')).rejects.toThrow('stt failed');
     expect(updateSessionMock).toHaveBeenLastCalledWith('session-2', { status: 'failed' });
+    expect(upsertArtifactMock).toHaveBeenCalledWith(
+      'session-2',
+      'analysis_report',
+      expect.objectContaining({
+        archiveStatus: 'failed',
+      }),
+    );
     expect(recordEventMock).toHaveBeenCalledWith('session-2', 'record_processing_failed', expect.any(Object));
     expect(sendOwnerMessageMock).toHaveBeenCalledTimes(1);
   });

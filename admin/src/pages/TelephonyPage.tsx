@@ -24,9 +24,14 @@ import {
 } from 'lucide-react';
 import { fetchBotApi, settingsApi } from '../api/supabase';
 import type {
+  TelephonyCallArtifact,
+  TelephonyCallEvent,
+  TelephonyCallOutcome,
+  TelephonyCallTurn,
   TelephonyAiCallPlan,
   TelephonyAiCallSession,
   TelephonyAiScenario,
+  TelephonyRuntimeMode,
 } from '../../../shared/types/telephony.js';
 
 interface LiraXStatus {
@@ -35,6 +40,21 @@ interface LiraXStatus {
   defaultExt: string;
   webhookUrl: string;
   hasWebhookToken: boolean;
+}
+
+interface RealtimeBridgeStatus {
+  enabled: boolean;
+  configured: boolean;
+  url: string;
+  healthUrl: string;
+  reachable: boolean | null;
+  archiveRecordings: boolean;
+  storePartialTranscript: boolean;
+  latencyBudgetMs: number;
+  recordingRetentionDays: number;
+  voiceProvider: string;
+  voiceModel: string;
+  speechModel: string;
 }
 
 interface TelephonyUser {
@@ -53,6 +73,14 @@ interface TelephonyAiStartResponse extends TelephonyAiPreviewResponse {
     id: string;
     mode: string;
   };
+}
+
+interface TelephonySessionDetails {
+  session: TelephonyAiCallSession;
+  events: TelephonyCallEvent[];
+  turns: TelephonyCallTurn[];
+  artifacts: TelephonyCallArtifact[];
+  outcome: TelephonyCallOutcome | null;
 }
 
 function createScenarioDraft(): TelephonyAiScenario {
@@ -108,16 +136,32 @@ function formatRuntimeMode(mode: TelephonyAiScenario['runtimeMode']): string {
   }
 }
 
+function formatRuntimeOverride(mode: TelephonyRuntimeMode | ''): string {
+  return mode ? formatRuntimeMode(mode) : 'По сценарию';
+}
+
 function formatSessionStatus(status: TelephonyAiCallSession['status']): string {
   switch (status) {
     case 'initiated':
       return 'Инициирован';
+    case 'queued':
+      return 'В очереди bridge';
+    case 'dialing':
+      return 'Набор номера';
+    case 'live':
+      return 'Живой диалог';
     case 'linked':
       return 'Связан с callid';
     case 'recorded':
       return 'Запись получена';
+    case 'completed':
+      return 'Звонок завершён';
     case 'processed':
       return 'Обработан';
+    case 'fallback':
+      return 'Ушёл в fallback';
+    case 'cancelled':
+      return 'Отменён';
     case 'failed':
       return 'Ошибка';
     default:
@@ -127,12 +171,59 @@ function formatSessionStatus(status: TelephonyAiCallSession['status']): string {
 
 function formatSessionStatusClass(status: TelephonyAiCallSession['status']): string {
   switch (status) {
+    case 'live':
+      return 'text-sky-300 border-sky-500/20 bg-sky-500/10';
+    case 'completed':
     case 'processed':
       return 'text-emerald-400 border-emerald-500/20 bg-emerald-500/10';
+    case 'fallback':
+      return 'text-violet-300 border-violet-500/20 bg-violet-500/10';
+    case 'cancelled':
     case 'failed':
       return 'text-red-400 border-red-500/20 bg-red-500/10';
     default:
       return 'text-amber-300 border-amber-500/20 bg-amber-500/10';
+  }
+}
+
+function formatBridgeReachability(value: boolean | null): string {
+  if (value === true) {
+    return 'Bridge отвечает';
+  }
+
+  if (value === false) {
+    return 'Bridge недоступен';
+  }
+
+  return 'Проверка недоступна';
+}
+
+function formatEventType(value: string): string {
+  switch (value) {
+    case 'bridge_session_started':
+      return 'Bridge session started';
+    case 'call_dialing':
+      return 'Dialing';
+    case 'call_connected':
+      return 'Connected';
+    case 'partial_transcript_updated':
+      return 'Partial transcript';
+    case 'transcript_finalized':
+      return 'Transcript finalized';
+    case 'agent_turn_started':
+      return 'Agent turn started';
+    case 'agent_turn_completed':
+      return 'Agent turn completed';
+    case 'fallback_triggered':
+      return 'Fallback triggered';
+    case 'recording_archived':
+      return 'Recording archived';
+    case 'call_completed':
+      return 'Call completed';
+    case 'call_failed':
+      return 'Call failed';
+    default:
+      return value;
   }
 }
 
@@ -210,11 +301,18 @@ async function startAiCall(
   phone: string,
   task: string,
   plan?: TelephonyAiCallPlan,
+  runtimeOverride?: TelephonyRuntimeMode | '',
 ): Promise<TelephonyAiStartResponse> {
   const response = await fetchBotApi('/api/lirax/ai-calls/start', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ scenarioId, phone, task, plan }),
+    body: JSON.stringify({
+      scenarioId,
+      phone,
+      task,
+      plan,
+      runtimeOverride: runtimeOverride || undefined,
+    }),
   });
   const json = await readJson<{ data: TelephonyAiStartResponse }>(response);
   return json.data;
@@ -224,6 +322,18 @@ async function fetchAiSessions(): Promise<TelephonyAiCallSession[]> {
   const response = await fetchBotApi('/api/lirax/ai-calls/sessions');
   const json = await readJson<{ data: TelephonyAiCallSession[] }>(response);
   return json.data ?? [];
+}
+
+async function fetchRealtimeStatus(): Promise<RealtimeBridgeStatus> {
+  const response = await fetchBotApi('/api/telephony/realtime/status');
+  const json = await readJson<{ data: RealtimeBridgeStatus }>(response);
+  return json.data;
+}
+
+async function fetchSessionDetails(sessionId: string): Promise<TelephonySessionDetails> {
+  const response = await fetchBotApi(`/api/lirax/ai-calls/sessions/${sessionId}`);
+  const json = await readJson<{ data: TelephonySessionDetails }>(response);
+  return json.data;
 }
 
 const TelephonyPage = () => {
@@ -236,6 +346,13 @@ const TelephonyPage = () => {
   const [operatorPhone, setOperatorPhone] = useState('');
   const [notifyCalls, setNotifyCalls] = useState(true);
   const [notifyRecords, setNotifyRecords] = useState(true);
+  const [realtimeEnabled, setRealtimeEnabled] = useState(false);
+  const [mediaBridgeUrl, setMediaBridgeUrl] = useState('');
+  const [mediaBridgeToken, setMediaBridgeToken] = useState('');
+  const [archiveRecordings, setArchiveRecordings] = useState(true);
+  const [storePartialTranscript, setStorePartialTranscript] = useState(true);
+  const [latencyBudgetMs, setLatencyBudgetMs] = useState('1800');
+  const [recordingRetentionDays, setRecordingRetentionDays] = useState('30');
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [reloadWarning, setReloadWarning] = useState(false);
 
@@ -247,12 +364,20 @@ const TelephonyPage = () => {
   const [studioScenarioId, setStudioScenarioId] = useState('');
   const [studioPhone, setStudioPhone] = useState('');
   const [studioTask, setStudioTask] = useState('');
+  const [studioRuntimeOverride, setStudioRuntimeOverride] = useState<TelephonyRuntimeMode | ''>('');
   const [previewData, setPreviewData] = useState<TelephonyAiPreviewResponse | null>(null);
   const [startSuccess, setStartSuccess] = useState<string | null>(null);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ['lirax-status'],
     queryFn: fetchLiraXStatus,
+    refetchInterval: 30_000,
+  });
+
+  const { data: realtimeStatus, isLoading: realtimeStatusLoading } = useQuery({
+    queryKey: ['telephony-realtime-status'],
+    queryFn: fetchRealtimeStatus,
     refetchInterval: 30_000,
   });
 
@@ -277,6 +402,13 @@ const TelephonyPage = () => {
     refetchInterval: 20_000,
   });
 
+  const { data: selectedSessionDetails, isLoading: sessionDetailsLoading } = useQuery({
+    queryKey: ['lirax-ai-session-detail', selectedSessionId],
+    queryFn: () => fetchSessionDetails(selectedSessionId!),
+    enabled: Boolean(selectedSessionId),
+    refetchInterval: selectedSessionId ? 15_000 : false,
+  });
+
   useEffect(() => {
     if (!allSettings) {
       return;
@@ -290,6 +422,13 @@ const TelephonyPage = () => {
     setOperatorPhone(map.get('lirax_operator_phone') || '');
     setNotifyCalls(map.get('lirax_notify_calls') !== 'false');
     setNotifyRecords(map.get('lirax_notify_records') !== 'false');
+    setRealtimeEnabled(map.get('telephony_realtime_enabled') === 'true');
+    setMediaBridgeUrl(map.get('telephony_media_bridge_url') || '');
+    setMediaBridgeToken(map.get('telephony_media_bridge_token') || '');
+    setArchiveRecordings(map.get('telephony_recordings_archive_enabled') !== 'false');
+    setStorePartialTranscript(map.get('telephony_partial_transcript_enabled') !== 'false');
+    setLatencyBudgetMs(map.get('telephony_latency_budget_ms') || '1800');
+    setRecordingRetentionDays(map.get('telephony_recording_retention_days') || '30');
   }, [allSettings]);
 
   useEffect(() => {
@@ -309,7 +448,7 @@ const TelephonyPage = () => {
   useEffect(() => {
     setPreviewData(null);
     setStartSuccess(null);
-  }, [studioScenarioId, studioPhone, studioTask]);
+  }, [studioScenarioId, studioPhone, studioTask, studioRuntimeOverride]);
 
   const enabledScenarios = useMemo(
     () => scenarios.filter((scenario) => scenario.enabled),
@@ -326,6 +465,13 @@ const TelephonyPage = () => {
         lirax_operator_phone: operatorPhone,
         lirax_notify_calls: notifyCalls ? 'true' : 'false',
         lirax_notify_records: notifyRecords ? 'true' : 'false',
+        telephony_realtime_enabled: realtimeEnabled ? 'true' : 'false',
+        telephony_media_bridge_url: mediaBridgeUrl,
+        telephony_media_bridge_token: mediaBridgeToken,
+        telephony_recordings_archive_enabled: archiveRecordings ? 'true' : 'false',
+        telephony_partial_transcript_enabled: storePartialTranscript ? 'true' : 'false',
+        telephony_latency_budget_ms: latencyBudgetMs,
+        telephony_recording_retention_days: recordingRetentionDays,
       });
 
       const reloadResponse = await fetchBotApi('/api/lirax/reload-config', { method: 'POST' }).catch(() => null);
@@ -337,6 +483,7 @@ const TelephonyPage = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] });
       queryClient.invalidateQueries({ queryKey: ['lirax-status'] });
+      queryClient.invalidateQueries({ queryKey: ['telephony-realtime-status'] });
       setSettingsSaved(true);
       setMutationError(null);
       setTimeout(() => setSettingsSaved(false), 3000);
@@ -398,7 +545,7 @@ const TelephonyPage = () => {
   const { mutate: executeCall, isPending: startingCall } = useMutation({
     mutationFn: async () => {
       const preview = previewData ?? await previewAiCall(studioScenarioId, studioPhone, studioTask);
-      return startAiCall(studioScenarioId, studioPhone, studioTask, preview.plan);
+      return startAiCall(studioScenarioId, studioPhone, studioTask, preview.plan, studioRuntimeOverride);
     },
     onSuccess: (data) => {
       setPreviewData(data);
@@ -523,6 +670,31 @@ const TelephonyPage = () => {
       </div>
 
       <div className="card p-6">
+        <div className="flex items-center gap-3 mb-4">
+          {realtimeStatus?.enabled ? (
+            <Mic className="w-5 h-5 text-sky-400" />
+          ) : (
+            <MicOff className="w-5 h-5 text-gray-500" />
+          )}
+          <h2 className="text-lg font-semibold text-white">Realtime voice bridge</h2>
+          {realtimeStatusLoading && <Loader2 className="w-4 h-4 animate-spin text-gray-500" />}
+        </div>
+
+        {realtimeStatus ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <StatusRow label="Режим realtime" value={realtimeStatus.enabled ? 'Включён' : 'Выключен'} ok={realtimeStatus.enabled} />
+            <StatusRow label="Bridge URL" value={realtimeStatus.url || 'Не задан'} ok={realtimeStatus.configured} mono />
+            <StatusRow label="Bridge health" value={formatBridgeReachability(realtimeStatus.reachable)} ok={realtimeStatus.reachable !== false} />
+            <StatusRow label="Голос" value={`${realtimeStatus.voiceProvider} / ${realtimeStatus.voiceModel}`} ok={!!realtimeStatus.voiceProvider} mono />
+            <StatusRow label="STT" value={realtimeStatus.speechModel} ok={!!realtimeStatus.speechModel} mono />
+            <StatusRow label="Latency budget" value={`${realtimeStatus.latencyBudgetMs} ms`} ok={realtimeStatus.latencyBudgetMs > 0} />
+          </div>
+        ) : (
+          !realtimeStatusLoading && <p className="text-sm text-gray-500">Не удалось загрузить статус realtime bridge</p>
+        )}
+      </div>
+
+      <div className="card p-6">
         <div className="flex items-center gap-3 mb-6">
           <User className="w-5 h-5 text-amber-400" />
           <h2 className="text-lg font-semibold text-white">Настройки управления</h2>
@@ -572,6 +744,74 @@ const TelephonyPage = () => {
               label="Уведомления о записях"
               onClick={() => setNotifyRecords((value) => !value)}
             />
+          </div>
+
+          <div className="pt-2 border-t border-white/5">
+            <p className="text-sm font-medium text-white mb-3">Realtime AI voice</p>
+            <div className="space-y-5">
+              <Field label="Media bridge URL" hint="Bridge принимает start payload и шлёт callbacks обратно в backend.">
+                <input
+                  className="input w-full font-mono text-sm"
+                  value={mediaBridgeUrl}
+                  onChange={(e) => setMediaBridgeUrl(e.target.value)}
+                  placeholder="https://bridge.example.com/v1/calls/start"
+                />
+              </Field>
+
+              <Field label="Bridge bearer token" hint="Используется и для outbound start, и для входящих callbackов bridge.">
+                <input
+                  className="input w-full font-mono text-sm"
+                  value={mediaBridgeToken}
+                  onChange={(e) => setMediaBridgeToken(e.target.value)}
+                  placeholder="bridge-secret-token"
+                />
+              </Field>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <Field label="Latency budget (ms)" hint="Если realtime pipeline выходит за бюджет, bridge должен инициировать fallback.">
+                  <input
+                    type="number"
+                    className="input w-full"
+                    value={latencyBudgetMs}
+                    onChange={(e) => setLatencyBudgetMs(e.target.value)}
+                    placeholder="1800"
+                  />
+                </Field>
+                <Field label="Retention (days)" hint="Сколько дней хранить raw recording в Supabase Storage.">
+                  <input
+                    type="number"
+                    className="input w-full"
+                    value={recordingRetentionDays}
+                    onChange={(e) => setRecordingRetentionDays(e.target.value)}
+                    placeholder="30"
+                  />
+                </Field>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-4">
+                <ToggleButton
+                  active={realtimeEnabled}
+                  iconOn={<Mic className="w-4 h-4" />}
+                  iconOff={<MicOff className="w-4 h-4" />}
+                  label="Realtime runtime включён"
+                  onClick={() => setRealtimeEnabled((value) => !value)}
+                />
+                <ToggleButton
+                  active={archiveRecordings}
+                  iconOn={<Mic className="w-4 h-4" />}
+                  iconOff={<MicOff className="w-4 h-4" />}
+                  label="Архивировать raw recording"
+                  onClick={() => setArchiveRecordings((value) => !value)}
+                />
+                <ToggleButton
+                  active={storePartialTranscript}
+                  iconOn={<Sparkles className="w-4 h-4" />}
+                  iconOff={<Sparkles className="w-4 h-4" />}
+                  label="Хранить partial transcript"
+                  onClick={() => setStorePartialTranscript((value) => !value)}
+                />
+              </div>
+            </div>
           </div>
 
           <div className="flex items-center gap-3">
@@ -689,7 +929,7 @@ const TelephonyPage = () => {
           Preview показывает, что именно скажет AI по сценарию. Запуск создаёт реальный звонок и потом присылает владельцу summary по записи.
         </p>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
           <Field label="Сценарий">
             <select className="input w-full" value={studioScenarioId} onChange={(e) => setStudioScenarioId(e.target.value)}>
               {enabledScenarios.map((scenario) => (
@@ -713,6 +953,15 @@ const TelephonyPage = () => {
             <div className="input w-full flex items-center text-sm text-gray-300">
               {ownerChatId || adminChatId || 'Не задан в настройках'}
             </div>
+          </Field>
+
+          <Field label="Runtime override">
+            <select className="input w-full" value={studioRuntimeOverride} onChange={(e) => setStudioRuntimeOverride(e.target.value as TelephonyRuntimeMode | '')}>
+              <option value="">По сценарию</option>
+              <option value="scripted">Scripted</option>
+              <option value="hybrid">Hybrid</option>
+              <option value="realtime">Realtime</option>
+            </select>
           </Field>
         </div>
 
@@ -748,7 +997,7 @@ const TelephonyPage = () => {
               <div>
                 <p className="text-sm font-semibold text-white">{previewData.scenario.name}</p>
                 <p className="text-xs text-gray-500">
-                  {formatScenarioMode(previewData.plan.callMode)} / {formatRuntimeMode(previewData.scenario.runtimeMode)}
+                  {formatScenarioMode(previewData.plan.callMode)} / {formatRuntimeMode(previewData.scenario.runtimeMode)} / override: {formatRuntimeOverride(studioRuntimeOverride)}
                 </p>
               </div>
               <span className="text-xs px-2 py-1 rounded-full border border-violet-500/20 bg-violet-500/10 text-violet-300">
@@ -800,6 +1049,25 @@ const TelephonyPage = () => {
                   <a href={session.recordLink} target="_blank" rel="noreferrer" className="text-sm text-emerald-400 hover:text-emerald-300">
                     Открыть запись звонка
                   </a>
+                )}
+
+                <div className="flex items-center gap-3 pt-1">
+                  <button
+                    className="text-sm text-violet-300 hover:text-violet-200"
+                    onClick={() => setSelectedSessionId((current) => current === session.id ? null : session.id)}
+                  >
+                    {selectedSessionId === session.id ? 'Скрыть live detail' : 'Открыть live detail'}
+                  </button>
+                  {selectedSessionId === session.id && sessionDetailsLoading && (
+                    <span className="text-xs text-gray-500 flex items-center gap-2">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      Загрузка таймлайна
+                    </span>
+                  )}
+                </div>
+
+                {selectedSessionId === session.id && selectedSessionDetails?.session.id === session.id && (
+                  <SessionDetailPanel details={selectedSessionDetails} />
                 )}
               </div>
             ))}
@@ -984,6 +1252,94 @@ const PreviewRow = ({ label, value }: PreviewRowProps) => (
     <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">{label}</p>
     <div className="rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2 text-sm text-gray-200 whitespace-pre-wrap">
       {value}
+    </div>
+  </div>
+);
+
+interface SessionDetailPanelProps {
+  details: TelephonySessionDetails;
+}
+
+const SessionDetailPanel = ({ details }: SessionDetailPanelProps) => (
+  <div className="rounded-2xl border border-violet-500/10 bg-black/20 p-4 space-y-4">
+    {details.outcome && (
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <PreviewRow label="Outcome" value={details.outcome.outcomeLabel} />
+        <PreviewRow label="Result summary" value={details.outcome.resultSummary} />
+      </div>
+    )}
+
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="space-y-3">
+        <p className="text-xs uppercase tracking-wide text-gray-500">Артефакты</p>
+        {details.artifacts.length === 0 ? (
+          <p className="text-sm text-gray-500">Пока нет артефактов.</p>
+        ) : (
+          <div className="space-y-2">
+            {details.artifacts.map((artifact) => (
+              <div key={artifact.id} className="rounded-xl border border-white/5 bg-white/[0.02] px-3 py-3 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-white">{artifact.artifactType}</span>
+                  <span className="text-xs text-gray-500">{artifact.status}</span>
+                </div>
+                {artifact.url && (
+                  <a href={artifact.url} target="_blank" rel="noreferrer" className="mt-2 inline-block text-emerald-400 hover:text-emerald-300">
+                    Открыть артефакт
+                  </a>
+                )}
+                {artifact.storagePath && (
+                  <p className="mt-2 text-xs font-mono text-gray-500 break-all">{artifact.storagePath}</p>
+                )}
+                {artifact.content && (
+                  <p className="mt-2 text-sm text-gray-300 whitespace-pre-wrap">{artifact.content}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-3">
+        <p className="text-xs uppercase tracking-wide text-gray-500">Таймлайн событий</p>
+        {details.events.length === 0 ? (
+          <p className="text-sm text-gray-500">Событий пока нет.</p>
+        ) : (
+          <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
+            {details.events.map((event) => (
+              <div key={event.id} className="rounded-xl border border-white/5 bg-white/[0.02] px-3 py-2.5">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-sm text-white">{formatEventType(event.eventType)}</span>
+                  <span className="text-[11px] text-gray-500">{new Date(event.createdAt).toLocaleTimeString('ru-RU')}</span>
+                </div>
+                {Object.keys(event.payload).length > 0 && (
+                  <pre className="mt-2 whitespace-pre-wrap break-all text-[11px] text-gray-400">
+                    {JSON.stringify(event.payload, null, 2)}
+                  </pre>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+
+    <div className="space-y-3">
+      <p className="text-xs uppercase tracking-wide text-gray-500">Turns</p>
+      {details.turns.length === 0 ? (
+        <p className="text-sm text-gray-500">Пока нет turns.</p>
+      ) : (
+        <div className="space-y-2">
+          {details.turns.map((turn) => (
+            <div key={turn.id} className="rounded-xl border border-white/5 bg-white/[0.02] px-3 py-2.5">
+              <div className="flex items-center justify-between gap-3 mb-1">
+                <span className="text-sm text-white">{turn.turnIndex}. {turn.speaker}</span>
+                <span className="text-[11px] text-gray-500">{turn.source}</span>
+              </div>
+              <p className="text-sm text-gray-300 whitespace-pre-wrap">{turn.content}</p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   </div>
 );

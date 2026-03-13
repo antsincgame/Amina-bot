@@ -3,6 +3,7 @@ import { analyticsRepo } from '../../../db/supabase.js';
 import type {
   TelephonyAiCallPlan,
   TelephonyAiScenario,
+  TelephonyRuntimeMode,
 } from '../../../../../shared/types/telephony.js';
 import {
   buildPlanPrompt,
@@ -26,6 +27,7 @@ export interface StartTelephonyCallParams {
   ownerTelegramId: string;
   initiatedBy: string;
   plan?: TelephonyAiCallPlan;
+  runtimeOverride?: TelephonyRuntimeMode;
 }
 
 export interface TelephonyCallStartResult {
@@ -42,12 +44,11 @@ async function resolveScenarioById(scenarioId: string): Promise<TelephonyAiScena
   return scenario;
 }
 
-export async function previewTelephonyCall(
-  scenarioId: string,
+async function buildPlanForScenario(
+  scenario: TelephonyAiScenario,
   task: string,
   phone: string,
-): Promise<{ scenario: TelephonyAiScenario; plan: TelephonyAiCallPlan }> {
-  const scenario = await resolveScenarioById(scenarioId);
+): Promise<TelephonyAiCallPlan> {
   const aiResult = await aiService.chat(
     buildPlanPrompt(scenario, task, phone),
     'voice',
@@ -60,7 +61,16 @@ export async function previewTelephonyCall(
   );
 
   const rawPlan = safeJsonParse<Record<string, unknown>>(extractJsonObject(aiResult.content) ?? '');
-  const plan = normalizePlan(scenario, rawPlan, task);
+  return normalizePlan(scenario, rawPlan, task);
+}
+
+export async function previewTelephonyCall(
+  scenarioId: string,
+  task: string,
+  phone: string,
+): Promise<{ scenario: TelephonyAiScenario; plan: TelephonyAiCallPlan }> {
+  const scenario = await resolveScenarioById(scenarioId);
+  const plan = await buildPlanForScenario(scenario, task, phone);
 
   return { scenario, plan };
 }
@@ -69,25 +79,31 @@ export async function startTelephonyCall(
   params: StartTelephonyCallParams,
 ): Promise<{ scenario: TelephonyAiScenario; plan: TelephonyAiCallPlan; result: TelephonyCallStartResult }> {
   const scenario = await resolveScenarioById(params.scenarioId);
+  const effectiveScenario: TelephonyAiScenario = params.runtimeOverride
+    ? {
+        ...scenario,
+        runtimeMode: params.runtimeOverride,
+      }
+    : scenario;
   const plan = params.plan
-    ? normalizePlan(scenario, toPlanInput(params.plan), params.task)
-    : (await previewTelephonyCall(params.scenarioId, params.task, params.phone)).plan;
+    ? normalizePlan(effectiveScenario, toPlanInput(params.plan), params.task)
+    : await buildPlanForScenario(effectiveScenario, params.task, params.phone);
 
   const session = await callSessionRepo.create({
     ownerTelegramId: params.ownerTelegramId,
     initiatedBy: params.initiatedBy,
-    scenarioId: scenario.id,
-    scenarioName: scenario.name,
-    scenarioGoal: scenario.goal,
+    scenarioId: effectiveScenario.id,
+    scenarioName: effectiveScenario.name,
+    scenarioGoal: effectiveScenario.goal,
     callMode: plan.callMode,
-    runtimeMode: scenario.runtimeMode,
-    policyVersion: scenario.policyVersion,
+    runtimeMode: effectiveScenario.runtimeMode,
+    policyVersion: effectiveScenario.policyVersion,
     provider: 'unknown',
     targetPhone: normalizePhone(params.phone),
     task: cleanText(params.task),
     summary: cleanText(plan.summary),
-    successCriteria: scenario.successCriteria,
-    resultPrompt: scenario.resultPrompt,
+    successCriteria: effectiveScenario.successCriteria,
+    resultPrompt: effectiveScenario.resultPrompt,
     requestId: null,
     requestMode: 'pending',
     callId: null,
@@ -99,17 +115,23 @@ export async function startTelephonyCall(
   });
 
   await callEventRepo.record(session.id, 'call_started', {
-    scenarioId: scenario.id,
+    scenarioId: effectiveScenario.id,
     plan,
-    runtimeMode: scenario.runtimeMode,
+    runtimeMode: effectiveScenario.runtimeMode,
+    runtimeOverride: params.runtimeOverride ?? null,
     task: params.task,
+  });
+  await callEventRepo.record(session.id, 'provider_request_sent', {
+    scenarioId: effectiveScenario.id,
+    runtimeMode: effectiveScenario.runtimeMode,
+    targetPhone: normalizePhone(params.phone),
   });
 
   let runtimeResult: CallRuntimeResult;
   try {
     runtimeResult = await startThroughRuntimeRouter({
       session,
-      scenario,
+      scenario: effectiveScenario,
       plan,
       phone: normalizePhone(params.phone),
       task: cleanText(params.task),
@@ -142,13 +164,13 @@ export async function startTelephonyCall(
 
   analyticsRepo.log('call_started', 'voice', {
     sessionId: updatedSession.id,
-    scenarioId: scenario.id,
-    runtimeMode: scenario.runtimeMode,
+    scenarioId: effectiveScenario.id,
+    runtimeMode: effectiveScenario.runtimeMode,
     provider: runtimeResult.provider,
   }).catch(() => {});
 
   return {
-    scenario,
+    scenario: effectiveScenario,
     plan,
     result: {
       id: runtimeResult.requestId || updatedSession.id,

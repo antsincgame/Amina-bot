@@ -27,7 +27,7 @@ import { buildDigest } from '../features/digest-scheduler.js';
 import { buildHybridDigest, PreparedDigestUnavailableError } from '../features/digest-hybrid.js';
 import { markdownToTelegramHtml } from '../telegram/format.js';
 import type { DigestPipelineMode, NewsSite } from '../../../shared/types/index.js';
-import type { TelephonyAiCallPlan, TelephonyAiScenario } from '../../../shared/types/telephony.js';
+import type { TelephonyAiCallPlan, TelephonyAiScenario, TelephonyRuntimeMode } from '../../../shared/types/telephony.js';
 import { invalidateTTSConfig } from '../features/tts.js';
 import { voiceMessagesRepo } from '../features/voice-messages-repo.js';
 import {
@@ -53,6 +53,9 @@ import {
   failTelephonyAiCallByRequestId,
   processTelephonyAiCallRecording,
 } from '../features/telephony/ai-call-sessions.js';
+import { getRealtimeBridgeStatus, isRealtimeBridgeTokenValid } from '../features/telephony/service/realtime-bridge-config.js';
+import { handleRealtimeBridgeEvent, respondToRealtimeBridge } from '../features/telephony/service/realtime-bridge-service.js';
+import { getTelephonySessionDetails } from '../features/telephony/service/session-detail-service.js';
 import {
   clearLMStudioCache,
   getLMStudioConfig,
@@ -154,6 +157,24 @@ function getBearerToken(request: FastifyRequest): string | null {
   }
 
   return authorization.slice('Bearer '.length).trim() || null;
+}
+
+async function requireRealtimeBridgeAuth(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<boolean> {
+  const token = getBearerToken(request);
+  if (!token) {
+    await reply.code(401).send({ success: false, error: 'Bridge token is required' });
+    return false;
+  }
+
+  if (!(await isRealtimeBridgeTokenValid(token))) {
+    await reply.code(403).send({ success: false, error: 'Invalid bridge token' });
+    return false;
+  }
+
+  return true;
 }
 
 async function requireAdminAuth(
@@ -2616,6 +2637,46 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
         }
       });
 
+      apiServer.get(
+        '/lirax/ai-calls/sessions/:sessionId',
+        async (
+          request: FastifyRequest<{ Params: { sessionId: string } }>,
+          reply: FastifyReply,
+        ) => {
+          try {
+            const admin = await requireAdminAuth(request, reply);
+            if (!admin) {
+              return;
+            }
+
+            const details = await getTelephonySessionDetails(request.params.sessionId);
+            if (!details) {
+              return reply.code(404).send({ success: false, error: 'Session not found' });
+            }
+
+            return reply.code(200).send({ success: true, data: details });
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : 'Unknown error';
+            return reply.code(500).send({ success: false, error: msg });
+          }
+        },
+      );
+
+      apiServer.get('/telephony/realtime/status', async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+          const admin = await requireAdminAuth(request, reply);
+          if (!admin) {
+            return;
+          }
+
+          const status = await getRealtimeBridgeStatus();
+          return reply.code(200).send({ success: true, data: status });
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : 'Unknown error';
+          return reply.code(500).send({ success: false, error: msg });
+        }
+      });
+
       apiServer.post(
         '/lirax/ai-calls/preview',
         async (
@@ -2654,6 +2715,7 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
               task: string;
               ownerTelegramId?: string;
               plan?: TelephonyAiCallPlan;
+              runtimeOverride?: TelephonyRuntimeMode;
             };
           }>,
           reply: FastifyReply,
@@ -2664,11 +2726,21 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
               return;
             }
 
-            const { scenarioId, phone, task, ownerTelegramId, plan } = request.body;
+            const { scenarioId, phone, task, ownerTelegramId, plan, runtimeOverride } = request.body;
             if (!scenarioId || !phone || !task) {
               return reply
                 .code(400)
                 .send({ success: false, error: 'scenarioId, phone and task are required' });
+            }
+
+            if (
+              runtimeOverride
+              && runtimeOverride !== 'scripted'
+              && runtimeOverride !== 'shadow'
+              && runtimeOverride !== 'hybrid'
+              && runtimeOverride !== 'realtime'
+            ) {
+              return reply.code(400).send({ success: false, error: 'runtimeOverride is invalid' });
             }
 
             const effectiveOwnerId = ownerTelegramId?.trim() || await getTelephonyOwnerTelegramId();
@@ -2685,11 +2757,111 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
               ownerTelegramId: effectiveOwnerId,
               initiatedBy: admin.email ?? admin.userId,
               plan,
+              runtimeOverride,
             });
 
             return reply.code(200).send({ success: true, data: result });
           } catch (error) {
             const msg = error instanceof Error ? error.message : 'Unknown error';
+            return reply.code(500).send({ success: false, error: msg });
+          }
+        },
+      );
+
+      apiServer.post(
+        '/telephony/realtime/bridge/events',
+        async (
+          request: FastifyRequest<{ Body: Record<string, unknown> }>,
+          reply: FastifyReply,
+        ) => {
+          try {
+            if (!(await requireRealtimeBridgeAuth(request, reply))) {
+              return;
+            }
+
+            const body = request.body ?? {};
+            const sessionId = typeof body['sessionId'] === 'string' ? body['sessionId'].trim() : '';
+            const eventType = typeof body['eventType'] === 'string' ? body['eventType'].trim() : '';
+            if (!sessionId || !eventType) {
+              return reply.code(400).send({ success: false, error: 'sessionId and eventType are required' });
+            }
+
+            const updatedSession = await handleRealtimeBridgeEvent({
+              sessionId,
+              eventType,
+              providerEventId: typeof body['providerEventId'] === 'string' ? body['providerEventId'] : null,
+              requestId: typeof body['requestId'] === 'string' ? body['requestId'] : null,
+              callId: typeof body['callId'] === 'string' ? body['callId'] : null,
+              transcript: typeof body['transcript'] === 'string' ? body['transcript'] : null,
+              replyText: typeof body['replyText'] === 'string' ? body['replyText'] : null,
+              confidence: typeof body['confidence'] === 'number' ? body['confidence'] : null,
+              latencyMs: typeof body['latencyMs'] === 'number' ? body['latencyMs'] : null,
+              shouldEndCall: body['shouldEndCall'] === true,
+              shouldFallback: body['shouldFallback'] === true,
+              fallbackReason: typeof body['fallbackReason'] === 'string' ? body['fallbackReason'] : null,
+              recordingUrl: typeof body['recordingUrl'] === 'string' ? body['recordingUrl'] : null,
+              recordingSignedUrl: typeof body['recordingSignedUrl'] === 'string' ? body['recordingSignedUrl'] : null,
+              recordingStoragePath: typeof body['recordingStoragePath'] === 'string' ? body['recordingStoragePath'] : null,
+              recordingMimeType: typeof body['recordingMimeType'] === 'string' ? body['recordingMimeType'] : null,
+              recordingSizeBytes: typeof body['recordingSizeBytes'] === 'number' ? body['recordingSizeBytes'] : null,
+              recordingDurationMs: typeof body['recordingDurationMs'] === 'number' ? body['recordingDurationMs'] : null,
+              recordingChecksumSha256: typeof body['recordingChecksumSha256'] === 'string' ? body['recordingChecksumSha256'] : null,
+              outcomeLabel: typeof body['outcomeLabel'] === 'string' ? body['outcomeLabel'] : null,
+              resultSummary: typeof body['resultSummary'] === 'string' ? body['resultSummary'] : null,
+              turnIndex: typeof body['turnIndex'] === 'number' ? body['turnIndex'] : null,
+              metadata: typeof body['metadata'] === 'object' && body['metadata'] !== null && !Array.isArray(body['metadata'])
+                ? body['metadata'] as Record<string, unknown>
+                : {},
+              error: typeof body['error'] === 'string' ? body['error'] : null,
+            });
+
+            return reply.code(200).send({ success: true, data: updatedSession });
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : 'Unknown error';
+            aiLogger.error({ error: msg }, '[Realtime bridge] Event callback failed');
+            return reply.code(500).send({ success: false, error: msg });
+          }
+        },
+      );
+
+      apiServer.post(
+        '/telephony/realtime/bridge/respond',
+        async (
+          request: FastifyRequest<{ Body: Record<string, unknown> }>,
+          reply: FastifyReply,
+        ) => {
+          try {
+            if (!(await requireRealtimeBridgeAuth(request, reply))) {
+              return;
+            }
+
+            const body = request.body ?? {};
+            const sessionId = typeof body['sessionId'] === 'string' ? body['sessionId'].trim() : '';
+            const transcript = typeof body['transcript'] === 'string' ? body['transcript'] : '';
+            const bootstrap = body['bootstrap'] === true;
+            if (!sessionId || (!bootstrap && !transcript.trim())) {
+              return reply.code(400).send({
+                success: false,
+                error: bootstrap
+                  ? 'sessionId is required for bootstrap respond'
+                  : 'sessionId and transcript are required',
+              });
+            }
+
+            const result = await respondToRealtimeBridge({
+              sessionId,
+              transcript,
+              bootstrap,
+              isFinal: body['isFinal'] !== false,
+              confidence: typeof body['confidence'] === 'number' ? body['confidence'] : null,
+              latencyMs: typeof body['latencyMs'] === 'number' ? body['latencyMs'] : null,
+              providerEventId: typeof body['providerEventId'] === 'string' ? body['providerEventId'] : null,
+            });
+
+            return reply.code(200).send({ success: true, data: result });
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : 'Unknown error';
+            aiLogger.error({ error: msg }, '[Realtime bridge] Respond callback failed');
             return reply.code(500).send({ success: false, error: msg });
           }
         },

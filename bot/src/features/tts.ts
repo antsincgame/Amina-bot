@@ -39,6 +39,15 @@ interface TTSConfig {
   edgeVoice: string;
 }
 
+export interface TtsRuntimeProfile {
+  provider: TTSProvider;
+  elevenlabsVoiceId: string;
+  elevenlabsModelId: string;
+  openaiVoice: OpenAIVoice;
+  openaiModel: string;
+  edgeVoice: string;
+}
+
 // ===== Константы =====
 
 const MAX_TEXT_LENGTH = 10_000;
@@ -116,6 +125,18 @@ async function getTTSConfig(): Promise<TTSConfig> {
 /** Сбросить кеш конфигурации (после изменения настроек) */
 export function invalidateTTSConfig(): void {
   configCache = null;
+}
+
+export async function getTtsRuntimeProfile(): Promise<TtsRuntimeProfile> {
+  const config = await getTTSConfig();
+  return {
+    provider: config.provider,
+    elevenlabsVoiceId: config.elevenlabsVoiceId,
+    elevenlabsModelId: config.elevenlabsModelId,
+    openaiVoice: config.openaiVoice,
+    openaiModel: config.openaiModel,
+    edgeVoice: config.edgeVoice,
+  };
 }
 
 // ===== Главная функция =====

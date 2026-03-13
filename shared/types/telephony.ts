@@ -5,27 +5,45 @@ export type TelephonyProvider = 'lirax' | 'media_bridge' | 'unknown';
 
 export type TelephonyAiSessionStatus =
   | 'initiated'
+  | 'queued'
+  | 'dialing'
+  | 'live'
   | 'linked'
   | 'recorded'
+  | 'completed'
   | 'processed'
+  | 'fallback'
+  | 'cancelled'
   | 'failed';
 
 export type TelephonyCallEventType =
   | 'call_started'
+  | 'bridge_session_started'
+  | 'call_dialing'
+  | 'call_connected'
   | 'runtime_selected'
   | 'runtime_fallback'
+  | 'fallback_triggered'
   | 'provider_request_sent'
   | 'provider_request_accepted'
   | 'webhook_event_received'
+  | 'partial_transcript_updated'
+  | 'transcript_finalized'
+  | 'agent_turn_started'
+  | 'agent_turn_completed'
+  | 'recording_archived'
   | 'call_linked'
   | 'record_enqueued'
   | 'record_processed'
   | 'record_processing_failed'
+  | 'call_cancelled'
   | 'call_failed'
   | 'call_completed';
 
 export type TelephonyCallArtifactType =
   | 'recording'
+  | 'transcript_partial'
+  | 'transcript_final'
   | 'transcript'
   | 'summary'
   | 'analysis_report';
@@ -130,7 +148,15 @@ export interface TelephonyCallArtifact {
   artifactType: TelephonyCallArtifactType;
   status: TelephonyCallArtifactStatus;
   url: string | null;
+  storagePath: string | null;
   content: string | null;
+  mimeType: string | null;
+  sizeBytes: number | null;
+  durationMs: number | null;
+  checksumSha256: string | null;
+  archiveStatus: 'pending' | 'archived' | 'failed' | null;
+  retentionUntil: string | null;
+  version: number;
   metadata: Record<string, unknown>;
   createdAt: string;
   updatedAt: string;

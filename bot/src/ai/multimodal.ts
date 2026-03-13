@@ -196,6 +196,11 @@ interface MultimodalConfig {
   visionMaxTokens: number;
 }
 
+export interface SpeechRecognitionRuntimeProfile {
+  audioModel: string;
+  maxTokens: number;
+}
+
 // Дефолтные модели
 const DEFAULT_VISION_MODEL = 'allenai/molmo-2-8b:free';
 const DEFAULT_AUDIO_MODEL = 'groq/whisper-large-v3';
@@ -258,6 +263,14 @@ const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
     visionMaxTokens,
   };
 };
+
+export async function getSpeechRecognitionRuntimeProfile(): Promise<SpeechRecognitionRuntimeProfile> {
+  const config = await getMultimodalConfig();
+  return {
+    audioModel: config.audioModel,
+    maxTokens: config.maxTokens,
+  };
+}
 
 // --------------------------------------------
 // Vision Service
