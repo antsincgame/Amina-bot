@@ -18,6 +18,15 @@ interface HybridDigestBuildOptions {
   searchMode?: HybridDigestSearchMode;
 }
 
+export class PreparedDigestUnavailableError extends Error {
+  readonly code = 'DIGEST_NOT_PREPARED';
+
+  constructor(city: string) {
+    super(`Prepared digest for city "${city}" is not available yet`);
+    this.name = 'PreparedDigestUnavailableError';
+  }
+}
+
 function getCurrentDateKey(): string {
   const dateKey = new Intl.DateTimeFormat('en-CA', {
     timeZone: config.server.timeZone,
@@ -175,8 +184,9 @@ export async function prepareHybridDigestBase(
   const searchMode = options?.searchMode ?? 'full';
   const sourceHash = await buildSourceHash(normalizedCity, digestDate, searchMode);
   const cacheKey = buildCacheKey(normalizedCity, digestDate, sourceHash);
+  const shouldUsePreparedCacheOnly = searchMode === 'skip';
 
-  if (!options?.forceRefresh) {
+  if (!options?.forceRefresh || shouldUsePreparedCacheOnly) {
     try {
       const cached = await digestCacheRepo.getByKey(cacheKey);
       if (cached && isCacheFresh(cached.expires_at) && cached.payload?.source_hash === sourceHash) {
@@ -188,13 +198,34 @@ export async function prepareHybridDigestBase(
     }
   }
 
+  if (shouldUsePreparedCacheOnly) {
+    try {
+      const latestPrepared = await digestCacheRepo.getLatestByCity(normalizedCity);
+      if (latestPrepared?.payload) {
+        appLogger.warn(
+          {
+            city: normalizedCity,
+            requestedCacheKey: cacheKey,
+            fallbackCacheKey: latestPrepared.cache_key,
+            digestDate: latestPrepared.digest_date,
+            searchMode,
+          },
+          'Hybrid digest latest prepared cache fallback hit',
+        );
+        return { cacheKey: latestPrepared.cache_key, payload: latestPrepared.payload };
+      }
+    } catch (error) {
+      appLogger.warn({ error, city: normalizedCity, cacheKey, searchMode }, 'Hybrid latest prepared cache read failed');
+    }
+
+    throw new PreparedDigestUnavailableError(normalizedCity);
+  }
+
   const todayLabel = getTodayLabel();
   const [weatherResult, parsedHeadlinesResult] = await Promise.allSettled([
-    searchMode === 'skip'
-      ? Promise.resolve(null)
-      : webSearchWithRetry(
-        `Погода ${normalizedCity} сегодня ${todayLabel}: точная температура сейчас утром днём вечером, осадки, ветер, влажность, давление, ощущается как. Подробный прогноз на весь день.`,
-      ),
+    webSearchWithRetry(
+      `Погода ${normalizedCity} сегодня ${todayLabel}: точная температура сейчас утром днём вечером, осадки, ветер, влажность, давление, ощущается как. Подробный прогноз на весь день.`,
+    ),
     parseAllConfiguredSites(),
   ]);
 

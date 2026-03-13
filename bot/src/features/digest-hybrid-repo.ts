@@ -104,6 +104,25 @@ export const digestCacheRepo = {
     return (data as DigestCacheRecord | null) ?? null;
   },
 
+  async getLatestByCity(city: string): Promise<DigestCacheRecord | null> {
+    const { data, error } = await getSupabase()
+      .from('digest_caches')
+      .select('*')
+      .eq('pipeline', HYBRID_PIPELINE)
+      .eq('city', city)
+      .order('digest_date', { ascending: false })
+      .order('updated_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      dbLogger.error({ error, city }, 'Failed to get latest digest cache by city');
+      throw error;
+    }
+
+    return (data as DigestCacheRecord | null) ?? null;
+  },
+
   async upsert(input: UpsertDigestCacheInput): Promise<DigestCacheRecord> {
     const { data, error } = await getSupabase()
       .from('digest_caches')

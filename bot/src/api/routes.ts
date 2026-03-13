@@ -24,7 +24,7 @@ import {
 } from '../features/news-parser.js';
 import { localizeParsedHeadlines } from '../features/news-localization.js';
 import { buildDigest } from '../features/digest-scheduler.js';
-import { buildHybridDigest } from '../features/digest-hybrid.js';
+import { buildHybridDigest, PreparedDigestUnavailableError } from '../features/digest-hybrid.js';
 import { markdownToTelegramHtml } from '../telegram/format.js';
 import type { DigestPipelineMode, NewsSite } from '../../../shared/types/index.js';
 import { invalidateTTSConfig } from '../features/tts.js';
@@ -1633,14 +1633,14 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
           }>,
           reply: FastifyReply,
         ) => {
+          const { city = '', firstName = 'Читатель', format = 'html', pipeline = 'hybrid', refresh = '0' } = request.query as {
+            city?: string;
+            firstName?: string;
+            format?: string;
+            pipeline?: string;
+            refresh?: string;
+          };
           try {
-            const { city = '', firstName = 'Читатель', format = 'html', pipeline = 'hybrid', refresh = '0' } = request.query as {
-              city?: string;
-              firstName?: string;
-              format?: string;
-              pipeline?: string;
-              refresh?: string;
-            };
             const selectedPipeline: DigestPipelineMode =
               pipeline === 'hybrid' || pipeline === 'hybrid_supabase'
                 ? 'hybrid_supabase'
@@ -1726,6 +1726,27 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
 
             return reply.type('text/html').code(200).send(html);
           } catch (error) {
+            if (error instanceof PreparedDigestUnavailableError) {
+              aiLogger.warn({ error, city, format, pipeline }, 'Digest API: prepared cache is not available yet');
+              if (format === 'json') {
+                return reply.code(503).send({
+                  success: false,
+                  error: 'Digest is not prepared yet',
+                  code: 'DIGEST_NOT_PREPARED',
+                  data: {
+                    city,
+                    firstName,
+                    pipeline: pipeline === 'legacy' ? 'legacy' : 'hybrid_supabase',
+                  },
+                });
+              }
+
+              return reply
+                .type('text/html')
+                .code(503)
+                .send('<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><title>Дайджест готовится</title></head><body><p>Дайджест ещё подготавливается. Повтори запрос чуть позже.</p></body></html>');
+            }
+
             aiLogger.error({ error }, 'Digest API error');
             return reply.code(500).send({ success: false, error: 'Failed to build digest' });
           }

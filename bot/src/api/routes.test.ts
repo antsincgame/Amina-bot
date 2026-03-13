@@ -134,6 +134,14 @@ vi.mock('../features/digest-scheduler.js', () => ({
 }));
 
 vi.mock('../features/digest-hybrid.js', () => ({
+  PreparedDigestUnavailableError: class PreparedDigestUnavailableError extends Error {
+    code = 'DIGEST_NOT_PREPARED';
+
+    constructor(city: string) {
+      super(`Prepared digest for city "${city}" is not available yet`);
+      this.name = 'PreparedDigestUnavailableError';
+    }
+  },
   buildHybridDigest: vi.fn().mockResolvedValue({
     cacheKey: 'cache-1',
     digestText: 'hybrid digest',
@@ -503,6 +511,26 @@ describe('API Routes', () => {
       expect(body.data.content).toBe('legacy digest');
       expect(body.data.news.counts.merged_duplicates).toBe(1);
       expect(body.data.news.sections.city_local[0].source).toBe('Local Source');
+    });
+
+    it('should return 503 when hybrid digest is not prepared yet', async () => {
+      const digestHybrid = await import('../features/digest-hybrid.js');
+
+      vi.mocked(digestHybrid.buildHybridDigest).mockRejectedValueOnce(
+        new digestHybrid.PreparedDigestUnavailableError('Минск'),
+      );
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/digest/latest?format=json&city=Минск',
+      });
+
+      expect(response.statusCode).toBe(503);
+      const body = JSON.parse(response.body);
+      expect(body.success).toBe(false);
+      expect(body.code).toBe('DIGEST_NOT_PREPARED');
+      expect(body.data.pipeline).toBe('hybrid_supabase');
+      expect(body.data.city).toBe('Минск');
     });
   });
 
