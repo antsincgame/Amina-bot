@@ -1,35 +1,33 @@
-import { useState, useEffect } from 'react';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { settingsApi } from '../api/supabase';
+import { useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Phone,
-  PhoneCall,
-  Save,
-  Loader2,
-  CheckCircle,
   AlertCircle,
-  Wifi,
-  WifiOff,
   Bell,
   BellOff,
+  CheckCircle,
+  Loader2,
   Mic,
   MicOff,
+  Phone,
+  PhoneCall,
   Plus,
-  Trash2,
-  Sparkles,
-  Copy,
-  User,
-  Zap,
+  Save,
   Shield,
-  UserPlus,
+  Sparkles,
+  Trash2,
+  User,
   UserMinus,
+  UserPlus,
+  Wifi,
+  WifiOff,
 } from 'lucide-react';
-
-const BOT_URL = import.meta.env.VITE_BOT_URL || 'https://amina-bot.onrender.com';
-
-// ---------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------
+import { fetchBotApi, settingsApi } from '../api/supabase';
+import type {
+  TelephonyAiCallPlan,
+  TelephonyAiCallSession,
+  TelephonyAiScenario,
+} from '../../../shared/types/telephony.js';
 
 interface LiraXStatus {
   configured: boolean;
@@ -45,145 +43,182 @@ interface TelephonyUser {
   added_at: string;
 }
 
-interface Scenario {
-  id: string;
-  name: string;
-  rule: string;
-  generatedPrompt: string;
+interface TelephonyAiPreviewResponse {
+  scenario: TelephonyAiScenario;
+  plan: TelephonyAiCallPlan;
 }
 
-const DEFAULT_SCENARIOS: Scenario[] = [
-  {
-    id: 'callback',
-    name: 'Обратный звонок на пропущенный',
-    rule: 'Позвонить клиенту, сказать "Здравствуйте, вы нам звонили, соединяю с менеджером", затем соединить с оператором.',
-    generatedPrompt: '',
-  },
-  {
-    id: 'reminder',
-    name: 'Напоминание о встрече',
-    rule: 'Позвонить клиенту, сказать "Здравствуйте, напоминаем вам о встрече завтра в 14:00. Если подтверждаете, скажите да.", дождаться подтверждения, попрощаться.',
-    generatedPrompt: '',
-  },
-  {
-    id: 'qualification',
-    name: 'Холодный обзвон с квалификацией',
-    rule: 'Позвонить клиенту, сказать "Здравствуйте, компания предлагает услуги разработки сайтов. Вас интересует создание или обновление сайта?". Если ответ положительный — соединить с менеджером. Если нет — попрощаться.',
-    generatedPrompt: '',
-  },
-];
+interface TelephonyAiStartResponse extends TelephonyAiPreviewResponse {
+  result: {
+    id: string;
+    mode: string;
+  };
+}
 
-// ---------------------------------------------------------------
-// API helpers
-// ---------------------------------------------------------------
+function createScenarioDraft(): TelephonyAiScenario {
+  const now = new Date().toISOString();
+
+  return {
+    id: `custom-${Date.now()}`,
+    name: 'Новый AI-сценарий',
+    enabled: true,
+    callMode: 'ask_question',
+    goal: '',
+    systemPrompt: '',
+    openingLine: 'Здравствуйте. Вас беспокоит AI-ассистент Амина.',
+    questionHint: '',
+    successCriteria: '',
+    resultPrompt: '',
+    maxSpeechChars: 420,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function formatScenarioMode(mode: TelephonyAiScenario['callMode']): string {
+  return mode === 'speech' ? 'Только речь' : 'Вопрос с ожиданием ответа';
+}
+
+function formatSessionStatus(status: TelephonyAiCallSession['status']): string {
+  switch (status) {
+    case 'initiated':
+      return 'Инициирован';
+    case 'linked':
+      return 'Связан с callid';
+    case 'recorded':
+      return 'Запись получена';
+    case 'processed':
+      return 'Обработан';
+    case 'failed':
+      return 'Ошибка';
+    default:
+      return status;
+  }
+}
+
+function formatSessionStatusClass(status: TelephonyAiCallSession['status']): string {
+  switch (status) {
+    case 'processed':
+      return 'text-emerald-400 border-emerald-500/20 bg-emerald-500/10';
+    case 'failed':
+      return 'text-red-400 border-red-500/20 bg-red-500/10';
+    default:
+      return 'text-amber-300 border-amber-500/20 bg-amber-500/10';
+  }
+}
+
+async function readJson<T>(response: Response): Promise<T> {
+  const json = await response.json().catch(() => ({ error: 'Unknown error' }));
+  if (!response.ok) {
+    throw new Error((json as { error?: string }).error || 'Request failed');
+  }
+
+  return json as T;
+}
 
 async function fetchLiraXStatus(): Promise<LiraXStatus> {
-  const res = await fetch(`${BOT_URL}/api/lirax/status`);
-  if (!res.ok) throw new Error('Failed to fetch LiraX status');
-  const json = await res.json();
+  const response = await fetchBotApi('/api/lirax/status');
+  const json = await readJson<{ data: LiraXStatus }>(response);
   return json.data;
 }
 
-async function fetchScenarios(): Promise<Scenario[]> {
-  const res = await fetch(`${BOT_URL}/api/lirax/scenarios`);
-  if (!res.ok) throw new Error('Failed to fetch scenarios');
-  const json = await res.json();
-  return json.data?.length ? json.data : [];
+async function fetchScenarios(): Promise<TelephonyAiScenario[]> {
+  const response = await fetchBotApi('/api/lirax/scenarios');
+  const json = await readJson<{ data: TelephonyAiScenario[] }>(response);
+  return json.data ?? [];
 }
 
-async function saveScenarios(scenarios: Scenario[]): Promise<void> {
-  const res = await fetch(`${BOT_URL}/api/lirax/scenarios`, {
+async function saveScenarios(scenarios: TelephonyAiScenario[]): Promise<TelephonyAiScenario[]> {
+  const response = await fetchBotApi('/api/lirax/scenarios', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(scenarios),
   });
-  if (!res.ok) throw new Error('Failed to save scenarios');
-}
-
-async function generatePrompt(rule: string): Promise<{ generatedPrompt: string; model: string }> {
-  const res = await fetch(`${BOT_URL}/api/lirax/generate-prompt`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ rule }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(err.error || 'Failed to generate prompt');
-  }
-  const json = await res.json();
-  return json.data;
+  const json = await readJson<{ data: TelephonyAiScenario[] }>(response);
+  return json.data ?? [];
 }
 
 async function fetchTelephonyUsers(): Promise<TelephonyUser[]> {
-  const res = await fetch(`${BOT_URL}/api/lirax/users`);
-  if (!res.ok) throw new Error('Failed to fetch telephony users');
-  const json = await res.json();
-  return json.data;
+  const response = await fetchBotApi('/api/lirax/users');
+  const json = await readJson<{ data: TelephonyUser[] }>(response);
+  return json.data ?? [];
 }
 
 async function addTelephonyUserApi(telegramId: string, name: string): Promise<TelephonyUser[]> {
-  const res = await fetch(`${BOT_URL}/api/lirax/users`, {
+  const response = await fetchBotApi('/api/lirax/users', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ telegram_id: telegramId, name }),
   });
-  if (!res.ok) throw new Error('Failed to add user');
-  const json = await res.json();
-  return json.data;
+  const json = await readJson<{ data: TelephonyUser[] }>(response);
+  return json.data ?? [];
 }
 
 async function removeTelephonyUserApi(telegramId: string): Promise<TelephonyUser[]> {
-  const res = await fetch(`${BOT_URL}/api/lirax/users/${telegramId}`, {
+  const response = await fetchBotApi(`/api/lirax/users/${telegramId}`, {
     method: 'DELETE',
   });
-  if (!res.ok) throw new Error('Failed to remove user');
-  const json = await res.json();
-  return json.data;
+  const json = await readJson<{ data: TelephonyUser[] }>(response);
+  return json.data ?? [];
 }
 
-async function testCall(phone: string): Promise<{ id_makecall: string }> {
-  const res = await fetch(`${BOT_URL}/api/lirax/test-call`, {
+async function previewAiCall(
+  scenarioId: string,
+  phone: string,
+  task: string,
+): Promise<TelephonyAiPreviewResponse> {
+  const response = await fetchBotApi('/api/lirax/ai-calls/preview', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ phone }),
+    body: JSON.stringify({ scenarioId, phone, task }),
   });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Unknown error' }));
-    throw new Error(err.error || 'Test call failed');
-  }
-  const json = await res.json();
+  const json = await readJson<{ data: TelephonyAiPreviewResponse }>(response);
   return json.data;
 }
 
-// ---------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------
+async function startAiCall(
+  scenarioId: string,
+  phone: string,
+  task: string,
+): Promise<TelephonyAiStartResponse> {
+  const response = await fetchBotApi('/api/lirax/ai-calls/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scenarioId, phone, task }),
+  });
+  const json = await readJson<{ data: TelephonyAiStartResponse }>(response);
+  return json.data;
+}
+
+async function fetchAiSessions(): Promise<TelephonyAiCallSession[]> {
+  const response = await fetchBotApi('/api/lirax/ai-calls/sessions');
+  const json = await readJson<{ data: TelephonyAiCallSession[] }>(response);
+  return json.data ?? [];
+}
 
 const TelephonyPage = () => {
   const queryClient = useQueryClient();
 
-  // Settings state
   const [adminChatId, setAdminChatId] = useState('');
+  const [ownerChatId, setOwnerChatId] = useState('');
   const [webhookToken, setWebhookToken] = useState('');
   const [defaultExt, setDefaultExt] = useState('201');
   const [operatorPhone, setOperatorPhone] = useState('');
   const [notifyCalls, setNotifyCalls] = useState(true);
   const [notifyRecords, setNotifyRecords] = useState(true);
   const [settingsSaved, setSettingsSaved] = useState(false);
+  const [reloadWarning, setReloadWarning] = useState(false);
 
-  // Telephony users state
   const [newUserId, setNewUserId] = useState('');
   const [newUserName, setNewUserName] = useState('');
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
-  // Scenarios state
-  const [scenarios, setScenarios] = useState<Scenario[]>([]);
-  const [generatingId, setGeneratingId] = useState<string | null>(null);
-
-  // Test call state
-  const [testPhone, setTestPhone] = useState('');
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
-
-  // ---- Queries ----
+  const [scenarios, setScenarios] = useState<TelephonyAiScenario[]>([]);
+  const [studioScenarioId, setStudioScenarioId] = useState('');
+  const [studioPhone, setStudioPhone] = useState('');
+  const [studioTask, setStudioTask] = useState('');
+  const [previewData, setPreviewData] = useState<TelephonyAiPreviewResponse | null>(null);
+  const [startSuccess, setStartSuccess] = useState<string | null>(null);
 
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ['lirax-status'],
@@ -201,7 +236,80 @@ const TelephonyPage = () => {
     queryFn: fetchTelephonyUsers,
   });
 
-  const [mutationError, setMutationError] = useState<string | null>(null);
+  const { data: scenariosData = [], isLoading: scenariosLoading } = useQuery({
+    queryKey: ['lirax-scenarios'],
+    queryFn: fetchScenarios,
+  });
+
+  const { data: aiSessions = [], isLoading: sessionsLoading } = useQuery({
+    queryKey: ['lirax-ai-sessions'],
+    queryFn: fetchAiSessions,
+    refetchInterval: 20_000,
+  });
+
+  useEffect(() => {
+    if (!allSettings) {
+      return;
+    }
+
+    const map = new Map(allSettings.map((item) => [item.key, item.value]));
+    setAdminChatId(map.get('lirax_admin_chat_id') || '');
+    setOwnerChatId(map.get('lirax_owner_chat_id') || '');
+    setWebhookToken(map.get('lirax_webhook_token') || '');
+    setDefaultExt(map.get('lirax_default_ext') || '201');
+    setOperatorPhone(map.get('lirax_operator_phone') || '');
+    setNotifyCalls(map.get('lirax_notify_calls') !== 'false');
+    setNotifyRecords(map.get('lirax_notify_records') !== 'false');
+  }, [allSettings]);
+
+  useEffect(() => {
+    if (scenariosData.length === 0) {
+      return;
+    }
+
+    setScenarios(scenariosData);
+  }, [scenariosData]);
+
+  useEffect(() => {
+    if (!studioScenarioId && scenarios.length > 0) {
+      setStudioScenarioId(scenarios[0]!.id);
+    }
+  }, [studioScenarioId, scenarios]);
+
+  const enabledScenarios = useMemo(
+    () => scenarios.filter((scenario) => scenario.enabled),
+    [scenarios],
+  );
+
+  const { mutate: saveSettings, isPending: savingSettings } = useMutation({
+    mutationFn: async () => {
+      await settingsApi.updateMany({
+        lirax_admin_chat_id: adminChatId,
+        lirax_owner_chat_id: ownerChatId,
+        lirax_webhook_token: webhookToken,
+        lirax_default_ext: defaultExt,
+        lirax_operator_phone: operatorPhone,
+        lirax_notify_calls: notifyCalls ? 'true' : 'false',
+        lirax_notify_records: notifyRecords ? 'true' : 'false',
+      });
+
+      const reloadResponse = await fetchBotApi('/api/lirax/reload-config', { method: 'POST' }).catch(() => null);
+      if (!reloadResponse || !reloadResponse.ok) {
+        setReloadWarning(true);
+        setTimeout(() => setReloadWarning(false), 5000);
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['settings'] });
+      queryClient.invalidateQueries({ queryKey: ['lirax-status'] });
+      setSettingsSaved(true);
+      setMutationError(null);
+      setTimeout(() => setSettingsSaved(false), 3000);
+    },
+    onError: (error) => {
+      setMutationError(`Ошибка сохранения: ${error instanceof Error ? error.message : String(error)}`);
+    },
+  });
 
   const { mutate: addUser, isPending: addingUser } = useMutation({
     mutationFn: () => addTelephonyUserApi(newUserId.trim(), newUserName.trim() || newUserId.trim()),
@@ -211,7 +319,9 @@ const TelephonyPage = () => {
       setNewUserName('');
       setMutationError(null);
     },
-    onError: (err) => setMutationError(`Ошибка добавления: ${err instanceof Error ? err.message : String(err)}`),
+    onError: (error) => {
+      setMutationError(`Ошибка добавления пользователя: ${error instanceof Error ? error.message : String(error)}`);
+    },
   });
 
   const { mutate: removeUser } = useMutation({
@@ -220,126 +330,76 @@ const TelephonyPage = () => {
       queryClient.invalidateQueries({ queryKey: ['lirax-users'] });
       setMutationError(null);
     },
-    onError: (err) => setMutationError(`Ошибка удаления: ${err instanceof Error ? err.message : String(err)}`),
-  });
-
-  const { isLoading: scenariosLoading } = useQuery({
-    queryKey: ['lirax-scenarios'],
-    queryFn: async () => {
-      const data = await fetchScenarios();
-      if (data.length > 0) {
-        setScenarios(data);
-      } else {
-        setScenarios(DEFAULT_SCENARIOS);
-      }
-      return data;
+    onError: (error) => {
+      setMutationError(`Ошибка удаления пользователя: ${error instanceof Error ? error.message : String(error)}`);
     },
-  });
-
-  useEffect(() => {
-    if (!allSettings) return;
-    const map = new Map(allSettings.map((s) => [s.key, s.value]));
-    setAdminChatId(map.get('lirax_admin_chat_id') || '');
-    setWebhookToken(map.get('lirax_webhook_token') || '');
-    setDefaultExt(map.get('lirax_default_ext') || '201');
-    setOperatorPhone(map.get('lirax_operator_phone') || '');
-    setNotifyCalls(map.get('lirax_notify_calls') !== 'false');
-    setNotifyRecords(map.get('lirax_notify_records') !== 'false');
-  }, [allSettings]);
-
-  // ---- Mutations ----
-
-  const [reloadWarning, setReloadWarning] = useState(false);
-
-  const { mutate: saveSettings, isPending: savingSettings } = useMutation({
-    mutationFn: async () => {
-      await settingsApi.updateMany({
-        lirax_admin_chat_id: adminChatId,
-        lirax_webhook_token: webhookToken,
-        lirax_default_ext: defaultExt,
-        lirax_operator_phone: operatorPhone,
-        lirax_notify_calls: notifyCalls ? 'true' : 'false',
-        lirax_notify_records: notifyRecords ? 'true' : 'false',
-      });
-      const reloadRes = await fetch(`${BOT_URL}/api/lirax/reload-config`, { method: 'POST' }).catch(() => null);
-      if (!reloadRes || !reloadRes.ok) {
-        setReloadWarning(true);
-        setTimeout(() => setReloadWarning(false), 5000);
-      }
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['settings'] });
-      queryClient.invalidateQueries({ queryKey: ['lirax-status'] });
-      setSettingsSaved(true);
-      setTimeout(() => setSettingsSaved(false), 3000);
-    },
-    onError: (err) => setMutationError(`Ошибка сохранения: ${err instanceof Error ? err.message : String(err)}`),
   });
 
   const { mutate: persistScenarios, isPending: savingScenarios } = useMutation({
     mutationFn: () => saveScenarios(scenarios),
-    onSuccess: () => {
+    onSuccess: (saved) => {
+      setScenarios(saved);
       queryClient.invalidateQueries({ queryKey: ['lirax-scenarios'] });
       setMutationError(null);
     },
-    onError: (err) => setMutationError(`Ошибка сохранения сценариев: ${err instanceof Error ? err.message : String(err)}`),
+    onError: (error) => {
+      setMutationError(`Ошибка сохранения сценариев: ${error instanceof Error ? error.message : String(error)}`);
+    },
   });
 
-  const { mutate: doTestCall, isPending: callingTest } = useMutation({
-    mutationFn: () => testCall(testPhone),
+  const { mutate: previewCall, isPending: previewingCall } = useMutation({
+    mutationFn: () => previewAiCall(studioScenarioId, studioPhone, studioTask),
     onSuccess: (data) => {
-      setTestResult({ success: true, message: `Звонок инициирован! ID: ${data.id_makecall}` });
+      setPreviewData(data);
+      setStartSuccess(null);
+      setMutationError(null);
     },
-    onError: (err) => {
-      setTestResult({ success: false, message: String(err instanceof Error ? err.message : err) });
+    onError: (error) => {
+      setPreviewData(null);
+      setMutationError(`Ошибка preview: ${error instanceof Error ? error.message : String(error)}`);
     },
   });
 
-  // ---- Handlers ----
+  const { mutate: executeCall, isPending: startingCall } = useMutation({
+    mutationFn: () => startAiCall(studioScenarioId, studioPhone, studioTask),
+    onSuccess: (data) => {
+      setPreviewData(data);
+      setStartSuccess(`Звонок инициирован. ID: ${data.result.id || 'pending'}`);
+      queryClient.invalidateQueries({ queryKey: ['lirax-ai-sessions'] });
+      setMutationError(null);
+    },
+    onError: (error) => {
+      setStartSuccess(null);
+      setMutationError(`Ошибка запуска AI-звонка: ${error instanceof Error ? error.message : String(error)}`);
+    },
+  });
 
-  const handleGenerate = async (scenarioId: string) => {
-    const scenario = scenarios.find((s) => s.id === scenarioId);
-    if (!scenario) return;
-    setGeneratingId(scenarioId);
-    try {
-      const result = await generatePrompt(scenario.rule);
-      setScenarios((prev) =>
-        prev.map((s) => (s.id === scenarioId ? { ...s, generatedPrompt: result.generatedPrompt } : s)),
-      );
-    } catch (err) {
-      setMutationError(`Ошибка генерации: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setGeneratingId(null);
-    }
+  const updateScenario = (id: string, field: keyof TelephonyAiScenario, value: string | boolean | number) => {
+    setScenarios((prev) =>
+      prev.map((scenario) =>
+        scenario.id === id ? { ...scenario, [field]: value, updatedAt: new Date().toISOString() } : scenario,
+      ),
+    );
   };
 
   const addScenario = () => {
-    const id = `custom_${Date.now()}`;
-    setScenarios((prev) => [
-      ...prev,
-      { id, name: 'Новый сценарий', rule: '', generatedPrompt: '' },
-    ]);
+    const scenario = createScenarioDraft();
+    setScenarios((prev) => [...prev, scenario]);
+    setStudioScenarioId(scenario.id);
   };
 
   const removeScenario = (id: string) => {
-    setScenarios((prev) => prev.filter((s) => s.id !== id));
+    setScenarios((prev) => prev.filter((scenario) => scenario.id !== id));
+    if (studioScenarioId === id) {
+      const nextScenario = scenarios.find((scenario) => scenario.id !== id);
+      setStudioScenarioId(nextScenario?.id || '');
+    }
   };
 
-  const updateScenario = (id: string, field: keyof Scenario, value: string) => {
-    setScenarios((prev) => prev.map((s) => (s.id === id ? { ...s, [field]: value } : s)));
-  };
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text).catch(() => {});
-  };
-
-  // ---------------------------------------------------------------
-  // Render
-  // ---------------------------------------------------------------
+  const canRunStudio = Boolean(studioScenarioId.trim() && studioPhone.trim() && studioTask.trim());
 
   return (
     <div className="space-y-8 animate-fade-in">
-      {/* Header */}
       <div className="flex items-center gap-4">
         <div
           className="w-14 h-14 rounded-2xl flex items-center justify-center"
@@ -351,34 +411,34 @@ const TelephonyPage = () => {
           <Phone className="w-7 h-7 text-emerald-400" />
         </div>
         <div>
-          <h1
-            className="text-3xl font-bold text-gradient-gold"
-            style={{ fontFamily: 'var(--font-display)' }}
-          >
+          <h1 className="text-3xl font-bold text-gradient-gold" style={{ fontFamily: 'var(--font-display)' }}>
             Телефония
           </h1>
           <p className="text-sm text-gray-400 mt-1">
-            LiraX АТС — управление звонками, сценарии, уведомления
+            LiraX, owner-only AI-звонки, сценарии, расшифровка записей и отчёт владельцу.
           </p>
         </div>
       </div>
 
-      {/* Error banner */}
       {mutationError && (
         <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 flex items-center gap-3">
           <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
           <span className="text-sm text-red-300">{mutationError}</span>
-          <button className="ml-auto text-xs text-red-400 hover:text-red-300" onClick={() => setMutationError(null)}>Закрыть</button>
-        </div>
-      )}
-      {reloadWarning && (
-        <div className="p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/30 flex items-center gap-3">
-          <AlertCircle className="w-5 h-5 text-yellow-400 shrink-0" />
-          <span className="text-sm text-yellow-300">Настройки сохранены, но бот не перезагрузил конфигурацию. Перезапустите бота вручную.</span>
+          <button className="ml-auto text-xs text-red-400 hover:text-red-300" onClick={() => setMutationError(null)}>
+            Закрыть
+          </button>
         </div>
       )}
 
-      {/* A. Connection Status */}
+      {reloadWarning && (
+        <div className="p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/30 flex items-center gap-3">
+          <AlertCircle className="w-5 h-5 text-yellow-400 shrink-0" />
+          <span className="text-sm text-yellow-300">
+            Настройки сохранены, но LiraX-конфиг не перечитался. Перезапусти backend вручную.
+          </span>
+        </div>
+      )}
+
       <div className="card p-6">
         <div className="flex items-center gap-3 mb-4">
           {status?.configured ? (
@@ -392,109 +452,17 @@ const TelephonyPage = () => {
 
         {status ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <StatusRow
-              label="Подключение"
-              value={status.configured ? 'Настроено' : 'Не настроено'}
-              ok={status.configured}
-            />
+            <StatusRow label="Подключение" value={status.configured ? 'Настроено' : 'Не настроено'} ok={status.configured} />
             <StatusRow label="URL АТС" value={status.url} ok={!!status.url} mono />
             <StatusRow label="Внутренний номер" value={status.defaultExt} ok={!!status.defaultExt} />
             <StatusRow label="Webhook URL" value={status.webhookUrl} ok={!!status.webhookUrl} mono />
-            <StatusRow
-              label="Webhook токен"
-              value={status.hasWebhookToken ? 'Установлен' : 'Не установлен'}
-              ok={status.hasWebhookToken}
-            />
+            <StatusRow label="Webhook токен" value={status.hasWebhookToken ? 'Установлен' : 'Не установлен'} ok={status.hasWebhookToken} />
           </div>
         ) : (
-          !statusLoading && (
-            <p className="text-gray-500 text-sm">Не удалось загрузить статус LiraX</p>
-          )
+          !statusLoading && <p className="text-sm text-gray-500">Не удалось загрузить статус LiraX</p>
         )}
       </div>
 
-      {/* B. Authorized Users */}
-      <div className="card p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <Shield className="w-5 h-5 text-blue-400" />
-          <h2 className="text-lg font-semibold text-white">Авторизованные пользователи</h2>
-          {usersLoading && <Loader2 className="w-4 h-4 animate-spin text-gray-500" />}
-        </div>
-
-        <p className="text-xs text-gray-500 mb-4">
-          Только эти пользователи и администратор (chat ID ниже) могут использовать команды{' '}
-          <code className="text-blue-400">/call</code> и{' '}
-          <code className="text-blue-400">/calls</code> в Telegram-боте.
-        </p>
-
-        {/* User list */}
-        <div className="space-y-2 mb-4">
-          {telephonyUsers.length === 0 && !usersLoading && (
-            <p className="text-sm text-gray-500 italic py-2">
-              Нет авторизованных пользователей. Добавьте хотя бы одного.
-            </p>
-          )}
-          {telephonyUsers.map((u) => (
-            <div
-              key={u.telegram_id}
-              className="flex items-center justify-between px-4 py-2.5 rounded-xl bg-white/[0.02] border border-white/5"
-            >
-              <div className="flex items-center gap-3">
-                <User className="w-4 h-4 text-gray-500" />
-                <div>
-                  <span className="text-sm font-medium text-white">{u.name}</span>
-                  <span className="text-xs text-gray-500 ml-2">ID: {u.telegram_id}</span>
-                </div>
-              </div>
-              <button
-                className="p-1.5 rounded-lg text-gray-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
-                onClick={() => removeUser(u.telegram_id)}
-                title="Удалить"
-              >
-                <UserMinus className="w-4 h-4" />
-              </button>
-            </div>
-          ))}
-        </div>
-
-        {/* Add user form */}
-        <div className="flex gap-2 items-end">
-          <div className="flex-1">
-            <label className="block text-xs text-gray-500 mb-1">Telegram ID</label>
-            <input
-              type="text"
-              className="input w-full"
-              placeholder="7867087040"
-              value={newUserId}
-              onChange={(e) => setNewUserId(e.target.value)}
-            />
-          </div>
-          <div className="flex-1">
-            <label className="block text-xs text-gray-500 mb-1">Имя (опционально)</label>
-            <input
-              type="text"
-              className="input w-full"
-              placeholder="Дмитрий"
-              value={newUserName}
-              onChange={(e) => setNewUserName(e.target.value)}
-            />
-          </div>
-          <button
-            className="btn-gold flex items-center gap-1.5 whitespace-nowrap"
-            disabled={addingUser || !newUserId.trim()}
-            onClick={() => addUser()}
-          >
-            {addingUser ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <UserPlus className="w-4 h-4" />
-            )}
-            Добавить
-          </button>
-        </div>
-      </div>
-
-      {/* C. Admin Setup + Notifications */}
       <div className="card p-6">
         <div className="flex items-center gap-3 mb-6">
           <User className="w-5 h-5 text-amber-400" />
@@ -502,111 +470,53 @@ const TelephonyPage = () => {
         </div>
 
         <div className="space-y-5">
-          {/* Admin chat ID */}
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1.5">
-              Telegram ID администратора звонков
-            </label>
-            <input
-              type="text"
-              className="input w-full"
-              value={adminChatId}
-              onChange={(e) => setAdminChatId(e.target.value)}
-              placeholder="7867087040"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Этот пользователь получает уведомления о звонках и автоматически имеет доступ к /call
-            </p>
-          </div>
+          <Field label="Telegram ID администратора звонков" hint="Получает сервисные уведомления и доступ к /call.">
+            <input className="input w-full" value={adminChatId} onChange={(e) => setAdminChatId(e.target.value)} placeholder="7867087040" />
+          </Field>
 
-          {/* Webhook Token */}
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1.5">
-              Webhook токен (from_LiraX_token)
-            </label>
+          <Field
+            label="Telegram ID владельца AI-звонков"
+            hint="Только этот Telegram ID сможет запускать /callai. Если пусто, backend использует lirax_admin_chat_id."
+          >
+            <input className="input w-full" value={ownerChatId} onChange={(e) => setOwnerChatId(e.target.value)} placeholder="7867087040" />
+          </Field>
+
+          <Field label="Webhook токен (from_LiraX_token)" hint="Токен верификации вебхуков LiraX.">
             <input
-              type="text"
               className="input w-full font-mono text-sm"
               value={webhookToken}
               onChange={(e) => setWebhookToken(e.target.value)}
-              placeholder="Токен из LiraX → Интеграция General → Token for Webhooks"
+              placeholder="Токен из LiraX → Интеграция General"
             />
-            <p className="text-xs text-gray-500 mt-1">
-              LiraX отправляет этот токен с каждым вебхуком для верификации. Найдите его в LiraX → Интеграция → Token.
-            </p>
-          </div>
+          </Field>
 
-          {/* Operator Phone */}
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1.5">
-              📱 Телефон оператора (реальный номер)
-            </label>
-            <input
-              type="tel"
-              className="input w-full"
-              value={operatorPhone}
-              onChange={(e) => setOperatorPhone(e.target.value)}
-              placeholder="+375291234567"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              <b>Главная настройка для звонков!</b> При /call АТС сначала позвонит на этот номер, затем соединит с клиентом.
-              Без SIP-телефона — только реальные мобильные.
-            </p>
-          </div>
+          <Field label="Телефон оператора" hint="Нужен для обычных /call и connectCall. Для AI-сценариев с AskQuestion основной упор идёт на автозвонок.">
+            <input className="input w-full" value={operatorPhone} onChange={(e) => setOperatorPhone(e.target.value)} placeholder="+375291234567" />
+          </Field>
 
-          {/* Default Extension */}
-          <div>
-            <label className="block text-sm font-medium text-gray-300 mb-1.5">
-              Внутренний номер (ext)
-            </label>
-            <input
-              type="text"
-              className="input w-48"
-              value={defaultExt}
-              onChange={(e) => setDefaultExt(e.target.value)}
-              placeholder="201"
-            />
-            <p className="text-xs text-gray-500 mt-1">
-              Внутренний номер АТС для маршрутизации (используется как caller ID)
-            </p>
-          </div>
+          <Field label="Внутренний номер (ext)" hint="Используется как from/ext для LiraX-команд.">
+            <input className="input w-48" value={defaultExt} onChange={(e) => setDefaultExt(e.target.value)} placeholder="201" />
+          </Field>
 
-          {/* Notification toggles */}
           <div className="flex flex-col sm:flex-row gap-4">
-            <button
-              type="button"
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border transition-all ${
-                notifyCalls
-                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-                  : 'border-gray-700 bg-gray-800/50 text-gray-500'
-              }`}
-              onClick={() => setNotifyCalls(!notifyCalls)}
-            >
-              {notifyCalls ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
-              <span className="text-sm">Уведомления о звонках</span>
-            </button>
-
-            <button
-              type="button"
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border transition-all ${
-                notifyRecords
-                  ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-                  : 'border-gray-700 bg-gray-800/50 text-gray-500'
-              }`}
-              onClick={() => setNotifyRecords(!notifyRecords)}
-            >
-              {notifyRecords ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
-              <span className="text-sm">Уведомления о записях</span>
-            </button>
+            <ToggleButton
+              active={notifyCalls}
+              iconOn={<Bell className="w-4 h-4" />}
+              iconOff={<BellOff className="w-4 h-4" />}
+              label="Уведомления о звонках"
+              onClick={() => setNotifyCalls((value) => !value)}
+            />
+            <ToggleButton
+              active={notifyRecords}
+              iconOn={<Mic className="w-4 h-4" />}
+              iconOff={<MicOff className="w-4 h-4" />}
+              label="Уведомления о записях"
+              onClick={() => setNotifyRecords((value) => !value)}
+            />
           </div>
 
-          {/* Save button */}
           <div className="flex items-center gap-3">
-            <button
-              className="btn-gold flex items-center gap-2"
-              disabled={savingSettings}
-              onClick={() => saveSettings()}
-            >
+            <button className="btn-gold flex items-center gap-2" disabled={savingSettings} onClick={() => saveSettings()}>
               {savingSettings ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
               ) : settingsSaved ? (
@@ -620,32 +530,75 @@ const TelephonyPage = () => {
         </div>
       </div>
 
-      {/* D. Call Scenarios */}
+      <div className="card p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <Shield className="w-5 h-5 text-blue-400" />
+          <h2 className="text-lg font-semibold text-white">Авторизованные пользователи телефонии</h2>
+          {usersLoading && <Loader2 className="w-4 h-4 animate-spin text-gray-500" />}
+        </div>
+
+        <p className="text-xs text-gray-500 mb-4">
+          Эти пользователи могут пользоваться обычными командами <code>/call</code> и <code>/calls</code>. AI-команда <code>/callai</code> дополнительно ограничена владельцем.
+        </p>
+
+        <div className="space-y-2 mb-4">
+          {telephonyUsers.length === 0 && !usersLoading && (
+            <p className="text-sm text-gray-500 italic py-2">Нет авторизованных пользователей.</p>
+          )}
+          {telephonyUsers.map((user) => (
+            <div key={user.telegram_id} className="flex items-center justify-between px-4 py-2.5 rounded-xl bg-white/[0.02] border border-white/5">
+              <div className="flex items-center gap-3">
+                <User className="w-4 h-4 text-gray-500" />
+                <div>
+                  <span className="text-sm font-medium text-white">{user.name}</span>
+                  <span className="text-xs text-gray-500 ml-2">ID: {user.telegram_id}</span>
+                </div>
+              </div>
+              <button
+                className="p-1.5 rounded-lg text-gray-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                onClick={() => removeUser(user.telegram_id)}
+                title="Удалить"
+              >
+                <UserMinus className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="flex gap-2 items-end">
+          <Field label="Telegram ID" className="flex-1">
+            <input className="input w-full" value={newUserId} onChange={(e) => setNewUserId(e.target.value)} placeholder="7867087040" />
+          </Field>
+          <Field label="Имя" className="flex-1">
+            <input className="input w-full" value={newUserName} onChange={(e) => setNewUserName(e.target.value)} placeholder="Дмитрий" />
+          </Field>
+          <button className="btn-gold flex items-center gap-1.5 whitespace-nowrap" disabled={addingUser || !newUserId.trim()} onClick={() => addUser()}>
+            {addingUser ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
+            Добавить
+          </button>
+        </div>
+      </div>
+
       <div className="card p-6">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
             <Sparkles className="w-5 h-5 text-violet-400" />
-            <h2 className="text-lg font-semibold text-white">Сценарии звонков</h2>
+            <h2 className="text-lg font-semibold text-white">AI-сценарии звонков</h2>
           </div>
           <div className="flex gap-2">
             <button className="btn-ghost flex items-center gap-1.5 text-sm" onClick={addScenario}>
               <Plus className="w-4 h-4" />
               Добавить
             </button>
-            <button
-              className="btn-gold flex items-center gap-1.5 text-sm"
-              disabled={savingScenarios}
-              onClick={() => persistScenarios()}
-            >
+            <button className="btn-gold flex items-center gap-1.5 text-sm" disabled={savingScenarios} onClick={() => persistScenarios()}>
               {savingScenarios ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              Сохранить все
+              Сохранить сценарии
             </button>
           </div>
         </div>
 
         <p className="text-xs text-gray-500 mb-4">
-          Опишите правило на русском языке, нажмите &laquo;Генерировать&raquo; — ИИ преобразует его в
-          конфигурацию вызова LiraX.
+          Сценарий хранит бизнес-цель, тональность, стартовую реплику и правила summary после звонка. Генерация речи идёт через LM Studio, а если он недоступен — через OpenRouter fallback.
         </p>
 
         {scenariosLoading ? (
@@ -655,71 +608,139 @@ const TelephonyPage = () => {
         ) : (
           <div className="space-y-4">
             {scenarios.map((scenario) => (
-              <ScenarioCard
+              <ScenarioEditor
                 key={scenario.id}
                 scenario={scenario}
-                isGenerating={generatingId === scenario.id}
                 onUpdate={updateScenario}
-                onGenerate={handleGenerate}
                 onRemove={removeScenario}
-                onCopy={copyToClipboard}
               />
             ))}
           </div>
         )}
       </div>
 
-      {/* E. Test Call */}
       <div className="card p-6">
         <div className="flex items-center gap-3 mb-4">
-          <Zap className="w-5 h-5 text-amber-400" />
-          <h2 className="text-lg font-semibold text-white">Тестовый звонок</h2>
+          <PhoneCall className="w-5 h-5 text-emerald-400" />
+          <h2 className="text-lg font-semibold text-white">AI Call Studio</h2>
         </div>
 
         <p className="text-xs text-gray-500 mb-4">
-          АТС сначала позвонит на ваш внутренний номер ({status?.defaultExt || '201'}), затем
-          соединит с указанным абонентом.
+          Preview показывает, что именно скажет AI по сценарию. Запуск создаёт реальный звонок и потом присылает владельцу summary по записи.
         </p>
 
-        <div className="flex gap-3 items-start">
-          <input
-            type="tel"
-            className="input flex-1"
-            placeholder="+375291234567"
-            value={testPhone}
-            onChange={(e) => {
-              setTestPhone(e.target.value);
-              setTestResult(null);
-            }}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+          <Field label="Сценарий">
+            <select className="input w-full" value={studioScenarioId} onChange={(e) => setStudioScenarioId(e.target.value)}>
+              {enabledScenarios.map((scenario) => (
+                <option key={scenario.id} value={scenario.id}>
+                  {scenario.name} ({formatScenarioMode(scenario.callMode)})
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          <Field label="Телефон">
+            <input
+              className="input w-full"
+              value={studioPhone}
+              onChange={(e) => setStudioPhone(e.target.value)}
+              placeholder="+375291234567"
+            />
+          </Field>
+
+          <Field label="Владелец">
+            <div className="input w-full flex items-center text-sm text-gray-300">
+              {ownerChatId || adminChatId || 'Не задан в настройках'}
+            </div>
+          </Field>
+        </div>
+
+        <Field label="Задача для AI" hint="Например: подтвердить встречу на завтра 14:00, если неудобно — попросить сообщить новое время.">
+          <textarea
+            className="input w-full min-h-[110px] text-sm resize-y"
+            value={studioTask}
+            onChange={(e) => setStudioTask(e.target.value)}
+            placeholder="Опиши, что именно должен сделать AI в звонке..."
           />
-          <button
-            className="btn-gold flex items-center gap-2 whitespace-nowrap"
-            disabled={callingTest || !testPhone.trim()}
-            onClick={() => doTestCall()}
-          >
-            {callingTest ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
-            ) : (
-              <PhoneCall className="w-4 h-4" />
-            )}
-            Позвонить
+        </Field>
+
+        <div className="flex flex-wrap gap-3 mt-4">
+          <button className="btn-ghost flex items-center gap-2" disabled={!canRunStudio || previewingCall} onClick={() => previewCall()}>
+            {previewingCall ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+            Preview
+          </button>
+          <button className="btn-gold flex items-center gap-2" disabled={!canRunStudio || startingCall} onClick={() => executeCall()}>
+            {startingCall ? <Loader2 className="w-4 h-4 animate-spin" /> : <PhoneCall className="w-4 h-4" />}
+            Запустить AI-звонок
           </button>
         </div>
 
-        {testResult && (
-          <div
-            className={`mt-3 flex items-start gap-2 rounded-xl px-4 py-3 text-sm ${
-              testResult.success
-                ? 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
-                : 'bg-red-500/10 border border-red-500/20 text-red-400'
-            }`}
-          >
-            {testResult.success ? (
-              <CheckCircle className="w-4 h-4 mt-0.5 shrink-0" />
-            ) : (
-              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-            )}
-            <span>{testResult.message}</span>
+        {startSuccess && (
+          <div className="mt-4 rounded-xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
+            {startSuccess}
+          </div>
+        )}
+
+        {previewData && (
+          <div className="mt-5 rounded-2xl border border-white/5 bg-black/20 p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-white">{previewData.scenario.name}</p>
+                <p className="text-xs text-gray-500">{formatScenarioMode(previewData.plan.callMode)}</p>
+              </div>
+              <span className="text-xs px-2 py-1 rounded-full border border-violet-500/20 bg-violet-500/10 text-violet-300">
+                Preview плана
+              </span>
+            </div>
+
+            <PreviewRow label="Summary" value={previewData.plan.summary} />
+            {previewData.plan.speechText && <PreviewRow label="Speech" value={previewData.plan.speechText} />}
+            {previewData.plan.helloText && <PreviewRow label="Hello" value={previewData.plan.helloText} />}
+            {previewData.plan.askText && <PreviewRow label="Question" value={previewData.plan.askText} />}
+            {previewData.plan.okText && <PreviewRow label="On success" value={previewData.plan.okText} />}
+            {previewData.plan.byeText && <PreviewRow label="Goodbye" value={previewData.plan.byeText} />}
+            {previewData.plan.successHint && <PreviewRow label="Success hint" value={previewData.plan.successHint} />}
+          </div>
+        )}
+      </div>
+
+      <div className="card p-6">
+        <div className="flex items-center gap-3 mb-4">
+          <Mic className="w-5 h-5 text-amber-400" />
+          <h2 className="text-lg font-semibold text-white">Последние AI-звонки</h2>
+          {sessionsLoading && <Loader2 className="w-4 h-4 animate-spin text-gray-500" />}
+        </div>
+
+        {aiSessions.length === 0 && !sessionsLoading ? (
+          <p className="text-sm text-gray-500">Пока нет AI-звонков. Запусти первый сценарий через AI Call Studio или /callai.</p>
+        ) : (
+          <div className="space-y-3">
+            {aiSessions.map((session) => (
+              <div key={session.id} className="rounded-xl border border-white/5 bg-white/[0.02] p-4 space-y-3">
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-white">{session.scenarioName}</p>
+                    <p className="text-xs text-gray-500">
+                      {session.targetPhone} · {new Date(session.createdAt).toLocaleString('ru-RU')}
+                    </p>
+                  </div>
+                  <span className={`text-xs px-2 py-1 rounded-full border ${formatSessionStatusClass(session.status)}`}>
+                    {formatSessionStatus(session.status)}
+                  </span>
+                </div>
+
+                <PreviewRow label="Задача" value={session.task} />
+                <PreviewRow label="План" value={session.summary} />
+                {session.resultSummary && <PreviewRow label="Итог" value={session.resultSummary} />}
+                {session.transcript && <PreviewRow label="Расшифровка" value={session.transcript} />}
+                {session.recordLink && (
+                  <a href={session.recordLink} target="_blank" rel="noreferrer" className="text-sm text-emerald-400 hover:text-emerald-300">
+                    Открыть запись звонка
+                  </a>
+                )}
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -727,9 +748,20 @@ const TelephonyPage = () => {
   );
 };
 
-// ---------------------------------------------------------------
-// Sub-components
-// ---------------------------------------------------------------
+interface FieldProps {
+  label: string;
+  children: ReactNode;
+  hint?: string;
+  className?: string;
+}
+
+const Field = ({ label, children, hint, className }: FieldProps) => (
+  <div className={className}>
+    <label className="block text-sm font-medium text-gray-300 mb-1.5">{label}</label>
+    {children}
+    {hint && <p className="text-xs text-gray-500 mt-1">{hint}</p>}
+  </div>
+);
 
 interface StatusRowProps {
   label: string;
@@ -741,91 +773,118 @@ interface StatusRowProps {
 const StatusRow = ({ label, value, ok, mono }: StatusRowProps) => (
   <div className="flex items-center justify-between px-4 py-2.5 rounded-xl bg-white/[0.02] border border-white/5">
     <span className="text-sm text-gray-400">{label}</span>
-    <span
-      className={`text-sm font-medium ${ok ? 'text-emerald-400' : 'text-red-400'} ${mono ? 'font-mono text-xs' : ''}`}
-    >
+    <span className={`text-sm font-medium ${ok ? 'text-emerald-400' : 'text-red-400'} ${mono ? 'font-mono text-xs' : ''}`}>
       {value}
     </span>
   </div>
 );
 
-interface ScenarioCardProps {
-  scenario: Scenario;
-  isGenerating: boolean;
-  onUpdate: (id: string, field: keyof Scenario, value: string) => void;
-  onGenerate: (id: string) => void;
-  onRemove: (id: string) => void;
-  onCopy: (text: string) => void;
+interface ToggleButtonProps {
+  active: boolean;
+  label: string;
+  iconOn: ReactNode;
+  iconOff: ReactNode;
+  onClick: () => void;
 }
 
-const ScenarioCard = ({
-  scenario,
-  isGenerating,
-  onUpdate,
-  onGenerate,
-  onRemove,
-  onCopy,
-}: ScenarioCardProps) => (
-  <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4 space-y-3">
-    {/* Name */}
-    <div className="flex items-center gap-2">
-      <input
-        type="text"
-        className="input flex-1 text-sm font-semibold"
-        value={scenario.name}
-        onChange={(e) => onUpdate(scenario.id, 'name', e.target.value)}
-        placeholder="Название сценария"
-      />
-      <button
-        className="p-2 rounded-lg text-gray-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
-        onClick={() => onRemove(scenario.id)}
-        title="Удалить"
-      >
-        <Trash2 className="w-4 h-4" />
-      </button>
-    </div>
+const ToggleButton = ({ active, label, iconOn, iconOff, onClick }: ToggleButtonProps) => (
+  <button
+    type="button"
+    className={`flex items-center gap-2 px-4 py-2.5 rounded-xl border transition-all ${
+      active ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : 'border-gray-700 bg-gray-800/50 text-gray-500'
+    }`}
+    onClick={onClick}
+  >
+    {active ? iconOn : iconOff}
+    <span className="text-sm">{label}</span>
+  </button>
+);
 
-    {/* Rule */}
-    <div>
-      <label className="block text-xs text-gray-500 mb-1">Правило (на русском)</label>
-      <textarea
-        className="input w-full min-h-[72px] text-sm resize-y"
-        value={scenario.rule}
-        onChange={(e) => onUpdate(scenario.id, 'rule', e.target.value)}
-        placeholder="Опишите что должна делать Амина при звонке..."
-      />
-    </div>
+interface ScenarioEditorProps {
+  scenario: TelephonyAiScenario;
+  onUpdate: (id: string, field: keyof TelephonyAiScenario, value: string | boolean | number) => void;
+  onRemove: (id: string) => void;
+}
 
-    {/* Generate button */}
-    <button
-      className="btn-ghost flex items-center gap-1.5 text-sm text-violet-400 hover:text-violet-300"
-      disabled={isGenerating || !scenario.rule.trim()}
-      onClick={() => onGenerate(scenario.id)}
-    >
-      {isGenerating ? (
-        <Loader2 className="w-3.5 h-3.5 animate-spin" />
-      ) : (
-        <Sparkles className="w-3.5 h-3.5" />
-      )}
-      Генерировать промпт
-    </button>
-
-    {/* Generated prompt */}
-    {scenario.generatedPrompt && (
-      <div className="relative">
-        <label className="block text-xs text-gray-500 mb-1">Сгенерированная конфигурация LiraX</label>
-        <pre className="rounded-lg bg-black/30 border border-white/5 p-3 text-xs text-emerald-300 overflow-x-auto whitespace-pre-wrap font-mono max-h-48">
-          {scenario.generatedPrompt}
-        </pre>
+const ScenarioEditor = ({ scenario, onUpdate, onRemove }: ScenarioEditorProps) => (
+  <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4 space-y-4">
+    <div className="grid grid-cols-1 md:grid-cols-[1fr,1fr,180px,120px] gap-3">
+      <Field label="ID">
+        <input className="input w-full font-mono text-sm" value={scenario.id} onChange={(e) => onUpdate(scenario.id, 'id', e.target.value)} />
+      </Field>
+      <Field label="Название">
+        <input className="input w-full" value={scenario.name} onChange={(e) => onUpdate(scenario.id, 'name', e.target.value)} />
+      </Field>
+      <Field label="Режим">
+        <select className="input w-full" value={scenario.callMode} onChange={(e) => onUpdate(scenario.id, 'callMode', e.target.value)}>
+          <option value="ask_question">Ask question</option>
+          <option value="speech">Speech only</option>
+        </select>
+      </Field>
+      <div className="flex items-end gap-2">
         <button
-          className="absolute top-6 right-2 p-1.5 rounded-md bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-colors"
-          onClick={() => onCopy(scenario.generatedPrompt)}
-          title="Скопировать"
+          type="button"
+          className={`flex-1 px-3 py-2 rounded-xl border text-sm ${
+            scenario.enabled ? 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300' : 'border-gray-700 bg-gray-800/50 text-gray-500'
+          }`}
+          onClick={() => onUpdate(scenario.id, 'enabled', !scenario.enabled)}
         >
-          <Copy className="w-3.5 h-3.5" />
+          {scenario.enabled ? 'Включён' : 'Выключен'}
+        </button>
+        <button className="p-2 rounded-lg text-gray-500 hover:text-red-400 hover:bg-red-400/10 transition-colors" onClick={() => onRemove(scenario.id)}>
+          <Trash2 className="w-4 h-4" />
         </button>
       </div>
-    )}
+    </div>
+
+    <Field label="Цель сценария">
+      <textarea className="input w-full min-h-[72px] text-sm resize-y" value={scenario.goal} onChange={(e) => onUpdate(scenario.id, 'goal', e.target.value)} />
+    </Field>
+
+    <Field label="System prompt для голосового агента">
+      <textarea className="input w-full min-h-[88px] text-sm resize-y" value={scenario.systemPrompt} onChange={(e) => onUpdate(scenario.id, 'systemPrompt', e.target.value)} />
+    </Field>
+
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <Field label="Стартовая реплика">
+        <textarea className="input w-full min-h-[72px] text-sm resize-y" value={scenario.openingLine} onChange={(e) => onUpdate(scenario.id, 'openingLine', e.target.value)} />
+      </Field>
+      <Field label="Подсказка по вопросу">
+        <textarea className="input w-full min-h-[72px] text-sm resize-y" value={scenario.questionHint} onChange={(e) => onUpdate(scenario.id, 'questionHint', e.target.value)} />
+      </Field>
+    </div>
+
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <Field label="Что считать успехом">
+        <textarea className="input w-full min-h-[72px] text-sm resize-y" value={scenario.successCriteria} onChange={(e) => onUpdate(scenario.id, 'successCriteria', e.target.value)} />
+      </Field>
+      <Field label="Подсказка для summary после записи">
+        <textarea className="input w-full min-h-[72px] text-sm resize-y" value={scenario.resultPrompt} onChange={(e) => onUpdate(scenario.id, 'resultPrompt', e.target.value)} />
+      </Field>
+    </div>
+
+    <Field label="Лимит символов для speech-only">
+      <input
+        type="number"
+        className="input w-40"
+        value={scenario.maxSpeechChars}
+        onChange={(e) => onUpdate(scenario.id, 'maxSpeechChars', Number(e.target.value))}
+      />
+    </Field>
+  </div>
+);
+
+interface PreviewRowProps {
+  label: string;
+  value: string;
+}
+
+const PreviewRow = ({ label, value }: PreviewRowProps) => (
+  <div>
+    <p className="text-xs uppercase tracking-wide text-gray-500 mb-1">{label}</p>
+    <div className="rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2 text-sm text-gray-200 whitespace-pre-wrap">
+      {value}
+    </div>
   </div>
 );
 

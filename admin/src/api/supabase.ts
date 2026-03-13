@@ -27,6 +27,20 @@ import type { Settings, Prompt, AnalyticsEvent } from '../../../shared/types/ind
 // Bot API URL
 const BOT_URL = import.meta.env.VITE_BOT_URL || 'https://amina-bot.onrender.com';
 
+export async function fetchBotApi(path: string, init: RequestInit = {}): Promise<Response> {
+  const { data } = await supabase.auth.getSession();
+  const headers = new Headers(init.headers);
+
+  if (data.session?.access_token) {
+    headers.set('Authorization', `Bearer ${data.session.access_token}`);
+  }
+
+  return fetch(`${BOT_URL}${path}`, {
+    ...init,
+    headers,
+  });
+}
+
 // Settings API - uses bot backend (has service_role access)
 export const settingsApi = {
   async getAll(): Promise<Settings[]> {

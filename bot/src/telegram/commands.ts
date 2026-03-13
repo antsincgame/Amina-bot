@@ -22,6 +22,11 @@ import { sendDigestNow, sendHybridDigestNow } from '../features/digest-scheduler
 import { parseAllConfiguredSites, getConfiguredSites } from '../features/news-parser.js';
 import { escapeMarkdown, escapeHtml, sendLongMessage } from './format.js';
 import { connectCall, getCallHistory, isTelephonyAllowed, getLiraXConfig } from '../features/telephony/lirax.js';
+import {
+  getTelephonyAiScenarios,
+  isTelephonyOwner,
+  startTelephonyAiCall,
+} from '../features/telephony/ai-scenarios.js';
 import { aiService } from '../ai/openrouter.js';
 import type { AIMessage } from '../../../shared/types/index.js';
 import {
@@ -705,6 +710,119 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
         `❌ <b>Ошибка звонка:</b>\n<code>${escapeHtml(msg)}</code>`,
         { parse_mode: 'HTML' },
       );
+    }
+  });
+
+  const TELEPHONY_OWNER_DENIED_MSG =
+    '🔒 <b>Только владелец может запускать AI-звонки</b>\n\n' +
+    'Укажите свой Telegram ID в поле <code>lirax_owner_chat_id</code> в админке телефонии.';
+
+  bot.command('callai', async (ctx) => {
+    if (!ctx.from?.id) return;
+    const userId = ctx.from.id.toString();
+
+    if (!(await isTelephonyOwner(userId))) {
+      await ctx.reply(TELEPHONY_OWNER_DENIED_MSG, { parse_mode: 'HTML' });
+      return;
+    }
+
+    const scenarios = (await getTelephonyAiScenarios()).filter((scenario) => scenario.enabled);
+    const scenarioList = scenarios.length > 0
+      ? scenarios
+        .map((scenario) => `• <code>${escapeHtml(scenario.id)}</code> — ${escapeHtml(scenario.name)}`)
+        .join('\n')
+      : '• Нет включённых сценариев';
+    const helpText =
+      '📞 <b>AI-звонок</b>\n\n' +
+      'Формат:\n' +
+      '<code>/callai scenario_id | +375291234567 | задача для ИИ</code>\n\n' +
+      'Быстрый режим по умолчанию:\n' +
+      '<code>/callai +375291234567 | напомни о встрече и попроси подтвердить время</code>\n\n' +
+      'Доступные сценарии:\n' +
+      `${scenarioList}`;
+
+    if (scenarios.length === 0) {
+      await ctx.reply(helpText, { parse_mode: 'HTML' });
+      return;
+    }
+
+    const input = ctx.match?.trim() || '';
+    if (!input) {
+      await ctx.reply(helpText, { parse_mode: 'HTML' });
+      return;
+    }
+
+    const parts = input.split('|').map((part) => part.trim()).filter(Boolean);
+    const looksLikePhone = (value: string): boolean => /(\+?\d[\d\s\-()]{6,})/.test(value);
+
+    let scenarioId = scenarios[0]!.id;
+    let phoneRaw = '';
+    let task = '';
+
+    if (parts.length >= 2 && looksLikePhone(parts[0] ?? '')) {
+      phoneRaw = parts[0] ?? '';
+      task = parts.slice(1).join(' | ');
+    } else if (parts.length >= 3) {
+      scenarioId = parts[0] ?? scenarioId;
+      phoneRaw = parts[1] ?? '';
+      task = parts.slice(2).join(' | ');
+    } else {
+      await ctx.reply(helpText, { parse_mode: 'HTML' });
+      return;
+    }
+
+    if (!scenarios.some((scenario) => scenario.id === scenarioId)) {
+      await ctx.reply(
+        `❌ <b>Сценарий не найден:</b> <code>${escapeHtml(scenarioId)}</code>\n\n${helpText}`,
+        { parse_mode: 'HTML' },
+      );
+      return;
+    }
+
+    const phoneMatch = phoneRaw.match(/(\+?\d[\d\s\-()]{6,})/);
+    const phone = phoneMatch?.[1]?.replace(/[\s\-()]/g, '') ?? '';
+    if (!phone) {
+      await ctx.reply('❌ <b>Не удалось распознать номер телефона</b>', { parse_mode: 'HTML' });
+      return;
+    }
+
+    if (!task.trim()) {
+      await ctx.reply('❌ <b>Опиши задачу для звонка после номера</b>', { parse_mode: 'HTML' });
+      return;
+    }
+
+    await ctx.replyWithChatAction('typing');
+
+    try {
+      const { scenario, plan, result } = await startTelephonyAiCall({
+        scenarioId,
+        phone,
+        task,
+        ownerTelegramId: userId,
+        initiatedBy: ctx.from.first_name || userId,
+      });
+
+      const details = plan.callMode === 'speech'
+        ? `🔊 Озвучка: <i>${escapeHtml(plan.speechText ?? '—')}</i>`
+        : `🗣 Приветствие: <i>${escapeHtml(plan.helloText ?? '—')}</i>\n❓ Вопрос: <i>${escapeHtml(plan.askText ?? '—')}</i>`;
+
+      await ctx.reply(
+        `📞 <b>AI-звонок запущен</b>\n\n` +
+        `🎭 Сценарий: <b>${escapeHtml(scenario.name)}</b>\n` +
+        `📱 Номер: <code>${escapeHtml(phone)}</code>\n` +
+        `📋 План: ${escapeHtml(plan.summary)}\n` +
+        `${details}\n` +
+        `🆔 ID: <code>${escapeHtml(result.id || 'pending')}</code>\n` +
+        `⚙️ Режим: <code>${escapeHtml(result.mode)}</code>\n\n` +
+        `После записи разговора я пришлю тебе расшифровку и итог в Telegram.`,
+        { parse_mode: 'HTML' },
+      );
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Неизвестная ошибка';
+      telegramLogger.error({ error, userId, input }, '[LiraX] AI call failed');
+      await ctx.reply(`❌ <b>Не удалось запустить AI-звонок:</b>\n<code>${escapeHtml(msg)}</code>`, {
+        parse_mode: 'HTML',
+      });
     }
   });
 

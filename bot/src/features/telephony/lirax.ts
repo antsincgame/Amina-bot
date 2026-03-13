@@ -159,6 +159,58 @@ export async function make2Calls(params: {
   return result as Make2CallsResult;
 }
 
+export interface AskQuestionResult {
+  id: string;
+  mode: 'ask_question';
+  raw: unknown;
+}
+
+/**
+ * Позвонить абоненту с автоматическим вопросом и дождаться ответа.
+ */
+export async function askQuestion(params: {
+  to: string;
+  fromExt?: string;
+  hello?: string;
+  ask: string;
+  ok?: string;
+  bye?: string;
+  timeout?: number;
+  successTime?: number;
+}): Promise<AskQuestionResult> {
+  const cfg = await getLiraXConfig();
+  const body: Record<string, string | number> = {
+    from: params.fromExt || cfg.defaultExt,
+    to1: params.to,
+    ask: params.ask,
+  };
+
+  if (params.hello) body['hello'] = params.hello;
+  if (params.ok) body['ok'] = params.ok;
+  if (params.bye) body['bye'] = params.bye;
+  if (params.timeout) body['timeout'] = params.timeout;
+  if (params.successTime) body['successtime'] = params.successTime;
+
+  const result = await liraXRequest('AskQuestion', body);
+  const payload = typeof result === 'object' && result !== null
+    ? result as Record<string, unknown>
+    : null;
+
+  const id = typeof payload?.['id_askquestion'] === 'string'
+    ? payload['id_askquestion']
+    : typeof payload?.['id_makecall'] === 'string'
+      ? payload['id_makecall']
+      : typeof payload?.['id'] === 'string'
+        ? payload['id']
+        : '';
+
+  return {
+    id,
+    mode: 'ask_question',
+    raw: result,
+  };
+}
+
 export interface ConnectCallResult {
   id: string;
   mode: 'make2calls' | 'makecall';

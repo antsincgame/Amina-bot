@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { aiService } from '../ai/openrouter.js';
-import { conversationsRepo, settingsRepo, promptsRepo } from '../db/supabase.js';
+import { conversationsRepo, settingsRepo, promptsRepo, getSupabase } from '../db/supabase.js';
 import { validateMessageContent, validateUserId } from '../utils/validation.js';
 import { aiLogger, getLogs, getLogStats } from '../config/logger.js';
 import { rateLimitHook } from '../utils/rate-limiter.js';
@@ -27,6 +27,7 @@ import { buildDigest } from '../features/digest-scheduler.js';
 import { buildHybridDigest, PreparedDigestUnavailableError } from '../features/digest-hybrid.js';
 import { markdownToTelegramHtml } from '../telegram/format.js';
 import type { DigestPipelineMode, NewsSite } from '../../../shared/types/index.js';
+import type { TelephonyAiScenario } from '../../../shared/types/telephony.js';
 import { invalidateTTSConfig } from '../features/tts.js';
 import { voiceMessagesRepo } from '../features/voice-messages-repo.js';
 import {
@@ -39,6 +40,19 @@ import {
   removeTelephonyUser,
   type LiraXEventPayload,
 } from '../features/telephony/lirax.js';
+import {
+  getTelephonyAiScenarios,
+  saveTelephonyAiScenarios,
+  previewTelephonyAiCall,
+  startTelephonyAiCall,
+  getTelephonyOwnerTelegramId,
+} from '../features/telephony/ai-scenarios.js';
+import {
+  getTelephonyAiCallSessions,
+  linkTelephonyAiSessionCallId,
+  failTelephonyAiCallByRequestId,
+  processTelephonyAiCallRecording,
+} from '../features/telephony/ai-call-sessions.js';
 import {
   clearLMStudioCache,
   getLMStudioConfig,
@@ -131,6 +145,37 @@ function getTunnelAuthFailure(request: FastifyRequest): { statusCode: number; er
   }
 
   return null;
+}
+
+function getBearerToken(request: FastifyRequest): string | null {
+  const authorization = readHeaderValue(request.headers.authorization);
+  if (!authorization?.startsWith('Bearer ')) {
+    return null;
+  }
+
+  return authorization.slice('Bearer '.length).trim() || null;
+}
+
+async function requireAdminAuth(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<{ userId: string; email: string | null } | null> {
+  const token = getBearerToken(request);
+  if (!token) {
+    await reply.code(401).send({ success: false, error: 'Admin authorization required' });
+    return null;
+  }
+
+  const { data, error } = await getSupabase().auth.getUser(token);
+  if (error || !data.user) {
+    await reply.code(403).send({ success: false, error: 'Invalid admin session' });
+    return null;
+  }
+
+  return {
+    userId: data.user.id,
+    email: data.user.email ?? null,
+  };
 }
 
 function getTunnelUrlValidationError(tunnelUrl: string): string | null {
@@ -2337,6 +2382,10 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
                   const message = formatCallEvent(eventPayload);
                   await sendTelegramNotification(message);
                 }
+
+                if (eventPayload.type === 'out' && eventPayload.phone && eventPayload.callid) {
+                  await linkTelephonyAiSessionCallId(eventPayload.phone, eventPayload.callid);
+                }
                 break;
               }
 
@@ -2351,6 +2400,12 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
                       `ID: <code>${callId}</code>\n` +
                       `<a href="${recordLink}">Слушать запись</a>`,
                     );
+                  }
+
+                  if (callId) {
+                    void processTelephonyAiCallRecording(callId, recordLink).catch((error) => {
+                      aiLogger.error({ error, callId }, '[Telephony AI] Async record processing failed');
+                    });
                   }
                 }
                 break;
@@ -2377,6 +2432,9 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
                 aiLogger.info({ idMakecall, success }, '[LiraX] makeCall finished');
 
                 if (!success) {
+                  if (idMakecall) {
+                    await failTelephonyAiCallByRequestId(idMakecall);
+                  }
                   await sendTelegramNotification(
                     `📵 <b>Звонок не состоялся</b>\n` +
                     `ID: <code>${idMakecall}</code>\n` +
@@ -2390,6 +2448,9 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
                 const id = payload['id_make2calls'];
                 const success = payload['success'] === '1';
                 aiLogger.info({ id, success }, '[LiraX] make2Calls finished');
+                if (!success && id) {
+                  await failTelephonyAiCallByRequestId(id);
+                }
                 break;
               }
 
@@ -2410,8 +2471,13 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
        * GET /api/lirax/status
        * Проверить конфигурацию LiraX интеграции
        */
-      apiServer.get('/lirax/status', async (_request: FastifyRequest, reply: FastifyReply) => {
+      apiServer.get('/lirax/status', async (request: FastifyRequest, reply: FastifyReply) => {
         try {
+          const admin = await requireAdminAuth(request, reply);
+          if (!admin) {
+            return;
+          }
+
           const settings = await settingsRepo.getMany([
             'lirax_url',
             'lirax_token',
@@ -2443,7 +2509,12 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
        * POST /api/lirax/reload-config
        * Принудительно сбросить кеш конфига LiraX (применяет новый токен без редеплоя)
        */
-      apiServer.post('/lirax/reload-config', async (_request: FastifyRequest, reply: FastifyReply) => {
+      apiServer.post('/lirax/reload-config', async (request: FastifyRequest, reply: FastifyReply) => {
+        const admin = await requireAdminAuth(request, reply);
+        if (!admin) {
+          return;
+        }
+
         clearLiraXConfigCache();
         aiLogger.info('LiraX config cache cleared via API');
         return reply.code(200).send({ success: true, message: 'LiraX config cache cleared' });
@@ -2460,6 +2531,11 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
           reply: FastifyReply,
         ) => {
           try {
+            const admin = await requireAdminAuth(request, reply);
+            if (!admin) {
+              return;
+            }
+
             const { phone, speech } = request.body as { phone: string; speech?: string };
             if (!phone) {
               return reply.code(400).send({ success: false, error: 'phone is required' });
@@ -2481,10 +2557,14 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
        * GET /api/lirax/scenarios
        * Получить сохранённые сценарии телефонии
        */
-      apiServer.get('/lirax/scenarios', async (_request: FastifyRequest, reply: FastifyReply) => {
+      apiServer.get('/lirax/scenarios', async (request: FastifyRequest, reply: FastifyReply) => {
         try {
-          const raw = await settingsRepo.get('lirax_scenarios');
-          const scenarios = raw ? JSON.parse(raw) : [];
+          const admin = await requireAdminAuth(request, reply);
+          if (!admin) {
+            return;
+          }
+
+          const scenarios = await getTelephonyAiScenarios();
           return reply.code(200).send({ success: true, data: scenarios });
         } catch (error) {
           const msg = error instanceof Error ? error.message : 'Unknown error';
@@ -2500,15 +2580,107 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
         '/lirax/scenarios',
         async (request: FastifyRequest, reply: FastifyReply) => {
           try {
+            const admin = await requireAdminAuth(request, reply);
+            if (!admin) {
+              return;
+            }
+
             const scenarios = request.body;
             if (!Array.isArray(scenarios)) {
               return reply.code(400).send({ success: false, error: 'Body must be an array' });
             }
 
-            await settingsRepo.set('lirax_scenarios', JSON.stringify(scenarios));
+            const saved = await saveTelephonyAiScenarios(scenarios as TelephonyAiScenario[]);
             aiLogger.info({ count: scenarios.length }, '[LiraX] Scenarios saved');
 
-            return reply.code(200).send({ success: true, message: 'Scenarios saved' });
+            return reply.code(200).send({ success: true, data: saved });
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : 'Unknown error';
+            return reply.code(500).send({ success: false, error: msg });
+          }
+        },
+      );
+
+      apiServer.get('/lirax/ai-calls/sessions', async (request: FastifyRequest, reply: FastifyReply) => {
+        try {
+          const admin = await requireAdminAuth(request, reply);
+          if (!admin) {
+            return;
+          }
+
+          const sessions = await getTelephonyAiCallSessions();
+          return reply.code(200).send({ success: true, data: sessions });
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : 'Unknown error';
+          return reply.code(500).send({ success: false, error: msg });
+        }
+      });
+
+      apiServer.post(
+        '/lirax/ai-calls/preview',
+        async (
+          request: FastifyRequest<{ Body: { scenarioId: string; phone: string; task: string } }>,
+          reply: FastifyReply,
+        ) => {
+          try {
+            const admin = await requireAdminAuth(request, reply);
+            if (!admin) {
+              return;
+            }
+
+            const { scenarioId, phone, task } = request.body;
+            if (!scenarioId || !phone || !task) {
+              return reply
+                .code(400)
+                .send({ success: false, error: 'scenarioId, phone and task are required' });
+            }
+
+            const result = await previewTelephonyAiCall(scenarioId, task, phone);
+            return reply.code(200).send({ success: true, data: result });
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : 'Unknown error';
+            return reply.code(500).send({ success: false, error: msg });
+          }
+        },
+      );
+
+      apiServer.post(
+        '/lirax/ai-calls/start',
+        async (
+          request: FastifyRequest<{
+            Body: { scenarioId: string; phone: string; task: string; ownerTelegramId?: string };
+          }>,
+          reply: FastifyReply,
+        ) => {
+          try {
+            const admin = await requireAdminAuth(request, reply);
+            if (!admin) {
+              return;
+            }
+
+            const { scenarioId, phone, task, ownerTelegramId } = request.body;
+            if (!scenarioId || !phone || !task) {
+              return reply
+                .code(400)
+                .send({ success: false, error: 'scenarioId, phone and task are required' });
+            }
+
+            const effectiveOwnerId = ownerTelegramId?.trim() || await getTelephonyOwnerTelegramId();
+            if (!effectiveOwnerId) {
+              return reply
+                .code(400)
+                .send({ success: false, error: 'Set lirax_owner_chat_id or ownerTelegramId first' });
+            }
+
+            const result = await startTelephonyAiCall({
+              scenarioId,
+              phone,
+              task,
+              ownerTelegramId: effectiveOwnerId,
+              initiatedBy: admin.email ?? admin.userId,
+            });
+
+            return reply.code(200).send({ success: true, data: result });
           } catch (error) {
             const msg = error instanceof Error ? error.message : 'Unknown error';
             return reply.code(500).send({ success: false, error: msg });
@@ -2520,8 +2692,13 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
       // LiraX Telephony User Permissions
       // ============================================
 
-      apiServer.get('/lirax/users', async (_request: FastifyRequest, reply: FastifyReply) => {
+      apiServer.get('/lirax/users', async (request: FastifyRequest, reply: FastifyReply) => {
         try {
+          const admin = await requireAdminAuth(request, reply);
+          if (!admin) {
+            return;
+          }
+
           const users = await getTelephonyUsers();
           return reply.code(200).send({ success: true, data: users });
         } catch (error) {
@@ -2537,6 +2714,11 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
           reply: FastifyReply,
         ) => {
           try {
+            const admin = await requireAdminAuth(request, reply);
+            if (!admin) {
+              return;
+            }
+
             const { telegram_id, name } = request.body as { telegram_id: string; name: string };
             if (!telegram_id) {
               return reply.code(400).send({ success: false, error: 'telegram_id is required' });
@@ -2558,6 +2740,11 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
           reply: FastifyReply,
         ) => {
           try {
+            const admin = await requireAdminAuth(request, reply);
+            if (!admin) {
+              return;
+            }
+
             const { telegramId } = request.params;
             const users = await removeTelephonyUser(telegramId);
             aiLogger.info({ telegramId }, '[LiraX] Telephony user removed');
@@ -2580,6 +2767,11 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
           reply: FastifyReply,
         ) => {
           try {
+            const admin = await requireAdminAuth(request, reply);
+            if (!admin) {
+              return;
+            }
+
             const { rule } = request.body as { rule: string };
             if (!rule || typeof rule !== 'string') {
               return reply.code(400).send({ success: false, error: 'rule is required' });
