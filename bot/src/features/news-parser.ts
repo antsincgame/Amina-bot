@@ -16,6 +16,7 @@ import type { AnyNode } from 'domhandler';
 import { settingsRepo } from '../db/supabase.js';
 import { appLogger } from '../config/logger.js';
 import { hasMostlyRussianText, localizeParsedHeadlines } from './news-localization.js';
+import { enrichParsedHeadlineDescriptions, isWeakHeadlineDescription } from './news-description-enrichment.js';
 import {
   FETCH_TIMEOUT_MS,
   MAX_HEADLINES_PER_SITE,
@@ -1709,7 +1710,7 @@ function getTierScore(tier?: NewsSourceTier): number {
 
 function getDescriptionScore(headline: ParsedHeadline): number {
   const description = cleanTitle(headline.description);
-  if (!description || description === headline.title) return 0;
+  if (!description || description === headline.title || isWeakHeadlineDescription(headline)) return 0;
   if (description.length >= 120) return 3;
   if (description.length >= 60) return 2;
   return 1;
@@ -1877,7 +1878,8 @@ export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
   });
 
   const deduped = dedupeParsedHeadlines(allHeadlines);
-  const localizedHeadlines = await localizeParsedHeadlines(deduped.headlines);
+  const enrichedHeadlines = await enrichParsedHeadlineDescriptions(deduped.headlines);
+  const localizedHeadlines = await localizeParsedHeadlines(enrichedHeadlines);
   const grouped = groupHeadlinesByCategory(localizedHeadlines);
 
   appLogger.info(
