@@ -191,14 +191,24 @@ interface AIConfig {
   temperature: number;
 }
 
+export interface AIChatOptions {
+  promptMode?: 'default' | 'passthrough';
+  maxTokens?: number;
+  temperature?: number;
+}
+
 /** Кеш промпта (меняется редко — TTL 5 минут) */
 let cachedPrompt: { content: string; channel: string; ts: number } | null = null;
 const PROMPT_CACHE_TTL = 5 * 60 * 1000;
 
-const getAIConfig = async (channel: 'telegram' | 'voice'): Promise<AIConfig> => {
+const getAIConfig = async (
+  channel: 'telegram' | 'voice',
+  options?: { includePrompt?: boolean },
+): Promise<AIConfig> => {
+  const includePrompt = options?.includePrompt ?? true;
   // === ОПТИМИЗАЦИЯ: settings (уже кешированы) + prompt параллельно ===
   const now = Date.now();
-  const promptCached = cachedPrompt && cachedPrompt.channel === channel
+  const promptCached = includePrompt && cachedPrompt && cachedPrompt.channel === channel
     && now - cachedPrompt.ts < PROMPT_CACHE_TTL;
 
   const [settings, prompt] = await Promise.all([
@@ -208,14 +218,16 @@ const getAIConfig = async (channel: 'telegram' | 'voice'): Promise<AIConfig> => 
       'max_tokens',
       'temperature',
     ]),
-    promptCached
+    includePrompt
+      ? (promptCached
       ? Promise.resolve({ content: cachedPrompt!.content } as { content: string })
       : promptsRepo.getActive(channel).then(p => {
           if (p) {
             cachedPrompt = { content: p.content, channel, ts: now };
           }
           return p;
-        }),
+        }))
+      : Promise.resolve(null),
   ]);
 
   // Priority: custom_model_override > openrouter_model > config default
@@ -245,7 +257,7 @@ const getAIConfig = async (channel: 'telegram' | 'voice'): Promise<AIConfig> => 
 
   return {
     model,
-    systemPrompt: prompt?.content ?? getDefaultSystemPrompt(),
+    systemPrompt: includePrompt ? (prompt?.content ?? getDefaultSystemPrompt()) : '',
     maxTokens: settings['max_tokens'] && !isNaN(Number(settings['max_tokens']))
       ? Number(settings['max_tokens'])
       : config.ai.maxTokens,
@@ -358,19 +370,27 @@ export const aiService = {
   async chat(
     messages: AIMessage[],
     channel: 'telegram' | 'voice' = 'telegram',
-    userMemoryContext?: string
+    userMemoryContext?: string,
+    options?: AIChatOptions,
   ): Promise<AIResponse> {
-    const aiConfig = await getAIConfig(channel);
+    const promptMode = options?.promptMode ?? 'default';
+    const aiConfig = await getAIConfig(channel, { includePrompt: promptMode === 'default' });
+    const maxTokens = options?.maxTokens ?? aiConfig.maxTokens;
+    const temperature = options?.temperature ?? aiConfig.temperature;
 
-    let systemPrompt = injectAntiRefusal(aiConfig.systemPrompt);
-    if (userMemoryContext) {
-      systemPrompt = `${userMemoryContext}\n\n${systemPrompt}`;
-    }
+    const fullMessages: AIMessage[] = promptMode === 'passthrough'
+      ? messages
+      : (() => {
+          let systemPrompt = injectAntiRefusal(aiConfig.systemPrompt);
+          if (userMemoryContext) {
+            systemPrompt = `${userMemoryContext}\n\n${systemPrompt}`;
+          }
 
-    const fullMessages: AIMessage[] = [
-      { role: 'system', content: systemPrompt },
-      ...messages,
-    ];
+          return [
+            { role: 'system', content: systemPrompt },
+            ...messages,
+          ];
+        })();
 
     const tryWithClient = async (
       client: OpenAI,
@@ -379,8 +399,8 @@ export const aiService = {
       const response = await client.chat.completions.create({
         model,
         messages: fullMessages,
-        max_tokens: aiConfig.maxTokens,
-        temperature: aiConfig.temperature,
+        max_tokens: maxTokens,
+        temperature,
       });
 
       const choice = response.choices[0];

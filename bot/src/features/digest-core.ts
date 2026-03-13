@@ -50,6 +50,8 @@ const DIGEST_HEADLINE_BATCH_MAX_CHARS = 4500;
 const DIGEST_FALLBACK_BATCH_MAX_ITEMS = 42;
 const DIGEST_FALLBACK_BATCH_MAX_CHARS = 11000;
 const DIGEST_HEADLINE_LLM_MAX_BATCHES = 8;
+const DIGEST_HEADLINE_ANNOTATION_MAX_TOKENS = 1800;
+const DIGEST_HEADLINE_ANNOTATION_TEMPERATURE = 0.2;
 const MARKDOWN_LINK_REGEX = /\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g;
 
 function estimateHeadlineSize(headline: ParsedHeadline): number {
@@ -275,7 +277,16 @@ ${inputLines}`
 ${inputLines}`;
 
   try {
-    const response = await aiService.chat([{ role: 'user', content: prompt }], 'telegram');
+    const response = await aiService.chat(
+      [{ role: 'user', content: prompt }],
+      'telegram',
+      undefined,
+      {
+        promptMode: 'passthrough',
+        maxTokens: DIGEST_HEADLINE_ANNOTATION_MAX_TOKENS,
+        temperature: DIGEST_HEADLINE_ANNOTATION_TEMPERATURE,
+      },
+    );
     const content = response.content.trim();
     const normalizedContent = content.startsWith('##') ? content : `## ${heading}\n\n${content}`;
     if (!content || !validateAnnotatedBatch(normalizedContent, batch.headlines)) {

@@ -134,6 +134,37 @@ describe('OpenRouter AI Service', () => {
       expect(callArgs.messages[1].content).toBe('Hi');
     });
 
+    it('should support passthrough mode for internal tasks', async () => {
+      mockCreate.mockResolvedValueOnce({
+        choices: [{ message: { content: '[]' }, finish_reason: 'stop' }],
+        model: 'test-model',
+        usage: { prompt_tokens: 6, completion_tokens: 2, total_tokens: 8 },
+      });
+
+      await aiService.chat(
+        [
+          { role: 'system', content: 'Return JSON only' },
+          { role: 'user', content: 'Translate this batch' },
+        ],
+        'telegram',
+        undefined,
+        {
+          promptMode: 'passthrough',
+          maxTokens: 111,
+          temperature: 0.2,
+        },
+      );
+
+      expect(mockCreate).toHaveBeenCalledTimes(1);
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs.messages).toEqual([
+        { role: 'system', content: 'Return JSON only' },
+        { role: 'user', content: 'Translate this batch' },
+      ]);
+      expect(callArgs.max_tokens).toBe(111);
+      expect(callArgs.temperature).toBe(0.2);
+    });
+
     it('should handle empty response from AI', async () => {
       mockCreate.mockResolvedValueOnce({
         choices: [{ message: { content: null }, finish_reason: 'stop' }],

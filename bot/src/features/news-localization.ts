@@ -4,7 +4,10 @@ import type { ParsedHeadline } from '../../../shared/types/index.js';
 
 const DESCRIPTION_TRANSLATION_BATCH_SIZE = 12;
 const DESCRIPTION_TRANSLATION_RETRY_BATCH_SIZE = 4;
+const DESCRIPTION_TRANSLATION_CONCURRENCY = 2;
 const DESCRIPTION_TRANSLATION_TIMEOUT_MS = 45_000;
+const DESCRIPTION_TRANSLATION_MAX_TOKENS = 1400;
+const DESCRIPTION_TRANSLATION_TEMPERATURE = 0.2;
 const MAX_LOCALIZED_DESCRIPTION_LENGTH = 320;
 
 interface DescriptionTranslationInput {
@@ -198,6 +201,28 @@ function mergeTranslationMaps(target: Map<number, string>, source: Map<number, s
   });
 }
 
+async function runWithConcurrency<T>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<void>,
+): Promise<void> {
+  let nextIndex = 0;
+
+  const runner = async (): Promise<void> => {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      await worker(items[currentIndex]!);
+    }
+  };
+
+  const runners = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    () => runner(),
+  );
+  await Promise.all(runners);
+}
+
 async function translateDescriptionBatch(
   items: DescriptionTranslationInput[],
   scope: 'batch' | 'retry_batch' | 'single',
@@ -218,6 +243,12 @@ async function translateDescriptionBatch(
           },
         ],
         'telegram',
+        undefined,
+        {
+          promptMode: 'passthrough',
+          maxTokens: DESCRIPTION_TRANSLATION_MAX_TOKENS,
+          temperature: DESCRIPTION_TRANSLATION_TEMPERATURE,
+        },
       ),
       DESCRIPTION_TRANSLATION_TIMEOUT_MS,
       `News description localization ${scope}`,
@@ -297,9 +328,9 @@ export async function localizeParsedHeadlines(headlines: ParsedHeadline[]): Prom
   }
 
   const localizedHeadlines = [...normalizedHeadlines];
+  const translationBatches = chunkTranslationInputs(translationQueue, DESCRIPTION_TRANSLATION_BATCH_SIZE);
 
-  for (let index = 0; index < translationQueue.length; index += DESCRIPTION_TRANSLATION_BATCH_SIZE) {
-    const batch = translationQueue.slice(index, index + DESCRIPTION_TRANSLATION_BATCH_SIZE);
+  await runWithConcurrency(translationBatches, DESCRIPTION_TRANSLATION_CONCURRENCY, async batch => {
     const translatedBatch = await translateDescriptionBatchWithFallback(batch);
 
     batch.forEach(({ id, headline }) => {
@@ -311,7 +342,7 @@ export async function localizeParsedHeadlines(headlines: ParsedHeadline[]): Prom
         description: translatedDescription,
       };
     });
-  }
+  });
 
   return localizedHeadlines;
 }

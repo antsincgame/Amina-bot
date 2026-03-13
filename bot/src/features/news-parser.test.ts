@@ -799,6 +799,11 @@ describe('News Parser — Russian description localization', () => {
     ]);
 
     expect(mockedAiService.chat).toHaveBeenCalledTimes(1);
+    expect(mockedAiService.chat.mock.calls[0]?.[3]).toMatchObject({
+      promptMode: 'passthrough',
+      maxTokens: 1400,
+      temperature: 0.2,
+    });
     expect(localized[0]?.description).toContain('выпустила нового coding-агента');
     expect(localized[1]?.description).toContain('Японский стартап');
   });
