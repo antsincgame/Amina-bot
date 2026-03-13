@@ -21,6 +21,8 @@ import { startReminderScheduler, stopReminderScheduler } from './reminders/remin
 import { startDigestScheduler, stopDigestScheduler } from './features/digest-scheduler.js';
 import { scheduleHybridDigestPrewarm, stopHybridDigestPrewarm } from './features/digest-hybrid-prewarm.js';
 import { ensureVoiceMessagesInfra } from './features/voice-messages-repo.js';
+import { ensureTelephonyInfra } from './features/telephony/repository/telephony-infra.js';
+import { startTelephonyJobWorker, stopTelephonyJobWorker } from './features/telephony/service/postcall-job-worker.js';
 
 // --------------------------------------------
 // Application Entry Point (v1.0.1)
@@ -256,6 +258,11 @@ const initBotAndServices = async (): Promise<void> => {
     appLogger.warn({ error: err }, 'Voice infra init failed')
   );
 
+  ensureTelephonyInfra().catch(err =>
+    appLogger.warn({ error: err }, 'Telephony infra init failed')
+  );
+  startTelephonyJobWorker();
+
   // Bot menu commands (non-critical)
   try {
     await bot.api.setMyCommands([
@@ -330,6 +337,7 @@ const shutdown = async (signal: string): Promise<void> => {
   stopReminderScheduler();
   stopDigestScheduler();
   stopHybridDigestPrewarm();
+  stopTelephonyJobWorker();
 
   if (bot) {
     appLogger.info('Stopping bot...');

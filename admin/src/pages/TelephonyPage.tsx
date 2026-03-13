@@ -63,6 +63,22 @@ function createScenarioDraft(): TelephonyAiScenario {
     name: 'Новый AI-сценарий',
     enabled: true,
     callMode: 'ask_question',
+    runtimeMode: 'scripted',
+    policyVersion: 1,
+    policy: {
+      allowedClaims: [],
+      requiredSlots: [],
+      exitConditions: [
+        'Получен явный ответ собеседника',
+        'Собеседник завершает разговор',
+      ],
+      handoffRules: [
+        'Если собеседник просит живого человека, переведи звонок в fallback режим и пометь handoff.',
+      ],
+      maxSilenceMs: 6000,
+      maxTurns: 6,
+      fallbackMode: 'scripted',
+    },
     goal: '',
     systemPrompt: '',
     openingLine: 'Здравствуйте. Вас беспокоит AI-ассистент Амина.',
@@ -77,6 +93,19 @@ function createScenarioDraft(): TelephonyAiScenario {
 
 function formatScenarioMode(mode: TelephonyAiScenario['callMode']): string {
   return mode === 'speech' ? 'Только речь' : 'Вопрос с ожиданием ответа';
+}
+
+function formatRuntimeMode(mode: TelephonyAiScenario['runtimeMode']): string {
+  switch (mode) {
+    case 'shadow':
+      return 'Shadow';
+    case 'hybrid':
+      return 'Hybrid';
+    case 'realtime':
+      return 'Realtime';
+    default:
+      return 'Scripted';
+  }
 }
 
 function formatSessionStatus(status: TelephonyAiCallSession['status']): string {
@@ -391,6 +420,27 @@ const TelephonyPage = () => {
     );
   };
 
+  const updateScenarioPolicy = (
+    id: string,
+    field: keyof TelephonyAiScenario['policy'],
+    value: string | number,
+  ) => {
+    setScenarios((prev) =>
+      prev.map((scenario) =>
+        scenario.id === id
+          ? {
+              ...scenario,
+              policy: {
+                ...scenario.policy,
+                [field]: value,
+              },
+              updatedAt: new Date().toISOString(),
+            }
+          : scenario,
+      ),
+    );
+  };
+
   const addScenario = () => {
     const scenario = createScenarioDraft();
     setScenarios((prev) => [...prev, scenario]);
@@ -621,6 +671,7 @@ const TelephonyPage = () => {
                 key={scenario.id}
                 scenario={scenario}
                 onUpdate={updateScenario}
+                onPolicyUpdate={updateScenarioPolicy}
                 onRemove={removeScenario}
               />
             ))}
@@ -643,7 +694,7 @@ const TelephonyPage = () => {
             <select className="input w-full" value={studioScenarioId} onChange={(e) => setStudioScenarioId(e.target.value)}>
               {enabledScenarios.map((scenario) => (
                 <option key={scenario.id} value={scenario.id}>
-                  {scenario.name} ({formatScenarioMode(scenario.callMode)})
+                  {scenario.name} ({formatScenarioMode(scenario.callMode)} / {formatRuntimeMode(scenario.runtimeMode)})
                 </option>
               ))}
             </select>
@@ -696,7 +747,9 @@ const TelephonyPage = () => {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-semibold text-white">{previewData.scenario.name}</p>
-                <p className="text-xs text-gray-500">{formatScenarioMode(previewData.plan.callMode)}</p>
+                <p className="text-xs text-gray-500">
+                  {formatScenarioMode(previewData.plan.callMode)} / {formatRuntimeMode(previewData.scenario.runtimeMode)}
+                </p>
               </div>
               <span className="text-xs px-2 py-1 rounded-full border border-violet-500/20 bg-violet-500/10 text-violet-300">
                 Preview плана
@@ -731,7 +784,7 @@ const TelephonyPage = () => {
                   <div>
                     <p className="text-sm font-semibold text-white">{session.scenarioName}</p>
                     <p className="text-xs text-gray-500">
-                      {session.targetPhone} · {new Date(session.createdAt).toLocaleString('ru-RU')}
+                      {session.targetPhone} · {new Date(session.createdAt).toLocaleString('ru-RU')} · {formatRuntimeMode(session.runtimeMode)} · {session.provider}
                     </p>
                   </div>
                   <span className={`text-xs px-2 py-1 rounded-full border ${formatSessionStatusClass(session.status)}`}>
@@ -812,12 +865,17 @@ const ToggleButton = ({ active, label, iconOn, iconOff, onClick }: ToggleButtonP
 interface ScenarioEditorProps {
   scenario: TelephonyAiScenario;
   onUpdate: (id: string, field: keyof TelephonyAiScenario, value: string | boolean | number) => void;
+  onPolicyUpdate: (
+    id: string,
+    field: keyof TelephonyAiScenario['policy'],
+    value: string | number,
+  ) => void;
   onRemove: (id: string) => void;
 }
 
-const ScenarioEditor = ({ scenario, onUpdate, onRemove }: ScenarioEditorProps) => (
+const ScenarioEditor = ({ scenario, onUpdate, onPolicyUpdate, onRemove }: ScenarioEditorProps) => (
   <div className="rounded-xl border border-white/5 bg-white/[0.02] p-4 space-y-4">
-    <div className="grid grid-cols-1 md:grid-cols-[1fr,1fr,180px,120px] gap-3">
+    <div className="grid grid-cols-1 md:grid-cols-[1fr,1fr,180px,180px,120px] gap-3">
       <Field label="ID">
         <input className="input w-full font-mono text-sm" value={scenario.id} onChange={(e) => onUpdate(scenario.id, 'id', e.target.value)} />
       </Field>
@@ -828,6 +886,14 @@ const ScenarioEditor = ({ scenario, onUpdate, onRemove }: ScenarioEditorProps) =
         <select className="input w-full" value={scenario.callMode} onChange={(e) => onUpdate(scenario.id, 'callMode', e.target.value)}>
           <option value="ask_question">Ask question</option>
           <option value="speech">Speech only</option>
+        </select>
+      </Field>
+      <Field label="Runtime">
+        <select className="input w-full" value={scenario.runtimeMode} onChange={(e) => onUpdate(scenario.id, 'runtimeMode', e.target.value)}>
+          <option value="scripted">Scripted</option>
+          <option value="shadow">Shadow</option>
+          <option value="hybrid">Hybrid</option>
+          <option value="realtime">Realtime</option>
         </select>
       </Field>
       <div className="flex items-end gap-2">
@@ -853,6 +919,31 @@ const ScenarioEditor = ({ scenario, onUpdate, onRemove }: ScenarioEditorProps) =
     <Field label="System prompt для голосового агента">
       <textarea className="input w-full min-h-[88px] text-sm resize-y" value={scenario.systemPrompt} onChange={(e) => onUpdate(scenario.id, 'systemPrompt', e.target.value)} />
     </Field>
+
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <Field label="Fallback">
+        <select className="input w-full" value={scenario.policy.fallbackMode} onChange={(e) => onPolicyUpdate(scenario.id, 'fallbackMode', e.target.value)}>
+          <option value="scripted">Scripted fallback</option>
+          <option value="fail">Fail fast</option>
+        </select>
+      </Field>
+      <Field label="Max silence (ms)">
+        <input
+          type="number"
+          className="input w-full"
+          value={scenario.policy.maxSilenceMs}
+          onChange={(e) => onPolicyUpdate(scenario.id, 'maxSilenceMs', Number(e.target.value))}
+        />
+      </Field>
+      <Field label="Max turns">
+        <input
+          type="number"
+          className="input w-full"
+          value={scenario.policy.maxTurns}
+          onChange={(e) => onPolicyUpdate(scenario.id, 'maxTurns', Number(e.target.value))}
+        />
+      </Field>
+    </div>
 
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       <Field label="Стартовая реплика">

@@ -1,60 +1,48 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const chatMock = vi.fn();
-const askQuestionMock = vi.fn();
-const connectCallMock = vi.fn();
-const registerSessionMock = vi.fn();
-const settingsGetMock = vi.fn();
 const settingsGetManyMock = vi.fn();
-const settingsSetMock = vi.fn();
-
-vi.mock('../../ai/openrouter.js', () => ({
-  aiService: {
-    chat: chatMock,
-  },
-}));
+const scenarioRepoGetAllMock = vi.fn();
+const scenarioRepoSaveAllMock = vi.fn();
+const previewTelephonyCallMock = vi.fn();
+const startTelephonyCallMock = vi.fn();
 
 vi.mock('../../db/supabase.js', () => ({
   settingsRepo: {
-    get: settingsGetMock,
     getMany: settingsGetManyMock,
-    set: settingsSetMock,
   },
 }));
 
-vi.mock('./lirax.js', () => ({
-  askQuestion: askQuestionMock,
-  connectCall: connectCallMock,
+vi.mock('./repository/scenario-repo.js', () => ({
+  scenarioRepo: {
+    getAll: scenarioRepoGetAllMock,
+    saveAll: scenarioRepoSaveAllMock,
+  },
 }));
 
-vi.mock('./ai-call-sessions.js', () => ({
-  registerTelephonyAiCallSession: registerSessionMock,
+vi.mock('./service/call-launch-service.js', () => ({
+  previewTelephonyCall: previewTelephonyCallMock,
+  startTelephonyCall: startTelephonyCallMock,
 }));
 
-describe('telephony ai scenarios', () => {
+describe('telephony ai scenarios facade', () => {
   beforeEach(() => {
-    chatMock.mockReset();
-    askQuestionMock.mockReset();
-    connectCallMock.mockReset();
-    registerSessionMock.mockReset();
-    settingsGetMock.mockReset();
     settingsGetManyMock.mockReset();
-    settingsSetMock.mockReset();
-
-    settingsGetMock.mockResolvedValue(null);
+    scenarioRepoGetAllMock.mockReset();
+    scenarioRepoSaveAllMock.mockReset();
+    previewTelephonyCallMock.mockReset();
+    startTelephonyCallMock.mockReset();
     settingsGetManyMock.mockResolvedValue({});
-    settingsSetMock.mockResolvedValue(undefined);
-    registerSessionMock.mockResolvedValue(undefined);
   });
 
-  it('returns default scenarios when settings are empty', async () => {
-    const { getTelephonyAiScenarios } = await import('./ai-scenarios.js');
+  it('exposes default scenarios with hybrid runtime', async () => {
+    const { getDefaultTelephonyAiScenarios } = await import('./ai-scenarios.js');
 
-    const scenarios = await getTelephonyAiScenarios();
+    const scenarios = getDefaultTelephonyAiScenarios();
 
     expect(scenarios.length).toBeGreaterThan(0);
     expect(scenarios[0]?.id).toBe('confirm-meeting');
-    expect(scenarios.every((scenario) => scenario.enabled)).toBe(true);
+    expect(scenarios[0]?.runtimeMode).toBe('hybrid');
+    expect(scenarios[0]?.policy.fallbackMode).toBe('scripted');
   });
 
   it('uses owner fallback from lirax_admin_chat_id', async () => {
@@ -71,125 +59,70 @@ describe('telephony ai scenarios', () => {
     await expect(isTelephonyOwner('123')).resolves.toBe(false);
   });
 
-  it('builds ask_question plan from AI JSON and starts LiraX call', async () => {
-    chatMock.mockResolvedValue({
-      content: JSON.stringify({
-        summary: 'Подтвердить встречу',
-        helloText: 'Здравствуйте, вас беспокоит Амина.',
-        askText: 'Подтвердите, пожалуйста, встречу завтра в 14:00.',
-        okText: 'Спасибо, фиксирую подтверждение.',
-        byeText: 'Благодарю за ответ, до свидания.',
-        successHint: 'Нужно понять, подтверждена ли встреча.',
-      }),
-      model: 'local-model',
-      tokens_used: { prompt: 10, completion: 20, total: 30 },
-      finish_reason: 'stop',
-    });
-
-    askQuestionMock.mockResolvedValue({ id: 'ask-1', mode: 'ask_question' });
-
-    const { startTelephonyAiCall } = await import('./ai-scenarios.js');
-
-    const result = await startTelephonyAiCall({
-      scenarioId: 'confirm-meeting',
-      phone: '+375291234567',
-      task: 'Подтверди встречу на завтра в 14:00.',
-      ownerTelegramId: '7867087040',
-      initiatedBy: 'Амина',
-    });
-
-    expect(result.plan.callMode).toBe('ask_question');
-    expect(result.plan.askText).toContain('встречу');
-    expect(askQuestionMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        to: '+375291234567',
-        ask: expect.stringContaining('ru '),
-      }),
-    );
-    expect(registerSessionMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        ownerTelegramId: '7867087040',
-        requestId: 'ask-1',
-      }),
-    );
-  });
-
-  it('reuses provided preview plan without extra AI call', async () => {
-    askQuestionMock.mockResolvedValue({ id: 'ask-2', mode: 'ask_question' });
-
-    const { startTelephonyAiCall } = await import('./ai-scenarios.js');
-
-    const result = await startTelephonyAiCall({
-      scenarioId: 'confirm-meeting',
-      phone: '+375291234567',
-      task: 'Подтверди встречу на завтра в 14:00.',
-      ownerTelegramId: '7867087040',
-      initiatedBy: 'Амина',
-      plan: {
-        summary: 'Подтвердить встречу',
+  it('delegates scenario reads and writes to repository', async () => {
+    const scenarios = [
+      {
+        id: 'confirm-meeting',
+        name: 'Подтверждение встречи',
+        enabled: true,
         callMode: 'ask_question',
-        speechText: null,
-        helloText: 'Здравствуйте. Вас беспокоит AI-ассистент Амина.',
-        askText: 'Подтвердите, пожалуйста, встречу завтра в 14:00.',
-        okText: 'Спасибо, фиксирую подтверждение.',
-        byeText: 'Благодарю за ответ, до свидания.',
-        successHint: 'Нужно понять, подтверждена ли встреча.',
+        runtimeMode: 'hybrid',
+        policyVersion: 1,
+        policy: {
+          allowedClaims: [],
+          requiredSlots: [],
+          exitConditions: [],
+          handoffRules: [],
+          maxSilenceMs: 6000,
+          maxTurns: 6,
+          fallbackMode: 'scripted',
+        },
+        goal: 'Подтвердить встречу',
+        systemPrompt: '',
+        openingLine: '',
+        questionHint: '',
+        successCriteria: '',
+        resultPrompt: '',
+        maxSpeechChars: 420,
+        createdAt: '2026-03-09T00:00:00.000Z',
+        updatedAt: '2026-03-09T00:00:00.000Z',
       },
-    });
+    ] as const;
 
-    expect(chatMock).not.toHaveBeenCalled();
-    expect(result.plan.callMode).toBe('ask_question');
-    expect(result.plan.askText).toContain('встречу');
-    expect(askQuestionMock).toHaveBeenCalledTimes(1);
+    scenarioRepoGetAllMock.mockResolvedValue(scenarios);
+    scenarioRepoSaveAllMock.mockResolvedValue(scenarios);
+
+    const { getTelephonyAiScenarios, saveTelephonyAiScenarios } = await import('./ai-scenarios.js');
+
+    await expect(getTelephonyAiScenarios()).resolves.toEqual(scenarios);
+    await expect(saveTelephonyAiScenarios([...scenarios])).resolves.toEqual(scenarios);
   });
 
-  it('falls back to connectCall for speech mode', async () => {
-    settingsGetMock.mockResolvedValue(
-      JSON.stringify([
-        {
-          id: 'delivery-update',
-          name: 'Оповещение',
-          enabled: true,
-          callMode: 'speech',
-          goal: 'Озвучить сообщение',
-          systemPrompt: 'Говори коротко.',
-          openingLine: 'Здравствуйте.',
-          questionHint: '',
-          successCriteria: 'Сообщение доставлено.',
-          resultPrompt: 'Кратко опиши реакцию.',
-          maxSpeechChars: 300,
-          createdAt: '2026-03-09T00:00:00.000Z',
-          updatedAt: '2026-03-09T00:00:00.000Z',
-        },
-      ]),
-    );
+  it('delegates preview and start to launch service', async () => {
+    const previewResult = {
+      scenario: { id: 'confirm-meeting' },
+      plan: { summary: 'Подтвердить встречу' },
+    };
+    const startResult = {
+      scenario: { id: 'confirm-meeting' },
+      plan: { summary: 'Подтвердить встречу' },
+      result: { id: 'call-1', mode: 'ask_question' },
+    };
 
-    chatMock.mockResolvedValue({
-      content: JSON.stringify({
-        summary: 'Озвучить перенос доставки',
-        speechText: 'Здравствуйте. Сообщаю, что доставка переносится на завтра после обеда.',
-        successHint: 'Важно донести перенос.',
+    previewTelephonyCallMock.mockResolvedValue(previewResult);
+    startTelephonyCallMock.mockResolvedValue(startResult);
+
+    const { previewTelephonyAiCall, startTelephonyAiCall } = await import('./ai-scenarios.js');
+
+    await expect(previewTelephonyAiCall('confirm-meeting', 'task', '+375291234567')).resolves.toEqual(previewResult);
+    await expect(
+      startTelephonyAiCall({
+        scenarioId: 'confirm-meeting',
+        phone: '+375291234567',
+        task: 'task',
+        ownerTelegramId: '7867087040',
+        initiatedBy: 'amina-admin',
       }),
-      model: 'local-model',
-      tokens_used: { prompt: 10, completion: 20, total: 30 },
-      finish_reason: 'stop',
-    });
-    connectCallMock.mockResolvedValue({ id: 'call-1', mode: 'makecall' });
-
-    const { startTelephonyAiCall } = await import('./ai-scenarios.js');
-
-    const result = await startTelephonyAiCall({
-      scenarioId: 'delivery-update',
-      phone: '+375291234567',
-      task: 'Сообщи о переносе доставки на завтра.',
-      ownerTelegramId: '7867087040',
-      initiatedBy: 'Амина',
-    });
-
-    expect(result.plan.callMode).toBe('speech');
-    expect(connectCallMock).toHaveBeenCalledWith(
-      '+375291234567',
-      expect.stringContaining('доставка'),
-    );
+    ).resolves.toEqual(startResult);
   });
 });
