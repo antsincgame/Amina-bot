@@ -65,7 +65,13 @@ export const createBot = (): Bot<BotContext> => {
 
   // Error handler
   bot.catch(async (err) => {
-    telegramLogger.error({ error: err.error, ctx: err.ctx?.update }, 'Bot error');
+    const error = err.error;
+    telegramLogger.error({
+      errorMessage: error instanceof Error ? error.message : String(error),
+      errorStack: error instanceof Error ? error.stack : undefined,
+      errorName: error instanceof Error ? error.name : typeof error,
+      updateId: err.ctx?.update?.update_id,
+    }, 'Bot error');
     try {
       await err.ctx.reply('Произошла внутренняя ошибка. Попробуй ещё раз через пару секунд.');
     } catch {

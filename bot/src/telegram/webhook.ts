@@ -77,7 +77,11 @@ function processWebhookUpdate(
       })
       .catch((error: unknown) => {
         markUpdateFailed(updateId);
-        telegramLogger.error({ error, updateId }, 'Telegram webhook update failed');
+        telegramLogger.error({
+          errorMessage: error instanceof Error ? error.message : String(error),
+          errorStack: error instanceof Error ? error.stack : undefined,
+          updateId,
+        }, 'Telegram webhook update failed');
       });
   });
 }
