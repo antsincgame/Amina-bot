@@ -14,6 +14,11 @@ vi.mock('../config/logger.js', () => ({
 
 const originalWebhookSecret = config.telegram.webhook.secret;
 
+async function flushWebhookProcessing(): Promise<void> {
+  await new Promise(resolve => setImmediate(resolve));
+  await Promise.resolve();
+}
+
 describe('registerTelegramWebhookRoute', () => {
   afterEach(() => {
     config.telegram.webhook.secret = originalWebhookSecret;
@@ -61,6 +66,7 @@ describe('registerTelegramWebhookRoute', () => {
     });
 
     expect(response.statusCode).toBe(200);
+    await flushWebhookProcessing();
     expect(handleUpdate).toHaveBeenCalledTimes(1);
 
     await app.close();
@@ -102,7 +108,50 @@ describe('registerTelegramWebhookRoute', () => {
     });
 
     expect(response.statusCode).toBe(200);
+    await flushWebhookProcessing();
     expect(handleUpdate).toHaveBeenCalledTimes(1);
+
+    await app.close();
+  });
+
+  it('should skip duplicate updates while the same update is still processing', async () => {
+    config.telegram.webhook.secret = 'expected-secret';
+    let resolveUpdate: (() => void) | null = null;
+    const handleUpdate = vi.fn().mockImplementation(() => new Promise<void>(resolve => {
+      resolveUpdate = resolve;
+    }));
+    const app = Fastify();
+
+    registerTelegramWebhookRoute(app, () => ({ handleUpdate }));
+    await app.ready();
+
+    const firstResponse = await app.inject({
+      method: 'POST',
+      url: '/webhook/telegram',
+      headers: {
+        'x-telegram-bot-api-secret-token': 'expected-secret',
+      },
+      payload: { update_id: 42, message: { text: '/digest_all' } },
+    });
+
+    expect(firstResponse.statusCode).toBe(200);
+    await flushWebhookProcessing();
+    expect(handleUpdate).toHaveBeenCalledTimes(1);
+
+    const duplicateResponse = await app.inject({
+      method: 'POST',
+      url: '/webhook/telegram',
+      headers: {
+        'x-telegram-bot-api-secret-token': 'expected-secret',
+      },
+      payload: { update_id: 42, message: { text: '/digest_all' } },
+    });
+
+    expect(duplicateResponse.statusCode).toBe(200);
+    expect(JSON.parse(duplicateResponse.payload)).toEqual({ ok: true, duplicate: true });
+    expect(handleUpdate).toHaveBeenCalledTimes(1);
+
+    resolveUpdate?.();
 
     await app.close();
   });

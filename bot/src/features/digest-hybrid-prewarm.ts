@@ -5,7 +5,8 @@ import { digestCacheRepo } from './digest-hybrid-repo.js';
 import { userPrefsRepo } from './user-prefs-repo.js';
 
 const DEFAULT_PREWARM_CITIES = ['Москва'];
-const PREWARM_STARTUP_DELAY_MS = 20_000;
+/** Задержка перед prewarm — даёт процессу осесть, снижает OOM при старте на Render */
+const PREWARM_STARTUP_DELAY_MS = 45_000;
 const PREWARM_MAX_CITIES = 8;
 const PREWARM_RECENT_CACHE_LIMIT = 20;
 const PREWARM_USER_CITY_LIMIT = 20;

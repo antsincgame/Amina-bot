@@ -90,6 +90,8 @@ export const MAX_TITLE_LENGTH = 800;
 export const MAX_NEWS_AGE_HOURS = 336; // 14 days
 export const NEWS_SITE_TIMEOUT_MS = 12_000;
 export const NEWS_FEED_PROBE_TIMEOUT_MS = 5_000;
+/** Максимум параллельных парсеров — снижает пик памяти при 88+ сайтах */
+export const NEWS_PARSE_BATCH_SIZE = 12;
 
 // ============================================
 // TTS

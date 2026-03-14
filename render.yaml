@@ -12,6 +12,8 @@ services:
     startCommand: npm start
     healthCheckPath: /health
     envVars:
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=384
       - key: NODE_ENV
         value: production
       - key: HOST

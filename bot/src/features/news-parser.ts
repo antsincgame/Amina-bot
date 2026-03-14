@@ -26,6 +26,7 @@ import {
   PARSED_NEWS_CACHE_TTL as PARSED_NEWS_CACHE_TTL_MS,
   NEWS_FEED_PROBE_TIMEOUT_MS,
   NEWS_SITE_TIMEOUT_MS,
+  NEWS_PARSE_BATCH_SIZE,
 } from '../config/constants.js';
 import { ASIA_NEWS_SOURCE_MANIFEST } from './asian-news-sources.js';
 import type {
@@ -1838,28 +1839,33 @@ export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
 
   appLogger.info({ count: enabledSites.length }, 'Parsing news from configured sites');
 
-  const results = await Promise.allSettled(
-    enabledSites.map(async (site) => {
-      try {
-        const headlines = await withPromiseTimeout(
-          parseNewsFromSite(site),
-          NEWS_SITE_TIMEOUT_MS,
-          `News site "${site.name}"`,
-        );
-        appLogger.info(
-          { site: site.name, count: headlines.length, type: site.type, category: site.category },
-          'Site parsed successfully',
-        );
-        return headlines;
-      } catch (err) {
-        appLogger.warn(
-          { site: site.name, url: site.url, error: err instanceof Error ? err.message : String(err) },
-          'Site parse failed',
-        );
-        throw err;
-      }
-    }),
-  );
+  const results: PromiseSettledResult<ParsedHeadline[]>[] = [];
+  for (let i = 0; i < enabledSites.length; i += NEWS_PARSE_BATCH_SIZE) {
+    const batch = enabledSites.slice(i, i + NEWS_PARSE_BATCH_SIZE);
+    const batchResults = await Promise.allSettled(
+      batch.map(async (site) => {
+        try {
+          const headlines = await withPromiseTimeout(
+            parseNewsFromSite(site),
+            NEWS_SITE_TIMEOUT_MS,
+            `News site "${site.name}"`,
+          );
+          appLogger.info(
+            { site: site.name, count: headlines.length, type: site.type, category: site.category },
+            'Site parsed successfully',
+          );
+          return headlines;
+        } catch (err) {
+          appLogger.warn(
+            { site: site.name, url: site.url, error: err instanceof Error ? err.message : String(err) },
+            'Site parse failed',
+          );
+          throw err;
+        }
+      }),
+    );
+    results.push(...batchResults);
+  }
 
   const allHeadlines: ParsedHeadline[] = [];
   let failedSites = 0;
