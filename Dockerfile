@@ -8,9 +8,9 @@ WORKDIR /app/admin
 # Copy shared types first (admin imports from ../shared)
 COPY shared/ /app/shared/
 
-# Install admin dependencies
+# Install admin dependencies (need devDeps for tsc/vite)
 COPY admin/package.json admin/package-lock.json ./
-RUN npm ci
+RUN NODE_ENV=development npm ci
 
 # Copy admin source
 COPY admin/ ./
