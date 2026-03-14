@@ -51,8 +51,5 @@ ENV PORT=3000
 
 EXPOSE 3000
 
-HEALTHCHECK --interval=15s --timeout=5s --start-period=90s --retries=5 \
-  CMD wget -qO- http://localhost:3000/health || exit 1
-
 WORKDIR /app/bot
-CMD ["npx", "tsx", "src/index.ts"]
+CMD ["./node_modules/.bin/tsx", "src/index.ts"]
