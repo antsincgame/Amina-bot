@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { config, getApiKeys } from '../config/index.js';
 import { aiLogger } from '../config/logger.js';
+import { getProxyHeaders, getOpenRouterBaseUrl } from '../config/ai-proxy.js';
 import { settingsRepo, promptsRepo } from '../db/supabase.js';
 import type { AIResponse, AIMessage } from '../../../shared/types/index.js';
 import { AppError } from '../utils/error-handler.js';
@@ -57,8 +58,8 @@ async function fetchFreeModels(): Promise<string[]> {
     
     let response: Response;
     try {
-      response = await fetch('https://openrouter.ai/api/v1/models', {
-        headers: { 'Authorization': `Bearer ${keys.openrouter}` },
+      response = await fetch(`${config.ai.baseUrl}/models`, {
+        headers: getProxyHeaders({ 'Authorization': `Bearer ${keys.openrouter}` }),
         signal: controller.signal,
       });
     } finally {
@@ -169,10 +170,10 @@ const getClient = async (): Promise<OpenAI> => {
       apiKey: apiKey,
       baseURL: config.ai.baseUrl,
       timeout: 30000,
-      defaultHeaders: {
+      defaultHeaders: getProxyHeaders({
         'HTTP-Referer': config.botUrl,
         'X-Title': 'Amina AI Bot',
-      },
+      }),
     });
     currentApiKey = apiKey;
     aiLogger.info('OpenRouter client initialized/updated');
@@ -682,10 +683,10 @@ export const aiService = {
   async getModels(): Promise<{ id: string; name: string }[]> {
     try {
       const keys = await getApiKeys();
-      const response = await fetch('https://openrouter.ai/api/v1/models', {
-        headers: {
+      const response = await fetch(`${config.ai.baseUrl}/models`, {
+        headers: getProxyHeaders({
           Authorization: `Bearer ${keys.openrouter}`,
-        },
+        }),
       });
 
       if (!response.ok) {

@@ -115,6 +115,8 @@ const env = parseEnv();
 // Токен Telegram: env или БД (устанавливается при старте в index.ts)
 let resolvedTelegramToken: string = env.TELEGRAM_BOT_TOKEN || '';
 
+import { getOpenRouterBaseUrl, getGroqBaseUrl, getPerplexityBaseUrl } from './ai-proxy.js';
+
 // --------------------------------------------
 // Static Config (from environment)
 // --------------------------------------------
@@ -163,7 +165,7 @@ export const config = {
   ai: {
     apiKey: env.OPENROUTER_API_KEY || '', // Может быть пустым, загрузится из БД
     model: env.OPENROUTER_MODEL || 'openrouter/free',
-    baseUrl: 'https://openrouter.ai/api/v1',
+    baseUrl: getOpenRouterBaseUrl(),
     maxTokens: 2048,
     temperature: 0.7,
   },
@@ -171,13 +173,13 @@ export const config = {
   // Groq — может быть переопределён из админки
   groq: {
     apiKey: env.GROQ_API_KEY || '', // Может быть пустым, загрузится из БД
-    baseUrl: 'https://api.groq.com/openai/v1',
+    baseUrl: getGroqBaseUrl(),
   },
 
   // Perplexity — для веб-поиска (доступ в интернет)
   perplexity: {
     apiKey: env.PERPLEXITY_API_KEY || '', // Может быть пустым, загрузится из БД
-    baseUrl: 'https://api.perplexity.ai',
+    baseUrl: getPerplexityBaseUrl(),
   },
 
   // Supabase Database — только эти 2 обязательны в Render

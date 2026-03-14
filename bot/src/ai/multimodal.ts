@@ -8,6 +8,7 @@ import OpenAI from 'openai';
 import { config } from '../config/index.js';
 import { aiLogger } from '../config/logger.js';
 import { settingsRepo } from '../db/supabase.js';
+import { getProxyHeaders } from '../config/ai-proxy.js';
 import { AppError } from '../utils/error-handler.js';
 import type { AIResponse } from '../../../shared/types/index.js';
 import { SingleCache } from '../utils/cache.js';
@@ -54,8 +55,8 @@ async function fetchFreeVisionModels(): Promise<Array<{ id: string; name: string
 
     let response: Response;
     try {
-      response = await fetch('https://openrouter.ai/api/v1/models', {
-        headers: { 'Authorization': `Bearer ${keys.openrouter}` },
+      response = await fetch(`${config.ai.baseUrl}/models`, {
+        headers: getProxyHeaders({ 'Authorization': `Bearer ${keys.openrouter}` }),
         signal: controller.signal,
       });
     } finally {

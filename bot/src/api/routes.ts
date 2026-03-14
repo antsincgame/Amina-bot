@@ -9,6 +9,7 @@ import { getAllAudioModels, getFreeVisionModels, refreshFreeVisionModelsCache, g
 import { getSearchModelInfo, getAvailableModels, isWebSearchEnabled, clearPerplexityCache } from '../ai/websearch.js';
 import { userProfileRepo, userMemoryRepo, userLogsRepo, type UserLog } from '../memory/user-memory.js';
 import { config, clearApiKeysCache, getApiKeys } from '../config/index.js';
+import { getProxyHeaders } from '../config/ai-proxy.js';
 import {
   getConfiguredSites,
   saveConfiguredSites,
@@ -965,10 +966,10 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
         try {
           const keys = await getApiKeys();
           const apiKey = keys.openrouter || config.ai.apiKey;
-          const response = await fetch('https://openrouter.ai/api/v1/models', {
-            headers: {
+          const response = await fetch(`${config.ai.baseUrl}/models`, {
+            headers: getProxyHeaders({
               'Authorization': `Bearer ${apiKey}`,
-            },
+            }),
           });
 
           if (!response.ok) {
@@ -1029,10 +1030,10 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
         try {
           const keys = await getApiKeys();
           const apiKey = keys.openrouter || config.ai.apiKey;
-          const response = await fetch('https://openrouter.ai/api/v1/models', {
-            headers: {
+          const response = await fetch(`${config.ai.baseUrl}/models`, {
+            headers: getProxyHeaders({
               'Authorization': `Bearer ${apiKey}`,
-            },
+            }),
           });
 
           if (!response.ok) {

@@ -8,6 +8,7 @@
 
 import { config, getApiKeys } from '../config/index.js';
 import { settingsRepo } from '../db/supabase.js';
+import { getProxyHeaders, getOpenRouterBaseUrl, getPerplexityBaseUrl } from '../config/ai-proxy.js';
 import { telegramLogger, aiLogger } from '../config/logger.js';
 import { SingleCache } from '../utils/cache.js';
 import OpenAI from 'openai';
@@ -50,7 +51,7 @@ export interface WebSearchResult {
 // Configuration
 // --------------------------------------------
 
-const PERPLEXITY_API_URL = 'https://api.perplexity.ai/chat/completions';
+const PERPLEXITY_API_URL = `${getPerplexityBaseUrl()}/chat/completions`;
 
 // Значения по умолчанию для токенов поиска
 const DEFAULT_SEARCH_MAX_TOKENS = 1200;
@@ -146,12 +147,12 @@ async function getOpenRouterClient(): Promise<OpenAI | null> {
     if (!openrouterClient || currentOpenRouterKey !== apiKey) {
       openrouterClient = new OpenAI({
         apiKey: apiKey,
-        baseURL: 'https://openrouter.ai/api/v1',
+        baseURL: getOpenRouterBaseUrl(),
         timeout: 30000,
-        defaultHeaders: {
+        defaultHeaders: getProxyHeaders({
           'HTTP-Referer': config.botUrl,
           'X-Title': 'Amina AI Bot',
-        },
+        }),
       });
       currentOpenRouterKey = apiKey;
       aiLogger.info('OpenRouter web search client initialized');
@@ -687,10 +688,10 @@ async function webSearchInternal(
   try {
     const response = await fetch(PERPLEXITY_API_URL, {
       method: 'POST',
-      headers: {
+      headers: getProxyHeaders({
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
-      },
+      }),
       signal: controller.signal,
       body: JSON.stringify({
         model: selectedModel,

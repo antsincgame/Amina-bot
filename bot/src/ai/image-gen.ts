@@ -11,6 +11,7 @@ import type { InferenceClient } from '@huggingface/inference';
 import { aiLogger } from '../config/logger.js';
 import { settingsRepo } from '../db/supabase.js';
 import { getApiKeys } from '../config/index.js';
+import { getProxyHeaders, getGroqBaseUrl, getOpenRouterBaseUrl } from '../config/ai-proxy.js';
 
 let InferenceClientClass: typeof import('@huggingface/inference').InferenceClient | null = null;
 
@@ -156,7 +157,7 @@ export function detectImageGenIntent(text: string): boolean {
 // =============================================
 
 /** Groq API endpoint (OpenAI-compatible) */
-const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const GROQ_API_URL = `${getGroqBaseUrl()}/chat/completions`;
 /** Модели Groq для классификации (быстрые, бесплатные) */
 const GROQ_CLASSIFY_MODELS = [
   'llama-3.1-8b-instant',    // ~100ms, 30 RPM free
@@ -217,10 +218,10 @@ export async function classifyImageIntentGroq(text: string): Promise<string | nu
         try {
           const response = await fetch(GROQ_API_URL, {
             method: 'POST',
-            headers: {
+            headers: getProxyHeaders({
               'Authorization': `Bearer ${keys.groq}`,
               'Content-Type': 'application/json',
-            },
+            }),
             signal: controller.signal,
             body: JSON.stringify({
               model,
@@ -328,10 +329,10 @@ export async function classifyImageEditIntentGroq(text: string): Promise<boolean
       try {
         const response = await fetch(GROQ_API_URL, {
           method: 'POST',
-          headers: {
+          headers: getProxyHeaders({
             'Authorization': `Bearer ${keys.groq}`,
             'Content-Type': 'application/json',
-          },
+          }),
           signal: controller.signal,
           body: JSON.stringify({
             model,
@@ -559,7 +560,7 @@ const OPENROUTER_IMAGE_FALLBACK_MODELS = [
   'google/gemini-3.1-flash-image-preview',
   'google/gemini-3-pro-image-preview',
 ];
-const OPENROUTER_API_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const OPENROUTER_API_URL = `${getOpenRouterBaseUrl()}/chat/completions`;
 
 /**
  * Получить модель OpenRouter для генерации изображений из настроек
@@ -594,12 +595,12 @@ async function fetchOpenRouterImage(
 
     const response = await fetch(OPENROUTER_API_URL, {
       method: 'POST',
-      headers: {
+      headers: getProxyHeaders({
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
         'HTTP-Referer': 'https://github.com/antsincgame/Amina-bot',
         'X-Title': 'Amina Telegram Bot',
-      },
+      }),
       signal: controller.signal,
       body: JSON.stringify({
         model,
@@ -1082,12 +1083,12 @@ export async function editImage(
   try {
     const response = await fetch(OPENROUTER_API_URL, {
       method: 'POST',
-      headers: {
+      headers: getProxyHeaders({
         'Authorization': `Bearer ${keys.openrouter}`,
         'Content-Type': 'application/json',
         'HTTP-Referer': 'https://github.com/antsincgame/Amina-bot',
         'X-Title': 'Amina Telegram Bot',
-      },
+      }),
       signal: controller.signal,
       body: JSON.stringify({
         model,
