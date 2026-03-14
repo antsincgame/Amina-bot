@@ -1,0 +1,16 @@
+node_modules
+.git
+*.md
+.env*
+bot/node_modules
+admin/node_modules
+admin/dist
+mcp-servers
+autostart
+docs
+supabase
+scripts
+tunnel.ps1
+tunnel.sh
+deploy.sh
+.cursor

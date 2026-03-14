@@ -1,6 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import fastifyStatic from '@fastify/static';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { existsSync, readFileSync } from 'fs';
 import { config } from './config/index.js';
 import {
   REQUEST_TIMEOUT_MS,
@@ -55,21 +59,27 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
     credentials: true,
   });
 
-  // Root endpoint - info page
-  server.get('/', async () => {
-    return {
-      service: 'Amina Telegram Bot',
-      status: 'running',
-      version: '1.0.0',
-      endpoints: {
-        health: '/health',
-        ready: '/ready',
-        api: '/api/*',
-        admin: config.adminUrl,
-      },
-      documentation: 'https://github.com/antsincgame/Amina-bot',
-    };
-  });
+  // Root endpoint - info page (only when admin panel is not bundled)
+  const __filename_check = fileURLToPath(import.meta.url);
+  const __dirname_check = dirname(__filename_check);
+  const hasAdminDist = existsSync(resolve(__dirname_check, '../../admin-dist/index.html'));
+
+  if (!hasAdminDist) {
+    server.get('/', async () => {
+      return {
+        service: 'Amina Telegram Bot',
+        status: 'running',
+        version: '1.0.0',
+        endpoints: {
+          health: '/health',
+          ready: '/ready',
+          api: '/api/*',
+          admin: config.adminUrl,
+        },
+        documentation: 'https://github.com/antsincgame/Amina-bot',
+      };
+    });
+  }
 
   // Health check endpoint
   server.get('/health', async () => {
@@ -167,6 +177,32 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
 
   // Register REST API routes for LLM interaction
   await registerApiRoutes(server);
+
+  // --------------------------------------------
+  // Serve Admin Panel (static files + SPA fallback)
+  // --------------------------------------------
+  const adminDistPath = resolve(__dirname_check, '../../admin-dist');
+
+  if (hasAdminDist) {
+    await server.register(fastifyStatic, {
+      root: adminDistPath,
+      prefix: '/',
+      wildcard: false,
+    });
+
+    // SPA fallback: non-API GET routes → index.html
+    const indexHtml = readFileSync(resolve(adminDistPath, 'index.html'), 'utf-8');
+    server.setNotFoundHandler(async (request, reply) => {
+      if (request.method === 'GET' && !request.url.startsWith('/api/') && !request.url.startsWith('/webhook/')) {
+        return reply.type('text/html').send(indexHtml);
+      }
+      return reply.code(404).send({ error: 'Not found' });
+    });
+
+    appLogger.info({ path: adminDistPath }, '📁 Admin panel static files registered');
+  } else {
+    appLogger.info('ℹ️ Admin dist not found — skipping static file serving');
+  }
 };
 
 // --------------------------------------------
