@@ -21,9 +21,18 @@ if (process.env.NODE_ENV === 'test') {
 // --------------------------------------------
 
 const envSchema = z.object({
+  // DB backend switch: 'supabase' | 'appwrite'
+  DB_BACKEND: z.enum(['supabase', 'appwrite']).default('supabase'),
+
   // Supabase — если не заданы, бот стартует без БД
   SUPABASE_URL: z.string().url().default('https://placeholder.supabase.co'),
   SUPABASE_SERVICE_KEY: z.string().default('placeholder'),
+
+  // Appwrite (required when DB_BACKEND=appwrite)
+  APPWRITE_ENDPOINT: z.string().url().default('https://appwrite.vibecoding.by/v1'),
+  APPWRITE_PROJECT_ID: z.string().default('69aa2114000211b48e63'),
+  APPWRITE_API_KEY: z.string().default(''),
+  APPWRITE_DATABASE_ID: z.string().default('vibecoding'),
 
   // Всё остальное можно задать в админке (API Ключи)
   TELEGRAM_BOT_TOKEN: z.string().optional(),
@@ -82,9 +91,16 @@ const parseEnv = () => {
     }
 
     if (process.env.NODE_ENV === 'production') {
-      if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
+      const backend = process.env.DB_BACKEND || 'supabase';
+      if (backend === 'supabase' && (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY)) {
         throw new Error(
-          `FATAL: SUPABASE_URL and SUPABASE_SERVICE_KEY are required in production. ` +
+          `FATAL: SUPABASE_URL and SUPABASE_SERVICE_KEY are required in production (DB_BACKEND=supabase). ` +
+          `Validation errors: ${errors}`
+        );
+      }
+      if (backend === 'appwrite' && !process.env.APPWRITE_API_KEY) {
+        throw new Error(
+          `FATAL: APPWRITE_API_KEY is required in production (DB_BACKEND=appwrite). ` +
           `Validation errors: ${errors}`
         );
       }
@@ -182,10 +198,21 @@ export const config = {
     baseUrl: getPerplexityBaseUrl(),
   },
 
+  // Database backend
+  dbBackend: env.DB_BACKEND as 'supabase' | 'appwrite',
+
   // Supabase Database — только эти 2 обязательны в Render
   db: {
     url: env.SUPABASE_URL,
     serviceKey: env.SUPABASE_SERVICE_KEY,
+  },
+
+  // Appwrite Database
+  appwrite: {
+    endpoint: env.APPWRITE_ENDPOINT,
+    projectId: env.APPWRITE_PROJECT_ID,
+    apiKey: env.APPWRITE_API_KEY,
+    databaseId: env.APPWRITE_DATABASE_ID,
   },
 };
 
@@ -220,8 +247,10 @@ export async function getApiKeys(): Promise<{ openrouter: string; groq: string }
 
   // Загружаем из БД (ленивый импорт чтобы избежать циклических зависимостей)
   try {
-    const { settingsRepo } = await import('../db/supabase.js');
-    const keys = await settingsRepo.getMany(['openrouter_api_key', 'groq_api_key']);
+    const dbModule = config.dbBackend === 'appwrite'
+      ? await import('../db/appwrite.js')
+      : await import('../db/supabase.js');
+    const keys = await dbModule.settingsRepo.getMany(['openrouter_api_key', 'groq_api_key']);
 
     const result = {
       openrouter: keys['openrouter_api_key'] || '',
