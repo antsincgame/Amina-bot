@@ -1,7 +1,7 @@
 import { getSpeechRecognitionRuntimeProfile } from '../../../ai/multimodal.js';
 import { config } from '../../../config/index.js';
 import { FETCH_TIMEOUT_MS } from '../../../config/constants.js';
-import { settingsRepo } from '../../../db/supabase.js';
+import { settingsRepo } from '../../../db/index.js';
 import { getTtsRuntimeProfile } from '../../tts.js';
 
 const DEFAULT_LATENCY_BUDGET_MS = 1800;

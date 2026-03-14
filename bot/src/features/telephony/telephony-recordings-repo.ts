@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { dbLogger } from '../../config/logger.js';
-import { getSupabase } from '../../db/supabase.js';
+import { getSupabase } from '../../db/index.js';
 
 const BUCKET = 'telephony-recordings';
 const DEFAULT_SIGNED_URL_TTL_SECONDS = 60 * 60;

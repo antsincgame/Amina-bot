@@ -13,7 +13,7 @@
 import { createHash } from 'node:crypto';
 import { load, type Cheerio } from 'cheerio';
 import type { AnyNode } from 'domhandler';
-import { settingsRepo } from '../db/supabase.js';
+import { settingsRepo } from '../db/index.js';
 import { appLogger } from '../config/logger.js';
 import { hasMostlyRussianText, localizeParsedHeadlines } from './news-localization.js';
 import { enrichParsedHeadlineDescriptions, isWeakHeadlineDescription } from './news-description-enrichment.js';

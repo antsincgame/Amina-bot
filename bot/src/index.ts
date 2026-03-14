@@ -17,15 +17,7 @@ import {
 import { serverLogger, httpLogger, appLogger } from './config/logger.js';
 import { createBot } from './telegram/bot.js';
 import { registerTelegramWebhookRoute } from './telegram/webhook.js';
-// DB backend switch — import the right module
-const dbModule = config.dbBackend === 'appwrite'
-  ? await import('./db/appwrite.js')
-  : await import('./db/supabase.js');
-
-const { settingsRepo } = dbModule;
-const getDbClient = config.dbBackend === 'appwrite'
-  ? (dbModule as any).getAppwrite
-  : (dbModule as any).getSupabase;
+import { settingsRepo, analyticsRepo } from './db/index.js';
 import { aiService } from './ai/openrouter.js';
 import { registerApiRoutes } from './api/routes.js';
 import { stopCleanupInterval } from './utils/rate-limiter.js';
@@ -103,15 +95,9 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
 
   const dbCheck = async (): Promise<boolean> => {
     try {
-      if (config.dbBackend === 'appwrite') {
-        const { getAppwrite } = await import('./db/appwrite.js');
-        const result = await getAppwrite().listDocuments(config.appwrite.databaseId, 'amina_settings', []);
-        return true;
-      } else {
-        const { getSupabase } = await import('./db/supabase.js');
-        const { error } = await getSupabase().from('settings').select('key').limit(1);
-        return !error;
-      }
+      // settingsRepo is already backend-aware via db/index.js
+      await settingsRepo.get('__healthcheck__');
+      return true;
     } catch {
       return false;
     }
@@ -164,13 +150,10 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
   // API routes for admin panel - stats
   server.get('/api/stats', async () => {
     try {
-      const dbMod = config.dbBackend === 'appwrite'
-        ? await import('./db/appwrite.js')
-        : await import('./db/supabase.js');
       const now = new Date();
       const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
       
-      const stats = await dbMod.analyticsRepo.getStats(weekAgo, now);
+      const stats = await analyticsRepo.getStats(weekAgo, now);
       return {
         totalMessages: stats.totalMessages,
         totalCalls: stats.totalCalls,
@@ -231,19 +214,8 @@ const initBotAndServices = async (): Promise<void> => {
 
   // Database check
   try {
-    if (config.dbBackend === 'appwrite') {
-      const { getAppwrite } = await import('./db/appwrite.js');
-      await getAppwrite().listDocuments(config.appwrite.databaseId, 'amina_settings', []);
-      appLogger.info('✓ Database connection OK (Appwrite)');
-    } else {
-      const { getSupabase } = await import('./db/supabase.js');
-      const { error } = await getSupabase().from('settings').select('key').limit(1);
-      if (error) {
-        appLogger.warn({ error: error.message }, '⚠️ Database connection issue');
-      } else {
-        appLogger.info('✓ Database connection OK (Supabase)');
-      }
-    }
+    await settingsRepo.get('__healthcheck__');
+    appLogger.info(`✓ Database connection OK (${config.dbBackend})`);
   } catch (error) {
     appLogger.warn({ error }, '⚠️ Database not available');
   }

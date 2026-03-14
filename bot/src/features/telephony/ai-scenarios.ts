@@ -1,4 +1,4 @@
-import { settingsRepo } from '../../db/supabase.js';
+import { settingsRepo } from '../../db/index.js';
 import type {
   TelephonyAiCallPlan,
   TelephonyAiScenario,

@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import { config, getApiKeys } from '../config/index.js';
 import { aiLogger } from '../config/logger.js';
 import { getProxyHeaders, getOpenRouterBaseUrl } from '../config/ai-proxy.js';
-import { settingsRepo, promptsRepo } from '../db/supabase.js';
+import { settingsRepo, promptsRepo } from '../db/index.js';
 import type { AIResponse, AIMessage } from '../../../shared/types/index.js';
 import { AppError } from '../utils/error-handler.js';
 import { SingleCache } from '../utils/cache.js';

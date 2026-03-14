@@ -17,7 +17,7 @@ import { telegramLogger } from '../config/logger.js';
 import { aiService, isGibberish } from '../ai/openrouter.js';
 import { processImageWithLLM, transcribeAudio } from '../ai/multimodal.js';
 import { getSearchContext, enhanceResponseIfNeeded, needsWebSearch, webSearch, isWebSearchEnabled, shouldForceWebSearch, searchAndFormat } from '../ai/websearch.js';
-import { conversationsRepo, analyticsRepo } from '../db/supabase.js';
+import { conversationsRepo, analyticsRepo } from '../db/index.js';
 import { checkTelegramRateLimit } from '../utils/rate-limiter.js';
 import { getErrorCode } from '../utils/error-handler.js';
 import {

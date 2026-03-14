@@ -1,5 +1,5 @@
 import { aiService } from '../../../ai/openrouter.js';
-import { analyticsRepo } from '../../../db/supabase.js';
+import { analyticsRepo } from '../../../db/index.js';
 import type {
   TelephonyAiCallPlan,
   TelephonyAiScenario,

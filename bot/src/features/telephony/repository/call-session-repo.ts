@@ -1,4 +1,4 @@
-import { getSupabase, settingsRepo } from '../../../db/supabase.js';
+import { getSupabase, settingsRepo } from '../../../db/index.js';
 import type { TelephonyAiCallSession } from '../../../../../shared/types/telephony.js';
 import {
   LEGACY_SESSIONS_KEY,

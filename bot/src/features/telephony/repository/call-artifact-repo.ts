@@ -1,4 +1,4 @@
-import { getSupabase } from '../../../db/supabase.js';
+import { getSupabase } from '../../../db/index.js';
 import type { TelephonyCallArtifact } from '../../../../../shared/types/telephony.js';
 import { ensureTelephonyInfra } from './telephony-infra.js';
 

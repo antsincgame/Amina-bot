@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { aiService } from '../ai/openrouter.js';
-import { conversationsRepo, settingsRepo, promptsRepo, getSupabase } from '../db/supabase.js';
+import { conversationsRepo, settingsRepo, promptsRepo, getSupabase } from '../db/index.js';
 import { validateMessageContent, validateUserId } from '../utils/validation.js';
 import { aiLogger, getLogs, getLogStats } from '../config/logger.js';
 import { rateLimitHook } from '../utils/rate-limiter.js';
@@ -1832,6 +1832,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
         '/migrate/voice-messages',
         async (_request: FastifyRequest, reply: FastifyReply) => {
           try {
+            // NOTE: Migration endpoint — always uses Supabase directly (legacy)
             const sb = (await import('../db/supabase.js')).getSupabase();
             
             // Check if table already exists
@@ -2026,7 +2027,7 @@ CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_
             aiLogger.info({ source: body.source, name: body.name }, '📩 Lead sent to admin');
 
             // Логируем в аналитику (fire-and-forget)
-            const { analyticsRepo } = await import('../db/supabase.js');
+            const { analyticsRepo } = await import('../db/index.js');
             analyticsRepo.log('message_received', 'telegram', {
               event: 'lead_received',
               source: body.source,

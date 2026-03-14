@@ -3,7 +3,7 @@
  * CRUD операции для списка задач пользователя
  */
 
-import { getSupabase } from '../db/supabase.js';
+import { getSupabase } from '../db/index.js';
 import { dbLogger } from '../config/logger.js';
 
 export interface Todo {

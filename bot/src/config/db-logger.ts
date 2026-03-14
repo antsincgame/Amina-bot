@@ -4,7 +4,7 @@
  * Интегрируется с pino для автоматической записи важных логов в БД
  */
 
-import { getSupabase } from '../db/supabase.js';
+import { getSupabase } from '../db/index.js';
 import type { SystemLog, LogLevel } from '../../../shared/types/index.js';
 
 // Очередь логов для batch insert

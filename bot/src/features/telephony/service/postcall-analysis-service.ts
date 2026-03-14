@@ -1,6 +1,6 @@
 import { transcribeAudio } from '../../../ai/multimodal.js';
 import { aiLogger } from '../../../config/logger.js';
-import { analyticsRepo } from '../../../db/supabase.js';
+import { analyticsRepo } from '../../../db/index.js';
 import type { TelephonyAiCallSession } from '../../../../../shared/types/telephony.js';
 import { callArtifactRepo } from '../repository/call-artifact-repo.js';
 import { callEventRepo } from '../repository/call-event-repo.js';

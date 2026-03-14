@@ -7,7 +7,7 @@
 import OpenAI from 'openai';
 import { config } from '../config/index.js';
 import { aiLogger } from '../config/logger.js';
-import { settingsRepo } from '../db/supabase.js';
+import { settingsRepo } from '../db/index.js';
 import { getProxyHeaders } from '../config/ai-proxy.js';
 import { AppError } from '../utils/error-handler.js';
 import type { AIResponse } from '../../../shared/types/index.js';

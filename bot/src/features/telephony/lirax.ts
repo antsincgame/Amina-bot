@@ -9,7 +9,7 @@
  */
 
 import { telegramLogger } from '../../config/logger.js';
-import { settingsRepo } from '../../db/supabase.js';
+import { settingsRepo } from '../../db/index.js';
 import { LIRAX_FETCH_TIMEOUT_MS } from '../../config/constants.js';
 
 // ---------------------------------------------------------------

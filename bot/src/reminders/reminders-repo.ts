@@ -9,7 +9,7 @@
  * - markFailed(): инкремент retry_count при ошибке отправки
  */
 
-import { getSupabase } from '../db/supabase.js';
+import { getSupabase } from '../db/index.js';
 import { dbLogger } from '../config/logger.js';
 import type { Reminder } from '../../../shared/types/index.js';
 

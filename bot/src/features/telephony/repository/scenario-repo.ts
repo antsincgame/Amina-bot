@@ -1,4 +1,4 @@
-import { settingsRepo, getSupabase } from '../../../db/supabase.js';
+import { settingsRepo, getSupabase } from '../../../db/index.js';
 import type { TelephonyAiScenario } from '../../../../../shared/types/telephony.js';
 import { getDefaultTelephonyAiScenarios, normalizeScenario } from '../scenario-compiler.js';
 import { LEGACY_SCENARIOS_KEY, cleanText, safeJsonParse } from '../shared.js';

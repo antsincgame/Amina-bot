@@ -10,7 +10,7 @@
 import { Bot, InputFile } from 'grammy';
 import type { BotContext } from './bot.js';
 import { telegramLogger } from '../config/logger.js';
-import { analyticsRepo, conversationsRepo } from '../db/supabase.js';
+import { analyticsRepo, conversationsRepo } from '../db/index.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';
 import { generateImage } from '../ai/image-gen.js';
 import { searchAndFormat } from '../ai/websearch.js';

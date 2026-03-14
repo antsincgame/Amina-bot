@@ -17,7 +17,7 @@
 
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 import OpenAI from 'openai';
-import { settingsRepo } from '../db/supabase.js';
+import { settingsRepo } from '../db/index.js';
 import { appLogger } from '../config/logger.js';
 
 // ===== Типы =====

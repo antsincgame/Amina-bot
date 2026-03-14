@@ -1,4 +1,4 @@
-import { getSupabase } from '../db/supabase.js';
+import { getSupabase } from '../db/index.js';
 import { dbLogger } from '../config/logger.js';
 import type { ParsedHeadline, ParsedHeadlineCategory, DigestPipelineMode } from '../../../shared/types/index.js';
 import type { DigestSearchResult } from './digest-core.js';

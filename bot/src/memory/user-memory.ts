@@ -4,7 +4,7 @@
  * Управление долгосрочной памятью о пользователях
  */
 
-import { getSupabase } from '../db/supabase.js';
+import { getSupabase } from '../db/index.js';
 import { dbLogger, aiLogger } from '../config/logger.js';
 import { aiService } from '../ai/openrouter.js';
 

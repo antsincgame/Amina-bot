@@ -3,7 +3,7 @@
  * Сохранение голосовых сообщений в Supabase Storage + метаданные в БД
  */
 
-import { getSupabase } from '../db/supabase.js';
+import { getSupabase } from '../db/index.js';
 import { dbLogger } from '../config/logger.js';
 
 // --------------------------------------------

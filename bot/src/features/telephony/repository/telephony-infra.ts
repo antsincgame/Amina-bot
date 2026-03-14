@@ -1,5 +1,5 @@
 import { dbLogger } from '../../../config/logger.js';
-import { getSupabase } from '../../../db/supabase.js';
+import { getSupabase } from '../../../db/index.js';
 
 let initialized = false;
 let initPromise: Promise<void> | null = null;

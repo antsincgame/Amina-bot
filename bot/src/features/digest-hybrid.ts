@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { settingsRepo } from '../db/supabase.js';
+import { settingsRepo } from '../db/index.js';
 import { appLogger } from '../config/logger.js';
 import { config } from '../config/index.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';

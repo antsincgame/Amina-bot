@@ -3,7 +3,7 @@
  * Настройки пользователя: дайджест, город, таймзона
  */
 
-import { getSupabase } from '../db/supabase.js';
+import { getSupabase } from '../db/index.js';
 import { dbLogger } from '../config/logger.js';
 
 export interface UserPreferences {

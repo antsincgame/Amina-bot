@@ -9,7 +9,7 @@
 // Загружается только при первом вызове generateImage()
 import type { InferenceClient } from '@huggingface/inference';
 import { aiLogger } from '../config/logger.js';
-import { settingsRepo } from '../db/supabase.js';
+import { settingsRepo } from '../db/index.js';
 import { getApiKeys } from '../config/index.js';
 import { getProxyHeaders, getGroqBaseUrl, getOpenRouterBaseUrl } from '../config/ai-proxy.js';
 

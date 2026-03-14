@@ -7,7 +7,7 @@
  */
 
 import { config, getApiKeys } from '../config/index.js';
-import { settingsRepo } from '../db/supabase.js';
+import { settingsRepo } from '../db/index.js';
 import { getProxyHeaders, getOpenRouterBaseUrl, getPerplexityBaseUrl } from '../config/ai-proxy.js';
 import { telegramLogger, aiLogger } from '../config/logger.js';
 import { SingleCache } from '../utils/cache.js';

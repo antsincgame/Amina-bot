@@ -1,6 +1,6 @@
 import OpenAI from 'openai';
 import { aiLogger } from '../config/logger.js';
-import { settingsRepo } from '../db/supabase.js';
+import { settingsRepo } from '../db/index.js';
 import { SingleCache } from '../utils/cache.js';
 
 type AIProvider = 'auto' | 'lmstudio' | 'openrouter';
