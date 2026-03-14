@@ -244,7 +244,8 @@ const initBotAndServices = async (): Promise<void> => {
     }
 
     bot = createBot();
-    appLogger.info('✓ Telegram bot created');
+    await bot.init();
+    appLogger.info('✓ Telegram bot created and initialized');
   }
 
   const webhookBaseUrl = config.telegram.webhook.url?.replace(/\/+$/, '');
