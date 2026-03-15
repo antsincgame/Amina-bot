@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
-import { voiceMessagesApi, type VoiceMessage } from '../api/supabase';
+import { voiceMessagesApi, type VoiceMessage } from '../api/appwrite';
 import {
   Mic,
   Download,

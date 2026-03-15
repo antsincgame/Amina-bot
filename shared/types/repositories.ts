@@ -1,7 +1,7 @@
 /**
  * Repository Interfaces — абстракция над хранилищем данных.
  *
- * Текущая реализация: Supabase (PostgreSQL + PostgREST)
+ * Текущая реализация: Appwrite
  * Целевая миграция:   AppWrite (Databases + Auth + Storage)
  *
  * Все репозитории реализуют эти интерфейсы.

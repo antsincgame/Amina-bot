@@ -1,6 +1,6 @@
 /**
  * User Memory Service
- * Supports both Supabase and Appwrite via config.dbBackend
+ * Supports Appwrite via config.dbBackend
  */
 
 import { config } from '../config/index.js';

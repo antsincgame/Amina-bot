@@ -1,5 +1,5 @@
 /**
- * Scenario Repository — dual backend (Supabase + Appwrite)
+ * Scenario Repository — dual backend (Appwrite primary)
  */
 
 import { config } from '../../../config/index.js';

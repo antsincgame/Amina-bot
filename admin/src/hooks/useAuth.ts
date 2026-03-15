@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { account } from '../api/supabase';
+import { account } from '../api/appwrite';
 import type { Models } from 'appwrite';
 
 interface AuthState {

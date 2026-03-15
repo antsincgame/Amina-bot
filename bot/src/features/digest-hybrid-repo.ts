@@ -1,5 +1,5 @@
 /**
- * Digest Hybrid Repository — dual backend (Supabase + Appwrite)
+ * Digest Hybrid Repository — dual backend (Appwrite primary)
  */
 
 import { config } from '../config/index.js';
@@ -51,7 +51,7 @@ interface UpsertDigestDeliveryInput {
   attempt_count?: number; last_error?: string | null; sent_at?: string | null;
 }
 
-const HYBRID_PIPELINE: Exclude<DigestPipelineMode, 'legacy'> = 'hybrid_supabase';
+const HYBRID_PIPELINE: Exclude<DigestPipelineMode, 'legacy'> = 'hybrid_appwrite';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function docToCache(d: any): DigestCacheRecord {

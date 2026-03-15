@@ -1,5 +1,5 @@
 /**
- * Call Session Repository — dual backend (Supabase + Appwrite)
+ * Call Session Repository — dual backend (Appwrite primary)
  */
 
 import { config } from '../../../config/index.js';

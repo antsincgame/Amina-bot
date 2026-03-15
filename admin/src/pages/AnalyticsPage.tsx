@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { analyticsApi, AnalyticsEvent } from '../api/supabase';
+import { analyticsApi, AnalyticsEvent } from '../api/appwrite';
 import {
   BarChart3,
   Calendar,

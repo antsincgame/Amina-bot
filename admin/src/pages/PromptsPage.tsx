@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { promptsApi, Prompt } from '../api/supabase';
+import { promptsApi, Prompt } from '../api/appwrite';
 import {
   Plus,
   Edit2,

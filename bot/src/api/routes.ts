@@ -204,7 +204,7 @@ async function requireAdminAuth(
       return null;
     }
   } else {
-    // Validate Supabase JWT
+    // Validate legacy JWT
     const { data, error } = await getSupabase().auth.getUser(token);
     if (error || !data.user) {
       await reply.code(403).send({ success: false, error: 'Invalid admin session' });
@@ -1723,13 +1723,13 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
           };
           try {
             const selectedPipeline: DigestPipelineMode =
-              pipeline === 'hybrid' || pipeline === 'hybrid_supabase'
-                ? 'hybrid_supabase'
+              pipeline === 'hybrid' || pipeline === 'hybrid_appwrite'
+                ? 'hybrid_appwrite'
                 : 'legacy';
             const forceRefresh = refresh === '1' || refresh.toLowerCase() === 'true';
 
             let hybridResult = null;
-            if (selectedPipeline === 'hybrid_supabase') {
+            if (selectedPipeline === 'hybrid_appwrite') {
               hybridResult = await buildHybridDigest('public', firstName, city, {
                 forceRefresh,
                 searchMode: 'skip',
@@ -1817,7 +1817,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
                   data: {
                     city,
                     firstName,
-                    pipeline: pipeline === 'legacy' ? 'legacy' : 'hybrid_supabase',
+                    pipeline: pipeline === 'legacy' ? 'legacy' : 'hybrid_appwrite',
                   },
                 });
               }
@@ -1846,7 +1846,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
         '/migrate/voice-messages',
         async (_request: FastifyRequest, reply: FastifyReply) => {
           try {
-            // NOTE: Migration endpoint — always uses Supabase directly (legacy)
+            // NOTE: Migration endpoint — legacy, not used
             const sb = (await import('../db/supabase.js')).getSupabase();
             
             // Check if table already exists
@@ -1855,12 +1855,12 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
               return reply.code(200).send({ success: true, message: 'Table already exists' });
             }
 
-            // Create via raw SQL using Supabase query (admin)
-            // Since we can't run DDL via PostgREST, we need the table created via Supabase Dashboard
+            // Legacy migration helper
+            // Since we can't run DDL via PostgREST, we need the table created via Appwrite Console
             // This endpoint validates the state and returns instructions
             return reply.code(200).send({
               success: false,
-              message: 'Table does not exist. Please run the following SQL in Supabase Dashboard → SQL Editor:',
+              message: 'Table does not exist. Please run the following SQL in Appwrite Console → SQL Editor:',
               sql: `CREATE TABLE IF NOT EXISTS voice_messages (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id TEXT NOT NULL,

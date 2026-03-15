@@ -22,7 +22,7 @@ import {
   Wifi,
   WifiOff,
 } from 'lucide-react';
-import { fetchBotApi, settingsApi } from '../api/supabase';
+import { fetchBotApi, settingsApi } from '../api/appwrite';
 import type {
   TelephonyCallArtifact,
   TelephonyCallEvent,
@@ -777,7 +777,7 @@ const TelephonyPage = () => {
                     placeholder="1800"
                   />
                 </Field>
-                <Field label="Retention (days)" hint="Сколько дней хранить raw recording в Supabase Storage.">
+                <Field label="Retention (days)" hint="Сколько дней хранить raw recording в Appwrite Storage.">
                   <input
                     type="number"
                     className="input w-full"

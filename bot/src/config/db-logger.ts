@@ -1,5 +1,5 @@
 /**
- * Database Logger — dual backend (Supabase + Appwrite)
+ * Database Logger — dual backend (Appwrite primary)
  * Записывает логи warn/error/fatal в БД
  */
 

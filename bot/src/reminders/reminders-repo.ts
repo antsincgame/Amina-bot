@@ -1,5 +1,5 @@
 /**
- * Reminders Repository — dual backend (Supabase + Appwrite)
+ * Reminders Repository — dual backend (Appwrite primary)
  */
 
 import { config } from '../config/index.js';

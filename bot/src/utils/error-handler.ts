@@ -62,7 +62,7 @@ export function getErrorCode(error: unknown): string | undefined {
 }
 
 /**
- * Check if error is "Not Found" from Supabase
+ * Check if error is "Not Found"
  */
 export function isNotFoundError(error: unknown): boolean {
   return (
@@ -74,9 +74,9 @@ export function isNotFoundError(error: unknown): boolean {
 }
 
 /**
- * Handle Supabase query errors
+ * Handle legacy query errors
  */
-export function handleSupabaseError<T>(
+export function handleLegacyDbError<T>(
   data: T | null,
   error: PostgrestError | null,
   context: { operation: string; [key: string]: unknown }

@@ -69,7 +69,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
       `📌 *Заметки* — «запомни ...» или кнопка\n` +
       `✅ *Задачи* — добавляй и выполняй\n` +
       `☀️ *Дайджест* — утренняя сводка с погодой и новостями\n` +
-      `🧠 *Полный дайджест* — /digest_all для полного Supabase-пайплайна\n` +
+      `🧠 *Полный дайджест* — /digest_all для полного Appwrite-пайплайна\n` +
       `🔊 *Озвучка* — «скажи голосом...»\n\n` +
       `👇 *Используй кнопки ниже или просто напиши!*`,
       { parse_mode: 'Markdown', reply_markup: buildReplyKeyboard() }
@@ -549,7 +549,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
     try {
       const prefs = await userPrefsRepo.getOrCreate(userId, chatId, ctx.from?.first_name);
-      await ctx.reply('🧠 Готовлю полный дайджест через Supabase-пайплайн... Это может занять до 1-2 минут.');
+      await ctx.reply('🧠 Готовлю полный дайджест через Appwrite-пайплайн... Это может занять до 1-2 минут.');
       await ctx.replyWithChatAction('typing');
 
       await sendHybridDigestNow(
@@ -565,7 +565,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
       );
     } catch (error) {
       telegramLogger.error({ error, userId }, 'Hybrid digest command failed');
-      await ctx.reply('😔 Не удалось собрать полный дайджест через Supabase-пайплайн. Попробуй позже.');
+      await ctx.reply('😔 Не удалось собрать полный дайджест через Appwrite-пайплайн. Попробуй позже.');
     }
   });
 

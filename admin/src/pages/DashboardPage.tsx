@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { analyticsApi, statusApi } from '../api/supabase';
+import { analyticsApi, statusApi } from '../api/appwrite';
 import {
   MessageSquare,
   Phone,

@@ -1,5 +1,5 @@
 /**
- * Notes Repository — dual backend (Supabase + Appwrite)
+ * Notes Repository — dual backend (Appwrite primary)
  */
 
 import { config } from '../config/index.js';

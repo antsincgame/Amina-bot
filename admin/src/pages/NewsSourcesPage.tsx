@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { newsSourcesApi } from '../api/supabase';
+import { newsSourcesApi } from '../api/appwrite';
 import type {
   NewsSite,
   NewsSourceType,

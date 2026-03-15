@@ -144,7 +144,7 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
           ready: healthCache.checks['ai'] ?? false,
           engine: config.ai.apiKey ? 'OpenRouter' : 'Не настроен',
         },
-        database: { ready: healthCache.checks['database'] ?? false, engine: config.dbBackend === 'appwrite' ? 'Appwrite' : 'Supabase' },
+        database: { ready: healthCache.checks['database'] ?? false, engine: config.dbBackend === 'appwrite' ? 'Appwrite' : 'Legacy' },
         admin: { ready: true, engine: 'React' },
       },
       timestamp: new Date().toISOString(),

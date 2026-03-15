@@ -1,5 +1,5 @@
 /**
- * User Preferences Repository — dual backend (Supabase + Appwrite)
+ * User Preferences Repository — dual backend (Appwrite primary)
  */
 
 import { config } from '../config/index.js';

@@ -1,5 +1,5 @@
 /**
- * Call Event Repository — dual backend (Supabase + Appwrite)
+ * Call Event Repository — dual backend (Appwrite primary)
  */
 
 import { config } from '../../../config/index.js';

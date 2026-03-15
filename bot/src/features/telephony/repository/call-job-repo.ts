@@ -1,5 +1,5 @@
 /**
- * Call Job Repository — dual backend (Supabase + Appwrite)
+ * Call Job Repository — dual backend (Appwrite primary)
  */
 
 import { config } from '../../../config/index.js';

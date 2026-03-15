@@ -1,5 +1,5 @@
 /**
- * Voice Messages Repository — dual backend (Supabase + Appwrite)
+ * Voice Messages Repository — dual backend (Appwrite primary)
  * DB metadata + file storage
  */
 
@@ -99,7 +99,7 @@ export const voiceMessagesRepo = {
       const sb = getSupabase();
       const { error: uploadError } = await sb.storage.from(BUCKET).upload(filePath, audioBuffer, { contentType: 'audio/ogg', upsert: false });
       if (uploadError) { dbLogger.error({ error: uploadError, filePath, userId }, 'Failed to upload voice'); throw uploadError; }
-      dbLogger.info({ filePath, userId, size: audioBuffer.length }, 'Voice uploaded to Supabase storage');
+      dbLogger.info({ filePath, userId, size: audioBuffer.length }, 'Voice uploaded to legacy storage');
       const { data, error } = await sb.from('voice_messages').insert({
         user_id: userId, file_path: filePath, duration, file_size: audioBuffer.length, telegram_file_id: telegramFileId ?? null,
       }).select().single();

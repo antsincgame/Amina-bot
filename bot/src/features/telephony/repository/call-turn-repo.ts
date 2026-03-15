@@ -1,5 +1,5 @@
 /**
- * Call Turn Repository — dual backend (Supabase + Appwrite)
+ * Call Turn Repository — dual backend (Appwrite primary)
  */
 
 import { config } from '../../../config/index.js';

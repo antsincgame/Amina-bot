@@ -3,7 +3,7 @@
 // ============================================
 
 // --------------------------------------------
-// Database Types (Supabase)
+// Database Types
 // --------------------------------------------
 
 export interface Settings {
@@ -215,7 +215,7 @@ export interface SettingsUpdate {
 // Digest Types
 // --------------------------------------------
 
-export type DigestPipelineMode = 'legacy' | 'hybrid_supabase';
+export type DigestPipelineMode = 'legacy' | 'hybrid_appwrite';
 
 // --------------------------------------------
 // News Sources Types

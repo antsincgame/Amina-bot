@@ -1,5 +1,5 @@
 /**
- * Todos Repository — dual backend (Supabase + Appwrite)
+ * Todos Repository — dual backend (Appwrite primary)
  */
 
 import { config } from '../config/index.js';

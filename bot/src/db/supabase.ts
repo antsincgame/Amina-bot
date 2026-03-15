@@ -17,7 +17,7 @@ import {
   checkArraySize,
   MAX_CONVERSATION_MESSAGES,
 } from '../utils/validation.js';
-import { handleSupabaseError, isNotFoundError } from '../utils/error-handler.js';
+import { handleLegacyDbError, isNotFoundError } from '../utils/error-handler.js';
 
 // --------------------------------------------
 // Supabase Client Singleton

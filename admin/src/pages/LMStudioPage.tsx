@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { settingsApi } from '../api/supabase';
+import { settingsApi } from '../api/appwrite';
 import {
   Save,
   Loader2,

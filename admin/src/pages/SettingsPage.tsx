@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { settingsApi } from '../api/supabase';
+import { settingsApi } from '../api/appwrite';
 import { fetchOpenRouterModels, filterFreeModels, filterPremiumModels, transformToSimpleModel } from '../api/openrouter';
 import { Save, Loader2, RefreshCw, Info, Download } from 'lucide-react';
 

@@ -1,5 +1,5 @@
 /**
- * Call Outcome Repository — dual backend (Supabase + Appwrite)
+ * Call Outcome Repository — dual backend (Appwrite primary)
  */
 
 import { config } from '../../../config/index.js';

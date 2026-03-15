@@ -4,13 +4,13 @@
  * Usage:
  *   import { settingsRepo, promptsRepo, conversationsRepo, analyticsRepo } from '../db/index.js';
  *
- * For raw Supabase access (legacy repos not yet migrated):
+ * For legacy fallback (not used when DB_BACKEND=appwrite):
  *   import { getSupabase } from '../db/index.js';
  */
 
 import { config } from '../config/index.js';
 
-// Raw Supabase client — always available for repos not yet migrated (P1/P2)
+// Legacy client — kept for fallback compatibility
 export { getSupabase } from './supabase.js';
 
 // --- Backend selection (lazy, no top-level await) ---
@@ -31,7 +31,7 @@ const useAppwrite = config.dbBackend === 'appwrite';
 
 /**
  * Creates a proxy that delegates every method call to the correct backend.
- * For supabase: direct sync call. For appwrite: lazy import then call.
+ * Delegates to active backend (appwrite when DB_BACKEND=appwrite).
  */
 function createProxy<T extends object>(supaRepo: T, repoName: string): T {
   if (!useAppwrite) return supaRepo;

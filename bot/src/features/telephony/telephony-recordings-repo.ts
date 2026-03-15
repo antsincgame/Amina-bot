@@ -1,5 +1,5 @@
 /**
- * Telephony Recordings Repository — dual backend (Supabase Storage + Appwrite Storage)
+ * Telephony Recordings Repository — dual backend (Appwrite Storage primary)
  */
 
 import { createHash } from 'node:crypto';
