@@ -18,6 +18,7 @@ import { serverLogger, httpLogger, appLogger } from './config/logger.js';
 import { createBot } from './telegram/bot.js';
 import { registerTelegramWebhookRoute } from './telegram/webhook.js';
 import { settingsRepo, analyticsRepo } from './db/index.js';
+import { userProfileRepo } from './memory/user-memory.js';
 import { aiService } from './ai/openrouter.js';
 import { registerApiRoutes } from './api/routes.js';
 import { stopCleanupInterval } from './utils/rate-limiter.js';
@@ -139,7 +140,10 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
     return {
       checks: {
         telegram: { ready: true, engine: 'grammy' },
-        ai: { ready: healthCache.checks['ai'] ?? false, engine: 'OpenRouter' },
+        ai: {
+          ready: healthCache.checks['ai'] ?? false,
+          engine: config.openrouter?.apiKey ? 'OpenRouter' : 'Не настроен',
+        },
         database: { ready: healthCache.checks['database'] ?? false, engine: config.dbBackend === 'appwrite' ? 'Appwrite' : 'Supabase' },
         admin: { ready: true, engine: 'React' },
       },
@@ -153,11 +157,15 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
       const now = new Date();
       const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
       
-      const stats = await analyticsRepo.getStats(weekAgo, now);
+      const [stats, allUsers] = await Promise.all([
+        analyticsRepo.getStats(weekAgo, now),
+        userProfileRepo.getAll(1000, 0),
+      ]);
+
       return {
         totalMessages: stats.totalMessages,
         totalCalls: stats.totalCalls,
-        uniqueUsers: stats.uniqueUsers,
+        uniqueUsers: allUsers.length,
         tokensByDay: stats.tokensByDay,
         period: '7d',
       };
