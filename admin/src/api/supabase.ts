@@ -2,7 +2,7 @@ import { Client, Account } from 'appwrite';
 
 // Appwrite client for admin auth
 const appwriteEndpoint = import.meta.env.VITE_APPWRITE_ENDPOINT || 'https://appwrite.vibecoding.by/v1';
-const appwriteProjectId = import.meta.env.VITE_APPWRITE_PROJECT_ID || '69aa2114000211b48e63';
+const appwriteProjectId = import.meta.env.VITE_APPWRITE_PROJECT_ID || '69af2faa003646d3574c';
 
 const client = new Client()
   .setEndpoint(appwriteEndpoint)

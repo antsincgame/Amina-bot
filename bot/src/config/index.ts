@@ -30,9 +30,9 @@ const envSchema = z.object({
 
   // Appwrite (required when DB_BACKEND=appwrite)
   APPWRITE_ENDPOINT: z.string().url().default('https://appwrite.vibecoding.by/v1'),
-  APPWRITE_PROJECT_ID: z.string().default('69aa2114000211b48e63'),
+  APPWRITE_PROJECT_ID: z.string().default('69af2faa003646d3574c'),
   APPWRITE_API_KEY: z.string().default(''),
-  APPWRITE_DATABASE_ID: z.string().default('vibecoding'),
+  APPWRITE_DATABASE_ID: z.string().default('amina'),
 
   // Всё остальное можно задать в админке (API Ключи)
   TELEGRAM_BOT_TOKEN: z.string().optional(),
