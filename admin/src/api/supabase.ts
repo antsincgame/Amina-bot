@@ -152,7 +152,7 @@ export const analyticsApi = {
     return result.data ?? [];
   },
 
-  async getStats(from: Date, to: Date): Promise<{
+  async getStats(_from: Date, _to: Date): Promise<{
     totalMessages: number; totalCalls: number; uniqueUsers: number;
     tokensByDay: { date: string; tokens: number }[];
   }> {
