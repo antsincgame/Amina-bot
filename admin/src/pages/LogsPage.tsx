@@ -322,27 +322,27 @@ const LogsPage = () => {
                 Скачать
                 <ChevronDown className="w-3 h-3" />
               </button>
-              <div className="absolute right-0 mt-1 w-48 bg-white rounded-lg shadow-lg border border-gray-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
-                <div className="p-2 border-b border-gray-100">
-                  <p className="text-xs font-medium text-gray-500 px-2">Все логи ({logs.length})</p>
+              <div className="absolute right-0 mt-1 w-48 bg-[#1a1a2e] rounded-lg shadow-lg border border-[rgba(255,215,0,0.2)] opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
+                <div className="p-2 border-b border-white/10">
+                  <p className="text-xs font-medium text-white/50 px-2">Все логи ({logs.length})</p>
                 </div>
                 <button
                   onClick={() => downloadJSON(logs, getFilename('json'))}
-                  className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  className="w-full px-3 py-2 text-left text-sm text-gray-300 hover:bg-white/10 flex items-center gap-2"
                 >
                   <FileJson className="w-4 h-4 text-blue-500" />
                   JSON
                 </button>
                 <button
                   onClick={() => downloadCSV(logs, getFilename('csv'))}
-                  className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  className="w-full px-3 py-2 text-left text-sm text-gray-300 hover:bg-white/10 flex items-center gap-2"
                 >
                   <FileText className="w-4 h-4 text-green-500" />
                   CSV
                 </button>
                 <button
                   onClick={() => downloadTXT(logs, getFilename('txt'))}
-                  className="w-full px-3 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
+                  className="w-full px-3 py-2 text-left text-sm text-gray-300 hover:bg-white/10 flex items-center gap-2"
                 >
                   <FileText className="w-4 h-4 text-gray-500" />
                   TXT
@@ -387,7 +387,7 @@ const LogsPage = () => {
                     >
                       <Download className="w-4 h-4 text-gray-400" />
                     </button>
-                    <div className="absolute right-0 mt-1 w-32 bg-white rounded-lg shadow-lg border border-gray-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
+                    <div className="absolute right-0 mt-1 w-32 bg-[#1a1a2e] rounded-lg shadow-lg border border-[rgba(255,215,0,0.2)] opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
                       <button
                         onClick={() => downloadJSON(levelLogs, `amina-${level}-${dateRange}.json`)}
                         className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
@@ -427,8 +427,7 @@ const LogsPage = () => {
           <select
             value={dateRange}
             onChange={(e) => setDateRange(e.target.value)}
-            className="input w-auto bg-white text-gray-900"
-            style={{ colorScheme: 'light' }}
+            className="input w-auto"
           >
             {DATE_RANGES.map((range) => (
               <option key={range.value} value={range.value}>
@@ -441,8 +440,7 @@ const LogsPage = () => {
           <select
             value={levelFilter}
             onChange={(e) => setLevelFilter(e.target.value)}
-            className="input w-auto bg-white text-gray-900"
-            style={{ colorScheme: 'light' }}
+            className="input w-auto"
           >
             <option value="">Все уровни</option>
             {Object.entries(LEVEL_CONFIG).map(([level, config]) => (
@@ -456,8 +454,7 @@ const LogsPage = () => {
           <select
             value={moduleFilter}
             onChange={(e) => setModuleFilter(e.target.value)}
-            className="input w-auto bg-white text-gray-900"
-            style={{ colorScheme: 'light' }}
+            className="input w-auto"
           >
             <option value="">Все модули</option>
             {modules.map((module) => (
@@ -569,7 +566,7 @@ const LogsPage = () => {
                     <div className="mt-3 ml-11 space-y-3">
                       {/* Full Message */}
                       <div>
-                        <p className="text-xs font-medium text-gray-500 mb-1">
+                        <p className="text-xs font-medium text-white/50 mb-1">
                           Сообщение:
                         </p>
                         <p className="text-sm text-gray-700 bg-gray-50 p-2 rounded">
@@ -580,7 +577,7 @@ const LogsPage = () => {
                       {/* Data */}
                       {log.data && Object.keys(log.data).length > 0 && (
                         <div>
-                          <p className="text-xs font-medium text-gray-500 mb-1">
+                          <p className="text-xs font-medium text-white/50 mb-1">
                             Данные:
                           </p>
                           <pre className="text-xs bg-gray-900 text-green-400 p-3 rounded overflow-x-auto">
@@ -592,7 +589,7 @@ const LogsPage = () => {
                       {/* Stack Trace */}
                       {log.error_stack && (
                         <div>
-                          <p className="text-xs font-medium text-gray-500 mb-1">
+                          <p className="text-xs font-medium text-white/50 mb-1">
                             Stack Trace:
                           </p>
                           <pre className="text-xs bg-red-50 text-red-700 p-3 rounded overflow-x-auto whitespace-pre-wrap">
@@ -660,7 +657,7 @@ const LogsPage = () => {
                         >
                           <Download className="w-3 h-3" />
                         </button>
-                        <div className="absolute right-0 mt-1 w-32 bg-white rounded-lg shadow-lg border border-gray-200 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
+                        <div className="absolute right-0 mt-1 w-32 bg-[#1a1a2e] rounded-lg shadow-lg border border-[rgba(255,215,0,0.2)] opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
                           <button
                             onClick={() => downloadJSON(moduleLogs, `amina-${module}-${dateRange}.json`)}
                             className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"

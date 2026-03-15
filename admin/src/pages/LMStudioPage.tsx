@@ -408,12 +408,12 @@ const LMStudioPage = () => {
                     )}
                     {(debugInfo.status === 0 || debugInfo.error?.toLowerCase().includes('timeout') || debugInfo.error?.toLowerCase().includes('abort')) && (
                       <p className="text-amber-400/90 mt-1">
-                        Бот на Render не может достучаться до туннеля. Проверьте: туннель запущен, LM Studio работает, URL в настройках совпадает с выводом tunnel.sh.
+                        Бот не может достучаться до туннеля. Проверьте: туннель запущен, LM Studio работает, URL в настройках совпадает с выводом tunnel.sh.
                       </p>
                     )}
                     {debugInfo.configured === false && (
                       <p className="text-amber-400/90 mt-1">
-                        URL туннеля не зарегистрирован в боте. Убедитесь, что tunnel.sh успешно выполнил регистрацию (POST /api/tunnel/register). Бот на Render мог быть в режиме сна — попробуйте перезапустить tunnel.sh.
+                        URL туннеля не зарегистрирован в боте. Убедитесь, что tunnel.sh успешно выполнил регистрацию (POST /api/tunnel/register).
                       </p>
                     )}
                   </>
@@ -737,16 +737,6 @@ const LMStudioPage = () => {
               localhost:1234, запускает cloudflared, извлекает URL и автоматически
               регистрирует его на боте. При падении туннеля или LM Studio скрипт
               автоматически перезапускает всё. URL в поле выше обновляется автоматически.
-            </p>
-          </div>
-
-          <div className="p-3 rounded-xl bg-amber-500/5 border border-amber-500/20">
-            <p className="text-amber-400/90 text-xs font-medium mb-1">Render Free Tier: Keep-Alive</p>
-            <p className="text-white/50 text-xs">
-              Бот на Render засыпает через 15 мин без запросов. Heartbeat от туннеля не дойдёт до спящего бота.
-              Настрой <strong>UptimeRobot</strong> (бесплатно): мониторинг{' '}
-              <code className="text-amber-300/80">https://amina.vibecoding.by/health</code> каждые 14 мин.
-              Альтернатива: cron-job.org или аналогичный сервис.
             </p>
           </div>
 

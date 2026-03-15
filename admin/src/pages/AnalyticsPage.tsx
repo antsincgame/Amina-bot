@@ -71,8 +71,8 @@ const AnalyticsPage = () => {
     call_started: 'bg-amber-100 text-amber-700',
     call_ended: 'bg-amber-100 text-amber-700',
     error: 'bg-red-100 text-red-700',
-    settings_updated: 'bg-gray-100 text-gray-700',
-    prompt_updated: 'bg-gray-100 text-gray-700',
+    settings_updated: 'bg-white/10 text-white/70',
+    prompt_updated: 'bg-white/10 text-white/70',
   };
 
   return (
@@ -81,21 +81,21 @@ const AnalyticsPage = () => {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Аналитика</h1>
-          <p className="text-gray-600 mt-1">
+          <p className="text-white/60 mt-1">
             История событий и статистика использования
           </p>
         </div>
         <div className="flex items-center gap-3">
           {/* Date Range */}
-          <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1">
+          <div className="flex items-center gap-1 bg-white/5 rounded-lg p-1 border border-white/10">
             {(['7d', '30d', '90d'] as const).map((range) => (
               <button
                 key={range}
                 onClick={() => setDateRange(range)}
                 className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
                   dateRange === range
-                    ? 'bg-white text-gray-900 shadow-sm'
-                    : 'text-gray-600 hover:text-gray-900'
+                    ? 'bg-white/10 text-amber-400 shadow-sm border border-amber-400/30'
+                    : 'text-gray-400 hover:text-gray-200'
                 }`}
               >
                 {range === '7d' ? '7 дней' : range === '30d' ? '30 дней' : '90 дней'}
@@ -147,17 +147,17 @@ const AnalyticsPage = () => {
           <div className="space-y-3">
             {[1, 2, 3, 4, 5].map((i) => (
               <div key={i} className="animate-pulse flex items-center gap-4 py-3">
-                <div className="w-8 h-8 bg-gray-200 rounded-lg" />
+                <div className="w-8 h-8 bg-white/10 rounded-lg" />
                 <div className="flex-1">
-                  <div className="h-4 bg-gray-200 rounded w-1/4 mb-2" />
-                  <div className="h-3 bg-gray-200 rounded w-1/2" />
+                  <div className="h-4 bg-white/10 rounded w-1/4 mb-2" />
+                  <div className="h-3 bg-white/10 rounded w-1/2" />
                 </div>
               </div>
             ))}
           </div>
         ) : events?.length === 0 ? (
-          <div className="text-center py-12 text-gray-500">
-            <BarChart3 className="w-12 h-12 mx-auto mb-4 text-gray-300" />
+          <div className="text-center py-12 text-white/50">
+            <BarChart3 className="w-12 h-12 mx-auto mb-4 text-white/30" />
             <p>Нет событий за выбранный период</p>
           </div>
         ) : (
@@ -168,7 +168,7 @@ const AnalyticsPage = () => {
                 event={event}
                 label={eventTypeLabels[event.event_type] ?? event.event_type}
                 Icon={eventTypeIcons[event.event_type] ?? MessageSquare}
-                colorClass={eventTypeColors[event.event_type] ?? 'bg-gray-100 text-gray-700'}
+                colorClass={eventTypeColors[event.event_type] ?? 'bg-white/10 text-white/70'}
               />
             ))}
           </div>
@@ -193,7 +193,7 @@ const StatCard = ({
       <Icon className="w-6 h-6 text-primary-600" />
     </div>
     <div>
-      <p className="text-sm text-gray-600">{label}</p>
+      <p className="text-sm text-white/60">{label}</p>
       <p className="text-2xl font-bold">{value.toLocaleString()}</p>
     </div>
   </div>
@@ -224,18 +224,18 @@ const EventRow = ({
         </div>
         <div className="flex-1 min-w-0">
           <p className="font-medium text-sm">{label}</p>
-          <p className="text-xs text-gray-500">
+          <p className="text-xs text-white/50">
             {event.channel} • {event.user_id ? `Пользователь: ${event.user_id.slice(0, 8)}...` : 'Система'}
           </p>
         </div>
-        <div className="text-sm text-gray-500">
+        <div className="text-sm text-white/50">
           {format(new Date(event.timestamp), 'd MMM, HH:mm', { locale: ru })}
         </div>
       </div>
 
       {expanded && Object.keys(event.data).length > 0 && (
-        <div className="mt-3 ml-12 p-3 bg-gray-50 rounded-lg">
-          <pre className="text-xs text-gray-600 overflow-auto">
+        <div className="mt-3 ml-12 p-3 bg-white/5 rounded-lg">
+          <pre className="text-xs text-white/60 overflow-auto">
             {JSON.stringify(event.data, null, 2)}
           </pre>
         </div>

@@ -107,7 +107,7 @@ const MEMORY_TYPES = {
   fact: { label: 'Факт', color: 'bg-blue-100 text-blue-700', icon: '📋' },
   preference: { label: 'Предпочтение', color: 'bg-green-100 text-green-700', icon: '💚' },
   context: { label: 'Контекст', color: 'bg-purple-100 text-purple-700', icon: '🎯' },
-  summary: { label: 'Итог', color: 'bg-gray-100 text-gray-700', icon: '📝' },
+  summary: { label: 'Итог', color: 'bg-white/10 text-white/70', icon: '📝' },
 };
 
 // Event type config
@@ -204,17 +204,17 @@ const UsersPage = () => {
         <div className="w-80 flex-shrink-0">
           <div className="card h-[calc(100vh-8rem)] flex flex-col">
             {/* Header */}
-            <div className="p-4 border-b border-gray-200">
+            <div className="p-4 border-b border-white/10">
               <div className="flex items-center justify-between mb-3">
-                <h2 className="font-semibold text-gray-900 flex items-center gap-2">
+                <h2 className="font-semibold text-white flex items-center gap-2">
                   <Users className="w-5 h-5" />
                   Пользователи
                 </h2>
                 <button
                   onClick={() => refetchUsers()}
-                  className="p-1.5 hover:bg-gray-100 rounded"
+                  className="p-1.5 hover:bg-white/10 rounded"
                 >
-                  <RefreshCw className="w-4 h-4 text-gray-500" />
+                  <RefreshCw className="w-4 h-4 text-white/50" />
                 </button>
               </div>
               <div className="relative">
@@ -224,8 +224,7 @@ const UsersPage = () => {
                   placeholder="Поиск..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  className="input pl-9 py-2 text-sm bg-white text-gray-900"
-                  style={{ colorScheme: 'light' }}
+                  className="input pl-9 py-2 text-sm"
                 />
               </div>
             </div>
@@ -237,7 +236,7 @@ const UsersPage = () => {
                   <Loader2 className="w-6 h-6 animate-spin text-gray-400 mx-auto" />
                 </div>
               ) : filteredUsers?.length === 0 ? (
-                <div className="p-4 text-center text-gray-500 text-sm">
+                <div className="p-4 text-center text-white/50 text-sm">
                   Пользователи не найдены
                 </div>
               ) : (
@@ -245,10 +244,10 @@ const UsersPage = () => {
                   <div
                     key={user.id}
                     onClick={() => setSelectedUser(user)}
-                    className={`p-3 border-b border-gray-100 cursor-pointer transition-colors ${
+                    className={`p-3 border-b border-white/10 cursor-pointer transition-colors ${
                       selectedUser?.id === user.id
                         ? 'bg-primary-50 border-l-4 border-l-primary-500'
-                        : 'hover:bg-gray-50'
+                        : 'hover:bg-white/5'
                     }`}
                   >
                     <div className="flex items-center gap-3">
@@ -256,16 +255,16 @@ const UsersPage = () => {
                         {getUserName(user).charAt(0).toUpperCase()}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium text-gray-900 truncate">
+                        <p className="font-medium text-white truncate">
                           {getUserName(user)}
                         </p>
-                        <p className="text-xs text-gray-500">
+                        <p className="text-xs text-white/50">
                           {user.username ? `@${user.username}` : `ID: ${user.user_id}`}
                         </p>
                       </div>
                       <ChevronRight className="w-4 h-4 text-gray-400" />
                     </div>
-                    <div className="flex items-center gap-3 mt-2 text-xs text-gray-500">
+                    <div className="flex items-center gap-3 mt-2 text-xs text-white/50">
                       <span className="flex items-center gap-1">
                         <MessageSquare className="w-3 h-3" />
                         {user.total_messages}
@@ -285,7 +284,7 @@ const UsersPage = () => {
             </div>
 
             {/* Stats */}
-            <div className="p-3 border-t border-gray-200 bg-gray-50 text-xs text-gray-500">
+            <div className="p-3 border-t border-white/10 bg-white/5 text-xs text-white/50">
               Всего: {users?.length ?? 0} пользователей
             </div>
           </div>
@@ -302,18 +301,18 @@ const UsersPage = () => {
                     {getUserName(selectedUser).charAt(0).toUpperCase()}
                   </div>
                   <div className="flex-1">
-                    <h2 className="text-xl font-bold text-gray-900">
+                    <h2 className="text-xl font-bold text-white">
                       {getUserName(selectedUser)}
                     </h2>
-                    <p className="text-gray-500">
+                    <p className="text-white/50">
                       {selectedUser.username ? `@${selectedUser.username}` : ''} • ID: {selectedUser.user_id}
                     </p>
                     <div className="flex items-center gap-4 mt-3 text-sm">
-                      <span className="flex items-center gap-1 text-gray-600">
+                      <span className="flex items-center gap-1 text-white/60">
                         <Clock className="w-4 h-4" />
                         Первый визит: {formatDate(selectedUser.first_seen_at)}
                       </span>
-                      <span className="flex items-center gap-1 text-gray-600">
+                      <span className="flex items-center gap-1 text-white/60">
                         <Zap className="w-4 h-4" />
                         Токенов: {selectedUser.total_tokens_used.toLocaleString()}
                       </span>
@@ -343,7 +342,7 @@ const UsersPage = () => {
                   className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 ${
                     activeTab === 'memory'
                       ? 'bg-primary-500 text-white'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      : 'bg-white/10 text-white/70 hover:bg-white/10'
                   }`}
                 >
                   <Brain className="w-4 h-4" />
@@ -354,7 +353,7 @@ const UsersPage = () => {
                   className={`px-4 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 ${
                     activeTab === 'logs'
                       ? 'bg-primary-500 text-white'
-                      : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                      : 'bg-white/10 text-white/70 hover:bg-white/10'
                   }`}
                 >
                   <History className="w-4 h-4" />
@@ -365,8 +364,8 @@ const UsersPage = () => {
               {/* Memory Tab */}
               {activeTab === 'memory' && (
                 <div className="card">
-                  <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-                    <h3 className="font-semibold text-gray-900">Память о пользователе</h3>
+                  <div className="p-4 border-b border-white/10 flex items-center justify-between">
+                    <h3 className="font-semibold text-white">Память о пользователе</h3>
                     <button
                       onClick={() => setShowAddMemory(!showAddMemory)}
                       className="btn-primary text-sm py-1.5"
@@ -378,14 +377,13 @@ const UsersPage = () => {
 
                   {/* Add Memory Form */}
                   {showAddMemory && (
-                    <div className="p-4 bg-gray-50 border-b border-gray-200">
+                    <div className="p-4 bg-white/5 border-b border-white/10">
                       <div className="space-y-3">
                         <div className="flex gap-3">
                           <select
                             value={newMemory.type}
                             onChange={(e) => setNewMemory({ ...newMemory, type: e.target.value })}
-                            className="input w-40 bg-white text-gray-900"
-                            style={{ colorScheme: 'light' }}
+                            className="input w-40 bg-white/5 text-gray-200"
                           >
                             {Object.entries(MEMORY_TYPES).map(([key, { label }]) => (
                               <option key={key} value={key}>{label}</option>
@@ -396,12 +394,11 @@ const UsersPage = () => {
                             placeholder="Содержимое..."
                             value={newMemory.content}
                             onChange={(e) => setNewMemory({ ...newMemory, content: e.target.value })}
-                            className="input flex-1 bg-white text-gray-900"
-                            style={{ colorScheme: 'light' }}
+                            className="input flex-1 bg-white/5 text-gray-200"
                           />
                         </div>
                         <div className="flex items-center justify-between">
-                          <label className="flex items-center gap-2 text-sm text-gray-600">
+                          <label className="flex items-center gap-2 text-sm text-white/60">
                             <input
                               type="checkbox"
                               checked={newMemory.isPinned}
@@ -442,7 +439,7 @@ const UsersPage = () => {
                         <Loader2 className="w-6 h-6 animate-spin text-gray-400 mx-auto" />
                       </div>
                     ) : memory?.length === 0 ? (
-                      <div className="p-8 text-center text-gray-500">
+                      <div className="p-8 text-center text-white/50">
                         <Brain className="w-12 h-12 text-gray-300 mx-auto mb-2" />
                         <p>Нет записей в памяти</p>
                         <p className="text-sm mt-1">Бот автоматически извлекает факты из разговоров</p>
@@ -451,7 +448,7 @@ const UsersPage = () => {
                       memory?.map((item) => {
                         const typeConfig = MEMORY_TYPES[item.memory_type] || MEMORY_TYPES.fact;
                         return (
-                          <div key={item.id} className="p-4 hover:bg-gray-50">
+                          <div key={item.id} className="p-4 hover:bg-white/5">
                             <div className="flex items-start gap-3">
                               <span className="text-lg">{typeConfig.icon}</span>
                               <div className="flex-1">
@@ -463,8 +460,8 @@ const UsersPage = () => {
                                     <Pin className="w-3 h-3 text-amber-500" />
                                   )}
                                 </div>
-                                <p className="text-gray-900">{item.content}</p>
-                                <p className="text-xs text-gray-500 mt-1">
+                                <p className="text-white">{item.content}</p>
+                                <p className="text-xs text-white/50 mt-1">
                                   {formatDate(item.created_at)}
                                 </p>
                               </div>
@@ -486,8 +483,8 @@ const UsersPage = () => {
               {/* Logs Tab */}
               {activeTab === 'logs' && (
                 <div className="card">
-                  <div className="p-4 border-b border-gray-200">
-                    <h3 className="font-semibold text-gray-900">История взаимодействий</h3>
+                  <div className="p-4 border-b border-white/10">
+                    <h3 className="font-semibold text-white">История взаимодействий</h3>
                   </div>
                   <div className="divide-y divide-gray-100 max-h-[600px] overflow-y-auto">
                     {logsLoading ? (
@@ -495,24 +492,24 @@ const UsersPage = () => {
                         <Loader2 className="w-6 h-6 animate-spin text-gray-400 mx-auto" />
                       </div>
                     ) : logs?.length === 0 ? (
-                      <div className="p-8 text-center text-gray-500">
+                      <div className="p-8 text-center text-white/50">
                         <History className="w-12 h-12 text-gray-300 mx-auto mb-2" />
                         <p>Нет записей</p>
                       </div>
                     ) : (
                       logs?.map((log) => {
-                        const eventConfig = EVENT_TYPES[log.event_type] || { label: log.event_type, color: 'bg-gray-100 text-gray-700' };
+                        const eventConfig = EVENT_TYPES[log.event_type] || { label: log.event_type, color: 'bg-white/10 text-white/70' };
                         return (
-                          <div key={log.id} className="p-3 hover:bg-gray-50">
+                          <div key={log.id} className="p-3 hover:bg-white/5">
                             <div className="flex items-start gap-3">
                               <span className={`px-2 py-0.5 text-xs rounded ${eventConfig.color}`}>
                                 {eventConfig.label}
                               </span>
                               <div className="flex-1 min-w-0">
                                 {log.content && (
-                                  <p className="text-sm text-gray-900 truncate">{log.content}</p>
+                                  <p className="text-sm text-white truncate">{log.content}</p>
                                 )}
-                                <div className="flex items-center gap-3 text-xs text-gray-500 mt-1">
+                                <div className="flex items-center gap-3 text-xs text-white/50 mt-1">
                                   <span>{formatDate(log.timestamp)}</span>
                                   {log.model && <span>Модель: {log.model}</span>}
                                   {log.response_time_ms && <span>{log.response_time_ms}ms</span>}
@@ -530,10 +527,10 @@ const UsersPage = () => {
           ) : (
             <div className="card p-12 text-center">
               <User className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">
+              <h3 className="text-lg font-medium text-white mb-2">
                 Выберите пользователя
               </h3>
-              <p className="text-gray-500">
+              <p className="text-white/50">
                 Выберите пользователя из списка слева для просмотра его профиля, памяти и истории
               </p>
             </div>
