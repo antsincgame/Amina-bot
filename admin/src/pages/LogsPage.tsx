@@ -77,11 +77,11 @@ const logsApi = {
 
 // Level config
 const LEVEL_CONFIG = {
-  debug: { icon: Bug, color: 'text-gray-500', bg: 'bg-gray-100', label: 'Debug' },
-  info: { icon: Info, color: 'text-blue-500', bg: 'bg-blue-100', label: 'Info' },
-  warn: { icon: AlertTriangle, color: 'text-yellow-500', bg: 'bg-yellow-100', label: 'Warning' },
-  error: { icon: AlertCircle, color: 'text-red-500', bg: 'bg-red-100', label: 'Error' },
-  fatal: { icon: Skull, color: 'text-purple-500', bg: 'bg-purple-100', label: 'Fatal' },
+  debug: { icon: Bug, color: 'text-gray-500', bg: 'bg-white/10', label: 'Debug' },
+  info: { icon: Info, color: 'text-blue-500', bg: 'bg-blue-500/20', label: 'Info' },
+  warn: { icon: AlertTriangle, color: 'text-yellow-500', bg: 'bg-yellow-500/20', label: 'Warning' },
+  error: { icon: AlertCircle, color: 'text-red-500', bg: 'bg-red-500/20', label: 'Error' },
+  fatal: { icon: Skull, color: 'text-purple-500', bg: 'bg-purple-500/20', label: 'Fatal' },
 };
 
 // Date ranges
@@ -382,7 +382,7 @@ const LogsPage = () => {
                 {levelLogs.length > 0 && (
                   <div className="relative group">
                     <button 
-                      className="p-1.5 rounded hover:bg-gray-100 transition-colors"
+                      className="p-1.5 rounded hover:bg-white/10 transition-colors"
                       title={`Скачать ${config.label} логи`}
                     >
                       <Download className="w-4 h-4 text-gray-400" />
@@ -390,19 +390,19 @@ const LogsPage = () => {
                     <div className="absolute right-0 mt-1 w-32 bg-[#1a1a2e] rounded-lg shadow-lg border border-[rgba(255,215,0,0.2)] opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
                       <button
                         onClick={() => downloadJSON(levelLogs, `amina-${level}-${dateRange}.json`)}
-                        className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
+                        className="w-full px-3 py-1.5 text-left text-xs text-gray-300 hover:bg-white/10"
                       >
                         JSON
                       </button>
                       <button
                         onClick={() => downloadCSV(levelLogs, `amina-${level}-${dateRange}.csv`)}
-                        className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
+                        className="w-full px-3 py-1.5 text-left text-xs text-gray-300 hover:bg-white/10"
                       >
                         CSV
                       </button>
                       <button
                         onClick={() => downloadTXT(levelLogs, `amina-${level}-${dateRange}.txt`)}
-                        className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
+                        className="w-full px-3 py-1.5 text-left text-xs text-gray-300 hover:bg-white/10"
                       >
                         TXT
                       </button>
@@ -510,7 +510,7 @@ const LogsPage = () => {
               return (
                 <div
                   key={log.id}
-                  className="p-4 hover:bg-gray-50 transition-colors"
+                  className="p-4 hover:bg-white/5 transition-colors"
                 >
                   {/* Log Header */}
                   <div
@@ -539,7 +539,7 @@ const LogsPage = () => {
                         >
                           {config.label}
                         </span>
-                        <span className="px-2 py-0.5 text-xs font-medium rounded bg-gray-100 text-gray-600">
+                        <span className="px-2 py-0.5 text-xs font-medium rounded bg-white/10 text-white/60">
                           {log.module}
                         </span>
                         {log.user_id && (
@@ -569,7 +569,7 @@ const LogsPage = () => {
                         <p className="text-xs font-medium text-white/50 mb-1">
                           Сообщение:
                         </p>
-                        <p className="text-sm text-gray-700 bg-gray-50 p-2 rounded">
+                        <p className="text-sm text-gray-300 bg-white/5 p-2 rounded">
                           {log.message}
                         </p>
                       </div>
@@ -592,7 +592,7 @@ const LogsPage = () => {
                           <p className="text-xs font-medium text-white/50 mb-1">
                             Stack Trace:
                           </p>
-                          <pre className="text-xs bg-red-50 text-red-700 p-3 rounded overflow-x-auto whitespace-pre-wrap">
+                          <pre className="text-xs bg-red-500/10 text-red-400 p-3 rounded overflow-x-auto whitespace-pre-wrap">
                             {log.error_stack}
                           </pre>
                         </div>
@@ -640,7 +640,7 @@ const LogsPage = () => {
                       className={`px-3 py-1.5 text-sm rounded-l-full transition-colors ${
                         moduleFilter === module
                           ? 'bg-primary-500 text-white'
-                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                          : 'bg-white/10 text-white/70 hover:bg-white/15'
                       }`}
                     >
                       {module}: {count}
@@ -651,7 +651,7 @@ const LogsPage = () => {
                           className={`px-2 py-1.5 text-sm rounded-r-full border-l transition-colors ${
                             moduleFilter === module
                               ? 'bg-primary-600 text-white border-primary-400'
-                              : 'bg-gray-100 text-gray-500 hover:bg-gray-200 border-gray-200'
+                              : 'bg-white/10 text-white/50 hover:bg-white/15 border-white/10'
                           }`}
                           title={`Скачать логи ${module}`}
                         >
@@ -660,19 +660,19 @@ const LogsPage = () => {
                         <div className="absolute right-0 mt-1 w-32 bg-[#1a1a2e] rounded-lg shadow-lg border border-[rgba(255,215,0,0.2)] opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-10">
                           <button
                             onClick={() => downloadJSON(moduleLogs, `amina-${module}-${dateRange}.json`)}
-                            className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
+                            className="w-full px-3 py-1.5 text-left text-xs text-gray-300 hover:bg-white/10"
                           >
                             JSON
                           </button>
                           <button
                             onClick={() => downloadCSV(moduleLogs, `amina-${module}-${dateRange}.csv`)}
-                            className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
+                            className="w-full px-3 py-1.5 text-left text-xs text-gray-300 hover:bg-white/10"
                           >
                             CSV
                           </button>
                           <button
                             onClick={() => downloadTXT(moduleLogs, `amina-${module}-${dateRange}.txt`)}
-                            className="w-full px-3 py-1.5 text-left text-xs text-gray-700 hover:bg-gray-50"
+                            className="w-full px-3 py-1.5 text-left text-xs text-gray-300 hover:bg-white/10"
                           >
                             TXT
                           </button>

@@ -110,8 +110,8 @@ const PromptsPage = () => {
         <div className="space-y-4">
           {[1, 2, 3].map((i) => (
             <div key={i} className="card animate-pulse">
-              <div className="h-6 bg-gray-200 rounded w-1/4 mb-4" />
-              <div className="h-20 bg-gray-200 rounded" />
+              <div className="h-6 bg-white/10 rounded w-1/4 mb-4" />
+              <div className="h-20 bg-white/10 rounded" />
             </div>
           ))}
         </div>
@@ -136,7 +136,7 @@ const PromptsPage = () => {
                     <div className="flex items-center gap-3">
                       <h3 className="font-semibold text-lg">{prompt.name}</h3>
                       {prompt.is_active && (
-                        <span className="px-2 py-0.5 text-xs font-medium bg-green-100 text-green-700 rounded-full">
+                        <span className="px-2 py-0.5 text-xs font-medium bg-green-500/20 text-green-400 rounded-full">
                           Активен
                         </span>
                       )}
@@ -153,7 +153,7 @@ const PromptsPage = () => {
                       )}
                       <button
                         onClick={() => setEditingPrompt(prompt)}
-                        className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg"
+                        className="p-2 text-gray-400 hover:text-white hover:bg-white/10 rounded-lg"
                       >
                         <Edit2 className="w-4 h-4" />
                       </button>
@@ -163,7 +163,7 @@ const PromptsPage = () => {
                             deletePrompt(prompt.id);
                           }
                         }}
-                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg"
+                        className="p-2 text-gray-400 hover:text-red-400 hover:bg-red-500/10 rounded-lg"
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>
@@ -171,7 +171,7 @@ const PromptsPage = () => {
                   </div>
 
                   {/* Content */}
-                  <pre className="whitespace-pre-wrap text-sm text-gray-700 bg-gray-50 rounded-lg p-4 mb-4 font-sans">
+                  <pre className="whitespace-pre-wrap text-sm text-gray-300 bg-white/5 rounded-lg p-4 mb-4 font-sans">
                     {prompt.content}
                   </pre>
 

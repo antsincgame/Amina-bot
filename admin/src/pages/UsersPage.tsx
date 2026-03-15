@@ -103,20 +103,20 @@ const usersApi = {
 
 // Memory type config
 const MEMORY_TYPES = {
-  important: { label: 'Важное', color: 'bg-red-100 text-red-700', icon: '⚠️' },
-  fact: { label: 'Факт', color: 'bg-blue-100 text-blue-700', icon: '📋' },
-  preference: { label: 'Предпочтение', color: 'bg-green-100 text-green-700', icon: '💚' },
-  context: { label: 'Контекст', color: 'bg-purple-100 text-purple-700', icon: '🎯' },
+  important: { label: 'Важное', color: 'bg-red-500/20 text-red-400', icon: '⚠️' },
+  fact: { label: 'Факт', color: 'bg-blue-500/20 text-blue-400', icon: '📋' },
+  preference: { label: 'Предпочтение', color: 'bg-green-500/20 text-green-400', icon: '💚' },
+  context: { label: 'Контекст', color: 'bg-purple-500/20 text-purple-400', icon: '🎯' },
   summary: { label: 'Итог', color: 'bg-white/10 text-white/70', icon: '📝' },
 };
 
 // Event type config
 const EVENT_TYPES: Record<string, { label: string; color: string }> = {
-  message: { label: 'Сообщение', color: 'bg-blue-100 text-blue-700' },
-  voice: { label: 'Голос', color: 'bg-purple-100 text-purple-700' },
-  image: { label: 'Фото', color: 'bg-green-100 text-green-700' },
+  message: { label: 'Сообщение', color: 'bg-blue-500/20 text-blue-400' },
+  voice: { label: 'Голос', color: 'bg-purple-500/20 text-purple-400' },
+  image: { label: 'Фото', color: 'bg-green-500/20 text-green-400' },
   ai_response: { label: 'AI Ответ', color: 'bg-amber-100 text-amber-700' },
-  error: { label: 'Ошибка', color: 'bg-red-100 text-red-700' },
+  error: { label: 'Ошибка', color: 'bg-red-500/20 text-red-400' },
   memory_created: { label: 'Память+', color: 'bg-cyan-100 text-cyan-700' },
 };
 
@@ -319,15 +319,15 @@ const UsersPage = () => {
                     </div>
                   </div>
                   <div className="grid grid-cols-3 gap-4 text-center">
-                    <div className="p-3 bg-blue-50 rounded-lg">
+                    <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg">
                       <p className="text-2xl font-bold text-blue-600">{selectedUser.total_messages}</p>
                       <p className="text-xs text-blue-600">Сообщений</p>
                     </div>
-                    <div className="p-3 bg-purple-50 rounded-lg">
+                    <div className="p-3 bg-purple-500/10 border border-purple-500/20 rounded-lg">
                       <p className="text-2xl font-bold text-purple-600">{selectedUser.total_voice_messages}</p>
                       <p className="text-xs text-purple-600">Голосовых</p>
                     </div>
-                    <div className="p-3 bg-green-50 rounded-lg">
+                    <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
                       <p className="text-2xl font-bold text-green-600">{selectedUser.total_images}</p>
                       <p className="text-xs text-green-600">Фото</p>
                     </div>
@@ -467,7 +467,7 @@ const UsersPage = () => {
                               </div>
                               <button
                                 onClick={() => deleteMemoryMutation.mutate(item.id)}
-                                className="p-1.5 hover:bg-red-100 rounded text-gray-400 hover:text-red-500"
+                                className="p-1.5 hover:bg-red-500/10 rounded text-white/40 hover:text-red-400"
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>

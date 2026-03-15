@@ -246,8 +246,8 @@ const ApiKeysPage = () => {
               Безопасное хранение
             </h3>
             <p className="text-gray-400 text-sm leading-relaxed">
-              Все API ключи хранятся в зашифрованной базе данных Supabase. 
-              В Render достаточно только <code className="px-1.5 py-0.5 rounded bg-white/5 text-amber-400 text-xs">SUPABASE_URL</code> и <code className="px-1.5 py-0.5 rounded bg-white/5 text-amber-400 text-xs">SUPABASE_SERVICE_KEY</code>.
+              Все API ключи хранятся в базе данных Appwrite. 
+              В Coolify достаточно только <code className="px-1.5 py-0.5 rounded bg-white/5 text-amber-400 text-xs">APPWRITE_API_KEY</code> и <code className="px-1.5 py-0.5 rounded bg-white/5 text-amber-400 text-xs">APPWRITE_PROJECT_ID</code>.
             </p>
           </div>
         </div>

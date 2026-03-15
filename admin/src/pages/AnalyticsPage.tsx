@@ -65,12 +65,12 @@ const AnalyticsPage = () => {
   };
 
   const eventTypeColors: Record<string, string> = {
-    message_received: 'bg-blue-100 text-blue-700',
-    message_sent: 'bg-green-100 text-green-700',
-    ai_response: 'bg-purple-100 text-purple-700',
+    message_received: 'bg-blue-500/20 text-blue-400',
+    message_sent: 'bg-green-500/20 text-green-400',
+    ai_response: 'bg-purple-500/20 text-purple-400',
     call_started: 'bg-amber-100 text-amber-700',
     call_ended: 'bg-amber-100 text-amber-700',
-    error: 'bg-red-100 text-red-700',
+    error: 'bg-red-500/20 text-red-400',
     settings_updated: 'bg-white/10 text-white/70',
     prompt_updated: 'bg-white/10 text-white/70',
   };

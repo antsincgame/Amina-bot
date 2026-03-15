@@ -174,11 +174,11 @@ const SettingsPage = () => {
     return (
       <div className="p-6 lg:p-8 max-w-3xl mx-auto">
         <div className="animate-pulse space-y-4">
-          <div className="h-8 bg-gray-200 rounded w-1/3" />
+          <div className="h-8 bg-white/10 rounded w-1/3" />
           <div className="card space-y-4">
-            <div className="h-10 bg-gray-200 rounded" />
-            <div className="h-10 bg-gray-200 rounded" />
-            <div className="h-10 bg-gray-200 rounded" />
+            <div className="h-10 bg-white/10 rounded" />
+            <div className="h-10 bg-white/10 rounded" />
+            <div className="h-10 bg-white/10 rounded" />
           </div>
         </div>
       </div>
@@ -228,7 +228,7 @@ const SettingsPage = () => {
               </div>
               
               {refreshMessage && (
-                <div className={`text-sm p-2 rounded ${refreshMessage.startsWith('✅') ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                <div className={`text-sm p-2 rounded ${refreshMessage.startsWith('✅') ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
                   {refreshMessage}
                 </div>
               )}
@@ -286,7 +286,7 @@ const SettingsPage = () => {
 
             {/* Custom Model Input (shown when "Other" is selected) */}
             {selectedModel === CUSTOM_MODEL_VALUE && (
-              <div className="border-l-4 border-primary-500 pl-4 py-2 bg-gray-50 rounded-r">
+              <div className="border-l-4 border-primary-500 pl-4 py-2 bg-white/5 rounded-r">
                 <label htmlFor="custom_model" className="label text-sm">
                   ID Модели
                 </label>
@@ -385,7 +385,7 @@ const SettingsPage = () => {
                 {...register('custom_model_override')}
               />
               {customModelOverride && customModelOverride.trim() && (
-                <div className="mt-2 p-2 bg-green-100 border border-green-300 rounded text-sm text-green-800">
+                <div className="mt-2 p-2 bg-green-500/10 border border-green-500/20 rounded text-sm text-green-400">
                   ✅ Активна модель: <code className="font-mono font-semibold">{customModelOverride}</code>
                 </div>
               )}
@@ -404,12 +404,12 @@ const SettingsPage = () => {
         </div>
 
         {/* Info */}
-        <div className="flex items-start gap-2 p-4 rounded-lg bg-blue-50 text-blue-700 text-sm">
-          <Info className="w-5 h-5 mt-0.5 flex-shrink-0" />
+        <div className="flex items-start gap-2 p-4 rounded-lg bg-blue-500/10 border border-blue-500/20 text-sm">
+          <Info className="w-5 h-5 mt-0.5 flex-shrink-0 text-blue-400" />
           <div>
-            <p className="font-medium">API ключ настраивается в Render</p>
-            <p className="mt-1 text-blue-600">
-              Переменная <code className="bg-blue-100 px-1 rounded">OPENROUTER_API_KEY</code> задаётся в Environment Variables сервиса на Render Dashboard.
+            <p className="font-medium text-blue-300">API ключ настраивается в Coolify</p>
+            <p className="mt-1 text-blue-400/80">
+              Переменная <code className="bg-white/5 px-1 rounded text-amber-400">OPENROUTER_API_KEY</code> задаётся в Environment Variables сервиса в Coolify.
             </p>
           </div>
         </div>

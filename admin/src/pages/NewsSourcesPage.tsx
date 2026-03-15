@@ -283,10 +283,10 @@ const NewsSourcesPage = () => {
     return (
       <div className="p-6 lg:p-8 max-w-5xl mx-auto">
         <div className="animate-pulse space-y-4">
-          <div className="h-8 bg-gray-200 rounded w-1/3" />
+          <div className="h-8 bg-white/10 rounded w-1/3" />
           <div className="card space-y-4">
-            <div className="h-10 bg-gray-200 rounded" />
-            <div className="h-10 bg-gray-200 rounded" />
+            <div className="h-10 bg-white/10 rounded" />
+            <div className="h-10 bg-white/10 rounded" />
           </div>
         </div>
       </div>
