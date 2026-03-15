@@ -1,8 +1,20 @@
+/**
+ * Scenario Repository — dual backend (Supabase + Appwrite)
+ */
+
+import { config } from '../../../config/index.js';
 import { settingsRepo, getSupabase } from '../../../db/index.js';
+import { ID, Query } from 'node-appwrite';
 import type { TelephonyAiScenario } from '../../../../../shared/types/telephony.js';
 import { getDefaultTelephonyAiScenarios, normalizeScenario } from '../scenario-compiler.js';
 import { LEGACY_SCENARIOS_KEY, cleanText, safeJsonParse } from '../shared.js';
 import { ensureTelephonyInfra } from './telephony-infra.js';
+
+let _aw: import('node-appwrite').Databases | null = null;
+async function getAW() { if (!_aw) { const { getAppwrite } = await import('../../../db/appwrite.js'); _aw = getAppwrite(); } return _aw; }
+const DB_ID = () => config.appwrite.databaseId;
+const useAW = () => config.dbBackend === 'appwrite';
+const COLL = 'amina_tel_scenarios';
 
 interface TelephonyScenarioRow {
   id: string;
@@ -69,17 +81,59 @@ function mapScenarioToRow(scenario: TelephonyAiScenario): TelephonyScenarioRow {
   };
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function docToScenario(d: any, index: number): TelephonyAiScenario {
+  const policy = typeof d.policy === 'string' ? safeJsonParse(d.policy) ?? {} : (d.policy ?? {});
+  return normalizeScenario(
+    {
+      id: d.scenario_id ?? d.id ?? d.$id,
+      name: d.name,
+      enabled: d.enabled ?? true,
+      callMode: d.call_mode,
+      runtimeMode: d.runtime_mode ?? 'scripted',
+      policyVersion: d.policy_version ?? 1,
+      policy,
+      goal: d.goal ?? '',
+      systemPrompt: d.system_prompt ?? '',
+      openingLine: d.opening_line ?? '',
+      questionHint: d.question_hint ?? '',
+      successCriteria: d.success_criteria ?? '',
+      resultPrompt: d.result_prompt ?? '',
+      maxSpeechChars: d.max_speech_chars ?? 420,
+      createdAt: d.created_at || d.$createdAt,
+      updatedAt: d.updated_at || d.$updatedAt,
+    },
+    index,
+    d.updated_at || d.$updatedAt,
+  );
+}
+
+function scenarioToAwDoc(scenario: TelephonyAiScenario) {
+  return {
+    scenario_id: scenario.id,
+    name: scenario.name,
+    enabled: scenario.enabled,
+    call_mode: scenario.callMode,
+    runtime_mode: scenario.runtimeMode ?? 'scripted',
+    policy_version: scenario.policyVersion ?? 1,
+    policy: JSON.stringify(scenario.policy ?? {}),
+    goal: scenario.goal ?? '',
+    system_prompt: scenario.systemPrompt ?? '',
+    opening_line: scenario.openingLine ?? '',
+    question_hint: scenario.questionHint ?? '',
+    success_criteria: scenario.successCriteria ?? '',
+    result_prompt: scenario.resultPrompt ?? '',
+    max_speech_chars: scenario.maxSpeechChars ?? 420,
+    created_at: scenario.createdAt || new Date().toISOString(),
+    updated_at: scenario.updatedAt || new Date().toISOString(),
+  };
+}
+
 async function loadLegacyScenarios(): Promise<TelephonyAiScenario[]> {
   const raw = await settingsRepo.get(LEGACY_SCENARIOS_KEY);
-  if (!raw) {
-    return [];
-  }
-
+  if (!raw) return [];
   const parsed = safeJsonParse<unknown[]>(raw);
-  if (!Array.isArray(parsed) || parsed.length === 0) {
-    return [];
-  }
-
+  if (!Array.isArray(parsed) || parsed.length === 0) return [];
   const now = new Date().toISOString();
   return parsed.map((item, index) => normalizeScenario((item ?? {}) as Partial<TelephonyAiScenario>, index, now));
 }
@@ -95,29 +149,26 @@ export const scenarioRepo = {
   async getAll(): Promise<TelephonyAiScenario[]> {
     await ensureTelephonyInfra();
 
-    const { data, error } = await getSupabase()
-      .from('telephony_scenarios')
-      .select('*')
-      .order('created_at', { ascending: true });
-
-    if (error) {
-      throw error;
+    if (useAW()) {
+      const aw = await getAW();
+      const r = await aw.listDocuments(DB_ID(), COLL, [Query.orderAsc('created_at'), Query.limit(100)]);
+      if (r.documents.length === 0) return bootstrapScenarios();
+      return r.documents.map((d, i) => docToScenario(d, i));
+    } else {
+      const { data, error } = await getSupabase()
+        .from('telephony_scenarios')
+        .select('*')
+        .order('created_at', { ascending: true });
+      if (error) throw error;
+      const rows = (data as TelephonyScenarioRow[] | null) ?? [];
+      if (rows.length === 0) return bootstrapScenarios();
+      return rows.map((row, index) => mapRowToScenario(row, index));
     }
-
-    const rows = (data as TelephonyScenarioRow[] | null) ?? [];
-    if (rows.length === 0) {
-      return bootstrapScenarios();
-    }
-
-    return rows.map((row, index) => mapRowToScenario(row, index));
   },
 
   async getById(id: string): Promise<TelephonyAiScenario | null> {
     const cleanId = cleanText(id);
-    if (!cleanId) {
-      return null;
-    }
-
+    if (!cleanId) return null;
     const scenarios = await this.getAll();
     return scenarios.find((scenario) => scenario.id === cleanId) ?? null;
   },
@@ -127,41 +178,61 @@ export const scenarioRepo = {
 
     const now = new Date().toISOString();
     const normalized = scenarios.map((scenario, index) => normalizeScenario(scenario, index, now));
-    const rows = normalized.map(mapScenarioToRow);
 
-    const sb = getSupabase();
-    const { data: existingRows, error: existingError } = await sb
-      .from('telephony_scenarios')
-      .select('id');
+    if (useAW()) {
+      const aw = await getAW();
+      // Get existing docs
+      const existing = await aw.listDocuments(DB_ID(), COLL, [Query.limit(100)]);
+      const existingMap = new Map<string, string>(); // scenario_id → $id
+      for (const doc of existing.documents) {
+        existingMap.set(doc.scenario_id, doc.$id);
+      }
 
-    if (existingError) {
-      throw existingError;
-    }
+      const nextIds = new Set(normalized.map((s) => s.id));
 
-    const existingIds = new Set(
-      ((existingRows as Array<{ id: string }> | null) ?? []).map((row) => row.id),
-    );
-    const nextIds = new Set(normalized.map((scenario) => scenario.id));
-
-    for (const existingId of existingIds) {
-      if (!nextIds.has(existingId)) {
-        const { error } = await sb.from('telephony_scenarios').delete().eq('id', existingId);
-        if (error) {
-          throw error;
+      // Delete removed
+      for (const [scenarioId, docId] of existingMap) {
+        if (!nextIds.has(scenarioId)) {
+          await aw.deleteDocument(DB_ID(), COLL, docId);
         }
       }
-    }
 
-    if (rows.length > 0) {
-      const { error } = await sb
-        .from('telephony_scenarios')
-        .upsert(rows, { onConflict: 'id' });
-
-      if (error) {
-        throw error;
+      // Upsert each (Appwrite has no native upsert)
+      for (const scenario of normalized) {
+        const awDoc = scenarioToAwDoc(scenario);
+        const existingDocId = existingMap.get(scenario.id);
+        if (existingDocId) {
+          await aw.updateDocument(DB_ID(), COLL, existingDocId, awDoc);
+        } else {
+          await aw.createDocument(DB_ID(), COLL, ID.unique(), awDoc);
+        }
       }
-    }
 
-    return normalized;
+      return normalized;
+    } else {
+      const rows = normalized.map(mapScenarioToRow);
+      const sb = getSupabase();
+      const { data: existingRows, error: existingError } = await sb
+        .from('telephony_scenarios')
+        .select('id');
+      if (existingError) throw existingError;
+
+      const existingIds = new Set(((existingRows as Array<{ id: string }> | null) ?? []).map((row) => row.id));
+      const nextIds = new Set(normalized.map((scenario) => scenario.id));
+
+      for (const existingId of existingIds) {
+        if (!nextIds.has(existingId)) {
+          const { error } = await sb.from('telephony_scenarios').delete().eq('id', existingId);
+          if (error) throw error;
+        }
+      }
+
+      if (rows.length > 0) {
+        const { error } = await sb.from('telephony_scenarios').upsert(rows, { onConflict: 'id' });
+        if (error) throw error;
+      }
+
+      return normalized;
+    }
   },
 };

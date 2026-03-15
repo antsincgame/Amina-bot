@@ -1,5 +1,8 @@
+import { config } from '../../../config/index.js';
 import { dbLogger } from '../../../config/logger.js';
 import { getSupabase } from '../../../db/index.js';
+
+const useAW = () => config.dbBackend === 'appwrite';
 
 let initialized = false;
 let initPromise: Promise<void> | null = null;
@@ -145,48 +148,28 @@ ALTER TABLE telephony_call_artifacts ADD COLUMN IF NOT EXISTS version INTEGER NO
 `;
 
 export async function ensureTelephonyInfra(): Promise<void> {
-  if (initialized) {
-    return;
-  }
-
-  if (initPromise) {
-    return initPromise;
-  }
-
+  if (initialized) return;
+  if (initPromise) return initPromise;
   initPromise = doEnsureTelephonyInfra();
-  try {
-    await initPromise;
-  } finally {
-    initPromise = null;
-  }
+  try { await initPromise; } finally { initPromise = null; }
 }
 
 async function doEnsureTelephonyInfra(): Promise<void> {
-  if (initialized) {
-    return;
-  }
+  if (initialized) return;
+
+  // Appwrite: collections pre-created via setup-telephony-collections.mjs
+  if (useAW()) { initialized = true; return; }
 
   const sb = getSupabase();
-
   try {
     const { error } = await sb.from('telephony_scenarios').select('id').limit(1);
-    if (!error) {
-      initialized = true;
-      return;
-    }
-
+    if (!error) { initialized = true; return; }
     if (!error.message?.includes('does not exist') && !error.message?.includes('schema cache')) {
       dbLogger.warn({ error }, 'telephony_scenarios table check returned non-fatal error');
-      initialized = true;
-      return;
+      initialized = true; return;
     }
-
     const { error: rpcError } = await sb.rpc('exec_sql', { sql: AUTO_CREATE_SQL });
-    if (rpcError) {
-      dbLogger.warn({ error: rpcError }, 'Telephony infra auto-create failed — run migration 012 manually');
-      return;
-    }
-
+    if (rpcError) { dbLogger.warn({ error: rpcError }, 'Telephony infra auto-create failed — run migration 012 manually'); return; }
     dbLogger.info('Telephony infra auto-created');
     initialized = true;
   } catch (error) {
