@@ -1723,7 +1723,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
           };
           try {
             const selectedPipeline: DigestPipelineMode =
-              pipeline === 'hybrid' || pipeline === 'hybrid_appwrite'
+              pipeline === 'hybrid' || pipeline === 'hybrid_appwrite' || pipeline === 'hybrid_supabase'
                 ? 'hybrid_appwrite'
                 : 'legacy';
             const forceRefresh = refresh === '1' || refresh.toLowerCase() === 'true';
