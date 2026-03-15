@@ -157,7 +157,7 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
       return {
         totalMessages: stats.totalMessages,
         totalCalls: stats.totalCalls,
-        totalUsers: stats.uniqueUsers,
+        uniqueUsers: stats.uniqueUsers,
         tokensByDay: stats.tokensByDay,
         period: '7d',
       };
@@ -166,7 +166,7 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
       return {
         totalMessages: 0,
         totalCalls: 0,
-        totalUsers: 0,
+        uniqueUsers: 0,
         tokensByDay: [],
         period: '7d',
       };
