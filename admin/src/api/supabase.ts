@@ -21,7 +21,7 @@ export type {
 import type { Settings, Prompt, AnalyticsEvent } from '../../../shared/types/index.js';
 
 // Bot API URL
-const BOT_URL = import.meta.env.VITE_BOT_URL || 'https://amina-bot.onrender.com';
+const BOT_URL = import.meta.env.VITE_BOT_URL ?? '';
 
 export async function fetchBotApi(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
