@@ -36,92 +36,42 @@ async function idx(c, key, type, attrs, orders) {
 }
 
 async function main() {
-  // 1. Delete broken collections
-  console.log('🗑️  Deleting broken collections...');
-  for (const id of ['amina_tel_scenarios', 'amina_tel_sessions']) {
-    try { await db.deleteCollection(DB, id); console.log(`  ✓ Deleted ${id}`); }
-    catch (e) { console.log(`  ~ ${id}: ${e.message}`); }
-  }
-
-  // Clear events from failed first migration (they'll be re-imported)
-  console.log('🧹 Clearing events from previous migration attempt...');
-  try {
-    const { Query } = await import('node-appwrite');
-    let cleared = 0;
-    while (true) {
-      const r = await db.listDocuments(DB, 'amina_tel_events', [Query.limit(100)]);
-      if (r.documents.length === 0) break;
-      for (const doc of r.documents) { await db.deleteDocument(DB, 'amina_tel_events', doc.$id); cleared++; }
-    }
-    console.log(`  ✓ Cleared ${cleared} event docs`);
-  } catch (e) { console.log(`  ~ events: ${e.message}`); }
-
+  // 1. Delete only broken sessions (scenarios are fine from last run)
+  console.log('🗑️  Deleting broken amina_tel_sessions...');
+  try { await db.deleteCollection(DB, 'amina_tel_sessions'); console.log('  ✓ Deleted'); }
+  catch (e) { console.log(`  ~ ${e.message}`); }
   await sleep(2000);
 
-  // ═══════════════════════════════════════════════════════
-  // amina_tel_scenarios
-  // Fixed: scenario_id(100)+name(255)+call_mode(50)+runtime_mode(50) = 455 chars = 1820 bytes
-  // Other: bool+2×int+2×datetime ≈ 33 bytes → total fixed ≈ 1853
-  // Remaining: 65535 - 1853 = 63682 bytes / 4 = 15920 chars for 7 text fields
-  //
-  // Allocation (total 15000 chars, safe margin):
-  //   system_prompt: 3000, result_prompt: 3000, policy: 3000
-  //   goal: 1500, opening_line: 1500, question_hint: 1500, success_criteria: 1500
-  // ═══════════════════════════════════════════════════════
-  console.log('\n📦 amina_tel_scenarios (budget: 15920 chars for text, using 15000)');
-  await db.createCollection(DB, 'amina_tel_scenarios', 'Tel Scenarios', []);
-  await a('amina_tel_scenarios', 'string', 'scenario_id', { size: 100, required: true });
-  await a('amina_tel_scenarios', 'string', 'name', { size: 255, required: true });
-  await a('amina_tel_scenarios', 'boolean', 'enabled', { default: true });
-  await a('amina_tel_scenarios', 'string', 'call_mode', { size: 50, required: true });
-  await a('amina_tel_scenarios', 'string', 'runtime_mode', { size: 50 });
-  await a('amina_tel_scenarios', 'integer', 'policy_version', { default: 1 });
-  await a('amina_tel_scenarios', 'text', 'policy', { size: 3000 });
-  await a('amina_tel_scenarios', 'text', 'goal', { size: 1500 });
-  await a('amina_tel_scenarios', 'text', 'system_prompt', { size: 3000 });
-  await a('amina_tel_scenarios', 'text', 'opening_line', { size: 1500 });
-  await a('amina_tel_scenarios', 'text', 'question_hint', { size: 1500 });
-  await a('amina_tel_scenarios', 'text', 'success_criteria', { size: 1500 });
-  await a('amina_tel_scenarios', 'text', 'result_prompt', { size: 3000 });
-  await a('amina_tel_scenarios', 'integer', 'max_speech_chars', { default: 420 });
-  await a('amina_tel_scenarios', 'datetime', 'created_at');
-  await a('amina_tel_scenarios', 'datetime', 'updated_at');
-  await sleep(3000);
-  await idx('amina_tel_scenarios', 'idx_scenario_id', 'unique', ['scenario_id'], ['ASC']);
-  console.log('  ✅ done');
+  // amina_tel_scenarios — already created successfully, skip
+  console.log('\n📦 amina_tel_scenarios — already OK, skipping');
 
   // ═══════════════════════════════════════════════════════
   // amina_tel_sessions
-  // Fixed strings: 1555 chars = 6220 bytes
-  // Other: int+2×datetime ≈ 24 bytes → total fixed ≈ 6244
-  // Remaining: 65535 - 6244 = 59291 / 4 = 14822 chars for 7 text fields
-  //
-  // Allocation (total 14600 chars, safe margin):
-  //   transcript: 4000, summary: 3000, result_prompt: 2000, result_summary: 2000
-  //   scenario_goal: 1200, task: 1200, success_criteria: 1200
+  // Appwrite internal columns eat ~2000 extra bytes
+  // Total text budget: ~10000 chars to be safe
   // ═══════════════════════════════════════════════════════
-  console.log('\n📦 amina_tel_sessions (budget: 14822 chars for text, using 14600)');
+  console.log('\n📦 amina_tel_sessions (reduced text budget: 10000 chars)');
   await db.createCollection(DB, 'amina_tel_sessions', 'Tel Sessions', []);
   await a('amina_tel_sessions', 'string', 'owner_telegram_id', { size: 50, required: true });
   await a('amina_tel_sessions', 'string', 'initiated_by', { size: 50, required: true });
   await a('amina_tel_sessions', 'string', 'scenario_id', { size: 100, required: true });
   await a('amina_tel_sessions', 'string', 'scenario_name', { size: 255 });
-  await a('amina_tel_sessions', 'text', 'scenario_goal', { size: 1200 });
+  await a('amina_tel_sessions', 'text', 'scenario_goal', { size: 800 });
   await a('amina_tel_sessions', 'string', 'call_mode', { size: 50, required: true });
   await a('amina_tel_sessions', 'string', 'runtime_mode', { size: 50 });
   await a('amina_tel_sessions', 'integer', 'policy_version', { default: 1 });
   await a('amina_tel_sessions', 'string', 'provider', { size: 50 });
   await a('amina_tel_sessions', 'string', 'target_phone', { size: 50, required: true });
-  await a('amina_tel_sessions', 'text', 'task', { size: 1200 });
-  await a('amina_tel_sessions', 'text', 'summary', { size: 3000 });
-  await a('amina_tel_sessions', 'text', 'success_criteria', { size: 1200 });
-  await a('amina_tel_sessions', 'text', 'result_prompt', { size: 2000 });
+  await a('amina_tel_sessions', 'text', 'task', { size: 800 });
+  await a('amina_tel_sessions', 'text', 'summary', { size: 2000 });
+  await a('amina_tel_sessions', 'text', 'success_criteria', { size: 800 });
+  await a('amina_tel_sessions', 'text', 'result_prompt', { size: 1000 });
   await a('amina_tel_sessions', 'string', 'request_id', { size: 100 });
   await a('amina_tel_sessions', 'string', 'request_mode', { size: 50 });
   await a('amina_tel_sessions', 'string', 'call_id', { size: 100 });
-  await a('amina_tel_sessions', 'string', 'record_link', { size: 500 });
-  await a('amina_tel_sessions', 'text', 'transcript', { size: 4000 });
-  await a('amina_tel_sessions', 'text', 'result_summary', { size: 2000 });
+  await a('amina_tel_sessions', 'string', 'record_link', { size: 255 });
+  await a('amina_tel_sessions', 'text', 'transcript', { size: 2500 });
+  await a('amina_tel_sessions', 'text', 'result_summary', { size: 1200 });
   await a('amina_tel_sessions', 'string', 'outcome_label', { size: 100 });
   await a('amina_tel_sessions', 'string', 'status', { size: 50, required: true });
   await a('amina_tel_sessions', 'datetime', 'created_at');
@@ -132,7 +82,66 @@ async function main() {
   await idx('amina_tel_sessions', 'idx_status', 'key', ['status', 'created_at'], ['ASC', 'DESC']);
   console.log('  ✅ done');
 
-  console.log('\n✅ Fix v2 complete! Now re-run: node scripts/migrate-telephony-data.mjs');
+  // ═══════════════════════════════════════════════════════
+  // Clear duplicate events and migrate sessions inline
+  // ═══════════════════════════════════════════════════════
+  console.log('\n🧹 Clearing duplicate events...');
+  try {
+    const { Query } = await import('node-appwrite');
+    let cleared = 0;
+    while (true) {
+      const r = await db.listDocuments(DB, 'amina_tel_events', [Query.limit(100)]);
+      if (r.documents.length === 0) break;
+      for (const doc of r.documents) { await db.deleteDocument(DB, 'amina_tel_events', doc.$id); cleared++; }
+    }
+    console.log(`  ✓ Cleared ${cleared} event docs`);
+  } catch (e) { console.log(`  ~ ${e.message}`); }
+
+  console.log('\n📦 Migrating sessions from Supabase...');
+  try {
+    const { createClient } = await import('@supabase/supabase-js');
+    const { ID } = await import('node-appwrite');
+    const sb = createClient(
+      'https://azdvlsznlvktxvmfswhq.supabase.co',
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF6ZHZsc3pubHZrdHh2bWZzd2hxIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MDE1NDkyNSwiZXhwIjoyMDg1NzMwOTI1fQ.7NmdUc57zlNZ8s3sd2OHVI-qcIAR3TSWzFEjRKOgCtE'
+    );
+    const tr = (v, m) => (!v || typeof v !== 'string') ? v : v.length > m ? v.slice(0, m) : v;
+    const { data } = await sb.from('telephony_call_sessions').select('*');
+    console.log(`  Found ${(data||[]).length} rows`);
+    let ok = 0;
+    for (const r of (data || [])) {
+      await db.createDocument(DB, 'amina_tel_sessions', ID.unique(), {
+        owner_telegram_id: r.owner_telegram_id,
+        initiated_by: r.initiated_by,
+        scenario_id: r.scenario_id,
+        scenario_name: tr(r.scenario_name ?? '', 255),
+        scenario_goal: tr(r.scenario_goal ?? '', 800),
+        call_mode: r.call_mode,
+        runtime_mode: r.runtime_mode ?? 'scripted',
+        policy_version: r.policy_version ?? 1,
+        provider: r.provider ?? 'unknown',
+        target_phone: r.target_phone,
+        task: tr(r.task ?? '', 800),
+        summary: tr(r.summary ?? '', 2000),
+        success_criteria: tr(r.success_criteria ?? '', 800),
+        result_prompt: tr(r.result_prompt ?? '', 1000),
+        request_id: r.request_id || null,
+        request_mode: r.request_mode ?? '',
+        call_id: r.call_id || null,
+        record_link: tr(r.record_link || null, 255),
+        transcript: tr(r.transcript || null, 2500),
+        result_summary: tr(r.result_summary || null, 1200),
+        outcome_label: r.outcome_label || null,
+        status: r.status,
+        created_at: r.created_at || new Date().toISOString(),
+        updated_at: r.updated_at || new Date().toISOString(),
+      });
+      ok++;
+    }
+    console.log(`  ✓ Migrated ${ok} sessions`);
+  } catch (e) { console.error(`  ✗ ${e.message}`); }
+
+  console.log('\n✅ All done! Now run: node scripts/migrate-telephony-data.mjs (for events only)');
 }
 
 main().catch(e => { console.error('FATAL:', e); process.exit(1); });
