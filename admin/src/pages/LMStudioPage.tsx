@@ -745,7 +745,7 @@ const LMStudioPage = () => {
             <p className="text-white/50 text-xs">
               Бот на Render засыпает через 15 мин без запросов. Heartbeat от туннеля не дойдёт до спящего бота.
               Настрой <strong>UptimeRobot</strong> (бесплатно): мониторинг{' '}
-              <code className="text-amber-300/80">https://amina-bot.onrender.com/health</code> каждые 14 мин.
+              <code className="text-amber-300/80">https://amina.vibecoding.by/health</code> каждые 14 мин.
               Альтернатива: cron-job.org или аналогичный сервис.
             </p>
           </div>

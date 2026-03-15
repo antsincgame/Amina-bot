@@ -152,10 +152,10 @@ export const config = {
   },
 
   /** URL админки (для CORS, ссылок в сообщениях). По умолчанию Render. */
-  adminUrl: env.ADMIN_URL ?? 'https://amina-admin.onrender.com',
+  adminUrl: env.ADMIN_URL ?? 'https://amina.vibecoding.by',
 
-  /** URL бота (для HTTP-Referer, webhook LiraX). По умолчанию Render. */
-  botUrl: env.BOT_URL ?? env.WEBHOOK_URL ?? 'https://amina-bot.onrender.com',
+  /** URL бота (для HTTP-Referer, webhook LiraX). */
+  botUrl: env.BOT_URL ?? env.WEBHOOK_URL ?? 'https://amina.vibecoding.by',
 
   // Telegram Bot — token из env или админки
   telegram: {
