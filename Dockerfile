@@ -15,12 +15,16 @@ RUN NODE_ENV=development npm ci
 # Copy admin source
 COPY admin/ ./
 
-# Build with empty BOT_URL (same origin) and Supabase vars from build args
+# Build with env vars for admin panel (Vite inlines at build time)
 ARG VITE_SUPABASE_URL
 ARG VITE_SUPABASE_ANON_KEY
+ARG VITE_APPWRITE_ENDPOINT
+ARG VITE_APPWRITE_PROJECT_ID
 ENV VITE_BOT_URL=""
 ENV VITE_SUPABASE_URL=${VITE_SUPABASE_URL}
 ENV VITE_SUPABASE_ANON_KEY=${VITE_SUPABASE_ANON_KEY}
+ENV VITE_APPWRITE_ENDPOINT=${VITE_APPWRITE_ENDPOINT}
+ENV VITE_APPWRITE_PROJECT_ID=${VITE_APPWRITE_PROJECT_ID}
 
 RUN npm run build
 
