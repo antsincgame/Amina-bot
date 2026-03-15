@@ -53,23 +53,30 @@ async function migrateTable(sbTable, awColl, mapFn) {
   return ok;
 }
 
-// --- Mappers ---
+// --- Helpers ---
+function trunc(val, max) {
+  if (!val) return val;
+  if (typeof val !== 'string') return val;
+  return val.length > max ? val.slice(0, max) : val;
+}
+
+// --- Mappers (sizes match fix-telephony-collections.mjs) ---
 
 function mapScenario(r) {
   return {
     scenario_id: r.id,
-    name: r.name,
+    name: trunc(r.name, 255),
     enabled: r.enabled ?? true,
     call_mode: r.call_mode,
     runtime_mode: r.runtime_mode ?? 'scripted',
     policy_version: r.policy_version ?? 1,
-    policy: JSON.stringify(r.policy ?? {}),
-    goal: r.goal ?? '',
-    system_prompt: r.system_prompt ?? '',
-    opening_line: r.opening_line ?? '',
-    question_hint: r.question_hint ?? '',
-    success_criteria: r.success_criteria ?? '',
-    result_prompt: r.result_prompt ?? '',
+    policy: trunc(JSON.stringify(r.policy ?? {}), 10000),
+    goal: trunc(r.goal ?? '', 2000),
+    system_prompt: trunc(r.system_prompt ?? '', 10000),
+    opening_line: trunc(r.opening_line ?? '', 2000),
+    question_hint: trunc(r.question_hint ?? '', 2000),
+    success_criteria: trunc(r.success_criteria ?? '', 2000),
+    result_prompt: trunc(r.result_prompt ?? '', 10000),
     max_speech_chars: r.max_speech_chars ?? 420,
     created_at: r.created_at || new Date().toISOString(),
     updated_at: r.updated_at || new Date().toISOString(),
@@ -81,23 +88,23 @@ function mapSession(r) {
     owner_telegram_id: r.owner_telegram_id,
     initiated_by: r.initiated_by,
     scenario_id: r.scenario_id,
-    scenario_name: r.scenario_name ?? '',
-    scenario_goal: r.scenario_goal ?? '',
+    scenario_name: trunc(r.scenario_name ?? '', 255),
+    scenario_goal: trunc(r.scenario_goal ?? '', 2000),
     call_mode: r.call_mode,
     runtime_mode: r.runtime_mode ?? 'scripted',
     policy_version: r.policy_version ?? 1,
     provider: r.provider ?? 'unknown',
     target_phone: r.target_phone,
-    task: r.task ?? '',
-    summary: r.summary ?? '',
-    success_criteria: r.success_criteria ?? '',
-    result_prompt: r.result_prompt ?? '',
+    task: trunc(r.task ?? '', 2000),
+    summary: trunc(r.summary ?? '', 10000),
+    success_criteria: trunc(r.success_criteria ?? '', 2000),
+    result_prompt: trunc(r.result_prompt ?? '', 10000),
     request_id: r.request_id || null,
     request_mode: r.request_mode ?? '',
     call_id: r.call_id || null,
-    record_link: r.record_link || null,
-    transcript: r.transcript || null,
-    result_summary: r.result_summary || null,
+    record_link: trunc(r.record_link || null, 500),
+    transcript: trunc(r.transcript || null, 50000),
+    result_summary: trunc(r.result_summary || null, 10000),
     outcome_label: r.outcome_label || null,
     status: r.status,
     created_at: r.created_at || new Date().toISOString(),
