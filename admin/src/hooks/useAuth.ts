@@ -1,17 +1,14 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import { supabase } from '../api/supabase';
-import type { User, Session } from '@supabase/supabase-js';
+import { account } from '../api/supabase';
+import type { Models } from 'appwrite';
 
 interface AuthState {
-  user: User | null;
-  session: Session | null;
+  user: Models.User<Models.Preferences> | null;
   isLoading: boolean;
   error: string | null;
-  subscription: ReturnType<typeof supabase.auth.onAuthStateChange>['data']['subscription'] | null;
   
-  // Actions
-  initialize: () => Promise<unknown>;
+  initialize: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   clearError: () => void;
@@ -20,61 +17,27 @@ interface AuthState {
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       user: null,
-      session: null,
       isLoading: true,
       error: null,
-      subscription: null,
 
       initialize: async () => {
         try {
-          // Get current session
-          const { data: { session }, error } = await supabase.auth.getSession();
-          
-          if (error) throw error;
-          
-          set({
-            user: session?.user ?? null,
-            session,
-            isLoading: false,
-          });
-
-          // Listen for auth changes
-          const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-            set({
-              user: session?.user ?? null,
-              session,
-            });
-          });
-
-          // Store subscription for cleanup
-          set({ subscription });
-          return subscription;
-        } catch (error) {
-          set({
-            isLoading: false,
-            error: error instanceof Error ? error.message : 'Auth initialization failed',
-          });
+          const user = await account.get();
+          set({ user, isLoading: false });
+        } catch {
+          // No active session
+          set({ user: null, isLoading: false });
         }
       },
 
       signIn: async (email: string, password: string) => {
         set({ isLoading: true, error: null });
-
         try {
-          const { data, error } = await supabase.auth.signInWithPassword({
-            email,
-            password,
-          });
-
-          if (error) throw error;
-
-          set({
-            user: data.user,
-            session: data.session,
-            isLoading: false,
-          });
+          await account.createEmailPasswordSession(email, password);
+          const user = await account.get();
+          set({ user, isLoading: false });
         } catch (error) {
           set({
             isLoading: false,
@@ -86,19 +49,9 @@ export const useAuthStore = create<AuthState>()(
 
       signOut: async () => {
         set({ isLoading: true });
-
         try {
-          // Cleanup subscription before signout
-          const { subscription } = get();
-          subscription?.unsubscribe();
-          
-          await supabase.auth.signOut();
-          set({
-            user: null,
-            session: null,
-            subscription: null,
-            isLoading: false,
-          });
+          await account.deleteSession('current');
+          set({ user: null, isLoading: false });
         } catch (error) {
           set({
             isLoading: false,
@@ -108,19 +61,12 @@ export const useAuthStore = create<AuthState>()(
       },
 
       clearError: () => set({ error: null }),
-
-      cleanup: () => {
-        const { subscription } = get();
-        subscription?.unsubscribe();
-        set({ subscription: null });
-      },
+      cleanup: () => {},
     }),
     {
       name: 'amina-auth',
       partialize: (state) => ({
-        // Only persist these fields
         user: state.user,
-        session: state.session,
       }),
     }
   )

@@ -1,19 +1,16 @@
-import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { Client, Account } from 'appwrite';
 
-// Environment variables (set in Render Dashboard)
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+// Appwrite client for admin auth
+const appwriteEndpoint = import.meta.env.VITE_APPWRITE_ENDPOINT || 'https://appwrite.vibecoding.by/v1';
+const appwriteProjectId = import.meta.env.VITE_APPWRITE_PROJECT_ID || '69aa2114000211b48e63';
 
-// Validate environment variables
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error(
-    'Missing Supabase environment variables. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Render Dashboard.'
-  );
-}
+const client = new Client()
+  .setEndpoint(appwriteEndpoint)
+  .setProject(appwriteProjectId);
 
-export const supabase: SupabaseClient = createClient(supabaseUrl, supabaseAnonKey);
+export const account = new Account(client);
 
-// Re-export types from shared (single source of truth)
+// Re-export types from shared
 export type {
   Settings as Setting,
   Prompt,
@@ -21,58 +18,45 @@ export type {
   AnalyticsEventType,
 } from '../../../shared/types/index.js';
 
-// Import types for internal use
 import type { Settings, Prompt, AnalyticsEvent } from '../../../shared/types/index.js';
 
 // Bot API URL
 const BOT_URL = import.meta.env.VITE_BOT_URL || 'https://amina-bot.onrender.com';
 
 export async function fetchBotApi(path: string, init: RequestInit = {}): Promise<Response> {
-  const { data } = await supabase.auth.getSession();
   const headers = new Headers(init.headers);
 
-  if (data.session?.access_token) {
-    headers.set('Authorization', `Bearer ${data.session.access_token}`);
+  try {
+    const jwt = await account.createJWT();
+    if (jwt?.jwt) {
+      headers.set('Authorization', `Bearer ${jwt.jwt}`);
+    }
+  } catch {
+    // No session — proceed without auth header
   }
 
-  return fetch(`${BOT_URL}${path}`, {
-    ...init,
-    headers,
-  });
+  return fetch(`${BOT_URL}${path}`, { ...init, headers });
 }
 
-// Settings API - uses bot backend (has service_role access)
+// Settings API
 export const settingsApi = {
   async getAll(): Promise<Settings[]> {
-    // Try bot API first (more reliable)
     try {
       const response = await fetch(`${BOT_URL}/api/settings`);
       if (response.ok) {
         const result = await response.json();
         return result.data ?? [];
       }
-    } catch {
-      // Fall back to direct Supabase
-    }
-    
-    // Fallback to Supabase
-    const { data, error } = await supabase
-      .from('settings')
-      .select('*')
-      .order('key');
-
-    if (error) throw error;
-    return data ?? [];
+    } catch {}
+    return [];
   },
 
   async update(key: string, value: string): Promise<void> {
-    // Use bot API (has service_role access, bypasses RLS)
     const response = await fetch(`${BOT_URL}/api/settings/${key}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value }),
     });
-    
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: 'Unknown error' }));
       throw new Error(error.error || 'Failed to update setting');
@@ -80,13 +64,11 @@ export const settingsApi = {
   },
 
   async updateMany(settings: Record<string, string>): Promise<void> {
-    // Use bot API (has service_role access, bypasses RLS)
     const response = await fetch(`${BOT_URL}/api/settings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),
     });
-    
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: 'Unknown error' }));
       throw new Error(error.error || 'Failed to update settings');
@@ -94,28 +76,17 @@ export const settingsApi = {
   },
 };
 
-// Prompts API - uses bot backend (has service_role access)
+// Prompts API
 export const promptsApi = {
   async getAll(): Promise<Prompt[]> {
-    // Try bot API first
     try {
       const response = await fetch(`${BOT_URL}/api/prompts`);
       if (response.ok) {
         const result = await response.json();
         return result.data ?? [];
       }
-    } catch {
-      // Fall back to direct Supabase
-    }
-    
-    // Fallback
-    const { data, error } = await supabase
-      .from('prompts')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-    return data ?? [];
+    } catch {}
+    return [];
   },
 
   async create(prompt: Omit<Prompt, 'id' | 'created_at' | 'updated_at'>): Promise<Prompt> {
@@ -124,12 +95,10 @@ export const promptsApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(prompt),
     });
-    
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: 'Unknown error' }));
       throw new Error(error.error || 'Failed to create prompt');
     }
-    
     const result = await response.json();
     return result.data;
   },
@@ -140,21 +109,16 @@ export const promptsApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates),
     });
-    
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: 'Unknown error' }));
       throw new Error(error.error || 'Failed to update prompt');
     }
-    
     const result = await response.json();
     return result.data;
   },
 
   async delete(id: string): Promise<void> {
-    const response = await fetch(`${BOT_URL}/api/prompts/${id}`, {
-      method: 'DELETE',
-    });
-    
+    const response = await fetch(`${BOT_URL}/api/prompts/${id}`, { method: 'DELETE' });
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: 'Unknown error' }));
       throw new Error(error.error || 'Failed to delete prompt');
@@ -162,10 +126,7 @@ export const promptsApi = {
   },
 
   async setActive(id: string): Promise<void> {
-    const response = await fetch(`${BOT_URL}/api/prompts/${id}/activate`, {
-      method: 'POST',
-    });
-    
+    const response = await fetch(`${BOT_URL}/api/prompts/${id}/activate`, { method: 'POST' });
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: 'Unknown error' }));
       throw new Error(error.error || 'Failed to activate prompt');
@@ -173,106 +134,50 @@ export const promptsApi = {
   },
 };
 
-// Analytics API
+// Analytics API — all through bot API
 export const analyticsApi = {
   async getEvents(params: {
-    from?: Date;
-    to?: Date;
-    channel?: string;
-    eventType?: string;
-    limit?: number;
+    from?: Date; to?: Date; channel?: string; eventType?: string; limit?: number;
   }): Promise<AnalyticsEvent[]> {
-    let query = supabase
-      .from('analytics')
-      .select('*')
-      .order('timestamp', { ascending: false });
+    const searchParams = new URLSearchParams();
+    if (params.from) searchParams.set('from', params.from.toISOString());
+    if (params.to) searchParams.set('to', params.to.toISOString());
+    if (params.channel) searchParams.set('channel', params.channel);
+    if (params.eventType) searchParams.set('eventType', params.eventType);
+    if (params.limit) searchParams.set('limit', String(params.limit));
 
-    if (params.from) {
-      query = query.gte('timestamp', params.from.toISOString());
-    }
-    if (params.to) {
-      query = query.lte('timestamp', params.to.toISOString());
-    }
-    if (params.channel) {
-      query = query.eq('channel', params.channel);
-    }
-    if (params.eventType) {
-      query = query.eq('event_type', params.eventType);
-    }
-    if (params.limit) {
-      query = query.limit(params.limit);
-    }
-
-    const { data, error } = await query;
-    if (error) throw error;
-    return (data ?? []) as AnalyticsEvent[];
+    const response = await fetch(`${BOT_URL}/api/analytics?${searchParams}`);
+    if (!response.ok) return [];
+    const result = await response.json();
+    return result.data ?? [];
   },
 
   async getStats(from: Date, to: Date): Promise<{
-    totalMessages: number;
-    totalCalls: number;
-    uniqueUsers: number;
+    totalMessages: number; totalCalls: number; uniqueUsers: number;
     tokensByDay: { date: string; tokens: number }[];
   }> {
-    const { data, error } = await supabase
-      .from('analytics')
-      .select('event_type, user_id, data, timestamp')
-      .gte('timestamp', from.toISOString())
-      .lte('timestamp', to.toISOString());
-
-    if (error) throw error;
-
-    const events = data ?? [];
-    const uniqueUsers = new Set(events.map((e) => e.user_id).filter(Boolean));
-
-    // Group tokens by day
-    const tokensByDay = events
-      .filter((e) => e.event_type === 'ai_response')
-      .reduce((acc, e) => {
-        const date = new Date(e.timestamp).toISOString().split('T')[0];
-        const tokens = (e.data as { tokens?: number })?.tokens ?? 0;
-        if (!date) return acc;
-        const existing = acc.find((d) => d.date === date);
-        if (existing) {
-          existing.tokens += tokens;
-        } else {
-          acc.push({ date, tokens });
-        }
-        return acc;
-      }, [] as { date: string; tokens: number }[]);
-
-    return {
-      totalMessages: events.filter(
-        (e) => e.event_type === 'message_received' || e.event_type === 'message_sent'
-      ).length,
-      totalCalls: events.filter((e) => e.event_type === 'call_started').length,
-      uniqueUsers: uniqueUsers.size,
-      tokensByDay: tokensByDay.sort((a, b) => a.date.localeCompare(b.date)),
-    };
+    try {
+      const response = await fetch(`${BOT_URL}/api/stats`);
+      if (response.ok) return response.json();
+    } catch {}
+    return { totalMessages: 0, totalCalls: 0, uniqueUsers: 0, tokensByDay: [] };
   },
 };
 
-// Service Status API (calls bot backend)
+// Service Status API
 export const statusApi = {
   async getServiceStatus(): Promise<{
     checks: Record<string, { ready: boolean; engine: string }>;
     timestamp: string;
   }> {
-    // Call bot API for real status
     try {
       const response = await fetch(`${BOT_URL}/api/status`);
-      if (response.ok) {
-        return response.json();
-      }
-    } catch {
-      // Bot not reachable
-    }
-
-    // Fallback when bot is unavailable
+      if (response.ok) return response.json();
+    } catch {}
     return {
       checks: {
         admin: { ready: true, engine: 'React' },
-        database: { ready: true, engine: 'Supabase' },
+        database: { ready: false, engine: 'Unknown' },
         telegram: { ready: false, engine: 'Bot unavailable' },
         ai: { ready: false, engine: 'Bot unavailable' },
       },
@@ -281,20 +186,12 @@ export const statusApi = {
   },
 };
 
-// News Sources API (для дайджеста — парсинг новостей с сайтов)
-// Re-export shared types
+// News Sources API
 export type {
-  NewsSite,
-  ParsedHeadline,
-  NewsSourceType,
-  NewsSourceCategory,
-  NewsSourceLanguage,
-  NewsSourceTier,
-  JsonFieldMapping,
-  HtmlFieldMapping,
+  NewsSite, ParsedHeadline, NewsSourceType, NewsSourceCategory,
+  NewsSourceLanguage, NewsSourceTier, JsonFieldMapping, HtmlFieldMapping,
 } from '../../../shared/types/index.js';
 
-// Import for internal use
 import type { NewsSite, ParsedHeadline } from '../../../shared/types/index.js';
 
 export const newsSourcesApi = {
@@ -307,8 +204,7 @@ export const newsSourcesApi = {
 
   async save(sites: NewsSite[]): Promise<void> {
     const response = await fetch(`${BOT_URL}/api/news-sites`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(sites),
     });
     if (!response.ok) {
@@ -318,13 +214,11 @@ export const newsSourcesApi = {
   },
 
   async testParse(site: Partial<NewsSite> & { url: string }): Promise<{
-    success: boolean;
-    error?: string;
+    success: boolean; error?: string;
     data: { url: string; headlines: ParsedHeadline[]; count: number; parseTimeMs?: number };
   }> {
     const response = await fetch(`${BOT_URL}/api/news-sites/test`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(site),
     });
     if (!response.ok) throw new Error('Failed to test parse');
@@ -332,26 +226,21 @@ export const newsSourcesApi = {
   },
 
   async getPresets(): Promise<{
-    all: NewsSite[];
-    global: NewsSite[];
-    asia: NewsSite[];
+    all: NewsSite[]; global: NewsSite[]; asia: NewsSite[];
     counts: { all: number; global: number; asia: number };
   }> {
     const response = await fetch(`${BOT_URL}/api/news-sites/presets`);
     if (!response.ok) throw new Error('Failed to fetch presets');
     const result = await response.json();
     return {
-      all: result.data?.all ?? [],
-      global: result.data?.global ?? [],
-      asia: result.data?.asia ?? [],
+      all: result.data?.all ?? [], global: result.data?.global ?? [], asia: result.data?.asia ?? [],
       counts: result.counts ?? { all: 0, global: 0, asia: 0 },
     };
   },
 
   async addPresets(group: 'all' | 'global' | 'asia' = 'all'): Promise<{ added: number; total: number; sites: NewsSite[]; group: string }> {
     const response = await fetch(`${BOT_URL}/api/news-sites/add-presets`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ group }),
     });
     if (!response.ok) throw new Error('Failed to add presets');
@@ -362,41 +251,27 @@ export const newsSourcesApi = {
 
 // Voice Messages API
 export interface VoiceMessage {
-  id: string;
-  user_id: string;
-  file_path: string;
-  duration: number;
-  file_size: number;
-  transcription: string | null;
-  telegram_file_id: string | null;
-  created_at: string;
-  username?: string;
-  first_name?: string;
+  id: string; user_id: string; file_path: string; duration: number; file_size: number;
+  transcription: string | null; telegram_file_id: string | null; created_at: string;
+  username?: string; first_name?: string;
 }
 
 export interface VoiceMessagesStats {
-  totalCount: number;
-  totalSize: number;
-  totalDuration: number;
+  totalCount: number; totalSize: number; totalDuration: number;
   byUser: { user_id: string; count: number; totalDuration: number }[];
 }
 
 export const voiceMessagesApi = {
   async list(params: {
-    userId?: string;
-    dateFrom?: string;
-    dateTo?: string;
-    limit?: number;
-    offset?: number;
+    userId?: string; dateFrom?: string; dateTo?: string; limit?: number; offset?: number;
   } = {}): Promise<{ data: VoiceMessage[]; total: number }> {
-    const searchParams = new URLSearchParams();
-    if (params.userId) searchParams.set('userId', params.userId);
-    if (params.dateFrom) searchParams.set('dateFrom', params.dateFrom);
-    if (params.dateTo) searchParams.set('dateTo', params.dateTo);
-    if (params.limit) searchParams.set('limit', String(params.limit));
-    if (params.offset) searchParams.set('offset', String(params.offset));
-
-    const response = await fetch(`${BOT_URL}/api/voice-messages?${searchParams}`);
+    const sp = new URLSearchParams();
+    if (params.userId) sp.set('userId', params.userId);
+    if (params.dateFrom) sp.set('dateFrom', params.dateFrom);
+    if (params.dateTo) sp.set('dateTo', params.dateTo);
+    if (params.limit) sp.set('limit', String(params.limit));
+    if (params.offset) sp.set('offset', String(params.offset));
+    const response = await fetch(`${BOT_URL}/api/voice-messages?${sp}`);
     if (!response.ok) throw new Error('Failed to fetch voice messages');
     const result = await response.json();
     return { data: result.data ?? [], total: result.total ?? 0 };
@@ -416,14 +291,9 @@ export const voiceMessagesApi = {
     return result.data.url;
   },
 
-  async downloadArchive(params: {
-    userId?: string;
-    dateFrom?: string;
-    dateTo?: string;
-  } = {}): Promise<Blob> {
+  async downloadArchive(params: { userId?: string; dateFrom?: string; dateTo?: string } = {}): Promise<Blob> {
     const response = await fetch(`${BOT_URL}/api/voice-messages/archive`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),
     });
     if (!response.ok) {

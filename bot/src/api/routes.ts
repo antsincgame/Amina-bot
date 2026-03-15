@@ -188,16 +188,30 @@ async function requireAdminAuth(
     return null;
   }
 
-  const { data, error } = await getSupabase().auth.getUser(token);
-  if (error || !data.user) {
-    await reply.code(403).send({ success: false, error: 'Invalid admin session' });
-    return null;
+  if (config.dbBackend === 'appwrite') {
+    // Validate Appwrite JWT
+    try {
+      const { Client: AWClient, Account: AWAccount } = await import('node-appwrite');
+      const client = new AWClient()
+        .setEndpoint(config.appwrite.endpoint)
+        .setProject(config.appwrite.projectId)
+        .setJWT(token);
+      const acc = new AWAccount(client);
+      const user = await acc.get();
+      return { userId: user.$id, email: user.email ?? null };
+    } catch {
+      await reply.code(403).send({ success: false, error: 'Invalid admin session' });
+      return null;
+    }
+  } else {
+    // Validate Supabase JWT
+    const { data, error } = await getSupabase().auth.getUser(token);
+    if (error || !data.user) {
+      await reply.code(403).send({ success: false, error: 'Invalid admin session' });
+      return null;
+    }
+    return { userId: data.user.id, email: data.user.email ?? null };
   }
-
-  return {
-    userId: data.user.id,
-    email: data.user.email ?? null,
-  };
 }
 
 function getTunnelUrlValidationError(tunnelUrl: string): string | null {
