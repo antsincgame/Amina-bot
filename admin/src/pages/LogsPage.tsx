@@ -40,7 +40,7 @@ interface LogStats {
 }
 
 // API
-const BOT_URL = import.meta.env.VITE_BOT_URL || 'https://amina-bot.onrender.com';
+const BOT_URL = import.meta.env.VITE_BOT_URL ?? '';
 
 const logsApi = {
   async getLogs(params: {

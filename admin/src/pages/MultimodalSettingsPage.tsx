@@ -7,7 +7,7 @@ import { settingsApi } from '../api/supabase';
 import { Save, Loader2, RefreshCw, Eye, Mic, CheckCircle, AlertCircle, Sparkles, MessageSquare, Download, Volume2, Key } from 'lucide-react';
 
 // Bot API URL
-const BOT_URL = import.meta.env.VITE_BOT_URL || 'https://amina-bot.onrender.com';
+const BOT_URL = import.meta.env.VITE_BOT_URL ?? '';
 
 // Schema
 const settingsSchema = z.object({

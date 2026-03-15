@@ -23,7 +23,7 @@ import {
   Bug,
 } from 'lucide-react';
 
-const BOT_URL = import.meta.env.VITE_BOT_URL || 'https://amina-bot.onrender.com';
+const BOT_URL = import.meta.env.VITE_BOT_URL ?? '';
 
 type AIProvider = 'auto' | 'lmstudio' | 'openrouter';
 

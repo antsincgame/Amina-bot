@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 
 // API URL
-const BOT_URL = import.meta.env.VITE_BOT_URL || 'https://amina-bot.onrender.com';
+const BOT_URL = import.meta.env.VITE_BOT_URL ?? '';
 
 // Types
 interface UserProfile {
