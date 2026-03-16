@@ -60,9 +60,9 @@ const CONFIG = {
   lmstudioPort: 1234,
   dashboardPort: 9876,
   healthInterval: 30,
-  tunnelUrlTimeout: 30,
+  tunnelUrlTimeout: 45,
   restartDelay: 5,
-  startRetries: 3,
+  startRetries: 5,
   unhealthyThreshold: 3,
 };
 
@@ -167,10 +167,13 @@ function httpPost(url, data, headers = {}, timeoutMs = 20000) {
 //  Cloudflared
 // ============================================
 function findCloudflared() {
-  const candidates = ['cloudflared', 'cloudflared.exe',
+  const candidates = [
+    'cloudflared', 'cloudflared.exe',
     path.join(process.cwd(), 'cloudflared.exe'),
     path.join(path.dirname(process.execPath), 'cloudflared.exe'),
+    path.join(os.homedir(), 'cloudflared.exe'),
     path.join(os.homedir(), '.local', 'bin', 'cloudflared'),
+    path.join(os.homedir(), 'AppData', 'Local', 'Programs', 'cloudflared', 'cloudflared.exe'),
   ];
   for (const bin of candidates) {
     try { execSync(`"${bin}" --version`, { stdio: 'pipe', timeout: 5000 }); return bin; } catch { continue; }
@@ -210,7 +213,7 @@ async function ensureCloudflared() {
   const isWin = process.platform === 'win32';
   const arch = process.arch === 'arm64' ? 'arm64' : 'amd64';
   const filename = isWin ? 'cloudflared.exe' : 'cloudflared';
-  const dest = path.join(path.dirname(process.execPath), filename);
+  const dest = path.join(os.homedir(), filename);
   const dlUrl = isWin
     ? `https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-${arch}.exe`
     : `https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}`;
@@ -269,26 +272,86 @@ async function startSingleAttempt(cfBin) {
   tunnelLogFile = path.join(os.tmpdir(), `amina-tunnel-${Date.now()}.log`);
   return new Promise((resolve) => {
     const logStream = fs.createWriteStream(tunnelLogFile);
-    tunnelProcess = spawn(cfBin, ['tunnel', '--url', `http://localhost:${CONFIG.lmstudioPort}`, '--protocol', 'http2'],
+    let resolved = false;
+    let foundUrl = '';
+    
+    // Try without --protocol flag first (more compatible)
+    tunnelProcess = spawn(cfBin, ['tunnel', '--url', `http://localhost:${CONFIG.lmstudioPort}`],
       { stdio: ['ignore', 'pipe', 'pipe'] });
-    tunnelProcess.stdout.pipe(logStream);
-    tunnelProcess.stderr.pipe(logStream);
-    tunnelProcess.on('error', () => resolve(null));
-    tunnelProcess.on('exit', () => { if (!currentUrl) resolve(null); });
+    
+    // URL patterns cloudflared can output
+    const urlRegex = /https:\/\/[-a-zA-Z0-9]+[-a-zA-Z0-9.]*\.trycloudflare\.com/;
+    
+    // Capture output directly (more reliable than file reading)
+    const handleData = (chunk) => {
+      const text = chunk.toString();
+      logStream.write(text);
+      const match = text.match(urlRegex);
+      if (match && !resolved) {
+        resolved = true;
+        foundUrl = match[0];
+        resolve(foundUrl);
+      }
+    };
+    
+    tunnelProcess.stdout.on('data', handleData);
+    tunnelProcess.stderr.on('data', handleData);
+    
+    tunnelProcess.on('error', (e) => {
+      err(`cloudflared process error: ${e.message}`);
+      if (!resolved) { resolved = true; resolve(null); }
+    });
+    
+    tunnelProcess.on('exit', (code) => {
+      if (!resolved) {
+        // Process exited before we got URL — read log file as fallback
+        try {
+          const content = fs.readFileSync(tunnelLogFile, 'utf8');
+          const match = content.match(urlRegex);
+          if (match) { resolved = true; resolve(match[0]); return; }
+          // Show last lines for debugging
+          const lines = content.trim().split('\n').slice(-5);
+          if (lines.length > 0) {
+            warn(`cloudflared exited (code ${code}). Last output:`);
+            lines.forEach(l => dim(`  ${l.trim()}`));
+          }
+        } catch {}
+        resolved = true;
+        resolve(null);
+      }
+    });
+    
+    // Timeout — also try file-based extraction as fallback
     let elapsed = 0;
     const poll = setInterval(() => {
       elapsed++;
+      if (resolved) { clearInterval(poll); return; }
       if (elapsed > CONFIG.tunnelUrlTimeout) {
         clearInterval(poll);
-        if (tunnelProcess && !tunnelProcess.killed) { tunnelProcess.kill(); tunnelProcess = null; }
-        resolve(null);
+        if (!resolved) {
+          // Last attempt from file
+          try {
+            const content = fs.readFileSync(tunnelLogFile, 'utf8');
+            const match = content.match(urlRegex);
+            if (match) { resolved = true; resolve(match[0]); return; }
+            warn(`Timeout (${CONFIG.tunnelUrlTimeout}s). cloudflared log:`);
+            const lines = content.trim().split('\n').slice(-8);
+            lines.forEach(l => dim(`  ${l.trim()}`));
+          } catch {}
+          if (tunnelProcess && !tunnelProcess.killed) { tunnelProcess.kill(); tunnelProcess = null; }
+          resolved = true;
+          resolve(null);
+        }
         return;
       }
-      try {
-        const content = fs.readFileSync(tunnelLogFile, 'utf8');
-        const match = content.match(/https:\/\/[a-zA-Z0-9]+-[a-zA-Z0-9][-a-zA-Z0-9]*\.trycloudflare\.com/);
-        if (match) { clearInterval(poll); resolve(match[0]); }
-      } catch {}
+      // Periodic file check as backup
+      if (elapsed % 5 === 0 && !resolved) {
+        try {
+          const content = fs.readFileSync(tunnelLogFile, 'utf8');
+          const match = content.match(urlRegex);
+          if (match) { clearInterval(poll); resolved = true; resolve(match[0]); }
+        } catch {}
+      }
     }, 1000);
   });
 }
@@ -296,14 +359,23 @@ async function startSingleAttempt(cfBin) {
 async function registerUrl(url) {
   const { status, body } = await httpPost(`${CONFIG.botApiUrl}/api/tunnel/register`, { url },
     { 'X-Amina-Tunnel-Token': CONFIG.tunnelToken });
-  try { return (status === 200 || status === 201) && JSON.parse(body).success; } catch { return false; }
+  try {
+    const json = JSON.parse(body);
+    if ((status === 200 || status === 201) && json.success) return true;
+    if (json.error) warn(`Bot registration error: ${json.error}`);
+    return false;
+  } catch { return false; }
 }
 
 async function sendHeartbeat() {
-  const { status } = await httpPost(`${CONFIG.botApiUrl}/api/tunnel/heartbeat`, { url: currentUrl },
+  const { status, body } = await httpPost(`${CONFIG.botApiUrl}/api/tunnel/heartbeat`, { url: currentUrl },
     { 'X-Amina-Tunnel-Token': CONFIG.tunnelToken });
-  if (status === 200 || status === 201) return 'ok';
+  if (status === 200 || status === 201) {
+    try { if (JSON.parse(body).success) return 'ok'; } catch {}
+    return 'ok';
+  }
   if (status === 0) return 'no_response';
+  try { const json = JSON.parse(body); if (json.error) warn(`Heartbeat error: ${json.error}`); } catch {}
   return 'unhealthy';
 }
 
@@ -314,7 +386,7 @@ async function startTunnel(cfBin) {
   STATE.botRegistered = false;
   log(`Starting cloudflared tunnel -> localhost:${CONFIG.lmstudioPort}`);
   killAllCloudflared();
-  await sleep(1000);
+  await sleep(2000); // Wait for port to free up
   for (let attempt = 1; attempt <= CONFIG.startRetries; attempt++) {
     if (shuttingDown) return false;
     log(`Attempt ${attempt}/${CONFIG.startRetries}...`);
