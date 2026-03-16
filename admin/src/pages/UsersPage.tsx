@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { fetchBotApi } from '../api/appwrite';
 import {
   Users,
   User,
@@ -18,9 +19,6 @@ import {
   History,
   Zap,
 } from 'lucide-react';
-
-// API URL
-const BOT_URL = import.meta.env.VITE_BOT_URL ?? '';
 
 // Types
 interface UserProfile {
@@ -64,21 +62,21 @@ interface UserLog {
 // API functions
 const usersApi = {
   async getAll(): Promise<UserProfile[]> {
-    const response = await fetch(`${BOT_URL}/api/users?limit=100`);
+    const response = await fetchBotApi('/api/users?limit=100');
     if (!response.ok) throw new Error('Failed to fetch users');
     const data = await response.json();
     return data.data ?? [];
   },
 
   async getMemory(userId: string): Promise<UserMemory[]> {
-    const response = await fetch(`${BOT_URL}/api/users/${userId}/memory`);
+    const response = await fetchBotApi(`/api/users/${userId}/memory`);
     if (!response.ok) throw new Error('Failed to fetch memory');
     const data = await response.json();
     return data.data ?? [];
   },
 
   async addMemory(userId: string, memory: { memory_type: string; content: string; is_pinned?: boolean }): Promise<void> {
-    const response = await fetch(`${BOT_URL}/api/users/${userId}/memory`, {
+    const response = await fetchBotApi(`/api/users/${userId}/memory`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(memory),
@@ -87,14 +85,14 @@ const usersApi = {
   },
 
   async deleteMemory(userId: string, memoryId: string): Promise<void> {
-    const response = await fetch(`${BOT_URL}/api/users/${userId}/memory/${memoryId}`, {
+    const response = await fetchBotApi(`/api/users/${userId}/memory/${memoryId}`, {
       method: 'DELETE',
     });
     if (!response.ok) throw new Error('Failed to delete memory');
   },
 
   async getLogs(userId: string, limit: number = 50): Promise<UserLog[]> {
-    const response = await fetch(`${BOT_URL}/api/users/${userId}/logs?limit=${limit}`);
+    const response = await fetchBotApi(`/api/users/${userId}/logs?limit=${limit}`);
     if (!response.ok) throw new Error('Failed to fetch logs');
     const data = await response.json();
     return data.data ?? [];

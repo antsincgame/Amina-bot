@@ -9,7 +9,7 @@ const hoistedMocks = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('../db/supabase.js', () => ({
+vi.mock('../db/index.js', () => ({
   settingsRepo: {
     get: vi.fn().mockResolvedValue('[]'),
   },
@@ -64,7 +64,7 @@ vi.mock('../telegram/format.js', () => ({
   inlineCitations: (text: string) => text,
 }));
 
-import { settingsRepo } from '../db/supabase.js';
+import { settingsRepo } from '../db/index.js';
 import { parseAllConfiguredSites } from './news-parser.js';
 import { buildParserOnlyNewsBundle, webSearchWithRetry } from './digest-core.js';
 import { digestCacheRepo } from './digest-hybrid-repo.js';
@@ -112,7 +112,7 @@ function buildLatestCacheRecord(city = 'Минск'): DigestCacheRecord {
   return {
     id: 'cache-record-1',
     cache_key: 'digest:hybrid-v1:2026-03-13:минск:legacy-cache-hash',
-    pipeline: 'hybrid_supabase',
+    pipeline: 'hybrid_appwrite',
     digest_date: '2026-03-13',
     city,
     source_hash: 'legacy-cache-hash',

@@ -9,6 +9,7 @@
  */
 
 const BOT_URL = process.env.BOT_URL || 'https://amina-bot.onrender.com';
+const ADMIN_JWT = process.env.AMINA_ADMIN_JWT?.trim();
 const groupArg = (process.argv[2] || 'all').trim().toLowerCase();
 const group = ['all', 'global', 'asia'].includes(groupArg) ? groupArg : 'all';
 
@@ -16,7 +17,9 @@ async function main() {
   console.log(`Синхронизирую пресеты группы "${group}" через ${BOT_URL}...`);
   const saveRes = await fetch(`${BOT_URL}/api/news-sites/add-presets`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: ADMIN_JWT
+      ? { 'Content-Type': 'application/json', Authorization: `Bearer ${ADMIN_JWT}` }
+      : { 'Content-Type': 'application/json' },
     body: JSON.stringify({ group }),
   });
 

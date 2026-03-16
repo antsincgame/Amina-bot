@@ -76,9 +76,9 @@ SLEEP_INTERVAL=15
 
 for i in $(seq 1 $MAX_ATTEMPTS); do
   sleep $SLEEP_INTERVAL
-  RESULT=$(curl -s "$BOT_URL/api/lmstudio/health" 2>/dev/null || echo '{"error":"unreachable"}')
+  RESULT=$(curl -s "$BOT_URL/api/status" 2>/dev/null || echo '{"error":"unreachable"}')
 
-  if echo "$RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if 'data' in d else 1)" 2>/dev/null; then
+  if echo "$RESULT" | python3 -c "import json,sys; d=json.load(sys.stdin); sys.exit(0 if 'checks' in d else 1)" 2>/dev/null; then
     log "New version deployed! (attempt $i, ~$((i * SLEEP_INTERVAL))s)"
     echo ""
     echo "$RESULT" | python3 -m json.tool 2>/dev/null || echo "$RESULT"

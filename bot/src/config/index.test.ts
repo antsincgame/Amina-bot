@@ -7,13 +7,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock settingsRepo to avoid real DB connections
-vi.mock('../db/supabase.js', () => ({
+vi.mock('../db/appwrite.js', () => ({
   settingsRepo: {
     getMany: vi.fn().mockResolvedValue({}),
     get: vi.fn().mockResolvedValue(null),
     set: vi.fn().mockResolvedValue(undefined),
   },
-  getSupabase: vi.fn(),
 }));
 
 import { config, getApiKeys, clearApiKeysCache } from './index.js';
@@ -31,7 +30,7 @@ describe('Configuration', () => {
       expect(config).toHaveProperty('server');
       expect(config).toHaveProperty('telegram');
       expect(config).toHaveProperty('ai');
-      expect(config).toHaveProperty('db');
+      expect(config).toHaveProperty('appwrite');
     });
 
     it('should have valid server config', () => {

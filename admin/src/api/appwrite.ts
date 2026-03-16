@@ -38,41 +38,52 @@ export async function fetchBotApi(path: string, init: RequestInit = {}): Promise
   return fetch(`${BOT_URL}${path}`, { ...init, headers });
 }
 
+async function readApiError(response: Response, fallbackMessage: string): Promise<string> {
+  const payload = await response.clone().json().catch(() => null) as { error?: string } | null;
+  if (payload?.error) {
+    return payload.error;
+  }
+
+  const text = await response.text().catch(() => '');
+  return text || fallbackMessage;
+}
+
+async function fetchBotApiJson<T>(
+  path: string,
+  init: RequestInit = {},
+  fallbackMessage = 'Request failed',
+): Promise<T> {
+  const response = await fetchBotApi(path, init);
+  if (!response.ok) {
+    throw new Error(await readApiError(response, fallbackMessage));
+  }
+  return response.json() as Promise<T>;
+}
+
 // Settings API
 export const settingsApi = {
   async getAll(): Promise<Settings[]> {
     try {
-      const response = await fetch(`${BOT_URL}/api/settings`);
-      if (response.ok) {
-        const result = await response.json();
-        return result.data ?? [];
-      }
+      const result = await fetchBotApiJson<{ data?: Settings[] }>('/api/settings', {}, 'Failed to fetch settings');
+      return result.data ?? [];
     } catch {}
     return [];
   },
 
   async update(key: string, value: string): Promise<void> {
-    const response = await fetch(`${BOT_URL}/api/settings/${key}`, {
+    await fetchBotApiJson(`/api/settings/${key}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ value }),
-    });
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(error.error || 'Failed to update setting');
-    }
+    }, 'Failed to update setting');
   },
 
   async updateMany(settings: Record<string, string>): Promise<void> {
-    const response = await fetch(`${BOT_URL}/api/settings`, {
+    await fetchBotApiJson('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),
-    });
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(error.error || 'Failed to update settings');
-    }
+    }, 'Failed to update settings');
   },
 };
 
@@ -80,57 +91,36 @@ export const settingsApi = {
 export const promptsApi = {
   async getAll(): Promise<Prompt[]> {
     try {
-      const response = await fetch(`${BOT_URL}/api/prompts`);
-      if (response.ok) {
-        const result = await response.json();
-        return result.data ?? [];
-      }
+      const result = await fetchBotApiJson<{ data?: Prompt[] }>('/api/prompts', {}, 'Failed to fetch prompts');
+      return result.data ?? [];
     } catch {}
     return [];
   },
 
   async create(prompt: Omit<Prompt, 'id' | 'created_at' | 'updated_at'>): Promise<Prompt> {
-    const response = await fetch(`${BOT_URL}/api/prompts`, {
+    const result = await fetchBotApiJson<{ data: Prompt }>('/api/prompts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(prompt),
-    });
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(error.error || 'Failed to create prompt');
-    }
-    const result = await response.json();
+    }, 'Failed to create prompt');
     return result.data;
   },
 
   async update(id: string, updates: Partial<Omit<Prompt, 'id' | 'created_at'>>): Promise<Prompt> {
-    const response = await fetch(`${BOT_URL}/api/prompts/${id}`, {
+    const result = await fetchBotApiJson<{ data: Prompt }>(`/api/prompts/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updates),
-    });
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(error.error || 'Failed to update prompt');
-    }
-    const result = await response.json();
+    }, 'Failed to update prompt');
     return result.data;
   },
 
   async delete(id: string): Promise<void> {
-    const response = await fetch(`${BOT_URL}/api/prompts/${id}`, { method: 'DELETE' });
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(error.error || 'Failed to delete prompt');
-    }
+    await fetchBotApiJson(`/api/prompts/${id}`, { method: 'DELETE' }, 'Failed to delete prompt');
   },
 
   async setActive(id: string): Promise<void> {
-    const response = await fetch(`${BOT_URL}/api/prompts/${id}/activate`, { method: 'POST' });
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(error.error || 'Failed to activate prompt');
-    }
+    await fetchBotApiJson(`/api/prompts/${id}/activate`, { method: 'POST' }, 'Failed to activate prompt');
   },
 };
 
@@ -146,19 +136,28 @@ export const analyticsApi = {
     if (params.eventType) searchParams.set('eventType', params.eventType);
     if (params.limit) searchParams.set('limit', String(params.limit));
 
-    const response = await fetch(`${BOT_URL}/api/analytics?${searchParams}`);
-    if (!response.ok) return [];
-    const result = await response.json();
-    return result.data ?? [];
+    try {
+      const result = await fetchBotApiJson<{ data?: AnalyticsEvent[] }>(
+        `/api/analytics?${searchParams}`,
+        {},
+        'Failed to fetch analytics events',
+      );
+      return result.data ?? [];
+    } catch {
+      return [];
+    }
   },
 
-  async getStats(_from: Date, _to: Date): Promise<{
+  async getStats(from: Date, to: Date): Promise<{
     totalMessages: number; totalCalls: number; uniqueUsers: number;
     tokensByDay: { date: string; tokens: number }[];
   }> {
     try {
-      const response = await fetch(`${BOT_URL}/api/stats`);
-      if (response.ok) return response.json();
+      const searchParams = new URLSearchParams({
+        from: from.toISOString(),
+        to: to.toISOString(),
+      });
+      return await fetchBotApiJson(`/api/stats?${searchParams}`, {}, 'Failed to fetch analytics stats');
     } catch {}
     return { totalMessages: 0, totalCalls: 0, uniqueUsers: 0, tokensByDay: [] };
   },
@@ -171,8 +170,7 @@ export const statusApi = {
     timestamp: string;
   }> {
     try {
-      const response = await fetch(`${BOT_URL}/api/status`);
-      if (response.ok) return response.json();
+      return await fetchBotApiJson('/api/status', {}, 'Failed to fetch service status');
     } catch {}
     return {
       checks: {
@@ -196,42 +194,35 @@ import type { NewsSite, ParsedHeadline } from '../../../shared/types/index.js';
 
 export const newsSourcesApi = {
   async getAll(): Promise<NewsSite[]> {
-    const response = await fetch(`${BOT_URL}/api/news-sites`);
-    if (!response.ok) throw new Error('Failed to fetch news sites');
-    const result = await response.json();
+    const result = await fetchBotApiJson<{ data?: NewsSite[] }>('/api/news-sites', {}, 'Failed to fetch news sites');
     return result.data ?? [];
   },
 
   async save(sites: NewsSite[]): Promise<void> {
-    const response = await fetch(`${BOT_URL}/api/news-sites`, {
+    await fetchBotApiJson('/api/news-sites', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(sites),
-    });
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ error: 'Unknown error' }));
-      throw new Error(error.error || 'Failed to save news sites');
-    }
+    }, 'Failed to save news sites');
   },
 
   async testParse(site: Partial<NewsSite> & { url: string }): Promise<{
     success: boolean; error?: string;
     data: { url: string; headlines: ParsedHeadline[]; count: number; parseTimeMs?: number };
   }> {
-    const response = await fetch(`${BOT_URL}/api/news-sites/test`, {
+    return fetchBotApiJson('/api/news-sites/test', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(site),
-    });
-    if (!response.ok) throw new Error('Failed to test parse');
-    return response.json();
+    }, 'Failed to test parse');
   },
 
   async getPresets(): Promise<{
     all: NewsSite[]; global: NewsSite[]; asia: NewsSite[];
     counts: { all: number; global: number; asia: number };
   }> {
-    const response = await fetch(`${BOT_URL}/api/news-sites/presets`);
-    if (!response.ok) throw new Error('Failed to fetch presets');
-    const result = await response.json();
+    const result = await fetchBotApiJson<{
+      data?: { all?: NewsSite[]; global?: NewsSite[]; asia?: NewsSite[] };
+      counts?: { all: number; global: number; asia: number };
+    }>('/api/news-sites/presets', {}, 'Failed to fetch presets');
     return {
       all: result.data?.all ?? [], global: result.data?.global ?? [], asia: result.data?.asia ?? [],
       counts: result.counts ?? { all: 0, global: 0, asia: 0 },
@@ -239,12 +230,10 @@ export const newsSourcesApi = {
   },
 
   async addPresets(group: 'all' | 'global' | 'asia' = 'all'): Promise<{ added: number; total: number; sites: NewsSite[]; group: string }> {
-    const response = await fetch(`${BOT_URL}/api/news-sites/add-presets`, {
+    const result = await fetchBotApiJson<{ data: { added: number; total: number; sites: NewsSite[]; group: string } }>('/api/news-sites/add-presets', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ group }),
-    });
-    if (!response.ok) throw new Error('Failed to add presets');
-    const result = await response.json();
+    }, 'Failed to add presets');
     return result.data;
   },
 };
@@ -271,34 +260,39 @@ export const voiceMessagesApi = {
     if (params.dateTo) sp.set('dateTo', params.dateTo);
     if (params.limit) sp.set('limit', String(params.limit));
     if (params.offset) sp.set('offset', String(params.offset));
-    const response = await fetch(`${BOT_URL}/api/voice-messages?${sp}`);
-    if (!response.ok) throw new Error('Failed to fetch voice messages');
-    const result = await response.json();
+    const result = await fetchBotApiJson<{ data?: VoiceMessage[]; total?: number }>(
+      `/api/voice-messages?${sp}`,
+      {},
+      'Failed to fetch voice messages',
+    );
     return { data: result.data ?? [], total: result.total ?? 0 };
   },
 
   async stats(): Promise<VoiceMessagesStats> {
-    const response = await fetch(`${BOT_URL}/api/voice-messages/stats`);
-    if (!response.ok) throw new Error('Failed to fetch voice stats');
-    const result = await response.json();
+    const result = await fetchBotApiJson<{ data: VoiceMessagesStats }>(
+      '/api/voice-messages/stats',
+      {},
+      'Failed to fetch voice stats',
+    );
     return result.data;
   },
 
   async getDownloadUrl(id: string): Promise<string> {
-    const response = await fetch(`${BOT_URL}/api/voice-messages/${id}/download`);
-    if (!response.ok) throw new Error('Failed to get download URL');
-    const result = await response.json();
+    const result = await fetchBotApiJson<{ data: { url: string } }>(
+      `/api/voice-messages/${id}/download`,
+      {},
+      'Failed to get download URL',
+    );
     return result.data.url;
   },
 
   async downloadArchive(params: { userId?: string; dateFrom?: string; dateTo?: string } = {}): Promise<Blob> {
-    const response = await fetch(`${BOT_URL}/api/voice-messages/archive`, {
+    const response = await fetchBotApi('/api/voice-messages/archive', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),
     });
     if (!response.ok) {
-      const err = await response.json().catch(() => ({ error: 'Archive failed' }));
-      throw new Error(err.error || 'Failed to create archive');
+      throw new Error(await readApiError(response, 'Failed to create archive'));
     }
     return response.blob();
   },

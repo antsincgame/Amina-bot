@@ -6,7 +6,7 @@ const scenarioRepoSaveAllMock = vi.fn();
 const previewTelephonyCallMock = vi.fn();
 const startTelephonyCallMock = vi.fn();
 
-vi.mock('../../db/supabase.js', () => ({
+vi.mock('../../db/index.js', () => ({
   settingsRepo: {
     getMany: settingsGetManyMock,
   },

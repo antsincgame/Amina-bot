@@ -1,4 +1,4 @@
-import { settingsRepo } from '../src/db/supabase.js';
+import { settingsRepo } from '../src/db/index.js';
 import {
   getConfiguredSites,
   getPresetSources,

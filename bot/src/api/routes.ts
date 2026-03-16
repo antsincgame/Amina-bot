@@ -1,8 +1,8 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { aiService } from '../ai/openrouter.js';
-import { conversationsRepo, settingsRepo, promptsRepo } from '../db/index.js';
-import { validateMessageContent, validateUserId } from '../utils/validation.js';
+import { analyticsRepo, conversationsRepo, settingsRepo, promptsRepo } from '../db/index.js';
+import { validateEventType, validateMessageContent, validateUserId } from '../utils/validation.js';
 import { aiLogger, getLogs, getLogStats } from '../config/logger.js';
 import { rateLimitHook } from '../utils/rate-limiter.js';
 import { getAllAudioModels, getFreeVisionModels, refreshFreeVisionModelsCache, getVisionFallbackStatus } from '../ai/multimodal.js';
@@ -11,6 +11,7 @@ import { userProfileRepo, userMemoryRepo, userLogsRepo, type UserLog } from '../
 import { config, clearApiKeysCache, getApiKeys } from '../config/index.js';
 import { getProxyHeaders } from '../config/ai-proxy.js';
 import {
+  assertNewsSiteUrlIsSafe,
   getConfiguredSites,
   saveConfiguredSites,
   parseNewsFromSite,
@@ -27,7 +28,7 @@ import { localizeParsedHeadlines } from '../features/news-localization.js';
 import { buildDigest } from '../features/digest-scheduler.js';
 import { buildHybridDigest, PreparedDigestUnavailableError } from '../features/digest-hybrid.js';
 import { markdownToTelegramHtml } from '../telegram/format.js';
-import type { DigestPipelineMode, NewsSite } from '../../../shared/types/index.js';
+import type { AnalyticsEventType, DigestPipelineMode, NewsSite } from '../../../shared/types/index.js';
 import type { TelephonyAiCallPlan, TelephonyAiScenario, TelephonyRuntimeMode } from '../../../shared/types/telephony.js';
 import { invalidateTTSConfig } from '../features/tts.js';
 import { voiceMessagesRepo } from '../features/voice-messages-repo.js';
@@ -204,6 +205,24 @@ async function requireAdminAuth(
   }
 }
 
+const ADMIN_GUARDED_API_ROUTES = [
+  /^\/settings(?:\/|$)/,
+  /^\/prompts(?:\/|$)/,
+  /^\/logs(?:\/|$)/,
+  /^\/analytics(?:\/|$)/,
+  /^\/models(?:\/|$)/,
+  /^\/websearch(?:\/|$)/,
+  /^\/users(?:\/|$)/,
+  /^\/news-sites(?:\/|$)/,
+  /^\/voice-messages(?:\/|$)/,
+  /^\/lmstudio(?:\/|$)/,
+  /^\/debug\/raw-news$/,
+] as const;
+
+function isAdminGuardedApiRoute(routePath: string): boolean {
+  return ADMIN_GUARDED_API_ROUTES.some((pattern) => pattern.test(routePath));
+}
+
 function getTunnelUrlValidationError(tunnelUrl: string): string | null {
   let parsed: URL;
   try {
@@ -276,6 +295,17 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
     async (apiServer: FastifyInstance) => {
       // Apply rate limiting to all API routes
       apiServer.addHook('preHandler', rateLimitHook('api'));
+      apiServer.addHook('preHandler', async (request, reply) => {
+        const routePath = request.routeOptions.url ?? request.url.split('?')[0] ?? '';
+        if (!isAdminGuardedApiRoute(routePath)) {
+          return;
+        }
+
+        const admin = await requireAdminAuth(request, reply);
+        if (!admin) {
+          return reply;
+        }
+      });
 
       /**
        * POST /api/chat
@@ -872,6 +902,67 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
             });
           }
         }
+      );
+
+      /**
+       * GET /api/analytics
+       * Get analytics events with optional filters
+       */
+      apiServer.get(
+        '/analytics',
+        async (
+          request: FastifyRequest<{
+            Querystring: {
+              from?: string;
+              to?: string;
+              channel?: string;
+              eventType?: string;
+              limit?: string;
+            };
+          }>,
+          reply: FastifyReply,
+        ) => {
+          try {
+            const { from, to, channel, eventType, limit } = request.query;
+
+            const validChannel = channel === 'telegram' || channel === 'voice' || channel === 'admin'
+              ? channel
+              : undefined;
+
+            if (channel && channel !== 'all' && validChannel === undefined) {
+              return reply.code(400).send({ success: false, error: 'Invalid channel filter' });
+            }
+
+            let validEventType: AnalyticsEventType | undefined;
+            if (eventType) {
+              try {
+                validEventType = validateEventType(eventType);
+              } catch {
+                return reply.code(400).send({ success: false, error: 'Invalid analytics event type' });
+              }
+            }
+
+            const events = await analyticsRepo.listEvents({
+              from: from ? new Date(from) : undefined,
+              to: to ? new Date(to) : undefined,
+              channel: validChannel,
+              eventType: validEventType,
+              limit: limit ? parseInt(limit, 10) : 100,
+            });
+
+            return reply.code(200).send({
+              success: true,
+              data: events,
+              count: events.length,
+            });
+          } catch (error) {
+            aiLogger.error({ error }, 'Get analytics error');
+            return reply.code(500).send({
+              success: false,
+              error: 'Failed to fetch analytics events',
+            });
+          }
+        },
       );
 
       /**
@@ -1535,6 +1626,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
             }
 
             const normalized = sites.map(site => normalizeNewsSite(site));
+            await Promise.all(normalized.map((site) => assertNewsSiteUrlIsSafe(site.url)));
             await saveConfiguredSites(normalized);
             settingsRepo.invalidateCache?.();
 
@@ -1578,6 +1670,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
               htmlMapping: payload.htmlMapping,
               filterKeywords: payload.filterKeywords,
             });
+            await assertNewsSiteUrlIsSafe(testSite.url);
 
             const startTime = Date.now();
             const rawHeadlines = await parseNewsFromSite(testSite);

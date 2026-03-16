@@ -3,12 +3,10 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { settingsApi } from '../api/appwrite';
+import { fetchBotApi, settingsApi } from '../api/appwrite';
 import { Save, Loader2, RefreshCw, Eye, Mic, CheckCircle, AlertCircle, Sparkles, MessageSquare, Download, Volume2, Key } from 'lucide-react';
 
 // Bot API URL
-const BOT_URL = import.meta.env.VITE_BOT_URL ?? '';
-
 // Schema
 const settingsSchema = z.object({
   audio_model: z.string().min(1),
@@ -122,7 +120,7 @@ const MultimodalSettingsPage = () => {
       setIsRefreshingVision(true);
       const endpoint = force ? '/api/models/vision/refresh' : '/api/models/vision';
       const method = force ? 'POST' : 'GET';
-      const response = await fetch(`${BOT_URL}${endpoint}`, {
+      const response = await fetchBotApi(endpoint, {
         method,
         headers: method === 'POST' ? { 'Content-Type': 'application/json' } : undefined,
         body: method === 'POST' ? '{}' : undefined,
@@ -139,9 +137,8 @@ const MultimodalSettingsPage = () => {
         }
       } else {
         const errorText = await response.text();
-        console.error('Vision models fetch error:', response.status, errorText);
         if (force) {
-          setRefreshMessage(`Ошибка ${response.status}: не удалось загрузить модели`);
+          setRefreshMessage(`Ошибка ${response.status}: ${errorText || 'не удалось загрузить модели'}`);
           setTimeout(() => setRefreshMessage(''), 5000);
         }
       }
@@ -165,7 +162,7 @@ const MultimodalSettingsPage = () => {
   const fetchImageModels = useCallback(async () => {
     try {
       setIsRefreshingImage(true);
-      const response = await fetch(`${BOT_URL}/api/models/openrouter/image`);
+      const response = await fetchBotApi('/api/models/openrouter/image');
       if (response.ok) {
         const result = await response.json();
         const allModels = result.data?.all || [];
@@ -173,10 +170,16 @@ const MultimodalSettingsPage = () => {
           setImageModels(allModels);
         }
       } else {
-        console.error('Image models fetch error:', response.status);
+        const message = `Ошибка ${response.status}: не удалось загрузить image модели`;
+        setRefreshMessage(message);
+        setTimeout(() => setRefreshMessage(''), 5000);
+        throw new Error(message);
       }
     } catch (err) {
-      console.error('Error fetching image models:', err);
+      const message = err instanceof Error ? err.message : 'Не удалось загрузить image модели';
+      setRefreshMessage(message);
+      setTimeout(() => setRefreshMessage(''), 5000);
+      throw err instanceof Error ? err : new Error(message);
     } finally {
       setIsRefreshingImage(false);
     }
@@ -184,9 +187,18 @@ const MultimodalSettingsPage = () => {
 
   // Auto-load image models on mount (retry once on failure)
   useEffect(() => {
-    fetchImageModels().catch(() => {
-      setTimeout(() => fetchImageModels(), 3000);
+    let retryTimeout: ReturnType<typeof setTimeout> | null = null;
+    void fetchImageModels().catch(() => {
+      retryTimeout = setTimeout(() => {
+        void fetchImageModels().catch(() => undefined);
+      }, 3000);
     });
+
+    return () => {
+      if (retryTimeout) {
+        clearTimeout(retryTimeout);
+      }
+    };
   }, [fetchImageModels]);
 
   // Save mutation

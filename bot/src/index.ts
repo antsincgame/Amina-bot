@@ -1,4 +1,4 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
@@ -152,22 +152,36 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
   });
 
   // API routes for admin panel - stats
-  server.get('/api/stats', async () => {
+  server.get('/api/stats', async (request: FastifyRequest<{ Querystring: { from?: string; to?: string } }>) => {
     try {
       const now = new Date();
-      const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-      
+      const defaultFrom = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const rawFrom = request.query.from;
+      const rawTo = request.query.to;
+      const fromDate = rawFrom ? new Date(rawFrom) : defaultFrom;
+      const toDate = rawTo ? new Date(rawTo) : now;
+
+      if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+        return {
+          totalMessages: 0,
+          totalCalls: 0,
+          uniqueUsers: 0,
+          tokensByDay: [],
+          period: 'invalid',
+        };
+      }
+
       const [stats, allUsers] = await Promise.all([
-        analyticsRepo.getStats(weekAgo, now),
+        analyticsRepo.getStats(fromDate, toDate),
         userProfileRepo.getAll(1000, 0),
       ]);
 
       return {
         totalMessages: stats.totalMessages,
         totalCalls: stats.totalCalls,
-        uniqueUsers: allUsers.length,
+        uniqueUsers: stats.uniqueUsers || allUsers.length,
         tokensByDay: stats.tokensByDay,
-        period: '7d',
+        period: `${fromDate.toISOString()}..${toDate.toISOString()}`,
       };
     } catch (error) {
       httpLogger.error({ error }, 'Failed to get stats');
@@ -176,7 +190,7 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
         totalCalls: 0,
         uniqueUsers: 0,
         tokensByDay: [],
-        period: '7d',
+        period: 'error',
       };
     }
   });

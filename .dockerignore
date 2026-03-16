@@ -8,7 +8,6 @@ admin/dist
 mcp-servers
 autostart
 docs
-supabase
 scripts
 tunnel.ps1
 tunnel.sh

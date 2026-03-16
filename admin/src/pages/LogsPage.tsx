@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { fetchBotApi } from '../api/appwrite';
 import {
   AlertCircle,
   AlertTriangle,
@@ -39,9 +40,6 @@ interface LogStats {
   byModule: Record<string, number>;
 }
 
-// API
-const BOT_URL = import.meta.env.VITE_BOT_URL ?? '';
-
 const logsApi = {
   async getLogs(params: {
     level?: string;
@@ -57,7 +55,7 @@ const logsApi = {
     if (params.to) searchParams.set('to', params.to);
     if (params.limit) searchParams.set('limit', String(params.limit));
 
-    const response = await fetch(`${BOT_URL}/api/logs?${searchParams}`);
+    const response = await fetchBotApi(`/api/logs?${searchParams}`);
     if (!response.ok) throw new Error('Failed to fetch logs');
     const data = await response.json();
     return data.data ?? [];
@@ -68,7 +66,7 @@ const logsApi = {
     if (from) searchParams.set('from', from);
     if (to) searchParams.set('to', to);
 
-    const response = await fetch(`${BOT_URL}/api/logs/stats?${searchParams}`);
+    const response = await fetchBotApi(`/api/logs/stats?${searchParams}`);
     if (!response.ok) throw new Error('Failed to fetch log stats');
     const data = await response.json();
     return data.data ?? { total: 0, byLevel: {}, byModule: {} };

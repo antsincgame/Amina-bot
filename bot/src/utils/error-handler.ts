@@ -64,12 +64,12 @@ export function getErrorCode(error: unknown): string | undefined {
  * Check if error is "Not Found"
  */
 export function isNotFoundError(error: unknown): boolean {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    error.code === 'PGRST116'
-  );
+  if (typeof error !== 'object' || error === null || !('code' in error)) {
+    return false;
+  }
+
+  const { code } = error as { code: unknown };
+  return typeof code === 'string' && (code === 'not_found' || code.endsWith('_not_found'));
 }
 
 /**

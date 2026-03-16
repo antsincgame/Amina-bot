@@ -15,7 +15,7 @@ vi.mock('../../../ai/multimodal.js', () => ({
   transcribeAudio: transcribeAudioMock,
 }));
 
-vi.mock('../../../db/supabase.js', () => ({
+vi.mock('../../../db/index.js', () => ({
   analyticsRepo: {
     log: logMock,
   },

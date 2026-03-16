@@ -2,7 +2,7 @@
  * Tests for error handling utilities
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import {
   NotFoundError,
   ValidationError,
@@ -12,7 +12,6 @@ import {
   isAppError,
   getErrorCode,
   isNotFoundError,
-  handleSupabaseError,
   safeStringify,
 } from './error-handler.js';
 
@@ -70,15 +69,14 @@ describe('AIError', () => {
 // --------------------------------------------
 
 describe('isNotFoundError', () => {
-  it('should return false for NotFoundError (checks Supabase code)', () => {
-    // isNotFoundError checks for Supabase PGRST116 code, not NotFoundError class
+  it('should return false for NotFoundError instance', () => {
     const error = new NotFoundError('Not found');
     expect(isNotFoundError(error)).toBe(false);
   });
 
-  it('should return true for Supabase PGRST116 error', () => {
-    const supabaseError = { code: 'PGRST116', message: 'Row not found' };
-    expect(isNotFoundError(supabaseError)).toBe(true);
+  it('should return true for Appwrite not found codes', () => {
+    expect(isNotFoundError({ code: 'document_not_found', message: 'Document not found' })).toBe(true);
+    expect(isNotFoundError({ code: 'storage_file_not_found', message: 'File not found' })).toBe(true);
   });
 
   it('should return false for other errors', () => {
@@ -97,48 +95,6 @@ describe('isNotFoundError', () => {
     expect(isNotFoundError('string')).toBe(false);
     expect(isNotFoundError(123)).toBe(false);
     expect(isNotFoundError({})).toBe(false);
-  });
-});
-
-// --------------------------------------------
-// handleSupabaseError Tests
-// --------------------------------------------
-
-describe('handleSupabaseError', () => {
-  it('should return data when no error', () => {
-    const data = { id: 1, name: 'Test' };
-    const result = handleSupabaseError(data, null, { operation: 'get' });
-    expect(result).toEqual(data);
-  });
-
-  it('should throw DatabaseError when error exists', () => {
-    const error = { code: '42P01', message: 'Table not found' };
-    expect(() =>
-      handleSupabaseError(null, error as any, { operation: 'insert' })
-    ).toThrow(DatabaseError);
-  });
-
-  it('should throw NotFoundError for PGRST116', () => {
-    const error = { code: 'PGRST116', message: 'Row not found' };
-    expect(() =>
-      handleSupabaseError(null, error as any, { operation: 'get' })
-    ).toThrow(NotFoundError);
-  });
-
-  it('should throw NotFoundError when data is null without error', () => {
-    // When data is null and no error, it's a "not found" case
-    expect(() =>
-      handleSupabaseError(null, null, { operation: 'get' })
-    ).toThrow(NotFoundError);
-  });
-
-  it('should include context in error message', () => {
-    const error = { code: 'TEST', message: 'Test error' };
-    try {
-      handleSupabaseError(null, error as any, { operation: 'update', id: '123' });
-    } catch (e) {
-      expect((e as Error).message).toContain('update');
-    }
   });
 });
 

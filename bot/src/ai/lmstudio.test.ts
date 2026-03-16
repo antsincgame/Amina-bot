@@ -12,7 +12,7 @@ import {
   probeLMStudioTunnelUrl,
 } from './lmstudio.js';
 
-vi.mock('../db/supabase.js', () => {
+vi.mock('../db/index.js', () => {
   const store = new Map<string, string>();
   return {
     settingsRepo: {
@@ -46,7 +46,7 @@ vi.mock('../config/logger.js', () => ({
 describe('lmstudio', () => {
   beforeEach(async () => {
     clearLMStudioCache();
-    const { settingsRepo } = await import('../db/supabase.js');
+    const { settingsRepo } = await import('../db/index.js');
     (settingsRepo as unknown as { _store: Map<string, string> })._store.clear();
   });
 
@@ -61,7 +61,7 @@ describe('lmstudio', () => {
     });
 
     it('should return config when URL is set', async () => {
-      const { settingsRepo } = await import('../db/supabase.js');
+      const { settingsRepo } = await import('../db/index.js');
       (settingsRepo as unknown as { _store: Map<string, string> })._store.set(
         'lmstudio_url',
         'https://test-tunnel.trycloudflare.com'
@@ -74,7 +74,7 @@ describe('lmstudio', () => {
     });
 
     it('should append /v1 if not present', async () => {
-      const { settingsRepo } = await import('../db/supabase.js');
+      const { settingsRepo } = await import('../db/index.js');
       (settingsRepo as unknown as { _store: Map<string, string> })._store.set(
         'lmstudio_url',
         'https://example.com'
@@ -85,7 +85,7 @@ describe('lmstudio', () => {
     });
 
     it('should not double-append /v1', async () => {
-      const { settingsRepo } = await import('../db/supabase.js');
+      const { settingsRepo } = await import('../db/index.js');
       (settingsRepo as unknown as { _store: Map<string, string> })._store.set(
         'lmstudio_url',
         'https://example.com/v1'
@@ -96,7 +96,7 @@ describe('lmstudio', () => {
     });
 
     it('should use cached config on second call', async () => {
-      const { settingsRepo } = await import('../db/supabase.js');
+      const { settingsRepo } = await import('../db/index.js');
       const store = (settingsRepo as unknown as { _store: Map<string, string> })._store;
       store.set('lmstudio_url', 'https://cached.trycloudflare.com');
 
@@ -131,7 +131,7 @@ describe('lmstudio', () => {
 
   describe('getLMStudioHealthStatus', () => {
     it('should return healthy via heartbeat if recent', async () => {
-      const { settingsRepo } = await import('../db/supabase.js');
+      const { settingsRepo } = await import('../db/index.js');
       const store = (settingsRepo as unknown as { _store: Map<string, string> })._store;
       store.set('lmstudio_url', 'https://tunnel.trycloudflare.com');
       store.set('lmstudio_url_updated_at', new Date().toISOString());
@@ -145,7 +145,7 @@ describe('lmstudio', () => {
     });
 
     it('should return unhealthy if heartbeat is stale', async () => {
-      const { settingsRepo } = await import('../db/supabase.js');
+      const { settingsRepo } = await import('../db/index.js');
       const store = (settingsRepo as unknown as { _store: Map<string, string> })._store;
       store.set('lmstudio_url', 'https://tunnel.trycloudflare.com');
       store.set(
@@ -167,7 +167,7 @@ describe('lmstudio', () => {
     });
 
     it('should ignore heartbeat when it belongs to another tunnel url', async () => {
-      const { settingsRepo } = await import('../db/supabase.js');
+      const { settingsRepo } = await import('../db/index.js');
       const store = (settingsRepo as unknown as { _store: Map<string, string> })._store;
       store.set('lmstudio_url', 'https://tunnel-a.trycloudflare.com');
       store.set('lmstudio_url_updated_at', new Date().toISOString());
@@ -210,7 +210,7 @@ describe('lmstudio', () => {
 
   describe('checkLMStudioHealth', () => {
     it('should return healthy when native fetch fails but openai endpoint succeeds', async () => {
-      const { settingsRepo } = await import('../db/supabase.js');
+      const { settingsRepo } = await import('../db/index.js');
       const store = (settingsRepo as unknown as { _store: Map<string, string> })._store;
       store.set('lmstudio_url', 'https://fallback.trycloudflare.com');
 

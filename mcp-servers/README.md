@@ -16,8 +16,6 @@ npm install
 # Coolify
 export RENDER_API_KEY="rnd_xxxxxxxxxxxxxx"
 
-export SUPABASE_SERVICE_KEY="eyJhbGciOiJIUzI1NiIsInR..."
-
 # Perplexity (поиск в интернете, модель sonar — самая дешёвая)
 export PERPLEXITY_API_KEY="pplx-xxxxxxxxxxxx"
 ```
@@ -48,12 +46,6 @@ Name: render
 Command: node
 Args: /полный/путь/к/mcp-servers/render-server.js
 Environment: RENDER_API_KEY=ваш_ключ
-```
-
-```
-Command: node
-Environment: 
-  SUPABASE_SERVICE_KEY=ваш_ключ
 ```
 
 **Perplexity:**

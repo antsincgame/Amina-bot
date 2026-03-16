@@ -46,8 +46,6 @@ temp/
 # Netlify
 .netlify/
 
-# Supabase
-.supabase/
 .cursor/
 tunnel-app/.env
 tunnel-app/node_modules

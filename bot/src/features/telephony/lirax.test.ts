@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const settingsGetManyMock = vi.fn();
 const fetchMock = vi.fn();
 
-vi.mock('../../db/supabase.js', () => ({
+vi.mock('../../db/index.js', () => ({
   settingsRepo: {
     getMany: settingsGetManyMock,
   },

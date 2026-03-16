@@ -1,7 +1,7 @@
 {
   "name": "amina-bot",
   "version": "1.0.0",
-  "description": "Telegram AI Bot with OpenRouter and Supabase",
+  "description": "Telegram AI bot with OpenRouter and Appwrite",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",

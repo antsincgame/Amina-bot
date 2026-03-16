@@ -11,6 +11,8 @@
  */
 
 import { createHash } from 'node:crypto';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import { load, type Cheerio } from 'cheerio';
 import type { AnyNode } from 'domhandler';
 import { settingsRepo } from '../db/index.js';
@@ -63,6 +65,8 @@ const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 const RSS_PATHS = ['/feed', '/rss', '/rss.xml', '/feed/rss', '/atom.xml', '/feed/atom', '/index.xml', '/rss/all', '/rss/new'];
+const NEWS_HOST_VALIDATION_TTL_MS = 10 * 60 * 1000;
+const MAX_FETCH_REDIRECTS = 5;
 
 const ARTICLE_URL_PATTERNS = [
   /\/\d{4}\/\d{2}\//,
@@ -105,6 +109,8 @@ const SKIP_LINK_PATTERNS = [
   /^главная$/i,
   /^home$/i,
 ];
+
+const validatedNewsHostCache = new Map<string, { safe: boolean; ts: number }>();
 
 // ===== Пресетные AI/Tech источники =====
 
@@ -541,6 +547,11 @@ export function normalizeNewsSite(site: NewsSite): NewsSite {
     throw new Error(`Unsupported protocol in news site URL: ${url}`);
   }
 
+  const hostValidationError = getUnsafeNewsHostError(parsedUrl.hostname);
+  if (hostValidationError) {
+    throw new Error(hostValidationError);
+  }
+
   const normalizedType = typeof site.type === 'string' ? site.type.trim() as NewsSite['type'] : undefined;
   const normalizedCategory = typeof site.category === 'string' ? site.category.trim() as NewsSourceCategory : undefined;
   const normalizedLanguage = typeof site.language === 'string' ? site.language.trim() as NewsSourceLanguage : undefined;
@@ -575,6 +586,116 @@ export function normalizeNewsSite(site: NewsSite): NewsSite {
     ...(htmlMapping ? { htmlMapping } : {}),
     ...(filterKeywords ? { filterKeywords } : {}),
   };
+}
+
+function isPrivateIpv4Address(hostname: string): boolean {
+  if (/^0\.\d+\.\d+\.\d+$/.test(hostname)) return true;
+  if (/^10\.\d+\.\d+\.\d+$/.test(hostname)) return true;
+  if (/^127\.\d+\.\d+\.\d+$/.test(hostname)) return true;
+  if (/^169\.254\.\d+\.\d+$/.test(hostname)) return true;
+  if (/^192\.168\.\d+\.\d+$/.test(hostname)) return true;
+  if (/^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.\d+\.\d+$/.test(hostname)) return true;
+  if (/^198\.(1[89])\.\d+\.\d+$/.test(hostname)) return true;
+
+  const privateRange = /^172\.(\d+)\.\d+\.\d+$/.exec(hostname);
+  if (!privateRange) return false;
+
+  const secondOctet = Number(privateRange[1]);
+  return secondOctet >= 16 && secondOctet <= 31;
+}
+
+function isPrivateIpv6Address(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  return normalized === '::1'
+    || normalized === '::'
+    || normalized.startsWith('fc')
+    || normalized.startsWith('fd')
+    || normalized.startsWith('fe80:')
+    || normalized.startsWith('fe90:')
+    || normalized.startsWith('fea0:')
+    || normalized.startsWith('feb0:');
+}
+
+function getUnsafeNewsHostError(hostname: string): string | null {
+  const normalized = hostname.trim().toLowerCase().replace(/^\[|\]$/g, '');
+  if (!normalized) {
+    return 'News site URL must include a hostname';
+  }
+
+  if (
+    normalized === 'localhost'
+    || normalized === '0.0.0.0'
+    || normalized === '::1'
+    || normalized === '::'
+  ) {
+    return 'News site URL must not target a local or private host';
+  }
+
+  const ipVersion = isIP(normalized);
+  if (ipVersion === 4 && isPrivateIpv4Address(normalized)) {
+    return 'News site URL must not target a local or private host';
+  }
+
+  if (ipVersion === 6 && isPrivateIpv6Address(normalized)) {
+    return 'News site URL must not target a local or private host';
+  }
+
+  if (ipVersion === 0 && !normalized.includes('.')) {
+    return 'News site URL must use a public hostname';
+  }
+
+  return null;
+}
+
+export async function assertNewsSiteUrlIsSafe(url: string): Promise<void> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error(`Invalid news site URL: ${url}`);
+  }
+
+  if (!['http:', 'https:'].includes(parsed.protocol)) {
+    throw new Error(`Unsupported protocol in news site URL: ${url}`);
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+  const syncValidationError = getUnsafeNewsHostError(hostname);
+  if (syncValidationError) {
+    throw new Error(syncValidationError);
+  }
+
+  const cached = validatedNewsHostCache.get(hostname);
+  if (cached && Date.now() - cached.ts < NEWS_HOST_VALIDATION_TTL_MS) {
+    if (!cached.safe) {
+      throw new Error('News site URL must not resolve to a local or private host');
+    }
+    return;
+  }
+
+  if (isIP(hostname)) {
+    validatedNewsHostCache.set(hostname, { safe: true, ts: Date.now() });
+    return;
+  }
+
+  try {
+    const records = await lookup(hostname, { all: true, verbatim: true });
+    if (records.length === 0) {
+      throw new Error(`Unable to resolve news site host: ${hostname}`);
+    }
+
+    const resolvedPrivate = records.some((record) => getUnsafeNewsHostError(record.address));
+    validatedNewsHostCache.set(hostname, { safe: !resolvedPrivate, ts: Date.now() });
+
+    if (resolvedPrivate) {
+      throw new Error('News site URL must not resolve to a local or private host');
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('local or private host')) {
+      throw error;
+    }
+    throw new Error(`Unable to resolve news site host: ${hostname}`);
+  }
 }
 
 export function normalizeNewsSites(sites: NewsSite[]): NewsSite[] {
@@ -933,21 +1054,44 @@ function addHeadline(
 // ===== Fetch с таймаутом =====
 
 async function fetchWithTimeout(url: string, timeoutMs: number = FETCH_TIMEOUT_MS): Promise<Response> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, {
-      headers: {
-        'User-Agent': USER_AGENT,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8',
-        'Accept-Language': 'ja-JP,ja;q=0.95,ko-KR,ko;q=0.9,zh-CN,zh;q=0.9,en-US,en;q=0.7,ru-RU,ru;q=0.5',
-      },
-      signal: controller.signal,
-      redirect: 'follow',
-    });
-  } finally {
-    clearTimeout(timeoutId);
+  let currentUrl = url;
+
+  for (let redirectCount = 0; redirectCount <= MAX_FETCH_REDIRECTS; redirectCount += 1) {
+    await assertNewsSiteUrlIsSafe(currentUrl);
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(currentUrl, {
+        headers: {
+          'User-Agent': USER_AGENT,
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8',
+          'Accept-Language': 'ja-JP,ja;q=0.95,ko-KR,ko;q=0.9,zh-CN,zh;q=0.9,en-US,en;q=0.7,ru-RU,ru;q=0.5',
+        },
+        signal: controller.signal,
+        redirect: 'manual',
+      });
+
+      if (response.status < 300 || response.status >= 400) {
+        return response;
+      }
+
+      const location = response.headers.get('location');
+      if (!location) {
+        throw new Error(`Redirect location is missing for news site: ${currentUrl}`);
+      }
+
+      if (redirectCount === MAX_FETCH_REDIRECTS) {
+        throw new Error(`Too many redirects while fetching news site: ${url}`);
+      }
+
+      currentUrl = new URL(location, currentUrl).toString();
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
+
+  throw new Error(`Too many redirects while fetching news site: ${url}`);
 }
 
 function createTimeoutError(scope: string, timeoutMs: number): Error {
@@ -1577,6 +1721,7 @@ export async function parseNewsFromSite(siteOrUrl: NewsSite | string): Promise<P
     : siteOrUrl;
 
   const siteUrl = site.url;
+  await assertNewsSiteUrlIsSafe(siteUrl);
   const parseOptions: ParseOptions = {
     category: site.category,
     language: site.language,

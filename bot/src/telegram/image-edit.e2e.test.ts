@@ -17,13 +17,34 @@ vi.mock('../config/logger.js', () => ({
   logger: { child: vi.fn(() => ({ error: vi.fn(), info: vi.fn(), warn: vi.fn(), debug: vi.fn() })) },
 }));
 
-vi.mock('../db/supabase.js', () => ({
-  conversationsRepo: { saveMessage: vi.fn().mockReturnValue({ catch: vi.fn() }), getHistory: vi.fn().mockResolvedValue([]), addMessage: vi.fn().mockResolvedValue({}) },
+vi.mock('../db/index.js', () => ({
+  conversationsRepo: {
+    getOrCreate: vi.fn().mockResolvedValue({ id: 'conv-1', messages: [] }),
+    saveMessage: vi.fn().mockReturnValue({ catch: vi.fn() }),
+    getHistory: vi.fn().mockResolvedValue([]),
+    addMessage: vi.fn().mockResolvedValue({}),
+  },
   analyticsRepo: { log: vi.fn().mockReturnValue({ catch: vi.fn() }) },
-  userProfileRepo: { get: vi.fn().mockResolvedValue({ id: 1, first_name: 'Test' }) },
-  userMemoryRepo: { get: vi.fn().mockResolvedValue({ memories: [] }) },
-  userLogsRepo: { save: vi.fn().mockReturnValue({ catch: vi.fn() }) },
-  settingsRepo: { get: vi.fn().mockResolvedValue('test-value') },
+}));
+
+vi.mock('../memory/user-memory.js', () => ({
+  userProfileRepo: {
+    get: vi.fn().mockResolvedValue({ id: 1, first_name: 'Test' }),
+    updateOnMessage: vi.fn().mockResolvedValue(undefined),
+  },
+  userMemoryRepo: {
+    get: vi.fn().mockResolvedValue({ memories: [] }),
+  },
+  userLogsRepo: {
+    save: vi.fn().mockReturnValue({ catch: vi.fn() }),
+  },
+  memoryExtractor: {
+    extractAndStore: vi.fn().mockResolvedValue(false),
+  },
+  memoryContextBuilder: {
+    buildContext: vi.fn().mockResolvedValue(''),
+    invalidateCache: vi.fn(),
+  },
 }));
 
 vi.mock('../utils/rate-limiter.js', () => ({
@@ -37,6 +58,15 @@ vi.mock('../features/user-prefs-repo.js', () => ({
 vi.mock('../ai/openrouter.js', () => ({
   aiService: { generate: vi.fn() },
   isGibberish: vi.fn().mockReturnValue(false),
+}));
+
+vi.mock('../ai/multimodal.js', () => ({
+  processImageWithLLM: vi.fn().mockResolvedValue({
+    content: 'test vision response',
+    tokens_used: { total: 10 },
+    model: 'test-model',
+  }),
+  transcribeAudio: vi.fn(),
 }));
 
 // Mock image-gen functions
@@ -56,6 +86,7 @@ vi.mock('../ai/image-gen.js', async () => {
 // Now import the functions we want to test
 import { handlePhotoMessage } from './messages.js';
 import * as imageGen from '../ai/image-gen.js';
+import * as multimodal from '../ai/multimodal.js';
 
 describe('Image Editing E2E Flow', () => {
   let mockCtx: any;
@@ -110,15 +141,10 @@ describe('Image Editing E2E Flow', () => {
   it('should NOT trigger image editing if no intent detected', async () => {
     mockCtx.message.caption = 'просто красивая фотка';
     (imageGen.classifyImageEditIntentGroq as any).mockResolvedValue(false);
-    
-    // This will try to call processImageWithLLM, which we should mock to avoid errors
-    vi.mock('../ai/multimodal.js', () => ({
-      processImageWithLLM: vi.fn().mockResolvedValue({ content: 'test', tokens_used: { total: 10 }, model: 'test' }),
-      downloadTelegramPhoto: vi.fn().mockResolvedValue({ base64: 'base64', mimeType: 'image/jpeg' }),
-    }));
 
     await handlePhotoMessage(mockCtx);
 
     expect(imageGen.editImage).not.toHaveBeenCalled();
+    expect(multimodal.processImageWithLLM).toHaveBeenCalled();
   });
 });

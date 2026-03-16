@@ -201,7 +201,7 @@ vi.mock('../ai/lmstudio.js', () => ({
   recordHeartbeat: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('../db/supabase.js', () => ({
+vi.mock('../db/index.js', () => ({
   settingsRepo: {
     get: vi.fn().mockResolvedValue(null),
     set: vi.fn().mockResolvedValue(undefined),
@@ -241,9 +241,8 @@ vi.mock('../db/supabase.js', () => ({
   analyticsRepo: {
     log: vi.fn().mockResolvedValue(undefined),
     getStats: vi.fn().mockResolvedValue({ totalMessages: 0, uniqueUsers: 0, tokensByDay: [] }),
-    getEvents: vi.fn().mockResolvedValue([]),
+    listEvents: vi.fn().mockResolvedValue([]),
   },
-  getSupabase: vi.fn(),
 }));
 
 vi.mock('../memory/user-memory.js', () => ({
@@ -264,10 +263,57 @@ vi.mock('../utils/rate-limiter.js', () => ({
   getRateLimitStats: vi.fn().mockReturnValue({ totalEntries: 0, byType: {} }),
 }));
 
+vi.mock('node-appwrite', () => {
+  class MockClient {
+    private jwt: string | null = null;
+
+    setEndpoint() {
+      return this;
+    }
+
+    setProject() {
+      return this;
+    }
+
+    setJWT(jwt: string) {
+      this.jwt = jwt;
+      return this;
+    }
+
+    getJwt() {
+      return this.jwt;
+    }
+  }
+
+  class MockAccount {
+    constructor(private readonly client: MockClient) {}
+
+    async get() {
+      if (this.client.getJwt() !== 'valid-admin-jwt') {
+        throw new Error('Invalid admin session');
+      }
+
+      return {
+        $id: 'admin-1',
+        email: 'admin@example.com',
+      };
+    }
+  }
+
+  return {
+    Client: MockClient,
+    Account: MockAccount,
+  };
+});
+
 import { registerApiRoutes } from './routes.js';
 
 const tunnelHeaders = {
   'x-amina-tunnel-token': 'test-tunnel-token',
+};
+
+const adminHeaders = {
+  authorization: 'Bearer valid-admin-jwt',
 };
 
 describe('API Routes', () => {
@@ -289,7 +335,7 @@ describe('API Routes', () => {
 
   describe('GET /api/conversations/:id', () => {
     it('should return 404 for non-existent conversation', async () => {
-      const { conversationsRepo } = await import('../db/supabase.js');
+      const { conversationsRepo } = await import('../db/index.js');
       vi.mocked(conversationsRepo.get).mockRejectedValueOnce(new Error('Not found'));
 
       const response = await app.inject({
@@ -307,6 +353,7 @@ describe('API Routes', () => {
       const response = await app.inject({
         method: 'GET',
         url: '/api/settings',
+        headers: adminHeaders,
       });
 
       // Settings endpoint may call getAll which returns []
@@ -323,6 +370,7 @@ describe('API Routes', () => {
       const response = await app.inject({
         method: 'GET',
         url: '/api/prompts',
+        headers: adminHeaders,
       });
 
       expect(response.statusCode).toBe(200);
@@ -337,6 +385,7 @@ describe('API Routes', () => {
       const response = await app.inject({
         method: 'GET',
         url: '/api/models/vision',
+        headers: adminHeaders,
       });
 
       expect([200, 500]).toContain(response.statusCode);
@@ -353,6 +402,7 @@ describe('API Routes', () => {
       const response = await app.inject({
         method: 'GET',
         url: '/api/models/audio',
+        headers: adminHeaders,
       });
 
       // Audio models endpoint may depend on internal state
@@ -384,6 +434,7 @@ describe('API Routes', () => {
       const response = await app.inject({
         method: 'GET',
         url: '/api/lmstudio/health/debug',
+        headers: adminHeaders,
       });
 
       expect(response.statusCode).toBe(200);
@@ -432,6 +483,7 @@ describe('API Routes', () => {
       const response = await app.inject({
         method: 'GET',
         url: '/api/users',
+        headers: adminHeaders,
       });
 
       // May return 200 or 500 depending on mocks
@@ -448,6 +500,7 @@ describe('API Routes', () => {
       const response = await app.inject({
         method: 'GET',
         url: '/api/debug/raw-news',
+        headers: adminHeaders,
       });
 
       expect(response.statusCode).toBe(200);
@@ -485,7 +538,7 @@ describe('API Routes', () => {
 
       const body = JSON.parse(response.body);
       expect(body.success).toBe(true);
-      expect(body.data.pipeline).toBe('hybrid_supabase');
+      expect(body.data.pipeline).toBe('hybrid_appwrite');
       expect(body.data.news.mode).toBe('parser_only');
       expect(body.data.content).toBe('hybrid digest');
       expect(body.data.news.counts.merged_duplicates).toBe(1);
@@ -529,7 +582,7 @@ describe('API Routes', () => {
       const body = JSON.parse(response.body);
       expect(body.success).toBe(false);
       expect(body.code).toBe('DIGEST_NOT_PREPARED');
-      expect(body.data.pipeline).toBe('hybrid_supabase');
+      expect(body.data.pipeline).toBe('hybrid_appwrite');
       expect(body.data.city).toBe('Минск');
     });
   });

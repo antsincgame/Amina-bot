@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { settingsApi } from '../api/appwrite';
+import { fetchBotApi, settingsApi } from '../api/appwrite';
 import {
   Save,
   Loader2,
@@ -22,8 +22,6 @@ import {
   ChevronUp,
   Bug,
 } from 'lucide-react';
-
-const BOT_URL = import.meta.env.VITE_BOT_URL ?? '';
 
 type AIProvider = 'auto' | 'lmstudio' | 'openrouter';
 
@@ -122,10 +120,10 @@ const LMStudioPage = () => {
     setIsCheckingHealth(true);
     try {
       if (forceRefresh) {
-        await fetch(`${BOT_URL}/api/lmstudio/reload`, { method: 'POST' });
+        await fetchBotApi('/api/lmstudio/reload', { method: 'POST' });
         await new Promise((r) => setTimeout(r, 400));
       }
-      const res = await fetch(`${BOT_URL}/api/lmstudio/health`);
+      const res = await fetchBotApi('/api/lmstudio/health');
       const json = await res.json().catch(() => null);
       const data = json?.data;
       if (res.ok && data && typeof data.configured === 'boolean') {
@@ -143,7 +141,7 @@ const LMStudioPage = () => {
   const loadModels = useCallback(async () => {
     setIsLoadingModels(true);
     try {
-      const res = await fetch(`${BOT_URL}/api/lmstudio/models`);
+      const res = await fetchBotApi('/api/lmstudio/models');
       if (res.ok) {
         const json = await res.json();
         const modelsList = json.data?.models ?? [];
@@ -169,7 +167,7 @@ const LMStudioPage = () => {
     setIsLoadingDebug(true);
     setDebugInfo(null);
     try {
-      const res = await fetch(`${BOT_URL}/api/lmstudio/health/debug`);
+      const res = await fetchBotApi('/api/lmstudio/health/debug');
       const json = await res.json().catch(() => null);
       if (res.ok && json?.data) {
         setDebugInfo(json.data);

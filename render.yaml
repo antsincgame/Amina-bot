@@ -31,9 +31,13 @@ services:
         sync: false
       - key: OPENROUTER_API_KEY
         sync: false
-      - key: SUPABASE_URL
-        sync: false
-      - key: SUPABASE_SERVICE_KEY
+      - key: APPWRITE_ENDPOINT
+        value: https://appwrite.vibecoding.by/v1
+      - key: APPWRITE_PROJECT_ID
+        value: 69af2faa003646d3574c
+      - key: APPWRITE_DATABASE_ID
+        value: amina
+      - key: APPWRITE_API_KEY
         sync: false
       # URL админки для CORS
       - key: ADMIN_URL
@@ -81,10 +85,10 @@ services:
         source: /*
         destination: /index.html
     envVars:
-      - key: VITE_SUPABASE_URL
-        sync: false
-      - key: VITE_SUPABASE_ANON_KEY
-        sync: false
+      - key: VITE_APPWRITE_ENDPOINT
+        value: https://appwrite.vibecoding.by/v1
+      - key: VITE_APPWRITE_PROJECT_ID
+        value: 69af2faa003646d3574c
       - key: VITE_BOT_URL
         value: https://amina-bot.onrender.com
     autoDeploy: true

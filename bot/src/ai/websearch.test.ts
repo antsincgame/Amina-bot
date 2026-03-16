@@ -27,7 +27,7 @@ vi.mock('../config/logger.js', () => ({
   },
 }));
 
-vi.mock('../db/supabase.js', () => ({
+vi.mock('../db/index.js', () => ({
   settingsRepo: {
     get: vi.fn().mockResolvedValue(null),
   },
@@ -46,7 +46,7 @@ import {
   enhanceResponseIfNeeded,
   clearPerplexityCache,
 } from './websearch.js';
-import { settingsRepo } from '../db/supabase.js';
+import { settingsRepo } from '../db/index.js';
 
 describe('Web Search Service', () => {
   beforeEach(() => {

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { detectImageEditIntent, extractEditPrompt, classifyImageEditIntentGroq, editImage } from './image-gen.js';
 
 // Mock dependencies
-vi.mock('../db/supabase.js', () => ({
+vi.mock('../db/index.js', () => ({
   settingsRepo: {
     get: vi.fn().mockResolvedValue('google/gemini-2.0-flash-exp'),
     getMany: vi.fn().mockResolvedValue({ openrouter_api_key: 'test-key', groq_api_key: 'test-key' }),

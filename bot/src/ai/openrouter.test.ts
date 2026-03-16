@@ -32,7 +32,7 @@ vi.mock('../config/logger.js', () => ({
   },
 }));
 
-vi.mock('../db/supabase.js', () => ({
+vi.mock('../db/index.js', () => ({
   settingsRepo: {
     get: vi.fn().mockResolvedValue(null),
     set: vi.fn().mockResolvedValue(undefined),

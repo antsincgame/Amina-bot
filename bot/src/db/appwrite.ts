@@ -99,6 +99,30 @@ function docToConversation(doc: any): Conversation {
   };
 }
 
+type StoredAnalyticsDoc = Record<string, unknown> & {
+  $id: string;
+  $createdAt?: string;
+  event_type?: string;
+  data?: string | null;
+  user_id?: string | null;
+  channel?: string;
+  timestamp?: string;
+};
+
+function docToAnalyticsEvent(doc: StoredAnalyticsDoc): AnalyticsEvent {
+  const parsedChannel = validateChannel(typeof doc.channel === 'string' ? doc.channel : 'admin');
+  return {
+    id: doc.$id,
+    event_type: validateEventType(typeof doc.event_type === 'string' ? doc.event_type : 'system_log'),
+    data: parseJson<Record<string, unknown>>(typeof doc.data === 'string' ? doc.data : null, {}),
+    user_id: typeof doc.user_id === 'string' && doc.user_id.trim() ? doc.user_id : undefined,
+    channel: parsedChannel === 'all' ? 'admin' : parsedChannel,
+    timestamp: typeof doc.timestamp === 'string' && doc.timestamp.trim()
+      ? doc.timestamp
+      : (doc.$createdAt ?? new Date().toISOString()),
+  };
+}
+
 // --------------------------------------------
 // Settings Repository (with in-memory cache)
 // --------------------------------------------
@@ -521,6 +545,37 @@ export const analyticsRepo = {
     }
   },
 
+  async listEvents(filters: {
+    from?: Date;
+    to?: Date;
+    channel?: AnalyticsEvent['channel'];
+    eventType?: AnalyticsEventType;
+    limit?: number;
+  }): Promise<AnalyticsEvent[]> {
+    const queries = [Query.orderDesc('timestamp'), Query.limit(validateLimit(filters.limit ?? 100, 1, 500))];
+
+    if (filters.from) {
+      queries.push(Query.greaterThanEqual('timestamp', filters.from.toISOString()));
+    }
+    if (filters.to) {
+      queries.push(Query.lessThanEqual('timestamp', filters.to.toISOString()));
+    }
+    if (filters.channel) {
+      queries.push(Query.equal('channel', filters.channel));
+    }
+    if (filters.eventType) {
+      queries.push(Query.equal('event_type', filters.eventType));
+    }
+
+    try {
+      const result = await getAppwrite().listDocuments(DB_ID(), COLL.analytics, queries);
+      return result.documents.map((document) => docToAnalyticsEvent(document as StoredAnalyticsDoc));
+    } catch (error) {
+      dbLogger.error({ error, filters }, 'Failed to list analytics events');
+      throw error;
+    }
+  },
+
   async getStats(fromDate: Date, toDate: Date): Promise<{
     totalMessages: number;
     totalCalls: number;
@@ -529,7 +584,7 @@ export const analyticsRepo = {
   }> {
     try {
       // Fetch all events in range (paginated)
-      const allEvents: any[] = [];
+      const allEvents: StoredAnalyticsDoc[] = [];
       let offset = 0;
       const limit = 100;
 
@@ -540,7 +595,7 @@ export const analyticsRepo = {
           Query.limit(limit),
           Query.offset(offset),
         ]);
-        allEvents.push(...result.documents);
+        allEvents.push(...result.documents as StoredAnalyticsDoc[]);
         if (result.documents.length < limit) break;
         offset += limit;
         // Safety limit — max 5000 events
@@ -552,11 +607,12 @@ export const analyticsRepo = {
       const tokensByDay = allEvents
         .filter(e => e.event_type === 'ai_response')
         .reduce((acc, e) => {
-          const date = new Date(e.timestamp).toISOString().split('T')[0];
+          const timestamp = typeof e.timestamp === 'string' ? e.timestamp : '';
+          const date = timestamp ? new Date(timestamp).toISOString().split('T')[0] : '';
           const eventData = parseJson<{ tokens?: number }>(e.data, {});
           const tokens = eventData?.tokens ?? 0;
           if (!date) return acc;
-          const existing = acc.find((d: any) => d.date === date);
+          const existing = acc.find((entry) => entry.date === date);
           if (existing) {
             existing.tokens += tokens;
           } else {
@@ -571,7 +627,7 @@ export const analyticsRepo = {
         ).length,
         totalCalls: allEvents.filter(e => e.event_type === 'call_started').length,
         uniqueUsers: uniqueUsers.size,
-        tokensByDay: tokensByDay.sort((a: any, b: any) => a.date.localeCompare(b.date)),
+        tokensByDay: tokensByDay.sort((left, right) => left.date.localeCompare(right.date)),
       };
     } catch (error) {
       dbLogger.error({ error }, 'Failed to get analytics stats');
