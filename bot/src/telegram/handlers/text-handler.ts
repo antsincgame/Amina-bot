@@ -165,7 +165,15 @@ export const handleTextMessage = async (ctx: BotContext): Promise<void> => {
   await ctx.replyWithChatAction('typing');
 
   try {
-    if (await handleAutoDetections(ctx, userMessage, userId, chatId)) return;
+    // Short messages without explicit markers → skip auto-detection, go straight to LLM
+    const isShortMessage = userMessage.length < 20;
+    const hasExplicitMarker = /^(напомни|нарисуй|озвучь|запомни|запиши|поищи|найди в интернете)/i.test(userMessage.trim());
+
+    if (isShortMessage && !hasExplicitMarker) {
+      // Skip auto-detection for short ambiguous messages like "Чья ты жена?"
+    } else if (await handleAutoDetections(ctx, userMessage, userId, chatId)) {
+      return;
+    }
 
     if (shouldForceWebSearch(userMessage) || needsWebSearch(userMessage)) {
       const handled = await handleDirectWebSearch(ctx, userMessage, userId, chatId, startTime);

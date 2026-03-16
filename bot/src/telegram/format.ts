@@ -378,28 +378,24 @@ export const buildTimeContext = (firstName?: string): string => {
   const now = new Date();
   const TZ = config.server.timeZone;
 
-  // Intl.DateTimeFormat гарантирует правильную TZ независимо от серверных настроек
-  const parts = new Intl.DateTimeFormat('ru-RU', {
+  const dateFmt = new Intl.DateTimeFormat('ru-RU', {
     timeZone: TZ,
-    hour: 'numeric', minute: '2-digit', hour12: false,
-    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-  }).formatToParts(now);
+    day: '2-digit', month: '2-digit', year: 'numeric',
+  }).format(now);
 
-  const get = (type: string) => parts.find(p => p.type === type)?.value ?? '';
-  const hour = parseInt(get('hour'), 10) || 0;
-  const minute = get('minute');
-  const day = get('weekday');
-  const dateStr = `${get('day')} ${get('month')} ${get('year')}`;
+  const weekday = new Intl.DateTimeFormat('ru-RU', {
+    timeZone: TZ,
+    weekday: 'short',
+  }).format(now);
 
-  let greeting = '';
-  if (hour >= 5 && hour < 12) greeting = 'утро';
-  else if (hour >= 12 && hour < 17) greeting = 'день';
-  else if (hour >= 17 && hour < 22) greeting = 'вечер';
-  else greeting = 'ночь';
+  const time = new Intl.DateTimeFormat('ru-RU', {
+    timeZone: TZ,
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).format(now);
 
-  const nameStr = firstName ? `Имя пользователя: ${firstName}.` : '';
+  const nameStr = firstName ? ` ${firstName}` : '';
 
-  return `[Контекст: ${dateStr}, ${day}, ${greeting} (${hour}:${minute}, TZ ${TZ}). ${nameStr}]`;
+  return `[${dateFmt}, ${weekday}, ${time}.${nameStr}]`;
 };
 
 // ============================================

@@ -342,24 +342,25 @@ export const userLogsRepo = {
 
 export const memoryExtractor = {
   async extractFacts(userId: string, userMessage: string, aiResponse: string): Promise<void> {
-    if (userMessage.length < 20) return;
+    const FACT_INDICATORS = /(?:меня зовут|я работаю|мне нравится|я живу|я из|мне \d+ лет|я люблю|я учусь|я занимаюсь|мой номер|я предпочитаю|мне не нравится|я хочу|моя работа|мой город)/i;
+
+    if (userMessage.length < 30 && !FACT_INDICATORS.test(userMessage)) {
+      return;
+    }
+
     try {
-      const prompt = `Проанализируй диалог и извлеки ТОЛЬКО явные факты о пользователе.
+      const prompt = `Есть ли новый факт о пользователе в этом диалоге? Если да — напиши одним предложением (тип: факт/предпочтение/важное). Если нет — напиши "нет".
+
 Сообщение пользователя: "${userMessage}"
-Ответ ассистента: "${aiResponse}"
-Извлеки факты в формате JSON массива. Каждый факт: {type: "fact"|"preference"|"context"|"important", content: "...", confidence: 0-1}
-Если фактов нет, верни []. Верни ТОЛЬКО JSON.`;
+Ответ ассистента: "${aiResponse}"`;
       const response = await aiService.complete(prompt, 'telegram');
-      const match = response.match(/\[\s*\{[\s\S]*?\}\s*\]/);
-      if (!match) return;
-      const facts = JSON.parse(match[0]) as Array<{ type: 'fact' | 'preference' | 'context' | 'important'; content: string; confidence: number }>;
-      for (const f of facts) {
-        if (f.content && f.confidence > 0.5) {
-          await userMemoryRepo.add(userId, f.type, f.content, { source: 'inference', confidence: f.confidence });
-          await userLogsRepo.add(userId, 'memory_created', f.content, { memory_type: f.type, confidence: f.confidence });
-        }
-      }
-      if (facts.length > 0) { aiLogger.info({ userId, factsCount: facts.length }, 'Facts extracted'); memoryContextBuilder.invalidateCache(userId); }
+      const text = response.trim().toLowerCase();
+      if (text === 'нет' || text.length < 5) return;
+
+      await userMemoryRepo.add(userId, 'fact', response.trim(), { source: 'inference', confidence: 0.8 });
+      await userLogsRepo.add(userId, 'memory_created', response.trim(), { memory_type: 'fact' });
+      aiLogger.info({ userId }, 'Fact extracted');
+      memoryContextBuilder.invalidateCache(userId);
     } catch (error) { aiLogger.error({ error, userId }, 'Failed to extract facts'); }
   },
 

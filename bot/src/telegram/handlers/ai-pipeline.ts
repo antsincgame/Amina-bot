@@ -143,15 +143,7 @@ export const forceAnswer = async (
     const forceResult = await aiService.chat(
       [{ role: 'user', content: userMessage }],
       'telegram',
-      'Ты — премиум AI-ассистент. Пользователь задал вопрос и ждёт ответ.\n\n' +
-      'АБСОЛЮТНЫЕ ПРАВИЛА:\n' +
-      '1. ОТВЕТЬ на вопрос. Это единственное, что от тебя требуется.\n' +
-      '2. ЗАПРЕЩЕНО: отказывать, говорить "не могу", "не знаю", "обратитесь к...".\n' +
-      '3. ЗАПРЕЩЕНО: перечислять свои возможности вместо ответа.\n' +
-      '4. ЗАПРЕЩЕНО: симулировать поиск ("Ищу...", "Поиск...").\n' +
-      '5. Если не уверен — дай лучший ответ из своих знаний с пометкой "по моим данным".\n' +
-      '6. Ответ должен быть развёрнутым, полезным и конкретным.\n' +
-      '7. Отвечай на русском языке.'
+      `Ты — Amina, кибер-жрица Омниссии. Ответь техножрецу кратко и по делу. Не отказывай. Отвечай на русском.`
     );
 
     if (forceResult.content &&
@@ -172,13 +164,7 @@ export const forceAnswer = async (
 export const addSearchWarning = (fullContext: string, userMessage: string, webSearchContext: string, userId: string): string => {
   if (!webSearchContext && needsWebSearch(userMessage)) {
     telegramLogger.warn({ userId, query: userMessage.substring(0, 50) }, 'Search needed but no data — instructing to answer from knowledge');
-    return fullContext + '\n\n⚠️ СИСТЕМНОЕ УВЕДОМЛЕНИЕ: Автоматический поиск сейчас недоступен. ' +
-      'ОБЯЗАТЕЛЬНО ответь на вопрос пользователя из своих знаний! ' +
-      'Ты — премиум-ассистент, НИКОГДА не отказывай в помощи. ' +
-      'Если точных данных нет — дай лучший ответ из того, что знаешь, с пометкой "по моим данным". ' +
-      'НЕ симулируй поиск, НЕ пиши "Ищу...", "Поиск в интернете". ' +
-      'НЕ перечисляй свои возможности вместо ответа. НЕ говори "не могу помочь". ' +
-      'Просто ОТВЕТЬ на вопрос — развёрнуто, полезно, по существу.';
+    return fullContext + '\n\n[Поиск недоступен. Ответь из своих знаний с пометкой "по моим данным". Не симулируй поиск.]';
   }
   return fullContext;
 };
@@ -272,6 +258,18 @@ export const processMessageThroughAI = async (
 
   // Verify & protect from search simulation/refusal/ignorance
   aiResponse = await processAIResponse(aiResponse, userText, userId, webSearchContext);
+
+  // Strip wrapper brackets/quotes that weak models add
+  let cleanedContent = aiResponse.content.trim();
+  if (/^\[.*\]$/s.test(cleanedContent)) {
+    cleanedContent = cleanedContent.slice(1, -1).trim();
+  }
+  if (/^".*"$/s.test(cleanedContent)) {
+    cleanedContent = cleanedContent.slice(1, -1).trim();
+  }
+  if (cleanedContent !== aiResponse.content) {
+    aiResponse = { ...aiResponse, content: cleanedContent };
+  }
 
   // Replace placeholder [Имя]/[Name] that weak models sometimes leave
   if (userName) {
