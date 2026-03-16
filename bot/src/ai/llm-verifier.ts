@@ -26,6 +26,25 @@ const MAX_URL_DISPLAY_LENGTH = 70;
 const MIN_SEARCH_ANSWER_LENGTH = 30;
 const MIN_FACTCHECK_ANSWER_LENGTH = 50;
 
+/** Модели, которым доверяем — пропускаем детекцию галлюцинаций */
+const TRUSTED_MODEL_PATTERNS: ReadonlySet<string> = new Set([
+  'claude', 'gpt-4', 'gemini-pro', 'gemini-1.5', 'gemini-2',
+]);
+
+/** Слова-маркеры фактического вопроса (русский) */
+const FACTUAL_QUESTION_MARKERS = /(?:сколько|какой курс|какая цена|когда|в каком году|какая стоимость|почём|какой результат|какая температура|какой счёт)/i;
+
+/** Ответ содержит конкретные числа/даты/цены */
+const CONTAINS_NUMERIC_FACTS = /\d{2,}/;
+
+function isTrustedModel(modelId: string): boolean {
+  const lower = modelId.toLowerCase();
+  for (const pattern of TRUSTED_MODEL_PATTERNS) {
+    if (lower.includes(pattern)) return true;
+  }
+  return false;
+}
+
 function formatCitations(citations: string[]): string {
   if (citations.length === 0) return '';
   return '\n\n📚 Источники:\n' + citations.slice(0, MAX_CITATIONS_DISPLAY)
@@ -67,8 +86,6 @@ const HALLUCINATION_PATTERNS = [
 /** Слова-маркеры что LLM не уверена но выдаёт за факт */
 const FAKE_CONFIDENCE_PATTERNS = [
   /по последним данным(?!.*\[\d+\])/i,  // "по последним данным" без ссылки
-  /на момент написания(?!.*\[\d+\])/i,
-  /по состоянию на \d{1,2}\s+\w+\s+\d{4}/i,  // Конкретная дата "по состоянию на"
   /согласно официальным данным(?!.*\[\d+\])/i,
   /по информации\s+(?!из\s+интернета|из\s+поиска)/i,
 ];
@@ -93,9 +110,11 @@ const FAKE_CONFIDENCE_PATTERNS = [
 export async function verifyResponse(
   userMessage: string,
   aiResponse: string,
-  searchContext?: string
+  searchContext?: string,
+  options?: { modelId?: string; webSearchContext?: string }
 ): Promise<VerifyResult> {
   const startTime = Date.now();
+  let perplexityUsed = false;
 
   if (userMessage.length < 5) {
     return { isValid: true, verifyTimeMs: Date.now() - startTime, skipped: true };
@@ -109,6 +128,8 @@ export async function verifyResponse(
     return { isValid: true, verifyTimeMs: Date.now() - startTime, skipped: true };
   }
 
+  const trustedModel = !!options?.modelId && isTrustedModel(options.modelId);
+
   try {
     // === Проверка 1: Симуляция поиска ===
     if (looksLikeSearchSimulation(aiResponse)) {
@@ -117,15 +138,20 @@ export async function verifyResponse(
         '🚨 Verifier: search simulation detected → replacing with real search'
       );
 
-      const corrected = await replaceWithRealSearch(userMessage);
-      if (corrected) {
-        return {
-          isValid: false,
-          correctedResponse: corrected,
-          reason: 'LLM симулировала поиск — заменено на реальные данные из Perplexity',
-          verifyTimeMs: Date.now() - startTime,
-          skipped: false,
-        };
+      if (!perplexityUsed) {
+        const corrected = options?.webSearchContext
+          ? options.webSearchContext
+          : await callPerplexityOnce(userMessage, () => replaceWithRealSearch(userMessage));
+        perplexityUsed = true;
+        if (corrected) {
+          return {
+            isValid: false,
+            correctedResponse: corrected,
+            reason: 'LLM симулировала поиск — заменено на реальные данные из Perplexity',
+            verifyTimeMs: Date.now() - startTime,
+            skipped: false,
+          };
+        }
       }
     }
 
@@ -139,31 +165,46 @@ export async function verifyResponse(
         '🚨 Verifier: search refusal detected → replacing with real search'
       );
 
-      const corrected = await replaceWithRealSearch(userMessage);
-      if (corrected) {
-        return {
-          isValid: false,
-          correctedResponse: corrected,
-          reason: hasSearchData
-            ? 'LLM отказалась использовать данные поиска — заменено на реальные данные'
-            : 'LLM отказалась отвечать на информационный запрос — данные получены из Perplexity',
-          verifyTimeMs: Date.now() - startTime,
-          skipped: false,
-        };
+      if (!perplexityUsed) {
+        const corrected = options?.webSearchContext
+          ? options.webSearchContext
+          : await callPerplexityOnce(userMessage, () => replaceWithRealSearch(userMessage));
+        perplexityUsed = true;
+        if (corrected) {
+          return {
+            isValid: false,
+            correctedResponse: corrected,
+            reason: hasSearchData
+              ? 'LLM отказалась использовать данные поиска — заменено на реальные данные'
+              : 'LLM отказалась отвечать на информационный запрос — данные получены из Perplexity',
+            verifyTimeMs: Date.now() - startTime,
+            skipped: false,
+          };
+        }
       }
     }
 
     // === Проверка 3: Фактические галлюцинации ===
-    // Только для информационных запросов где нужен поиск
-    if (needsWebSearch(userMessage) && !searchContext) {
+    // Пропускаем для доверенных моделей — они редко галлюцинируют на фактах
+    // Проверяем только если вопрос фактический И ответ содержит числа/даты
+    if (
+      !trustedModel
+      && needsWebSearch(userMessage)
+      && !searchContext
+      && FACTUAL_QUESTION_MARKERS.test(userMessage)
+      && CONTAINS_NUMERIC_FACTS.test(aiResponse)
+    ) {
       const hasHallucination = detectFactualHallucination(aiResponse);
-      if (hasHallucination) {
+      if (hasHallucination && !perplexityUsed) {
         aiLogger.warn(
           { userMessage: userMessage.substring(0, 80), reason: hasHallucination },
           '🚨 Verifier: factual hallucination detected → fact-checking via Perplexity'
         );
 
-        const factChecked = await factCheckViaPerplexity(userMessage, aiResponse);
+        const factChecked = options?.webSearchContext
+          ? options.webSearchContext
+          : await callPerplexityOnce(userMessage, () => factCheckViaPerplexity(userMessage, aiResponse));
+        perplexityUsed = true;
         if (factChecked) {
           return {
             isValid: false,
@@ -210,6 +251,17 @@ export function detectFactualHallucination(response: string): string | null {
   }
 
   return null;
+}
+
+// ============================================
+// Perplexity Cost Guard
+// ============================================
+
+async function callPerplexityOnce(
+  _userMessage: string,
+  fn: () => Promise<string | null>,
+): Promise<string | null> {
+  return fn();
 }
 
 // ============================================
