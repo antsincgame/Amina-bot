@@ -13,6 +13,7 @@ import {
   BODY_LIMIT_BYTES,
   HEALTH_CACHE_TTL_MS,
   HEALTH_AI_TIMEOUT_MS,
+  INIT_DELAY_MS,
 } from './config/constants.js';
 import { serverLogger, httpLogger, appLogger } from './config/logger.js';
 import { createBot } from './telegram/bot.js';
@@ -365,14 +366,14 @@ const start = async (): Promise<void> => {
       host: config.server.host,
     });
     serverLogger.info({ address }, '📡 HTTP server listening');
-    appLogger.info('✅ HTTP server ready — starting background init in 5s');
+    appLogger.info({ delayMs: INIT_DELAY_MS }, '✅ HTTP server ready — starting background init');
 
-    // Задержка перед фоновой инициализацией — даём Render подтвердить health check
+    // Задержка перед фоновой инициализацией — даём платформе подтвердить health check
     setTimeout(() => {
       initBotAndServices().catch(err => {
         appLogger.error({ error: err }, 'Background init error');
       });
-    }, 5000);
+    }, INIT_DELAY_MS);
   } catch (error) {
     appLogger.fatal({ error }, 'Failed to start application');
     process.exit(1);

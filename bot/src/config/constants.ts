@@ -48,6 +48,7 @@ export const BUILD_DIGEST_TIMEOUT_MS = 90_000;
 export const REQUEST_TIMEOUT_MS = 28_000;
 export const CONNECTION_TIMEOUT_MS = 5_000;
 export const KEEP_ALIVE_TIMEOUT_MS = 30_000;
+export const INIT_DELAY_MS = Number(process.env.INIT_DELAY_MS) || 5_000;
 export const BODY_LIMIT_BYTES = 10_485_760; // 10MB
 export const HEALTH_AI_TIMEOUT_MS = 8_000;
 
