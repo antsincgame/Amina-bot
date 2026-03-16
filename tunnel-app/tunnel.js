@@ -39,7 +39,7 @@ const dim = (msg) => console.log(`${C.dim('[tunnel]')} ${msg}`);
 // ============================================
 const CONFIG = {
   botApiUrl: 'https://amina.vibecoding.by',
-  tunnelToken: '',
+  tunnelToken: 'g2xTd4FohTJnkw6zjcs7rg9M1pOaHd-XdEeuVW2OtrA',
   lmstudioPort: 1234,
   healthInterval: 30,
   tunnelUrlTimeout: 30,
