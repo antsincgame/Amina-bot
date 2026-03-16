@@ -11,7 +11,7 @@
  * Голос OpenAI: настройка `openai_tts_voice` ('nova' | 'alloy' | 'echo' | 'fable' | 'onyx' | 'shimmer')
  * Голос Edge: настройка `voice_speaker` ('svetlana' | 'dmitry')
  * 
- * Цепочка fallback: ElevenLabs → OpenAI → Edge TTS
+ * Цепочка fallback: ElevenLabs (main) → retry 2s → ElevenLabs Turbo v2.5 → OpenAI → Edge TTS
  * Поддержка длинных текстов — разбивает на чанки.
  */
 
@@ -58,6 +58,8 @@ const TTS_TIMEOUT_MS = 60_000;
 const ELEVENLABS_API_URL = 'https://api.elevenlabs.io/v1/text-to-speech';
 const ELEVENLABS_DEFAULT_VOICE = '21m00Tcm4TlvDq8ikWAM'; // Rachel
 const ELEVENLABS_DEFAULT_MODEL = 'eleven_multilingual_v2';
+const ELEVENLABS_TURBO_MODEL = 'eleven_turbo_v2_5';
+const ELEVENLABS_RETRY_DELAY_MS = 2000;
 
 // Edge TTS голоса
 const EDGE_VOICES: Record<string, string> = {
@@ -161,6 +163,7 @@ export async function textToSpeech(
 
   // === ElevenLabs (премиум) ===
   if (config.provider === 'elevenlabs' && config.elevenlabsApiKey) {
+    // 1) Основная модель
     try {
       const result = await elevenlabsTTS(cleanText, config);
       if (result) {
@@ -168,7 +171,31 @@ export async function textToSpeech(
         return result;
       }
     } catch (error) {
-      appLogger.warn({ error, textLen: cleanText.length }, 'TTS: ElevenLabs failed, falling back to OpenAI/Edge');
+      appLogger.warn({ error, textLen: cleanText.length }, 'TTS: ElevenLabs main model failed, retrying after 2s');
+    }
+
+    // 2) Retry основной модели через 2 секунды
+    try {
+      await new Promise((r) => setTimeout(r, ELEVENLABS_RETRY_DELAY_MS));
+      const result = await elevenlabsTTS(cleanText, config);
+      if (result) {
+        appLogger.info({ provider: 'elevenlabs', textLen: cleanText.length, audioBytes: result.length }, 'TTS: ElevenLabs retry success');
+        return result;
+      }
+    } catch (error) {
+      appLogger.warn({ error, textLen: cleanText.length }, 'TTS: ElevenLabs retry failed, trying turbo model');
+    }
+
+    // 3) Cheap fallback — ElevenLabs Turbo v2.5
+    try {
+      const turboConfig: TTSConfig = { ...config, elevenlabsModelId: ELEVENLABS_TURBO_MODEL };
+      const result = await elevenlabsTTS(cleanText, turboConfig);
+      if (result) {
+        appLogger.info({ provider: 'elevenlabs-turbo', textLen: cleanText.length, audioBytes: result.length }, 'TTS: ElevenLabs Turbo v2.5 success');
+        return result;
+      }
+    } catch (error) {
+      appLogger.warn({ error, textLen: cleanText.length }, 'TTS: ElevenLabs Turbo v2.5 failed, falling back to OpenAI/Edge');
     }
   }
 

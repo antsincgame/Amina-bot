@@ -40,13 +40,27 @@ export const remindersRepo = {
 
   async getDue(): Promise<Reminder[]> {
     try {
-      const r = await (await getAW()).listDocuments(DB_ID(), COLL, [
-        Query.equal('is_completed', false),
-        Query.lessThanEqual('scheduled_at', new Date().toISOString()),
-        Query.orderAsc('scheduled_at'),
-        Query.limit(50),
-      ]);
-      return r.documents.map(docToReminder);
+      const aw = await getAW();
+      const nowISO = new Date().toISOString();
+      const allDue: Reminder[] = [];
+      let offset = 0;
+      const PAGE_SIZE = 100;
+      const MAX_PAGES = 5;
+
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const r = await aw.listDocuments(DB_ID(), COLL, [
+          Query.equal('is_completed', false),
+          Query.lessThanEqual('scheduled_at', nowISO),
+          Query.orderAsc('scheduled_at'),
+          Query.limit(PAGE_SIZE),
+          Query.offset(offset),
+        ]);
+        allDue.push(...r.documents.map(docToReminder));
+        if (r.documents.length < PAGE_SIZE) break;
+        offset += PAGE_SIZE;
+      }
+
+      return allDue;
     } catch { return []; }
   },
 

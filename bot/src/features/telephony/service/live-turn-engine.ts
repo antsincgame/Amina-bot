@@ -10,6 +10,10 @@ import { buildInitialAgentReplyFromPlan } from './telephony-plan.js';
 const LIVE_TURN_MAX_TOKENS = 500;
 const LIVE_TURN_TEMPERATURE = 0.35;
 
+/** Cached system prompts per session to avoid rebuilding every turn. */
+const systemPromptCache = new Map<string, { prompt: string; cachedAt: number }>();
+const SYSTEM_PROMPT_TTL_MS = 5 * 60 * 1000;
+
 interface LiveTurnModelResponse {
   replyText?: string;
   shouldEndCall?: boolean;
@@ -179,10 +183,47 @@ async function createBootstrapAgentTurn(input: LiveTurnEngineRequest, assembly: 
   };
 }
 
+function getCachedSystemPrompt(sessionId: string): string | null {
+  const entry = systemPromptCache.get(sessionId);
+  if (!entry) {
+    return null;
+  }
+
+  if (Date.now() - entry.cachedAt > SYSTEM_PROMPT_TTL_MS) {
+    systemPromptCache.delete(sessionId);
+    return null;
+  }
+
+  return entry.prompt;
+}
+
+function setCachedSystemPrompt(sessionId: string, prompt: string): void {
+  systemPromptCache.set(sessionId, { prompt, cachedAt: Date.now() });
+}
+
+export function clearSystemPromptCache(sessionId: string): void {
+  systemPromptCache.delete(sessionId);
+}
+
 export async function generateLiveAgentTurn(
   input: LiveTurnEngineRequest,
 ): Promise<LiveTurnEngineResult> {
   const transcript = cleanText(input.transcript);
+
+  if (!input.isFinal && !input.bootstrap) {
+    await storeTranscriptProgress(input, transcript);
+    return {
+      replyText: '',
+      shouldEndCall: false,
+      shouldFallback: false,
+      fallbackReason: null,
+      outcomeLabel: 'неясно',
+      resultSummary: '',
+      customerTurn: null,
+      agentTurn: null,
+    };
+  }
+
   const assembly = await assembleConversationContext(input.sessionId, transcript);
   const agentTurnCount = assembly.turns.filter((turn) => turn.speaker === 'agent').length;
 
@@ -226,8 +267,17 @@ export async function generateLiveAgentTurn(
     transcript,
   }, input.providerEventId);
 
+  const cachedPrompt = getCachedSystemPrompt(input.sessionId);
+  const messages = cachedPrompt
+    ? [{ role: 'system' as const, content: cachedPrompt }, ...assembly.messages.slice(1)]
+    : assembly.messages;
+
+  if (!cachedPrompt && assembly.messages.length > 0 && assembly.messages[0].role === 'system') {
+    setCachedSystemPrompt(input.sessionId, assembly.messages[0].content);
+  }
+
   const aiResult = await aiService.chat(
-    assembly.messages,
+    messages,
     'voice',
     undefined,
     {

@@ -19,6 +19,7 @@ import { settingsRepo } from '../db/index.js';
 import { appLogger } from '../config/logger.js';
 import { hasMostlyRussianText, localizeParsedHeadlines } from './news-localization.js';
 import { enrichParsedHeadlineDescriptions, isWeakHeadlineDescription } from './news-description-enrichment.js';
+import { filterHeadlinesForVibecoding } from './news-vibecoding-filter.js';
 import {
   FETCH_TIMEOUT_MS,
   MAX_HEADLINES_PER_SITE,
@@ -2031,15 +2032,17 @@ export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
   const deduped = dedupeParsedHeadlines(allHeadlines);
   const enrichedHeadlines = await enrichParsedHeadlineDescriptions(deduped.headlines);
   const localizedHeadlines = await localizeParsedHeadlines(enrichedHeadlines);
-  const grouped = groupHeadlinesByCategory(localizedHeadlines);
+  const filteredHeadlines = await filterHeadlinesForVibecoding(localizedHeadlines);
+  const grouped = groupHeadlinesByCategory(filteredHeadlines);
 
   appLogger.info(
     {
-      totalHeadlines: localizedHeadlines.length,
+      totalHeadlines: filteredHeadlines.length,
       totalSites: enabledSites.length,
       failedSites,
       duplicatesFiltered: deduped.duplicatesFiltered,
-      mergedDuplicates: countMergedDuplicates(localizedHeadlines),
+      mergedDuplicates: countMergedDuplicates(filteredHeadlines),
+      vibecodingFilteredOut: localizedHeadlines.length - filteredHeadlines.length,
       byCategory: {
         ai_tech: grouped.ai_tech.length,
         community: grouped.community.length,
@@ -2051,8 +2054,8 @@ export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
     'News parsing complete',
   );
 
-  parsedNewsCache = { headlines: localizedHeadlines, ts: Date.now() };
-  return localizedHeadlines;
+  parsedNewsCache = { headlines: filteredHeadlines, ts: Date.now() };
+  return filteredHeadlines;
 }
 
 /**

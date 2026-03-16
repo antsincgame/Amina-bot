@@ -72,7 +72,17 @@ export async function assembleConversationContext(
   const plan = extractPlanFromEvents(events);
   const cleanIncomingText = cleanText(incomingCustomerText);
 
+  const isFreeform = scenario.id === 'freeform';
+
+  const freeformInstructions = isFreeform
+    ? `\nЭто СВОБОДНЫЙ ДИАЛОГ. Не следуй жёсткому сценарию.
+Веди естественный телефонный разговор: слушай, задавай уточняющие вопросы, реагируй на ответы.
+Адаптируй тему и стиль под ход беседы, но держи в фокусе задачу владельца.
+Если собеседник прощается или тема исчерпана — завершай звонок.`
+    : '';
+
   const systemPrompt = `Ты управляешь realtime AI-звонком владельца.
+Это ТЕЛЕФОННЫЙ разговор: будь кратким, естественным, разговорным. Не пиши длинных монологов.
 
 Сценарий: ${scenario.name}
 Цель сценария: ${scenario.goal || 'не указана'}
@@ -95,7 +105,7 @@ ${stringifyRules(scenario.policy.requiredSlots)}
 ${stringifyRules(scenario.policy.exitConditions)}
 - handoffRules:
 ${stringifyRules(scenario.policy.handoffRules)}
-
+${freeformInstructions}
 Говори по-русски, короткими телефонными фразами.
 Не обещай того, чего нет в контексте.
 Не используй Markdown, эмодзи и списки в ответе для абонента.

@@ -17,8 +17,8 @@ interface RateLimitConfig {
 }
 
 // Хранилище для rate limiting (в памяти)
-// В production можно заменить на Redis
 const rateLimitStore = new Map<string, RateLimitEntry>();
+const MAX_STORE_ENTRIES = 10_000;
 
 // Конфигурации для разных типов лимитов
 export const RATE_LIMIT_CONFIGS = {
@@ -42,6 +42,16 @@ export const RATE_LIMIT_CONFIGS = {
     windowMs: 60 * 1000,  // 1 минута
     maxRequests: 100,      // 100 запросов в минуту
   },
+  // Sensitive endpoints (/settings, /prompts) — strict
+  sensitive: {
+    windowMs: 60 * 1000,  // 1 минута
+    maxRequests: 10,       // 10 запросов в минуту
+  },
+  // Unauthenticated IP-based
+  ip: {
+    windowMs: 60 * 1000,  // 1 минута
+    maxRequests: 30,       // 30 запросов в минуту
+  },
 } as const;
 
 export type RateLimitType = keyof typeof RATE_LIMIT_CONFIGS;
@@ -57,9 +67,20 @@ export function checkRateLimit(
   const config = RATE_LIMIT_CONFIGS[type];
   const now = Date.now();
   
+  // Evict oldest entries if store is too large
+  if (rateLimitStore.size >= MAX_STORE_ENTRIES) {
+    const toDelete = rateLimitStore.size - MAX_STORE_ENTRIES + 100;
+    const iter = rateLimitStore.keys();
+    for (let i = 0; i < toDelete; i++) {
+      const k = iter.next().value;
+      if (k) rateLimitStore.delete(k);
+    }
+    serverLogger.warn({ evicted: toDelete, storeSize: rateLimitStore.size }, 'Rate limit store eviction');
+  }
+
   // Получить или создать запись
   let entry = rateLimitStore.get(key);
-  
+
   if (!entry || now - entry.windowStart >= config.windowMs) {
     // Новое окно
     entry = { count: 1, windowStart: now };
@@ -223,6 +244,8 @@ export function getRateLimitStats(): {
     chat: 0,
     telegram: 0,
     admin: 0,
+    sensitive: 0,
+    ip: 0,
   };
   
   for (const key of rateLimitStore.keys()) {
