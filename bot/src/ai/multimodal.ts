@@ -141,7 +141,7 @@ const getClient = async (): Promise<OpenAI> => {
   const apiKey = keys.openrouter;
 
   if (!apiKey) {
-    throw new Error('OPENROUTER_API_KEY не задан. Укажите в Render или в админке.');
+    throw new Error('OPENROUTER_API_KEY не задан. Укажите в переменных окружения или в админке.');
   }
 
   if (!openai || currentOpenRouterKey !== apiKey) {
@@ -514,7 +514,7 @@ export async function transcribeAudio(
   const groq = await getGroqClient();
   
   if (!groq) {
-    throw new AppError('GROQ_AUTH_ERROR', 'GROQ_API_KEY не настроен. Задайте его в Render или в админке для транскрипции голоса.');
+    throw new AppError('GROQ_AUTH_ERROR', 'GROQ_API_KEY не настроен. Задайте его в переменных окружения или в админке для транскрипции голоса.');
   }
 
   if (audioBuffer.length > MAX_GROQ_FILE_SIZE) {
@@ -558,7 +558,7 @@ async function transcribeAudioGroq(
   const groq = await getGroqClient();
   
   if (!groq) {
-    throw new Error('GROQ_API_KEY не настроен. Задайте его в Render или в админке.');
+    throw new Error('GROQ_API_KEY не настроен. Задайте его в переменных окружения или в админке.');
   }
 
   const mimeType = getMimeTypeFromFilename(filename);

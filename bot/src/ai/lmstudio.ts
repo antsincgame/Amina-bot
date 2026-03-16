@@ -25,7 +25,7 @@ export interface LMStudioDirectProbeResult {
   timeout: boolean;
 }
 
-const HEALTH_CACHE_TTL_MS = 30_000;
+const HEALTH_CACHE_TTL_MS = 60_000;
 const HEALTH_CHECK_TIMEOUT_MS = 25_000;
 const HEARTBEAT_VALID_MS = 180_000; // 3 min — если туннель слал heartbeat недавно, считаем Online
 const CONFIG_CACHE_TTL_MS = 60_000;
@@ -34,9 +34,13 @@ const DEFAULT_API_KEY = 'lm-studio';
 const healthCache = new SingleCache<boolean>(HEALTH_CACHE_TTL_MS);
 const configCache = new SingleCache<LMStudioConfig>(CONFIG_CACHE_TTL_MS);
 
+const RETRY_BACKOFF_MS = [1500, 3000, 5000] as const;
+const MAX_CONSECUTIVE_FAILURES = 3;
+
 let lmStudioClient: OpenAI | null = null;
 let currentLmStudioUrl = '';
 let currentLmStudioKey = '';
+let consecutiveFailures = 0;
 
 export async function getAIProvider(): Promise<AIProvider> {
   const value = await settingsRepo.get('ai_provider');
@@ -272,47 +276,73 @@ export async function probeLMStudioDirect(
 }
 
 async function checkLMStudioHealthDirect(cfg: LMStudioConfig): Promise<boolean> {
-  if (await isHeartbeatRecent(cfg.url)) {
+  const heartbeatUrl = await getHeartbeatUrl();
+  const heartbeatUrlMatches = heartbeatUrl
+    ? normalizeLMStudioBaseUrl(heartbeatUrl) === normalizeLMStudioBaseUrl(cfg.url)
+    : false;
+
+  if (heartbeatUrlMatches && await isHeartbeatRecent(cfg.url)) {
     healthCache.set(true);
+    consecutiveFailures = 0;
     aiLogger.debug({ url: cfg.url }, 'LM Studio healthy via heartbeat');
     return true;
+  }
+
+  if (!heartbeatUrlMatches && heartbeatUrl) {
+    aiLogger.warn(
+      { heartbeatUrl, configUrl: cfg.url },
+      'Heartbeat URL mismatch, ignoring heartbeat — using direct probe',
+    );
   }
 
   const cached = healthCache.get();
   if (cached !== null) return cached;
 
-  const firstAttempt = await probeLMStudioDirect(cfg, {
-    timeoutMs: HEALTH_CHECK_TIMEOUT_MS,
-    userAgent: 'Amina-Bot/1.0 (LM-Studio-Health)',
-  });
-  if (firstAttempt.healthy) {
-    healthCache.set(true);
-    aiLogger.debug({ url: cfg.url, endpoint: firstAttempt.endpoint }, 'LM Studio health check');
-    return true;
+  for (let attempt = 0; attempt < RETRY_BACKOFF_MS.length; attempt++) {
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, RETRY_BACKOFF_MS[attempt - 1]));
+    }
+
+    const result = await probeLMStudioDirect(cfg, {
+      timeoutMs: HEALTH_CHECK_TIMEOUT_MS,
+      userAgent: 'Amina-Bot/1.0 (LM-Studio-Health)',
+    });
+
+    if (result.healthy) {
+      healthCache.set(true);
+      consecutiveFailures = 0;
+      const msg = attempt === 0
+        ? 'LM Studio health check succeeded'
+        : `LM Studio health check succeeded on retry #${attempt}`;
+      aiLogger.info({ url: cfg.url, endpoint: result.endpoint, attempt }, msg);
+      return true;
+    }
+
+    if (result.status > 0) {
+      aiLogger.info(
+        { url: cfg.url, status: result.status, endpoint: result.endpoint, attempt },
+        'LM Studio health check: non-OK response',
+      );
+    } else if (result.error) {
+      aiLogger.info(
+        { url: cfg.url, error: result.error, timeout: result.timeout, endpoint: result.endpoint, attempt },
+        'LM Studio health check failed (Server may not reach Cloudflare tunnel)',
+      );
+    }
   }
 
-  if (firstAttempt.status > 0) {
-    aiLogger.info(
-      { url: cfg.url, status: firstAttempt.status, endpoint: firstAttempt.endpoint },
-      'LM Studio health check: non-OK response'
-    );
-  } else if (firstAttempt.error) {
-    aiLogger.info(
-      { url: cfg.url, error: firstAttempt.error, timeout: firstAttempt.timeout, endpoint: firstAttempt.endpoint },
-      'LM Studio health check failed (Server may not reach Cloudflare tunnel)'
-    );
-  }
+  consecutiveFailures++;
+  healthCache.set(false);
 
-  await new Promise((resolve) => setTimeout(resolve, 1500));
-
-  const retryAttempt = await probeLMStudioDirect(cfg, {
-    timeoutMs: HEALTH_CHECK_TIMEOUT_MS,
-    userAgent: 'Amina-Bot/1.0 (LM-Studio-Health)',
-  });
-  if (retryAttempt.healthy) {
-    healthCache.set(true);
-    aiLogger.info({ url: cfg.url, endpoint: retryAttempt.endpoint }, 'LM Studio health check succeeded on retry');
-    return true;
+  if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+    aiLogger.warn(
+      { url: cfg.url, consecutiveFailures },
+      'LM Studio unreachable after consecutive failures — clearing client cache for fresh reconnect',
+    );
+    lmStudioClient = null;
+    currentLmStudioUrl = '';
+    currentLmStudioKey = '';
+    consecutiveFailures = 0;
   }
 
   return false;
@@ -390,7 +420,7 @@ export async function probeLMStudioTunnelUrl(tunnelUrl: string): Promise<boolean
 
 /**
  * Прямая проверка доступности LM Studio через tunnel URL.
- * Обходит heartbeat и кэш — Render реально делает HTTP-запрос к tunnel.
+ * Обходит heartbeat и кэш — реально делает HTTP-запрос к tunnel.
  * Таймаут 10 с, без retry — для быстрого ответа в /api/tunnel/register.
  */
 export async function checkLMStudioReachable(cfg: LMStudioConfig): Promise<boolean> {

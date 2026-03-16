@@ -18,7 +18,45 @@ const PERPLEXITY_BASE_URL = 'https://api.perplexity.ai';
 /** Cheapest model for web search: Sonar ($1/1M input, $1/1M output) */
 const DEFAULT_MODEL = 'sonar';
 
-async function perplexityChat(args) {
+interface PerplexityChatArgs {
+  message: string;
+  system?: string;
+  max_tokens?: number;
+  model?: string;
+}
+
+interface PerplexityMessage {
+  role: 'system' | 'user';
+  content: string;
+}
+
+interface PerplexityUsage {
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+}
+
+interface PerplexityResponse {
+  choices?: Array<{ message?: { content?: string } }>;
+  model?: string;
+  usage?: PerplexityUsage;
+  citations?: string[];
+  search_results?: unknown[];
+}
+
+interface PerplexityChatResult {
+  content: string;
+  model: string;
+  usage: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+  };
+  citations?: string[];
+  search_results?: unknown[];
+}
+
+async function perplexityChat(args: PerplexityChatArgs): Promise<PerplexityChatResult> {
   if (!PERPLEXITY_API_KEY) {
     throw new Error('PERPLEXITY_API_KEY must be set');
   }
@@ -32,7 +70,7 @@ async function perplexityChat(args) {
     throw new Error('message is required');
   }
 
-  const messages = [];
+  const messages: PerplexityMessage[] = [];
   if (system && system.trim()) {
     messages.push({ role: 'system', content: system.trim() });
   }
@@ -62,7 +100,7 @@ async function perplexityChat(args) {
     const errText = await res.text();
     let errMessage = `Perplexity API error ${res.status}: ${res.statusText}`;
     try {
-      const errJson = JSON.parse(errText);
+      const errJson = JSON.parse(errText) as { error?: { message?: string } };
       if (errJson.error?.message) errMessage = errJson.error.message;
     } catch {
       if (errText) errMessage += ` - ${errText.slice(0, 500)}`;
@@ -70,10 +108,10 @@ async function perplexityChat(args) {
     throw new Error(errMessage);
   }
 
-  const data = await res.json();
+  const data = await res.json() as PerplexityResponse;
   const choice = data.choices?.[0];
   const content = choice?.message?.content ?? '';
-  const usage = data.usage ?? {};
+  const usage = data.usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
   const citations = data.citations ?? [];
   const searchResults = data.search_results ?? [];
 
@@ -96,7 +134,7 @@ const tools = [
     description:
       'Ask a question and get an answer with web search. Uses the cheapest Perplexity model (sonar) for internet search. Good for factual, up-to-date information.',
     inputSchema: {
-      type: 'object',
+      type: 'object' as const,
       properties: {
         message: {
           type: 'string',
@@ -132,19 +170,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   if (name !== 'perplexity_search') {
     return {
-      content: [{ type: 'text', text: `Unknown tool: ${name}` }],
+      content: [{ type: 'text' as const, text: `Unknown tool: ${name}` }],
       isError: true,
     };
   }
 
   try {
-    const result = await perplexityChat(args || {});
+    const result = await perplexityChat((args || {}) as PerplexityChatArgs);
     return {
-      content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+      content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
     };
   } catch (error) {
+    const err = error as Error;
     return {
-      content: [{ type: 'text', text: `Error: ${error.message}` }],
+      content: [{ type: 'text' as const, text: `Error: ${err.message}` }],
       isError: true,
     };
   }

@@ -1,13 +1,16 @@
 {
   "name": "amina-mcp-servers",
-  "version": "1.0.0",
-  "description": "MCP servers for Coolify and Perplexity",
+  "version": "1.1.0",
+  "description": "MCP servers for Perplexity web search",
   "type": "module",
   "scripts": {
-    "render": "node render-server.js",
-    "perplexity": "node perplexity-server.js"
+    "perplexity": "tsx perplexity-server.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0"
   }
 }
