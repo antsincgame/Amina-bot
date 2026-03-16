@@ -1,0 +1,306 @@
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { settingsRepo } from '../../db/index.js';
+import { aiLogger } from '../../config/logger.js';
+import { config, getApiKeys } from '../../config/index.js';
+import { getProxyHeaders } from '../../config/ai-proxy.js';
+import { getAllAudioModels, getFreeVisionModels, refreshFreeVisionModelsCache, getVisionFallbackStatus } from '../../ai/multimodal.js';
+
+export async function registerModelsRoutes(server: FastifyInstance): Promise<void> {
+  /**
+   * GET /api/models/vision
+   */
+  server.get('/models/vision', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const models = await getFreeVisionModels();
+      const fallbackStatus = getVisionFallbackStatus();
+      const currentModel = await settingsRepo.get('vision_model');
+      return reply.code(200).send({
+        success: true,
+        data: {
+          models,
+          currentModel: currentModel || 'allenai/molmo-2-8b:free',
+          fallbackStatus,
+        },
+      });
+    } catch (error) {
+      aiLogger.error({ error }, 'Get vision models error');
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to fetch vision models',
+      });
+    }
+  });
+
+  /**
+   * POST /api/models/vision/refresh
+   */
+  server.post('/models/vision/refresh', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const freshModels = await refreshFreeVisionModelsCache();
+      return reply.code(200).send({
+        success: true,
+        data: { models: freshModels, count: freshModels.length },
+      });
+    } catch (error) {
+      aiLogger.error({ error }, 'Refresh vision models error');
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to refresh vision models',
+      });
+    }
+  });
+
+  /**
+   * GET /api/models/audio
+   */
+  server.get('/models/audio', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const models = getAllAudioModels();
+      return reply.code(200).send({
+        success: true,
+        data: models,
+      });
+    } catch (error) {
+      aiLogger.error({ error }, 'Get audio models error');
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to fetch audio models',
+      });
+    }
+  });
+
+  /**
+   * GET /api/models/openrouter/vision
+   */
+  server.get('/models/openrouter/vision', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const models = await refreshFreeVisionModelsCache();
+      aiLogger.info({ count: models.length }, 'Fetched free vision models from OpenRouter');
+      return reply.code(200).send({
+        success: true,
+        data: { free: models },
+        source: 'openrouter',
+      });
+    } catch (error) {
+      aiLogger.error({ error }, 'Fetch OpenRouter vision models error');
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to fetch vision models from OpenRouter',
+      });
+    }
+  });
+
+  /**
+   * GET /api/models/openrouter/audio
+   */
+  server.get('/models/openrouter/audio', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const keys = await getApiKeys();
+      const apiKey = keys.openrouter || config.ai.apiKey;
+      const response = await fetch(`${config.ai.baseUrl}/models`, {
+        headers: getProxyHeaders({
+          'Authorization': `Bearer ${apiKey}`,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`OpenRouter API error: ${response.status}`);
+      }
+
+      const data = await response.json() as { data: Array<{
+        id: string;
+        name: string;
+        description?: string;
+        pricing: { prompt: string; completion: string };
+        architecture?: { input_modalities?: string[] };
+      }> };
+
+      // Filter models that support audio input
+      const audioModels = data.data.filter(model =>
+        model.architecture?.input_modalities?.includes('audio')
+      );
+
+      const free = audioModels
+        .filter(m => m.pricing.prompt === '0' && m.pricing.completion === '0')
+        .map(m => ({
+          id: m.id,
+          name: m.name,
+          description: m.description || 'Audio модель',
+        }));
+
+      const premium = audioModels
+        .filter(m => m.pricing.prompt !== '0' || m.pricing.completion !== '0')
+        .slice(0, 10)
+        .map(m => ({
+          id: m.id,
+          name: m.name,
+          description: m.description || 'Audio модель (платная)',
+        }));
+
+      aiLogger.info({ freeCount: free.length, premiumCount: premium.length }, 'Fetched audio models from OpenRouter');
+
+      return reply.code(200).send({
+        success: true,
+        data: { free, premium },
+        source: 'openrouter',
+      });
+    } catch (error) {
+      aiLogger.error({ error }, 'Fetch OpenRouter audio models error');
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to fetch audio models from OpenRouter',
+      });
+    }
+  });
+
+  /**
+   * GET /api/models/openrouter/image
+   */
+  server.get('/models/openrouter/image', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const keys = await getApiKeys();
+      const apiKey = keys.openrouter || config.ai.apiKey;
+      const response = await fetch(`${config.ai.baseUrl}/models`, {
+        headers: getProxyHeaders({
+          'Authorization': `Bearer ${apiKey}`,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`OpenRouter API error: ${response.status}`);
+      }
+
+      const data = await response.json() as { data: Array<{
+        id: string;
+        name: string;
+        description?: string;
+        pricing: { prompt: string; completion: string; image?: string };
+        context_length?: number;
+        architecture?: {
+          modality?: string;
+          output_modalities?: string[];
+        };
+      }> };
+
+      const imageModels = data.data.filter(model => {
+        if (model.architecture?.output_modalities?.includes('image')) return true;
+        if (model.architecture?.modality === 'image') return true;
+        const id = model.id.toLowerCase();
+        if (id.includes('flux')) return true;
+        if (id.includes('dall-e')) return true;
+        if (id.includes('riverflow')) return true;
+        if (id.includes('gemini') && id.includes('image')) return true;
+        if (id.includes('gpt') && id.includes('image')) return true;
+        return false;
+      });
+
+      // Sort by price (cheapest first)
+      const sortedModels = imageModels
+        .map(m => {
+          const pricePerToken = m.pricing.image
+            ? parseFloat(m.pricing.image)
+            : parseFloat(m.pricing.completion);
+
+          const pricePerImage = pricePerToken * 1000;
+
+          return {
+            id: m.id,
+            name: m.name,
+            description: m.description || 'Image generation model',
+            pricing: {
+              input: parseFloat(m.pricing.prompt),
+              output: pricePerToken,
+              perImage: pricePerImage,
+            },
+            contextLength: m.context_length,
+          };
+        })
+        .filter(m => m.pricing.perImage >= 0)
+        .sort((a, b) => a.pricing.perImage - b.pricing.perImage);
+
+      const cheap = sortedModels.filter(m => m.pricing.perImage <= 0.05).slice(0, 10);
+      const premiumImg = sortedModels.filter(m => m.pricing.perImage > 0.05).slice(0, 10);
+
+      aiLogger.info({
+        totalModels: sortedModels.length,
+        cheapCount: cheap.length,
+        premiumCount: premiumImg.length,
+        cheapestModel: cheap[0]?.id,
+        cheapestPrice: cheap[0]?.pricing.perImage,
+      }, 'Fetched image generation models from OpenRouter');
+
+      return reply.code(200).send({
+        success: true,
+        data: {
+          cheap,
+          premium: premiumImg,
+          all: sortedModels.slice(0, 20),
+        },
+        source: 'openrouter',
+      });
+    } catch (error) {
+      aiLogger.error({ error }, 'Fetch OpenRouter image models error');
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to fetch image models from OpenRouter',
+      });
+    }
+  });
+
+  /**
+   * GET /api/models/fallback
+   */
+  server.get('/models/fallback', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { getFallbackModels, getFallbackStatus } = await import('../../ai/openrouter.js');
+      const fallbackModels = await getFallbackModels();
+      const status = await getFallbackStatus();
+
+      return reply.code(200).send({
+        success: true,
+        data: {
+          enabled: true,
+          models: fallbackModels,
+          currentModel: status.currentModel,
+          lastSwitchReason: status.lastSwitchReason,
+          lastSwitchTime: status.lastSwitchTime,
+          cachedModels: status.cachedModels,
+          cacheAge: status.cacheAge,
+        },
+      });
+    } catch (error) {
+      aiLogger.error({ error }, 'Fallback models info error');
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to get fallback models info',
+      });
+    }
+  });
+
+  /**
+   * POST /api/models/fallback/refresh
+   */
+  server.post('/models/fallback/refresh', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const { refreshFreeModelsCache } = await import('../../ai/openrouter.js');
+      const models = await refreshFreeModelsCache();
+
+      aiLogger.info({ count: models.length }, 'Free models cache refreshed');
+
+      return reply.code(200).send({
+        success: true,
+        data: {
+          modelsCount: models.length,
+          models: models,
+          message: 'Free models cache refreshed from OpenRouter API',
+        },
+      });
+    } catch (error) {
+      aiLogger.error({ error }, 'Failed to refresh free models cache');
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to refresh free models cache',
+      });
+    }
+  });
+}
