@@ -597,7 +597,9 @@ async function main() {
 
   // Start dashboard & open browser
   startDashboard();
-  setTimeout(() => openBrowser(`http://localhost:${CONFIG.dashboardPort}`), 1000);
+  if (!process.versions.electron) {
+    setTimeout(() => openBrowser(`http://localhost:${CONFIG.dashboardPort}`), 1000);
+  }
 
   const cfBin = await ensureCloudflared();
   if (!cfBin) { await sleep(30000); process.exit(1); }

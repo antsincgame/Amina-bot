@@ -1,0 +1,30 @@
+{
+  "name": "amina-tunnel",
+  "version": "1.0.0",
+  "description": "Amina LM Studio Tunnel",
+  "main": "main.js",
+  "author": "igor1000rr",
+  "license": "ISC",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win portable"
+  },
+  "build": {
+    "appId": "by.vibecoding.amina-tunnel",
+    "productName": "Amina Tunnel",
+    "win": {
+      "target": "portable"
+    },
+    "portable": {
+      "artifactName": "amina-tunnel.exe"
+    },
+    "files": [
+      "main.js",
+      "tunnel.js"
+    ]
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  }
+}
