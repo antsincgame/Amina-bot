@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, nativeImage, ipcMain } = require('electron');
+const { app, BrowserWindow, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const { execSync } = require('child_process');
 
@@ -14,7 +14,9 @@ let tray = null;
 //  Autostart (Windows registry)
 // ============================================
 function getExePath() {
-  // For portable exe, process.execPath points to the exe
+  // Electron portable sets PORTABLE_EXECUTABLE_FILE to the actual exe
+  const portablePath = process.env.PORTABLE_EXECUTABLE_FILE;
+  if (portablePath) return `"${portablePath}"`;
   return `"${process.execPath}"`;
 }
 
@@ -97,12 +99,21 @@ function createWindow() {
     },
   });
 
-  mainWindow.loadURL('http://127.0.0.1:9876');
   mainWindow.removeMenu();
 
+  // Retry loading in case dashboard server isn't ready yet
+  const loadDashboard = () => {
+    mainWindow.loadURL('http://127.0.0.1:9876').catch(() => {
+      setTimeout(loadDashboard, 1000);
+    });
+  };
+  loadDashboard();
+
   mainWindow.on('close', (e) => {
-    e.preventDefault();
-    mainWindow.hide();
+    if (!app.isQuitting) {
+      e.preventDefault();
+      mainWindow.hide();
+    }
   });
 }
 
@@ -115,7 +126,7 @@ function updateTrayMenu() {
       setAutoStart(item.checked);
     }},
     { type: 'separator' },
-    { label: 'Quit', click: () => { mainWindow.destroy(); app.quit(); } },
+    { label: 'Quit', click: () => { app.isQuitting = true; mainWindow.destroy(); app.quit(); } },
   ]));
 }
 
@@ -128,6 +139,8 @@ function createTray() {
   updateTrayMenu();
   tray.on('double-click', () => mainWindow.show());
 }
+
+app.isQuitting = false;
 
 app.whenReady().then(() => {
   setTimeout(() => {

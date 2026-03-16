@@ -401,12 +401,47 @@ async function startTunnel(cfBin) {
     STATE.tunnel = true;
     STATE.tunnelUrl = currentUrl;
     log(`Tunnel URL: ${currentUrl}`);
+
+    // Wait for tunnel to propagate through Cloudflare
+    log('Waiting for tunnel to stabilize...');
+    await sleep(5000);
+
+    // Verify tunnel works locally before registering with bot
+    let tunnelVerified = false;
+    for (let v = 0; v < 5; v++) {
+      const { status } = await httpGet(`${currentUrl}/v1/models`, 10000);
+      if (status === 200 || status === 401 || status === 403) {
+        tunnelVerified = true;
+        log('Tunnel verified — LM Studio is accessible via tunnel');
+        break;
+      }
+      if (v < 4) {
+        dim(`Tunnel not ready yet (attempt ${v+1}/5, status=${status}), waiting 3s...`);
+        await sleep(3000);
+      }
+    }
+
+    if (!tunnelVerified) {
+      warn('Could not verify tunnel locally. Proceeding with registration anyway...');
+    }
+
+    // Register with bot (retry up to 3 times)
     log(`Registering with bot at ${CONFIG.botApiUrl}...`);
-    if (await registerUrl(currentUrl)) {
-      STATE.botRegistered = true;
-      log('Registered successfully');
-    } else {
-      warn('Registration failed. Will retry via heartbeat.');
+    let registered = false;
+    for (let r = 0; r < 3; r++) {
+      if (await registerUrl(currentUrl)) {
+        registered = true;
+        STATE.botRegistered = true;
+        log('Registered successfully');
+        break;
+      }
+      if (r < 2) {
+        warn(`Registration attempt ${r+1}/3 failed, retrying in 5s...`);
+        await sleep(5000);
+      }
+    }
+    if (!registered) {
+      warn('Registration failed after 3 attempts. Will retry via heartbeat.');
     }
     STATE.phase = 'connected';
     return true;
