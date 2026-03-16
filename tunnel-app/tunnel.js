@@ -455,6 +455,16 @@ function getDashboardHTML() {
   .lm.info{color:var(--green)}.lm.warn{color:var(--yellow)}.lm.error{color:var(--red)}.lm.dim{color:var(--text2)}
   .footer{text-align:center;padding:20px 0;color:var(--text2);font-size:12px}
   .footer a{color:var(--cyan);text-decoration:none}
+  .settings-bar{background:var(--bg2);border:1px solid var(--border);border-radius:14px;padding:16px 20px;margin-bottom:20px;
+    display:flex;align-items:center;justify-content:space-between}
+  .setting-item{display:flex;align-items:center;gap:12px}
+  .setting-label{font-family:'JetBrains Mono',monospace;font-size:13px;color:var(--text2)}
+  .toggle{position:relative;width:44px;height:24px;display:inline-block}
+  .toggle input{opacity:0;width:0;height:0}
+  .slider{position:absolute;cursor:pointer;inset:0;background:var(--bg3);border:1px solid var(--border);border-radius:24px;transition:.3s}
+  .slider:before{content:'';position:absolute;height:18px;width:18px;left:2px;bottom:2px;background:var(--text2);border-radius:50%;transition:.3s}
+  .toggle input:checked+.slider{background:rgba(0,229,255,.2);border-color:var(--cyan)}
+  .toggle input:checked+.slider:before{transform:translateX(20px);background:var(--cyan)}
 </style>
 </head>
 <body>
@@ -489,6 +499,12 @@ function getDashboardHTML() {
   </div>
   <div class="log-header"><h2>Live Log</h2></div>
   <div class="log-box" id="lb"></div>
+  <div class="settings-bar">
+    <div class="setting-item">
+      <span class="setting-label">Автозапуск с Windows</span>
+      <label class="toggle"><input type="checkbox" id="as" onchange="toggleAutostart(this.checked)"><span class="slider"></span></label>
+    </div>
+  </div>
   <div class="footer">Amina LM Studio Tunnel &middot; <a href="https://amina.vibecoding.by" target="_blank">amina.vibecoding.by</a></div>
 </div>
 <script>
@@ -517,6 +533,11 @@ setInterval(poll,2000);poll();
 const sse=new EventSource('/api/logs/stream');
 sse.onmessage=(e)=>{try{A(JSON.parse(e.data));}catch{}};
 (async()=>{try{const r=await fetch('/api/logs');(await r.json()).forEach(A);}catch{}})();
+async function toggleAutostart(enabled){
+  try{await fetch('http://127.0.0.1:9877/api/autostart',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})});
+  }catch{document.getElementById('as').checked=!enabled;}
+}
+(async()=>{try{const r=await fetch('http://127.0.0.1:9877/api/autostart');const d=await r.json();document.getElementById('as').checked=d.enabled;}catch{}})();
 </script>
 </body>
 </html>`;
