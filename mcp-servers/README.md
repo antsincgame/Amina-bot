@@ -1,6 +1,5 @@
 # MCP Серверы для Amina
 
-MCP (Model Context Protocol) серверы для интеграции Cursor с Render, Supabase и Perplexity (поиск в интернете).
 
 ## Установка
 
@@ -14,11 +13,9 @@ npm install
 Создайте файл `.env` в корне проекта или экспортируйте переменные:
 
 ```bash
-# Render
+# Coolify
 export RENDER_API_KEY="rnd_xxxxxxxxxxxxxx"
 
-# Supabase  
-export SUPABASE_URL="https://xxxxx.supabase.co"
 export SUPABASE_SERVICE_KEY="eyJhbGciOiJIUzI1NiIsInR..."
 
 # Perplexity (поиск в интернете, модель sonar — самая дешёвая)
@@ -29,8 +26,7 @@ export PERPLEXITY_API_KEY="pplx-xxxxxxxxxxxx"
 
 | Сервис | Где найти |
 |--------|-----------|
-| **Render** | Dashboard → Account Settings → API Keys |
-| **Supabase** | Project Settings → API → service_role key |
+| **Coolify** | Dashboard → Account Settings → API Keys |
 | **Perplexity** | https://www.perplexity.ai/settings/api |
 
 ## Подключение в Cursor
@@ -46,7 +42,7 @@ export PERPLEXITY_API_KEY="pplx-xxxxxxxxxxxx"
 3. Нажмите **Add Server**
 4. Заполните для каждого сервера:
 
-**Render:**
+**Coolify:**
 ```
 Name: render
 Command: node
@@ -54,13 +50,9 @@ Args: /полный/путь/к/mcp-servers/render-server.js
 Environment: RENDER_API_KEY=ваш_ключ
 ```
 
-**Supabase:**
 ```
-Name: supabase
 Command: node
-Args: /полный/путь/к/mcp-servers/supabase-server.js
 Environment: 
-  SUPABASE_URL=https://xxx.supabase.co
   SUPABASE_SERVICE_KEY=ваш_ключ
 ```
 
@@ -77,11 +69,10 @@ Environment: PERPLEXITY_API_KEY=pplx-ваш_ключ
 После подключения серверов, в Cursor появятся новые инструменты. Попробуйте:
 
 ```
-Покажи список сервисов на Render
+Покажи список сервисов на Coolify
 ```
 
 ```
-Выбери последние 10 записей из таблицы analytics в Supabase
 ```
 
 ```
@@ -91,7 +82,7 @@ Environment: PERPLEXITY_API_KEY=pplx-ваш_ключ
 
 ## Доступные инструменты
 
-### Render (8 инструментов)
+### Coolify (8 инструментов)
 - `render_list_services` — список сервисов
 - `render_get_service` — детали сервиса
 - `render_deploy_service` — запустить деплой
@@ -101,17 +92,6 @@ Environment: PERPLEXITY_API_KEY=pplx-ваш_ключ
 - `render_get_logs` — логи
 - `render_restart_service` — перезапуск
 
-### Supabase (10 инструментов)
-- `supabase_select` — SELECT запрос
-- `supabase_insert` — INSERT данных
-- `supabase_update` — UPDATE данных
-- `supabase_delete` — DELETE данных
-- `supabase_list_tables` — список таблиц
-- `supabase_list_users` — пользователи Auth
-- `supabase_get_user` — данные пользователя
-- `supabase_storage_list` — файлы Storage
-- `supabase_rpc` — вызов функций
-- `supabase_query` — raw SQL (ограничен)
 
 ### Perplexity (1 инструмент)
 - `perplexity_search` — ответ на вопрос с поиском в интернете (модель sonar, самая дешёвая)
@@ -124,7 +104,7 @@ Environment: PERPLEXITY_API_KEY=pplx-ваш_ключ
 RENDER_API_KEY=xxx node render-server.js
 ```
 
-Если видите `Render MCP server started` — сервер работает.
+Если видите `Coolify MCP server started` — сервер работает.
 
 ## Структура
 
@@ -132,7 +112,6 @@ RENDER_API_KEY=xxx node render-server.js
 mcp-servers/
 ├── package.json
 ├── README.md
-├── render-server.js       # Render MCP Server
-├── supabase-server.js     # Supabase MCP Server
+├── render-server.js       # Coolify MCP Server
 └── perplexity-server.js  # Perplexity MCP Server (поиск в интернете)
 ```

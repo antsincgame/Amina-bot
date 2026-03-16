@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { aiService } from '../ai/openrouter.js';
-import { conversationsRepo, settingsRepo, promptsRepo, getSupabase } from '../db/index.js';
+import { conversationsRepo, settingsRepo, promptsRepo } from '../db/index.js';
 import { validateMessageContent, validateUserId } from '../utils/validation.js';
 import { aiLogger, getLogs, getLogStats } from '../config/logger.js';
 import { rateLimitHook } from '../utils/rate-limiter.js';
@@ -188,29 +188,19 @@ async function requireAdminAuth(
     return null;
   }
 
-  if (config.dbBackend === 'appwrite') {
-    // Validate Appwrite JWT
-    try {
-      const { Client: AWClient, Account: AWAccount } = await import('node-appwrite');
-      const client = new AWClient()
-        .setEndpoint(config.appwrite.endpoint)
-        .setProject(config.appwrite.projectId)
-        .setJWT(token);
-      const acc = new AWAccount(client);
-      const user = await acc.get();
-      return { userId: user.$id, email: user.email ?? null };
-    } catch {
-      await reply.code(403).send({ success: false, error: 'Invalid admin session' });
-      return null;
-    }
-  } else {
-    // Validate legacy JWT
-    const { data, error } = await getSupabase().auth.getUser(token);
-    if (error || !data.user) {
-      await reply.code(403).send({ success: false, error: 'Invalid admin session' });
-      return null;
-    }
-    return { userId: data.user.id, email: data.user.email ?? null };
+  // Validate Appwrite JWT
+  try {
+    const { Client: AWClient, Account: AWAccount } = await import('node-appwrite');
+    const client = new AWClient()
+      .setEndpoint(config.appwrite.endpoint)
+      .setProject(config.appwrite.projectId)
+      .setJWT(token);
+    const acc = new AWAccount(client);
+    const user = await acc.get();
+    return { userId: user.$id, email: user.email ?? null };
+  } catch {
+    await reply.code(403).send({ success: false, error: 'Invalid admin session' });
+    return null;
   }
 }
 
@@ -1723,7 +1713,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
           };
           try {
             const selectedPipeline: DigestPipelineMode =
-              pipeline === 'hybrid' || pipeline === 'hybrid_appwrite' || pipeline === 'hybrid_supabase'
+              pipeline === 'hybrid' || pipeline === 'hybrid_appwrite'
                 ? 'hybrid_appwrite'
                 : 'legacy';
             const forceRefresh = refresh === '1' || refresh.toLowerCase() === 'true';
@@ -1837,49 +1827,6 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
       // ============================================
       // Database Migration (self-service)
       // ============================================
-
-      /**
-       * POST /api/migrate/voice-messages — создать таблицу voice_messages
-       * Безопасно: IF NOT EXISTS, можно вызывать повторно
-       */
-      apiServer.post(
-        '/migrate/voice-messages',
-        async (_request: FastifyRequest, reply: FastifyReply) => {
-          try {
-            // NOTE: Migration endpoint — legacy, not used
-            const sb = (await import('../db/supabase.js')).getSupabase();
-            
-            // Check if table already exists
-            const { error: checkError } = await sb.from('voice_messages').select('id').limit(1);
-            if (!checkError) {
-              return reply.code(200).send({ success: true, message: 'Table already exists' });
-            }
-
-            // Legacy migration helper
-            // Since we can't run DDL via PostgREST, we need the table created via Appwrite Console
-            // This endpoint validates the state and returns instructions
-            return reply.code(200).send({
-              success: false,
-              message: 'Table does not exist. Please run the following SQL in Appwrite Console → SQL Editor:',
-              sql: `CREATE TABLE IF NOT EXISTS voice_messages (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id TEXT NOT NULL,
-  file_path TEXT NOT NULL,
-  duration INTEGER DEFAULT 0,
-  file_size INTEGER DEFAULT 0,
-  transcription TEXT,
-  telegram_file_id TEXT,
-  created_at TIMESTAMPTZ DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS idx_voice_messages_user ON voice_messages(user_id);
-CREATE INDEX IF NOT EXISTS idx_voice_messages_created ON voice_messages(created_at DESC);`,
-            });
-          } catch (error) {
-            const msg = error instanceof Error ? error.message : 'Unknown error';
-            return reply.code(500).send({ success: false, error: msg });
-          }
-        },
-      );
 
       // ============================================
       // Voice Messages API

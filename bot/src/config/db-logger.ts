@@ -1,17 +1,17 @@
 /**
- * Database Logger — dual backend (Appwrite primary)
+ * Database Logger — Appwrite backend
  * Записывает логи warn/error/fatal в БД
  */
 
 import { config } from './index.js';
-import { getSupabase } from '../db/index.js';
+
 import { ID, Query } from 'node-appwrite';
 import type { SystemLog, LogLevel } from '../../../shared/types/index.js';
 
 let _aw: import('node-appwrite').Databases | null = null;
 async function getAW() { if (!_aw) { const { getAppwrite } = await import('../db/appwrite.js'); _aw = getAppwrite(); } return _aw; }
 const DB_ID = () => config.appwrite.databaseId;
-const useAW = () => config.dbBackend === 'appwrite';
+
 const COLL = 'amina_system_logs';
 
 let logQueue: Omit<SystemLog, 'id'>[] = [];
@@ -45,29 +45,22 @@ export async function flushLogs(): Promise<void> {
   logQueue = [];
 
   try {
-    if (useAW()) {
-      const aw = await getAW();
-      // Batch insert — create docs one by one (Appwrite has no batch insert)
-      const promises = logsToInsert.slice(0, 50).map(log =>
-        aw.createDocument(DB_ID(), COLL, ID.unique(), {
-          level: log.level,
-          module: log.module,
-          message: (log.message || '').slice(0, 10000),
-          data: log.data ? JSON.stringify(log.data).slice(0, 100000) : null,
-          error_stack: log.error_stack?.slice(0, 50000) || null,
-          user_id: log.user_id || null,
-          request_id: log.request_id || null,
-          timestamp: log.timestamp || new Date().toISOString(),
-        }).catch(() => {})
-      );
-      await Promise.allSettled(promises);
-    } else {
-      const { error } = await getSupabase().from('system_logs').insert(logsToInsert);
-      if (error) {
-        process.stderr.write(`[DB Logger] Failed to insert logs: ${error.message}\n`);
-        logQueue = [...logsToInsert.slice(0, 50), ...logQueue.slice(0, 50)];
-      }
-    }
+    const aw = await getAW();
+    // Batch insert — create docs one by one (Appwrite has no batch insert)
+    const promises = logsToInsert.slice(0, 50).map(log =>
+      aw.createDocument(DB_ID(), COLL, ID.unique(), {
+        level: log.level,
+        module: log.module,
+        message: (log.message || '').slice(0, 10000),
+        data: log.data ? JSON.stringify(log.data).slice(0, 100000) : null,
+        error_stack: log.error_stack?.slice(0, 50000) || null,
+        user_id: log.user_id || null,
+        request_id: log.request_id || null,
+        timestamp: log.timestamp || new Date().toISOString(),
+      }).catch(() => {})
+    );
+    await Promise.allSettled(promises);
+
   } catch (err) {
     process.stderr.write(`[DB Logger] Exception during flush: ${err}\n`);
   }
@@ -121,30 +114,19 @@ export function logFatal(module: string, message: string, error?: Error | unknow
 
 export async function getLogs(params: { level?: LogLevel; module?: string; from?: Date; to?: Date; limit?: number }): Promise<SystemLog[]> {
   try {
-    if (useAW()) {
-      const queries: string[] = [Query.orderDesc('timestamp')];
-      if (params.level) queries.push(Query.equal('level', params.level));
-      if (params.module) queries.push(Query.equal('module', params.module));
-      if (params.from) queries.push(Query.greaterThanEqual('timestamp', params.from.toISOString()));
-      if (params.to) queries.push(Query.lessThanEqual('timestamp', params.to.toISOString()));
-      queries.push(Query.limit(params.limit || 100));
-      const r = await (await getAW()).listDocuments(DB_ID(), COLL, queries);
-      return r.documents.map((d: any) => ({
-        id: d.$id, level: d.level, module: d.module, message: d.message,
-        data: d.data ? JSON.parse(d.data) : undefined, error_stack: d.error_stack,
-        user_id: d.user_id, request_id: d.request_id, timestamp: d.timestamp,
-      }));
-    } else {
-      let query = getSupabase().from('system_logs').select('*').order('timestamp', { ascending: false });
-      if (params.level) query = query.eq('level', params.level);
-      if (params.module) query = query.eq('module', params.module);
-      if (params.from) query = query.gte('timestamp', params.from.toISOString());
-      if (params.to) query = query.lte('timestamp', params.to.toISOString());
-      if (params.limit) query = query.limit(params.limit);
-      const { data, error } = await query;
-      if (error) { process.stderr.write(`[DB Logger] Failed to get logs: ${error.message}\n`); return []; }
-      return (data ?? []) as SystemLog[];
-    }
+    const queries: string[] = [Query.orderDesc('timestamp')];
+    if (params.level) queries.push(Query.equal('level', params.level));
+    if (params.module) queries.push(Query.equal('module', params.module));
+    if (params.from) queries.push(Query.greaterThanEqual('timestamp', params.from.toISOString()));
+    if (params.to) queries.push(Query.lessThanEqual('timestamp', params.to.toISOString()));
+    queries.push(Query.limit(params.limit || 100));
+    const r = await (await getAW()).listDocuments(DB_ID(), COLL, queries);
+    return r.documents.map((d: any) => ({
+      id: d.$id, level: d.level, module: d.module, message: d.message,
+      data: d.data ? JSON.parse(d.data) : undefined, error_stack: d.error_stack,
+      user_id: d.user_id, request_id: d.request_id, timestamp: d.timestamp,
+    }));
+
   } catch { return []; }
 }
 
@@ -152,23 +134,17 @@ export async function getLogStats(from: Date, to: Date): Promise<{ total: number
   const empty = { total: 0, byLevel: { debug: 0, info: 0, warn: 0, error: 0, fatal: 0 } as Record<LogLevel, number>, byModule: {} as Record<string, number> };
   try {
     let logs: Array<{ level: string; module: string }> = [];
-    if (useAW()) {
-      const all: any[] = []; let offset = 0;
-      while (offset < 5000) {
-        const r = await (await getAW()).listDocuments(DB_ID(), COLL, [
-          Query.greaterThanEqual('timestamp', from.toISOString()),
-          Query.lessThanEqual('timestamp', to.toISOString()),
-          Query.limit(100), Query.offset(offset),
-        ]);
-        all.push(...r.documents); if (r.documents.length < 100) break; offset += 100;
-      }
-      logs = all.map(d => ({ level: d.level, module: d.module }));
-    } else {
-      const { data, error } = await getSupabase().from('system_logs').select('level, module')
-        .gte('timestamp', from.toISOString()).lte('timestamp', to.toISOString());
-      if (error) { process.stderr.write(`[DB Logger] Failed to get stats: ${error.message}\n`); return empty; }
-      logs = (data ?? []) as Array<{ level: string; module: string }>;
+    const all: any[] = []; let offset = 0;
+    while (offset < 5000) {
+      const r = await (await getAW()).listDocuments(DB_ID(), COLL, [
+        Query.greaterThanEqual('timestamp', from.toISOString()),
+        Query.lessThanEqual('timestamp', to.toISOString()),
+        Query.limit(100), Query.offset(offset),
+      ]);
+      all.push(...r.documents); if (r.documents.length < 100) break; offset += 100;
     }
+    logs = all.map(d => ({ level: d.level, module: d.module }));
+
     const byLevel = { ...empty.byLevel };
     const byModule: Record<string, number> = {};
     for (const l of logs) { byLevel[l.level as LogLevel] = (byLevel[l.level as LogLevel] || 0) + 1; byModule[l.module] = (byModule[l.module] || 0) + 1; }

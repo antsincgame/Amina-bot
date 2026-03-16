@@ -2,7 +2,6 @@
  * Error handling utilities
  */
 
-import { PostgrestError } from '@supabase/supabase-js';
 import { dbLogger, aiLogger } from '../config/logger.js';
 
 /**
@@ -71,33 +70,6 @@ export function isNotFoundError(error: unknown): boolean {
     'code' in error &&
     error.code === 'PGRST116'
   );
-}
-
-/**
- * Handle legacy query errors
- */
-export function handleLegacyDbError<T>(
-  data: T | null,
-  error: PostgrestError | null,
-  context: { operation: string; [key: string]: unknown }
-): T {
-  if (error) {
-    // Not found is OK for some operations
-    if (isNotFoundError(error)) {
-      dbLogger.debug(context, 'Record not found');
-      throw new NotFoundError(`${context.operation}: not found`);
-    }
-
-    // Log and throw
-    dbLogger.error({ error, ...context }, `${context.operation} failed`);
-    throw new DatabaseError(`${context.operation} failed: ${error.message}`, error);
-  }
-
-  if (data === null) {
-    throw new NotFoundError(`${context.operation}: data is null`);
-  }
-
-  return data;
 }
 
 /**

@@ -299,7 +299,7 @@ async function checkLMStudioHealthDirect(cfg: LMStudioConfig): Promise<boolean> 
   } else if (firstAttempt.error) {
     aiLogger.info(
       { url: cfg.url, error: firstAttempt.error, timeout: firstAttempt.timeout, endpoint: firstAttempt.endpoint },
-      'LM Studio health check failed (Render may not reach Cloudflare tunnel)'
+      'LM Studio health check failed (Server may not reach Cloudflare tunnel)'
     );
   }
 

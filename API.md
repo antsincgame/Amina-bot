@@ -2,7 +2,7 @@
 
 ## 🚀 Base URL
 
-**Production:** `https://amina-bot.onrender.com`
+**Production:** `https://amina.vibecoding.by`
 
 ## 📡 REST API Endpoints
 
@@ -220,7 +220,7 @@ OpenAI-compatible endpoint для прямого доступа к LLM без с
     },
     "database": {
       "ready": true,
-      "engine": "Supabase"
+      "engine": "Appwrite"
     }
   },
   "timestamp": "2026-02-04T11:20:00.000Z"
@@ -288,7 +288,7 @@ Access-Control-Allow-Headers: Content-Type, Authorization
 
 ## 📊 Rate Limiting
 
-Текущие лимиты (Render Starter Plan):
+Текущие лимиты (Coolify (VPS)):
 - **Requests per minute:** без ограничений на уровне приложения
 - **Timeout:** 30 секунд на запрос
 - **Max message length:** 10,000 символов
@@ -302,7 +302,7 @@ Access-Control-Allow-Headers: Content-Type, Authorization
 
 ```bash
 # Отправить сообщение
-curl -X POST https://amina-bot.onrender.com/api/chat \
+curl -X POST https://amina.vibecoding.by/api/chat \
   -H "Content-Type: application/json" \
   -d '{
     "userId": "test-user",
@@ -310,7 +310,7 @@ curl -X POST https://amina-bot.onrender.com/api/chat \
   }'
 
 # OpenAI-compatible completions
-curl -X POST https://amina-bot.onrender.com/api/chat/completions \
+curl -X POST https://amina.vibecoding.by/api/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "messages": [
@@ -319,17 +319,17 @@ curl -X POST https://amina-bot.onrender.com/api/chat/completions \
   }'
 
 # Получить разговор
-curl https://amina-bot.onrender.com/api/conversations/YOUR-UUID-HERE
+curl https://amina.vibecoding.by/api/conversations/YOUR-UUID-HERE
 
 # Очистить разговор
-curl -X DELETE https://amina-bot.onrender.com/api/conversations/YOUR-UUID-HERE
+curl -X DELETE https://amina.vibecoding.by/api/conversations/YOUR-UUID-HERE
 ```
 
 ### JavaScript/TypeScript (fetch)
 
 ```typescript
 // Отправить сообщение
-const response = await fetch('https://amina-bot.onrender.com/api/chat', {
+const response = await fetch('https://amina.vibecoding.by/api/chat', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
@@ -349,7 +349,7 @@ console.log(data.data.response);
 import requests
 
 response = requests.post(
-    'https://amina-bot.onrender.com/api/chat',
+    'https://amina.vibecoding.by/api/chat',
     json={
         'userId': 'user-123',
         'message': 'Привет!',
@@ -380,7 +380,7 @@ print(data['data']['response'])
 
 - **Бот (Backend API):** ✅ LIVE
 - **Админка (Frontend):** ✅ LIVE
-- **База данных:** ✅ Supabase (PostgreSQL)
+- **База данных:** ✅ Appwrite
 - **AI:** ✅ OpenRouter API
 
 ---

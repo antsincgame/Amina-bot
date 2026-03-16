@@ -12,8 +12,6 @@ process.env.LOG_LEVEL = 'fatal';
 process.env.TELEGRAM_BOT_TOKEN = 'test-token';
 process.env.OPENROUTER_API_KEY = 'test-api-key';
 process.env.LMSTUDIO_TUNNEL_TOKEN = 'test-tunnel-token';
-process.env.SUPABASE_URL = 'https://test.supabase.co';
-process.env.SUPABASE_SERVICE_KEY = 'test-service-key';
 
 beforeAll(() => {
   // Env vars already set above

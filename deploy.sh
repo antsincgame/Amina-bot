@@ -6,12 +6,7 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-BOT_URL="https://amina-bot.onrender.com"
-RENDER_BOT_HOOK="${RENDER_BOT_DEPLOY_HOOK:-}"
-RENDER_ADMIN_HOOK="${RENDER_ADMIN_DEPLOY_HOOK:-}"
-RENDER_API_KEY="${RENDER_API_KEY:-}"
-RENDER_BOT_SVC="srv-d61h8dh4tr6s73ektm1g"
-RENDER_ADMIN_SVC="srv-d61h8dh4tr6s73ektm30"
+BOT_URL="https://amina.vibecoding.by"
 
 log()  { echo -e "${GREEN}[OK]${NC} $1"; }
 warn() { echo -e "${YELLOW}[!!]${NC} $1"; }
@@ -20,7 +15,7 @@ fail() { echo -e "${RED}[FAIL]${NC} $1"; exit 1; }
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 echo "============================================"
-echo "  AMINA DEPLOY SCRIPT"
+echo "  AMINA DEPLOY SCRIPT (Coolify)"
 echo "============================================"
 echo ""
 
@@ -66,103 +61,15 @@ else
   log "Committed: $MSG"
 fi
 
-# --- Step 3: Push ---
+# --- Step 3: Push (triggers Coolify auto-deploy via GitHub App) ---
 echo ""
 echo "--- Step 3: Push to origin ---"
 git push origin main 2>&1
-log "Pushed to origin/main"
+log "Pushed to origin/main — Coolify auto-deploy triggered"
 
-# --- Step 4: Trigger Render deploy hooks ---
+# --- Step 4: Wait and verify ---
 echo ""
-echo "--- Step 4: Trigger Render deploy ---"
-
-deploy_via_api() {
-  local name="$1"
-  local svc_id="$2"
-  if [ -z "$RENDER_API_KEY" ]; then
-    return 1
-  fi
-  local status
-  status=$(curl -s -o /dev/null -w "%{http_code}" \
-    -X POST "https://api.render.com/v1/services/$svc_id/deploys" \
-    -H "Authorization: Bearer $RENDER_API_KEY" \
-    -H "Content-Type: application/json" \
-    -d '{"clearCache":"clear"}')
-  if [ "$status" = "201" ] || [ "$status" = "200" ]; then
-    log "$name: deploy triggered via API (HTTP $status)"
-    return 0
-  else
-    warn "$name: API returned HTTP $status"
-    return 1
-  fi
-}
-
-deploy_via_hook() {
-  local name="$1"
-  local hook="$2"
-  if [ -z "$hook" ]; then
-    return 1
-  fi
-  local status
-  status=$(curl -s -o /dev/null -w "%{http_code}" "$hook")
-  if [ "$status" = "200" ] || [ "$status" = "201" ]; then
-    log "$name: deploy triggered via hook (HTTP $status)"
-    return 0
-  else
-    warn "$name: deploy hook returned HTTP $status"
-    return 1
-  fi
-}
-
-trigger_deploy() {
-  local name="$1"
-  local svc_id="$2"
-  local hook="$3"
-  if deploy_via_api "$name" "$svc_id"; then
-    return 0
-  fi
-  if deploy_via_hook "$name" "$hook"; then
-    return 0
-  fi
-  warn "$name: no deploy method available"
-  return 1
-}
-
-BOT_DEPLOYED=false
-ADMIN_DEPLOYED=false
-
-if trigger_deploy "amina-bot" "$RENDER_BOT_SVC" "$RENDER_BOT_HOOK"; then
-  BOT_DEPLOYED=true
-fi
-if trigger_deploy "amina-admin" "$RENDER_ADMIN_SVC" "$RENDER_ADMIN_HOOK"; then
-  ADMIN_DEPLOYED=true
-fi
-
-if [ "$BOT_DEPLOYED" = "false" ] && [ "$ADMIN_DEPLOYED" = "false" ]; then
-  echo ""
-  echo "Deploy methods (pick one):"
-  echo ""
-  echo "  Option A — Render API Key (recommended):"
-  echo "    export RENDER_API_KEY='rnd_xxxxx'"
-  echo "    Get key from: Render Dashboard > Account Settings > API Keys"
-  echo ""
-  echo "  Option B — Deploy Hooks:"
-  echo "    export RENDER_BOT_DEPLOY_HOOK='https://api.render.com/deploy/srv-xxx?key=yyy'"
-  echo "    export RENDER_ADMIN_DEPLOY_HOOK='https://api.render.com/deploy/srv-xxx?key=yyy'"
-  echo "    Get URLs from: Render Dashboard > Service > Settings > Deploy Hook"
-  echo ""
-  echo "  Option C — Cursor IDE with Render MCP (no setup needed)"
-fi
-
-# --- Step 5: Wait and verify ---
-echo ""
-echo "--- Step 5: Wait for deploy & verify ---"
-
-if [ "$BOT_DEPLOYED" = "false" ]; then
-  warn "Bot deploy was not triggered — skipping verification"
-  warn "Code is pushed. Use Render Dashboard for manual deploy."
-  exit 0
-fi
+echo "--- Step 4: Wait for deploy & verify ---"
 
 MAX_ATTEMPTS=20
 SLEEP_INTERVAL=15
@@ -179,6 +86,20 @@ for i in $(seq 1 $MAX_ATTEMPTS); do
     echo ""
     HEALTH=$(curl -s "$BOT_URL/health" 2>/dev/null)
     echo "Health: $HEALTH"
+
+    # Reset Telegram webhook after deploy (may get 502 during restart)
+    echo ""
+    echo "--- Resetting Telegram webhook ---"
+    TG_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
+    if [ -n "$TG_TOKEN" ]; then
+      curl -s "https://api.telegram.org/bot${TG_TOKEN}/deleteWebhook" > /dev/null
+      sleep 1
+      curl -s "https://api.telegram.org/bot${TG_TOKEN}/setWebhook?url=${BOT_URL}/webhook/${TG_TOKEN}" > /dev/null
+      log "Webhook reset"
+    else
+      warn "TELEGRAM_BOT_TOKEN not set — reset webhook manually"
+    fi
+
     log "Deploy complete!"
     exit 0
   fi
@@ -187,5 +108,5 @@ for i in $(seq 1 $MAX_ATTEMPTS); do
 done
 
 warn "Deploy verification timed out after $((MAX_ATTEMPTS * SLEEP_INTERVAL))s"
-warn "Check Render dashboard manually: https://dashboard.render.com"
+warn "Check Coolify dashboard: https://coolify.vibecoding.by"
 exit 1

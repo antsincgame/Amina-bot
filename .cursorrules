@@ -1,0 +1,74 @@
+# Amina-bot — Cursor Instructions
+
+## Architecture
+
+- **Telegram bot** (@AIAMINABOT) on Node.js + TypeScript
+- **Database**: Appwrite ONLY (project `69af2faa003646d3574c`, database `amina`)
+- **Hosting**: Coolify on VPS 45.135.234.145 (auto-deploy via GitHub push to main)
+- **Admin panel**: React + Vite, served from same container at amina.vibecoding.by
+- **AI**: OpenRouter (primary), LM Studio (optional, via Cloudflare Tunnel)
+- **Telephony**: LiraX API
+
+## Critical Rules
+
+1. **NO SUPABASE**. The project was fully migrated to Appwrite. There is no Supabase client, no Supabase env vars, no dual-backend code. Do not add any Supabase imports or references.
+
+2. **Database access pattern**: All repos use lazy Appwrite import:
+   ```typescript
+   let _aw: import('node-appwrite').Databases | null = null;
+   async function getAW() { if (!_aw) { const { getAppwrite } = await import('../db/appwrite.js'); _aw = getAppwrite(); } return _aw; }
+   const DB_ID = () => config.appwrite.databaseId;
+   ```
+
+3. **Collection naming**: All collections are prefixed `amina_` (e.g., `amina_settings`, `amina_user_profiles`, `amina_tel_sessions`).
+
+4. **Config**: `config.dbBackend` is always `'appwrite'`. There is no `config.db` (Supabase) property.
+
+5. **db/index.ts** re-exports directly from `db/appwrite.ts`:
+   ```typescript
+   export { getAppwrite, getAppwriteClient, settingsRepo, promptsRepo, conversationsRepo, analyticsRepo } from './appwrite.js';
+   ```
+
+6. **Admin auth**: Appwrite JWT validation via `node-appwrite` Account API. No Supabase auth.
+
+7. **File storage**: Appwrite Storage buckets (`amina-voice-messages`, `amina-tel-recordings`).
+
+## URLs
+
+- Bot/Admin: https://amina.vibecoding.by
+- Appwrite: https://appwrite.vibecoding.by/v1
+- Coolify: https://coolify.vibecoding.by
+- Analytics: https://analytics.vibecoding.by
+
+## Env Vars (Coolify)
+
+Required: APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID, APPWRITE_API_KEY, APPWRITE_DATABASE_ID, TELEGRAM_BOT_TOKEN, OPENROUTER_API_KEY
+Optional: WEBHOOK_URL, LMSTUDIO_TUNNEL_TOKEN, LIRAX_URL, LIRAX_TOKEN, AI_PROXY_URL, AI_PROXY_SECRET
+
+## Project Structure
+
+```
+bot/src/
+  ai/          — AI providers (OpenRouter, LM Studio, Groq, Perplexity)
+  api/         — Fastify HTTP routes (admin API, webhooks, tunnel)
+  config/      — Config, logger, db-logger
+  db/          — Database layer (appwrite.ts is the only backend)
+  features/    — Digest, notes, todos, user-prefs, voice-messages, telephony/
+  memory/      — User profiles, memory, logs
+  reminders/   — Reminder scheduler
+  telegram/    — Bot commands and handlers
+admin/src/     — React admin panel
+shared/types/  — Shared TypeScript types
+```
+
+## Appwrite Collections (DB: amina)
+
+Core: amina_settings, amina_prompts, amina_conversations, amina_analytics, amina_user_profiles, amina_user_memory, amina_user_logs, amina_reminders, amina_notes, amina_todos, amina_user_preferences, amina_system_logs, amina_digest_caches, amina_digest_deliveries, amina_voice_messages
+
+Telephony: amina_tel_scenarios, amina_tel_sessions, amina_tel_events, amina_tel_turns, amina_tel_artifacts, amina_tel_outcomes, amina_tel_jobs
+
+## Known Issues
+
+- 502 during deploys breaks Telegram webhook — run deleteWebhook + setWebhook after each deploy
+- Perplexity API key may be invalid — update in admin panel /api-keys
+- APPWRITE_PROJECT_ID may not pass through Coolify env — default is hardcoded in config

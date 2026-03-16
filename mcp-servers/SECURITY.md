@@ -1,4 +1,3 @@
-# MCP Supabase Server - Security
 
 ## ✅ Implemented Security Measures
 
@@ -20,18 +19,10 @@ This prevents SQL injection through column names.
 
 ### 3. No Raw SQL
 
-❌ **Removed `supabase_query` tool** - it allowed arbitrary SQL execution
 
 ✅ Use safe alternatives:
-- `supabase_select` - Safe SELECT with filters
-- `supabase_insert` - Safe INSERT/UPSERT
-- `supabase_update` - Safe UPDATE with filters
-- `supabase_delete` - Safe DELETE with filters
-- `supabase_rpc` - Call pre-defined PostgreSQL functions
 
-### 4. Supabase Client Security
 
-Using Supabase JS SDK which:
 - Uses parameterized queries
 - Prevents SQL injection by design
 - Validates input types
@@ -42,9 +33,7 @@ Using Supabase JS SDK which:
    - MCP server runs locally/server-side only
    - Service key is in environment variables
 
-2. **Use RLS (Row Level Security) in Supabase**
    - Even with service key, RLS provides extra layer
-   - Define policies in Supabase Dashboard
 
 3. **Validate data before insert/update**
    - Use Zod schemas in application code
@@ -61,4 +50,3 @@ Using Supabase JS SDK which:
 - No raw SQL execution
 - Limited to CRUD operations
 
-For advanced operations, use Supabase Dashboard SQL Editor.

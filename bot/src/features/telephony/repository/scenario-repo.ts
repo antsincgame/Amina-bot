@@ -1,9 +1,9 @@
 /**
- * Scenario Repository — dual backend (Appwrite primary)
+ * Scenario Repository — Appwrite backend
  */
 
 import { config } from '../../../config/index.js';
-import { settingsRepo, getSupabase } from '../../../db/index.js';
+import { settingsRepo } from '../../../db/index.js';
 import { ID, Query } from 'node-appwrite';
 import type { TelephonyAiScenario } from '../../../../../shared/types/telephony.js';
 import { getDefaultTelephonyAiScenarios, normalizeScenario } from '../scenario-compiler.js';
@@ -13,7 +13,6 @@ import { ensureTelephonyInfra } from './telephony-infra.js';
 let _aw: import('node-appwrite').Databases | null = null;
 async function getAW() { if (!_aw) { const { getAppwrite } = await import('../../../db/appwrite.js'); _aw = getAppwrite(); } return _aw; }
 const DB_ID = () => config.appwrite.databaseId;
-const useAW = () => config.dbBackend === 'appwrite';
 const COLL = 'amina_tel_scenarios';
 
 interface TelephonyScenarioRow {
@@ -149,21 +148,11 @@ export const scenarioRepo = {
   async getAll(): Promise<TelephonyAiScenario[]> {
     await ensureTelephonyInfra();
 
-    if (useAW()) {
-      const aw = await getAW();
-      const r = await aw.listDocuments(DB_ID(), COLL, [Query.orderAsc('created_at'), Query.limit(100)]);
-      if (r.documents.length === 0) return bootstrapScenarios();
-      return r.documents.map((d, i) => docToScenario(d, i));
-    } else {
-      const { data, error } = await getSupabase()
-        .from('telephony_scenarios')
-        .select('*')
-        .order('created_at', { ascending: true });
-      if (error) throw error;
-      const rows = (data as TelephonyScenarioRow[] | null) ?? [];
-      if (rows.length === 0) return bootstrapScenarios();
-      return rows.map((row, index) => mapRowToScenario(row, index));
-    }
+    const aw = await getAW();
+    const r = await aw.listDocuments(DB_ID(), COLL, [Query.orderAsc('created_at'), Query.limit(100)]);
+    if (r.documents.length === 0) return bootstrapScenarios();
+    return r.documents.map((d, i) => docToScenario(d, i));
+
   },
 
   async getById(id: string): Promise<TelephonyAiScenario | null> {
@@ -179,60 +168,35 @@ export const scenarioRepo = {
     const now = new Date().toISOString();
     const normalized = scenarios.map((scenario, index) => normalizeScenario(scenario, index, now));
 
-    if (useAW()) {
-      const aw = await getAW();
-      // Get existing docs
-      const existing = await aw.listDocuments(DB_ID(), COLL, [Query.limit(100)]);
-      const existingMap = new Map<string, string>(); // scenario_id → $id
-      for (const doc of existing.documents) {
-        existingMap.set(doc.scenario_id, doc.$id);
-      }
-
-      const nextIds = new Set(normalized.map((s) => s.id));
-
-      // Delete removed
-      for (const [scenarioId, docId] of existingMap) {
-        if (!nextIds.has(scenarioId)) {
-          await aw.deleteDocument(DB_ID(), COLL, docId);
-        }
-      }
-
-      // Upsert each (Appwrite has no native upsert)
-      for (const scenario of normalized) {
-        const awDoc = scenarioToAwDoc(scenario);
-        const existingDocId = existingMap.get(scenario.id);
-        if (existingDocId) {
-          await aw.updateDocument(DB_ID(), COLL, existingDocId, awDoc);
-        } else {
-          await aw.createDocument(DB_ID(), COLL, ID.unique(), awDoc);
-        }
-      }
-
-      return normalized;
-    } else {
-      const rows = normalized.map(mapScenarioToRow);
-      const sb = getSupabase();
-      const { data: existingRows, error: existingError } = await sb
-        .from('telephony_scenarios')
-        .select('id');
-      if (existingError) throw existingError;
-
-      const existingIds = new Set(((existingRows as Array<{ id: string }> | null) ?? []).map((row) => row.id));
-      const nextIds = new Set(normalized.map((scenario) => scenario.id));
-
-      for (const existingId of existingIds) {
-        if (!nextIds.has(existingId)) {
-          const { error } = await sb.from('telephony_scenarios').delete().eq('id', existingId);
-          if (error) throw error;
-        }
-      }
-
-      if (rows.length > 0) {
-        const { error } = await sb.from('telephony_scenarios').upsert(rows, { onConflict: 'id' });
-        if (error) throw error;
-      }
-
-      return normalized;
+    const aw = await getAW();
+    // Get existing docs
+    const existing = await aw.listDocuments(DB_ID(), COLL, [Query.limit(100)]);
+    const existingMap = new Map<string, string>(); // scenario_id → $id
+    for (const doc of existing.documents) {
+      existingMap.set(doc.scenario_id, doc.$id);
     }
+
+    const nextIds = new Set(normalized.map((s) => s.id));
+
+    // Delete removed
+    for (const [scenarioId, docId] of existingMap) {
+      if (!nextIds.has(scenarioId)) {
+        await aw.deleteDocument(DB_ID(), COLL, docId);
+      }
+    }
+
+    // Upsert each (Appwrite has no native upsert)
+    for (const scenario of normalized) {
+      const awDoc = scenarioToAwDoc(scenario);
+      const existingDocId = existingMap.get(scenario.id);
+      if (existingDocId) {
+        await aw.updateDocument(DB_ID(), COLL, existingDocId, awDoc);
+      } else {
+        await aw.createDocument(DB_ID(), COLL, ID.unique(), awDoc);
+      }
+    }
+
+    return normalized;
+
   },
 };

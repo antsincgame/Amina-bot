@@ -12,7 +12,8 @@ RestartSec=10
 WorkingDirectory=@AMINA_DIR@
 
 Environment=LMSTUDIO_PORT=1234
-Environment=BOT_API_URL=https://amina-bot.onrender.com
+Environment=BOT_API_URL=https://amina.vibecoding.by
+Environment=LMSTUDIO_TUNNEL_TOKEN=
 Environment=HEALTH_INTERVAL=30
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 

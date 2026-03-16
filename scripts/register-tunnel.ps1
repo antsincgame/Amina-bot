@@ -9,6 +9,6 @@ $headers = @{
     'X-Amina-Tunnel-Token' = $tunnelToken
 }
 
-$resp = Invoke-WebRequest -Uri 'https://amina-bot.onrender.com/api/tunnel/register' -Method POST -Headers $headers -Body $body -UseBasicParsing -TimeoutSec 30
+$resp = Invoke-WebRequest -Uri 'https://amina.vibecoding.by/api/tunnel/register' -Method POST -Headers $headers -Body $body -UseBasicParsing -TimeoutSec 30
 Write-Host "Status: $($resp.StatusCode)"
 Write-Host $resp.Content

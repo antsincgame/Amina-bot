@@ -68,7 +68,7 @@ Import-LocalEnvFile `
 # ============================================
 
 $LMSTUDIO_PORT          = if ($env:LMSTUDIO_PORT)       { $env:LMSTUDIO_PORT }       else { '1234' }
-$BOT_API_URL            = if ($env:BOT_API_URL)          { $env:BOT_API_URL }          else { 'https://amina-bot.onrender.com' }
+$BOT_API_URL            = if ($env:BOT_API_URL)          { $env:BOT_API_URL }          else { 'https://amina.vibecoding.by' }
 $LMSTUDIO_TUNNEL_TOKEN  = if ($env:LMSTUDIO_TUNNEL_TOKEN) { $env:LMSTUDIO_TUNNEL_TOKEN } else { '' }
 $CLOUDFLARED_BIN        = if ($env:CLOUDFLARED_BIN)      { $env:CLOUDFLARED_BIN }      else { 'cloudflared' }
 $CLOUDFLARED_TUNNEL_ARGS = if ($env:CLOUDFLARED_TUNNEL_ARGS) { $env:CLOUDFLARED_TUNNEL_ARGS } else { '' }

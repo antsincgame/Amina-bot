@@ -1,16 +1,14 @@
 /**
- * Notes Repository — dual backend (Appwrite primary)
+ * Notes Repository — Appwrite backend
  */
 
 import { config } from '../config/index.js';
-import { getSupabase } from '../db/index.js';
 import { dbLogger } from '../config/logger.js';
 import { ID, Query } from 'node-appwrite';
 
 let _aw: import('node-appwrite').Databases | null = null;
 async function getAW() { if (!_aw) { const { getAppwrite } = await import('../db/appwrite.js'); _aw = getAppwrite(); } return _aw; }
 const DB_ID = () => config.appwrite.databaseId;
-const useAW = () => config.dbBackend === 'appwrite';
 const COLL = 'amina_notes';
 
 export interface Note { id: string; user_id: string; content: string; created_at: string; }
@@ -28,32 +26,19 @@ export const notesRepo = {
     const count = await this.countByUser(userId);
     if (count >= MAX_NOTES_PER_USER) throw new Error(`Максимум ${MAX_NOTES_PER_USER} заметок.`);
 
-    if (useAW()) {
-      const doc = await (await getAW()).createDocument(DB_ID(), COLL, ID.unique(), {
-        user_id: userId, content: content.trim(), created_at: new Date().toISOString(),
-      });
-      dbLogger.info({ id: doc.$id, userId }, 'Note created');
-      return docToNote(doc);
-    } else {
-      const { data, error } = await getSupabase().from('notes').insert({ user_id: userId, content: content.trim() }).select().single();
-      if (error) { dbLogger.error({ error, userId }, 'Failed to create note'); throw error; }
-      dbLogger.info({ id: data.id, userId }, 'Note created');
-      return data as Note;
-    }
+    const doc = await (await getAW()).createDocument(DB_ID(), COLL, ID.unique(), {
+      user_id: userId, content: content.trim(), created_at: new Date().toISOString(),
+    });
+    dbLogger.info({ id: doc.$id, userId }, 'Note created');
+    return docToNote(doc);
   },
 
   async getByUser(userId: string): Promise<Note[]> {
     try {
-      if (useAW()) {
-        const r = await (await getAW()).listDocuments(DB_ID(), COLL, [
-          Query.equal('user_id', userId), Query.orderDesc('created_at'), Query.limit(100),
-        ]);
-        return r.documents.map(docToNote);
-      } else {
-        const { data, error } = await getSupabase().from('notes').select('*').eq('user_id', userId).order('created_at', { ascending: false });
-        if (error) { dbLogger.error({ error, userId }, 'Failed to get notes'); return []; }
-        return (data ?? []) as Note[];
-      }
+      const r = await (await getAW()).listDocuments(DB_ID(), COLL, [
+        Query.equal('user_id', userId), Query.orderDesc('created_at'), Query.limit(100),
+      ]);
+      return r.documents.map(docToNote);
     } catch { return []; }
   },
 
@@ -63,26 +48,15 @@ export const notesRepo = {
     if (!note) return null;
 
     try {
-      if (useAW()) {
-        await (await getAW()).deleteDocument(DB_ID(), COLL, note.id);
-      } else {
-        const { error } = await getSupabase().from('notes').delete().eq('id', note.id).eq('user_id', userId);
-        if (error) { dbLogger.error({ error, id: note.id, userId }, 'Failed to delete note'); return null; }
-      }
+      await (await getAW()).deleteDocument(DB_ID(), COLL, note.id);
       return note;
     } catch { return null; }
   },
 
   async countByUser(userId: string): Promise<number> {
     try {
-      if (useAW()) {
-        const r = await (await getAW()).listDocuments(DB_ID(), COLL, [Query.equal('user_id', userId), Query.limit(1)]);
-        return r.total;
-      } else {
-        const { count, error } = await getSupabase().from('notes').select('*', { count: 'exact', head: true }).eq('user_id', userId);
-        if (error) { dbLogger.error({ error, userId }, 'Failed to count notes'); return 0; }
-        return count ?? 0;
-      }
+      const r = await (await getAW()).listDocuments(DB_ID(), COLL, [Query.equal('user_id', userId), Query.limit(1)]);
+      return r.total;
     } catch { return 0; }
   },
 };

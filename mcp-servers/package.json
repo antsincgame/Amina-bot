@@ -1,15 +1,13 @@
 {
   "name": "amina-mcp-servers",
   "version": "1.0.0",
-  "description": "MCP servers for Render, Supabase, and Perplexity",
+  "description": "MCP servers for Coolify and Perplexity",
   "type": "module",
   "scripts": {
     "render": "node render-server.js",
-    "supabase": "node supabase-server.js",
     "perplexity": "node perplexity-server.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "@supabase/supabase-js": "^2.39.0"
+    "@modelcontextprotocol/sdk": "^1.0.0"
   }
 }

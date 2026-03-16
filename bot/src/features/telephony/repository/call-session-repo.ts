@@ -1,9 +1,9 @@
 /**
- * Call Session Repository — dual backend (Appwrite primary)
+ * Call Session Repository — Appwrite backend
  */
 
 import { config } from '../../../config/index.js';
-import { getSupabase, settingsRepo } from '../../../db/index.js';
+import { settingsRepo } from '../../../db/index.js';
 import { ID, Query } from 'node-appwrite';
 import type { TelephonyAiCallSession } from '../../../../../shared/types/telephony.js';
 import {
@@ -17,7 +17,6 @@ import { ensureTelephonyInfra } from './telephony-infra.js';
 let _aw: import('node-appwrite').Databases | null = null;
 async function getAW() { if (!_aw) { const { getAppwrite } = await import('../../../db/appwrite.js'); _aw = getAppwrite(); } return _aw; }
 const DB_ID = () => config.appwrite.databaseId;
-const useAW = () => config.dbBackend === 'appwrite';
 const COLL = 'amina_tel_sessions';
 
 type CreateTelephonySessionInput = Omit<TelephonyAiCallSession, 'id' | 'createdAt' | 'updatedAt'>;
@@ -176,19 +175,12 @@ async function importLegacySessions(): Promise<void> {
   const parsed = raw ? safeJsonParse<TelephonyAiCallSession[]>(raw) : null;
   if (!Array.isArray(parsed) || parsed.length === 0) return;
 
-  if (useAW()) {
-    const aw = await getAW();
-    for (const session of parsed) {
-      const doc = sessionToAwDoc(session);
-      await aw.createDocument(DB_ID(), COLL, ID.unique(), doc);
-    }
-  } else {
-    const rows = parsed.map(mapSessionToRow);
-    const { error } = await getSupabase()
-      .from('telephony_call_sessions')
-      .upsert(rows, { onConflict: 'id' });
-    if (error) throw error;
+  const aw = await getAW();
+  for (const session of parsed) {
+    const doc = sessionToAwDoc(session);
+    await aw.createDocument(DB_ID(), COLL, ID.unique(), doc);
   }
+
 }
 
 let bootstrapped = false;
@@ -196,17 +188,10 @@ async function ensureBootstrapped(): Promise<void> {
   await ensureTelephonyInfra();
   if (bootstrapped) return;
 
-  if (useAW()) {
-    const aw = await getAW();
-    const r = await aw.listDocuments(DB_ID(), COLL, [Query.limit(1)]);
-    if (r.total === 0) await importLegacySessions();
-  } else {
-    const { count, error } = await getSupabase()
-      .from('telephony_call_sessions')
-      .select('*', { count: 'exact', head: true });
-    if (error) throw error;
-    if ((count ?? 0) === 0) await importLegacySessions();
-  }
+  const aw = await getAW();
+  const r = await aw.listDocuments(DB_ID(), COLL, [Query.limit(1)]);
+  if (r.total === 0) await importLegacySessions();
+
   bootstrapped = true;
 }
 
@@ -223,58 +208,31 @@ export const callSessionRepo = {
       updatedAt: now,
     };
 
-    if (useAW()) {
-      const aw = await getAW();
-      const doc = await aw.createDocument(DB_ID(), COLL, ID.unique(), sessionToAwDoc(session));
-      return docToSession(doc);
-    } else {
-      const { data, error } = await getSupabase()
-        .from('telephony_call_sessions')
-        .insert(mapSessionToRow(session))
-        .select('*')
-        .single();
-      if (error) throw error;
-      return mapRowToSession(data as TelephonySessionRow);
-    }
+    const aw = await getAW();
+    const doc = await aw.createDocument(DB_ID(), COLL, ID.unique(), sessionToAwDoc(session));
+    return docToSession(doc);
+
   },
 
   async listRecent(limit = 20): Promise<TelephonyAiCallSession[]> {
     await ensureBootstrapped();
 
-    if (useAW()) {
-      const aw = await getAW();
-      const r = await aw.listDocuments(DB_ID(), COLL, [
-        Query.orderDesc('created_at'), Query.limit(limit),
-      ]);
-      return r.documents.map(docToSession);
-    } else {
-      const { data, error } = await getSupabase()
-        .from('telephony_call_sessions')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(limit);
-      if (error) throw error;
-      return ((data as TelephonySessionRow[] | null) ?? []).map(mapRowToSession);
-    }
+    const aw = await getAW();
+    const r = await aw.listDocuments(DB_ID(), COLL, [
+      Query.orderDesc('created_at'), Query.limit(limit),
+    ]);
+    return r.documents.map(docToSession);
+
   },
 
   async getById(id: string): Promise<TelephonyAiCallSession | null> {
     await ensureBootstrapped();
 
-    if (useAW()) {
-      try {
-        const doc = await (await getAW()).getDocument(DB_ID(), COLL, id);
-        return docToSession(doc);
-      } catch { return null; }
-    } else {
-      const { data, error } = await getSupabase()
-        .from('telephony_call_sessions')
-        .select('*')
-        .eq('id', id)
-        .maybeSingle();
-      if (error) throw error;
-      return data ? mapRowToSession(data as TelephonySessionRow) : null;
-    }
+    try {
+      const doc = await (await getAW()).getDocument(DB_ID(), COLL, id);
+      return docToSession(doc);
+    } catch { return null; }
+
   },
 
   async getByRequestId(requestId: string): Promise<TelephonyAiCallSession | null> {
@@ -282,21 +240,12 @@ export const callSessionRepo = {
     if (!normalized) return null;
     await ensureBootstrapped();
 
-    if (useAW()) {
-      const aw = await getAW();
-      const r = await aw.listDocuments(DB_ID(), COLL, [
-        Query.equal('request_id', normalized), Query.limit(1),
-      ]);
-      return r.documents.length > 0 ? docToSession(r.documents[0]) : null;
-    } else {
-      const { data, error } = await getSupabase()
-        .from('telephony_call_sessions')
-        .select('*')
-        .eq('request_id', normalized)
-        .maybeSingle();
-      if (error) throw error;
-      return data ? mapRowToSession(data as TelephonySessionRow) : null;
-    }
+    const aw = await getAW();
+    const r = await aw.listDocuments(DB_ID(), COLL, [
+      Query.equal('request_id', normalized), Query.limit(1),
+    ]);
+    return r.documents.length > 0 ? docToSession(r.documents[0]) : null;
+
   },
 
   async getByCallId(callId: string): Promise<TelephonyAiCallSession | null> {
@@ -304,52 +253,29 @@ export const callSessionRepo = {
     if (!normalized) return null;
     await ensureBootstrapped();
 
-    if (useAW()) {
-      const aw = await getAW();
-      const r = await aw.listDocuments(DB_ID(), COLL, [
-        Query.equal('call_id', normalized), Query.limit(1),
-      ]);
-      return r.documents.length > 0 ? docToSession(r.documents[0]) : null;
-    } else {
-      const { data, error } = await getSupabase()
-        .from('telephony_call_sessions')
-        .select('*')
-        .eq('call_id', normalized)
-        .maybeSingle();
-      if (error) throw error;
-      return data ? mapRowToSession(data as TelephonySessionRow) : null;
-    }
+    const aw = await getAW();
+    const r = await aw.listDocuments(DB_ID(), COLL, [
+      Query.equal('call_id', normalized), Query.limit(1),
+    ]);
+    return r.documents.length > 0 ? docToSession(r.documents[0]) : null;
+
   },
 
   async findPendingByPhone(phone: string): Promise<TelephonyAiCallSession | null> {
     await ensureBootstrapped();
     const minCreatedAt = new Date(Date.now() - PENDING_MATCH_WINDOW_MS).toISOString();
 
-    if (useAW()) {
-      const aw = await getAW();
-      const r = await aw.listDocuments(DB_ID(), COLL, [
-        Query.equal('target_phone', normalizePhone(phone)),
-        Query.equal('status', 'initiated'),
-        Query.isNull('call_id'),
-        Query.greaterThanEqual('created_at', minCreatedAt),
-        Query.orderDesc('created_at'),
-        Query.limit(1),
-      ]);
-      return r.documents.length > 0 ? docToSession(r.documents[0]) : null;
-    } else {
-      const { data, error } = await getSupabase()
-        .from('telephony_call_sessions')
-        .select('*')
-        .eq('target_phone', normalizePhone(phone))
-        .eq('status', 'initiated')
-        .is('call_id', null)
-        .gte('created_at', minCreatedAt)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (error) throw error;
-      return data ? mapRowToSession(data as TelephonySessionRow) : null;
-    }
+    const aw = await getAW();
+    const r = await aw.listDocuments(DB_ID(), COLL, [
+      Query.equal('target_phone', normalizePhone(phone)),
+      Query.equal('status', 'initiated'),
+      Query.isNull('call_id'),
+      Query.greaterThanEqual('created_at', minCreatedAt),
+      Query.orderDesc('created_at'),
+      Query.limit(1),
+    ]);
+    return r.documents.length > 0 ? docToSession(r.documents[0]) : null;
+
   },
 
   async update(id: string, updates: Partial<TelephonyAiCallSession>): Promise<TelephonyAiCallSession> {
@@ -365,19 +291,9 @@ export const callSessionRepo = {
       updatedAt: new Date().toISOString(),
     };
 
-    if (useAW()) {
-      const aw = await getAW();
-      const doc = await aw.updateDocument(DB_ID(), COLL, id, sessionToAwDoc(next));
-      return docToSession(doc);
-    } else {
-      const { data, error } = await getSupabase()
-        .from('telephony_call_sessions')
-        .update(mapSessionToRow(next))
-        .eq('id', id)
-        .select('*')
-        .single();
-      if (error) throw error;
-      return mapRowToSession(data as TelephonySessionRow);
-    }
+    const aw = await getAW();
+    const doc = await aw.updateDocument(DB_ID(), COLL, id, sessionToAwDoc(next));
+    return docToSession(doc);
+
   },
 };

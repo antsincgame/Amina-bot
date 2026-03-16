@@ -215,7 +215,7 @@ export interface SettingsUpdate {
 // Digest Types
 // --------------------------------------------
 
-export type DigestPipelineMode = 'legacy' | 'hybrid_appwrite' | 'hybrid_supabase';
+export type DigestPipelineMode = 'legacy' | 'hybrid_appwrite';
 
 // --------------------------------------------
 // News Sources Types

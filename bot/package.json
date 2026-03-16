@@ -19,7 +19,6 @@
     "@fastify/formbody": "^8.0.2",
     "@fastify/static": "^7.0.4",
     "@huggingface/inference": "^4.13.11",
-    "@supabase/supabase-js": "^2.39.3",
     "@types/archiver": "^7.0.0",
     "archiver": "^7.0.1",
     "cheerio": "^1.2.0",

@@ -21,14 +21,7 @@ if (process.env.NODE_ENV === 'test') {
 // --------------------------------------------
 
 const envSchema = z.object({
-  // DB backend switch: 'supabase' | 'appwrite'
-  DB_BACKEND: z.enum(['supabase', 'appwrite']).default('supabase'),
-
-  // Supabase — если не заданы, бот стартует без БД
-  SUPABASE_URL: z.string().url().default('https://placeholder.supabase.co'),
-  SUPABASE_SERVICE_KEY: z.string().default('placeholder'),
-
-  // Appwrite (required when DB_BACKEND=appwrite)
+  // Appwrite
   APPWRITE_ENDPOINT: z.string().url().default('https://appwrite.vibecoding.by/v1'),
   APPWRITE_PROJECT_ID: z.string().default('69af2faa003646d3574c'),
   APPWRITE_API_KEY: z.string().default(''),
@@ -90,32 +83,17 @@ const parseEnv = () => {
       throw new Error(`Invalid env vars: ${errors}`);
     }
 
-    if (process.env.NODE_ENV === 'production') {
-      const backend = process.env.DB_BACKEND || 'supabase';
-      if (backend === 'supabase' && (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY)) {
-        throw new Error(
-          `FATAL: SUPABASE_URL and SUPABASE_SERVICE_KEY are required in production (DB_BACKEND=supabase). ` +
-          `Validation errors: ${errors}`
-        );
-      }
-      if (backend === 'appwrite' && !process.env.APPWRITE_API_KEY) {
-        throw new Error(
-          `FATAL: APPWRITE_API_KEY is required in production (DB_BACKEND=appwrite). ` +
-          `Validation errors: ${errors}`
-        );
-      }
+    if (process.env.NODE_ENV === 'production' && !process.env.APPWRITE_API_KEY) {
+      throw new Error(
+        `FATAL: APPWRITE_API_KEY is required in production. Validation errors: ${errors}`
+      );
     }
 
-    const fallback = envSchema.safeParse({
-      ...process.env,
-      SUPABASE_URL: process.env.SUPABASE_URL || 'https://placeholder.supabase.co',
-      SUPABASE_SERVICE_KEY: process.env.SUPABASE_SERVICE_KEY || 'placeholder',
-    });
+    const fallback = envSchema.safeParse(process.env);
     if (fallback.success) return fallback.data;
 
     throw new Error(
-      `FATAL: environment configuration is invalid and fallback failed. ` +
-      `Set SUPABASE_URL and SUPABASE_SERVICE_KEY. Errors: ${errors}`
+      `FATAL: environment configuration is invalid and fallback failed. Errors: ${errors}`
     );
   }
 
@@ -151,7 +129,7 @@ export const config = {
     logLevel: env.LOG_LEVEL,
   },
 
-  /** URL админки (для CORS, ссылок в сообщениях). По умолчанию Render. */
+  /** URL админки (для CORS, ссылок в сообщениях). */
   adminUrl: env.ADMIN_URL ?? 'https://amina.vibecoding.by',
 
   /** URL бота (для HTTP-Referer, webhook LiraX). */
@@ -198,14 +176,8 @@ export const config = {
     baseUrl: getPerplexityBaseUrl(),
   },
 
-  // Database backend
-  dbBackend: env.DB_BACKEND as 'supabase' | 'appwrite',
-
-  // Supabase Database — только эти 2 обязательны в Render
-  db: {
-    url: env.SUPABASE_URL,
-    serviceKey: env.SUPABASE_SERVICE_KEY,
-  },
+  // Database backend — always Appwrite
+  dbBackend: 'appwrite' as const,
 
   // Appwrite Database
   appwrite: {
@@ -222,7 +194,6 @@ export type Config = typeof config;
 // Dynamic API Keys (from database with env fallback)
 // --------------------------------------------
 
-// Кэш для API ключей из БД (SingleCache не используем — здесь ленивый импорт и struct)
 import { SingleCache } from '../utils/cache.js';
 
 const apiKeysCache = new SingleCache<{ openrouter: string; groq: string }>(60_000);
@@ -245,11 +216,9 @@ export async function getApiKeys(): Promise<{ openrouter: string; groq: string }
     };
   }
 
-  // Загружаем из БД (ленивый импорт чтобы избежать циклических зависимостей)
+  // Загружаем из БД
   try {
-    const dbModule = config.dbBackend === 'appwrite'
-      ? await import('../db/appwrite.js')
-      : await import('../db/supabase.js');
+    const dbModule = await import('../db/appwrite.js');
     const keys = await dbModule.settingsRepo.getMany(['openrouter_api_key', 'groq_api_key']);
 
     const result = {

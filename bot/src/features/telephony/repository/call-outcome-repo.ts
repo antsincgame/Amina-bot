@@ -1,9 +1,9 @@
 /**
- * Call Outcome Repository — dual backend (Appwrite primary)
+ * Call Outcome Repository — Appwrite backend
  */
 
 import { config } from '../../../config/index.js';
-import { getSupabase } from '../../../db/index.js';
+
 import { ID, Query } from 'node-appwrite';
 import type { TelephonyCallOutcome } from '../../../../../shared/types/telephony.js';
 import { ensureTelephonyInfra } from './telephony-infra.js';
@@ -11,7 +11,6 @@ import { ensureTelephonyInfra } from './telephony-infra.js';
 let _aw: import('node-appwrite').Databases | null = null;
 async function getAW() { if (!_aw) { const { getAppwrite } = await import('../../../db/appwrite.js'); _aw = getAppwrite(); } return _aw; }
 const DB_ID = () => config.appwrite.databaseId;
-const useAW = () => config.dbBackend === 'appwrite';
 const COLL = 'amina_tel_outcomes';
 
 interface TelephonyCallOutcomeRow {
@@ -62,67 +61,39 @@ export const callOutcomeRepo = {
 
     const now = new Date().toISOString();
 
-    if (useAW()) {
-      const aw = await getAW();
-      const payload = {
-        session_id: sessionId,
-        outcome_label: outcome.outcomeLabel,
-        result_summary: outcome.resultSummary,
-        confidence: outcome.confidence ?? null,
-        metadata: JSON.stringify(outcome.metadata ?? {}),
-        updated_at: now,
-      };
+    const aw = await getAW();
+    const payload = {
+      session_id: sessionId,
+      outcome_label: outcome.outcomeLabel,
+      result_summary: outcome.resultSummary,
+      confidence: outcome.confidence ?? null,
+      metadata: JSON.stringify(outcome.metadata ?? {}),
+      updated_at: now,
+    };
 
-      // Unique per session_id — upsert manually
-      const r = await aw.listDocuments(DB_ID(), COLL, [
-        Query.equal('session_id', sessionId), Query.limit(1),
-      ]);
+    // Unique per session_id — upsert manually
+    const r = await aw.listDocuments(DB_ID(), COLL, [
+      Query.equal('session_id', sessionId), Query.limit(1),
+    ]);
 
-      if (r.documents.length > 0) {
-        const doc = await aw.updateDocument(DB_ID(), COLL, r.documents[0]!.$id, payload);
-        return docToOutcome(doc);
-      } else {
-        const doc = await aw.createDocument(DB_ID(), COLL, ID.unique(), { ...payload, created_at: now });
-        return docToOutcome(doc);
-      }
+    if (r.documents.length > 0) {
+      const doc = await aw.updateDocument(DB_ID(), COLL, r.documents[0]!.$id, payload);
+      return docToOutcome(doc);
     } else {
-      const { data, error } = await getSupabase()
-        .from('telephony_call_outcomes')
-        .upsert(
-          {
-            session_id: sessionId,
-            outcome_label: outcome.outcomeLabel,
-            result_summary: outcome.resultSummary,
-            confidence: outcome.confidence,
-            metadata: outcome.metadata,
-            updated_at: now,
-          },
-          { onConflict: 'session_id' },
-        )
-        .select('*')
-        .single();
-      if (error) throw error;
-      return mapRowToOutcome(data as TelephonyCallOutcomeRow);
+      const doc = await aw.createDocument(DB_ID(), COLL, ID.unique(), { ...payload, created_at: now });
+      return docToOutcome(doc);
     }
+
   },
 
   async getBySession(sessionId: string): Promise<TelephonyCallOutcome | null> {
     await ensureTelephonyInfra();
 
-    if (useAW()) {
-      const aw = await getAW();
-      const r = await aw.listDocuments(DB_ID(), COLL, [
-        Query.equal('session_id', sessionId), Query.limit(1),
-      ]);
-      return r.documents.length > 0 ? docToOutcome(r.documents[0]) : null;
-    } else {
-      const { data, error } = await getSupabase()
-        .from('telephony_call_outcomes')
-        .select('*')
-        .eq('session_id', sessionId)
-        .maybeSingle();
-      if (error) throw error;
-      return data ? mapRowToOutcome(data as TelephonyCallOutcomeRow) : null;
-    }
+    const aw = await getAW();
+    const r = await aw.listDocuments(DB_ID(), COLL, [
+      Query.equal('session_id', sessionId), Query.limit(1),
+    ]);
+    return r.documents.length > 0 ? docToOutcome(r.documents[0]) : null;
+
   },
 };
