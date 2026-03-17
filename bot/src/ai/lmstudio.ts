@@ -3,7 +3,7 @@ import { aiLogger } from '../config/logger.js';
 import { settingsRepo } from '../db/index.js';
 import { SingleCache } from '../utils/cache.js';
 
-type AIProvider = 'auto' | 'lmstudio' | 'openrouter';
+export type AIProvider = 'auto' | 'lmstudio' | 'openrouter';
 
 interface LMStudioConfig {
   url: string;

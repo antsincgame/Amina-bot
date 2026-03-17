@@ -1,4 +1,5 @@
 import { aiService } from '../../../ai/openrouter.js';
+import { verifyTelephonyReply } from '../../../ai/llm-verifier.js';
 import type { TelephonyCallTurn } from '../../../../../shared/types/telephony.js';
 import { callArtifactRepo } from '../repository/call-artifact-repo.js';
 import { callEventRepo } from '../repository/call-event-repo.js';
@@ -9,6 +10,9 @@ import { buildInitialAgentReplyFromPlan } from './telephony-plan.js';
 
 const LIVE_TURN_MAX_TOKENS = 500;
 const LIVE_TURN_TEMPERATURE = 0.35;
+
+/** Безопасный fallback-ответ агента когда верификатор отклонил LLM-ответ */
+const TELEPHONY_SAFE_FALLBACK = 'Подождите пожалуйста, уточню информацию.';
 
 /** Cached system prompts per session to avoid rebuilding every turn. */
 const systemPromptCache = new Map<string, { prompt: string; cachedAt: number }>();
@@ -272,8 +276,9 @@ export async function generateLiveAgentTurn(
     ? [{ role: 'system' as const, content: cachedPrompt }, ...assembly.messages.slice(1)]
     : assembly.messages;
 
-  if (!cachedPrompt && assembly.messages.length > 0 && assembly.messages[0].role === 'system') {
-    setCachedSystemPrompt(input.sessionId, assembly.messages[0].content);
+  const firstMsg = assembly.messages[0];
+  if (!cachedPrompt && firstMsg && firstMsg.role === 'system') {
+    setCachedSystemPrompt(input.sessionId, firstMsg.content);
   }
 
   const aiResult = await aiService.chat(
@@ -289,6 +294,22 @@ export async function generateLiveAgentTurn(
 
   const parsed = safeJsonParse<LiveTurnModelResponse>(extractJsonObject(aiResult.content) ?? '');
   const normalized = normalizeModelResponse(parsed, transcript);
+
+  // Telephony safety check — без внешних вызовов, < 1 мс
+  const scenarioContext = assembly.messages.map(m => m.content).join(' ');
+  const safetyCheck = verifyTelephonyReply(normalized.replyText, scenarioContext);
+  if (!safetyCheck.isSafe) {
+    await callEventRepo.record(input.sessionId, 'agent_turn_safety_fallback', {
+      reason: safetyCheck.reason,
+      originalReply: normalized.replyText.substring(0, 80),
+    }, input.providerEventId);
+    normalized.replyText = TELEPHONY_SAFE_FALLBACK;
+    normalized.shouldFallback = true;
+    normalized.shouldEndCall = false;
+    normalized.fallbackReason = normalized.fallbackReason ?? `telephony_safety:${safetyCheck.reason}`;
+    normalized.outcomeLabel = normalized.outcomeLabel || 'неясно';
+    normalized.resultSummary = normalized.resultSummary || 'Ответ был заменён safety-слоем телефонии.';
+  }
 
   const customerTurn = await appendCustomerTurn(input, transcript);
 

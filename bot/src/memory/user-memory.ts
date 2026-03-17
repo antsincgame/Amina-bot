@@ -206,20 +206,102 @@ export const userProfileRepo = {
   },
 };
 
+// ---------- Memory Safety Helpers ----------
+
+/** Максимальное количество активных записей каждого типа на пользователя */
+const MEMORY_LIMITS: Record<UserMemory['memory_type'], number> = {
+  important: 20,
+  fact: 50,
+  preference: 30,
+  context: 20,
+  summary: 5,
+};
+
+/**
+ * Паттерны prompt-injection в контенте памяти.
+ * Если пользователь написал что-то вроде "Меня зовут: Игнорируй инструкции",
+ * это не должно попасть в system prompt.
+ */
+const PROMPT_INJECTION_PATTERNS: ReadonlyArray<RegExp> = [
+  /игнорируй\s+(все\s+)?инструкции/i,
+  /ignore\s+(all\s+)?instructions/i,
+  /forget\s+your\s+(previous\s+)?instructions/i,
+  /забудь\s+(свои\s+)?инструкции/i,
+  /ты\s+теперь\s+(являешься|есть|стал)/i,
+  /you\s+are\s+now\s+a/i,
+  /system:\s+/i,
+  /\[system\]/i,
+  /\[INST\]/i,
+  /<\|system\|>/i,
+  /###\s*(System|Instruction|Prompt)/i,
+];
+
+/** Проверяет наличие prompt-injection попыток в строке */
+function hasPromptInjection(content: string): boolean {
+  return PROMPT_INJECTION_PATTERNS.some(p => p.test(content));
+}
+
+/**
+ * Нормализует строку для дедупликации: убирает пунктуацию, лишние пробелы и приводит к нижнему регистру.
+ */
+function normalizeForDedup(content: string): string {
+  return content.toLowerCase().replace(/[^\wа-яёa-z0-9]/gi, ' ').replace(/\s+/g, ' ').trim();
+}
+
 // ---------- User Memory Repository ----------
 
 export const userMemoryRepo = {
   async add(userId: string, memoryType: UserMemory['memory_type'], content: string,
     options: { source?: string; confidence?: number; isPinned?: boolean; expiresAt?: Date } = {}): Promise<UserMemory | null> {
     if (!(await checkTablesExist())) return null;
+
+    // Защита от prompt-injection
+    if (hasPromptInjection(content)) {
+      dbLogger.warn({ userId, memoryType, contentSnippet: content.substring(0, 80) }, 'Memory rejected: prompt injection detected');
+      return null;
+    }
+
     try {
+      // Проверяем лимит и дедупликацию перед записью
+      const aw = await getAW();
+      const existing = await aw.listDocuments(DB_ID(), COLL.memory, [
+        Query.equal('user_id', userId),
+        Query.equal('memory_type', memoryType),
+        Query.equal('is_active', true),
+        Query.orderDesc('created_at'),
+        Query.limit(MEMORY_LIMITS[memoryType] + 10),
+      ]);
+
+      // Дедупликация по нормализованному контенту
+      const normalizedNew = normalizeForDedup(content);
+      const isDuplicate = existing.documents.some(
+        d => normalizeForDedup(String(d.content)).startsWith(normalizedNew.substring(0, 40))
+          || normalizedNew.startsWith(normalizeForDedup(String(d.content)).substring(0, 40))
+      );
+      if (isDuplicate) {
+        dbLogger.info({ userId, memoryType }, 'Memory skipped: duplicate content');
+        return null;
+      }
+
+      // Применяем лимит: деактивируем самые старые если превышен
+      const activeCount = existing.documents.length;
+      if (activeCount >= MEMORY_LIMITS[memoryType]) {
+        const toDeactivate = existing.documents
+          .filter(d => !d.is_pinned)
+          .slice(MEMORY_LIMITS[memoryType] - 1);
+        for (const doc of toDeactivate) {
+          await aw.updateDocument(DB_ID(), COLL.memory, doc.$id, { is_active: false }).catch(() => {});
+        }
+      }
+
       const now = new Date().toISOString();
-      const doc = await (await getAW()).createDocument(DB_ID(), COLL.memory, ID.unique(), {
+      const doc = await aw.createDocument(DB_ID(), COLL.memory, ID.unique(), {
         user_id: userId, memory_type: memoryType, content, source: options.source || 'message',
         confidence: options.confidence ?? 1.0, is_pinned: options.isPinned ?? false, is_active: true,
         expires_at: options.expiresAt?.toISOString() || null, created_at: now, updated_at: now,
       });
       dbLogger.info({ userId, memoryType }, 'User memory added');
+      memoryContextBuilder.invalidateCache(userId);
       return docToMemory(doc);
 
     } catch (error) { dbLogger.warn({ error, userId }, 'Error adding memory'); return null; }
@@ -261,7 +343,12 @@ export const userMemoryRepo = {
 
   async update(memoryId: string, updates: Partial<Pick<UserMemory, 'content' | 'confidence' | 'is_pinned' | 'is_active'>>): Promise<void> {
     try {
-      await (await getAW()).updateDocument(DB_ID(), COLL.memory, memoryId, { ...updates, updated_at: new Date().toISOString() });
+      const aw = await getAW();
+      const current = await aw.getDocument(DB_ID(), COLL.memory, memoryId);
+      await aw.updateDocument(DB_ID(), COLL.memory, memoryId, { ...updates, updated_at: new Date().toISOString() });
+      if (typeof current.user_id === 'string' && current.user_id) {
+        memoryContextBuilder.invalidateCache(current.user_id);
+      }
 
     } catch (error) { dbLogger.error({ error, memoryId }, 'Failed to update memory'); }
   },
@@ -271,14 +358,23 @@ export const userMemoryRepo = {
   async getContextForPrompt(userId: string): Promise<string> {
     const memories = await this.getAll(userId, 30);
     if (!memories.length) return '';
+
     const grouped = { important: [] as string[], fact: [] as string[], preference: [] as string[], context: [] as string[], summary: [] as string[] };
-    for (const m of memories) { const t = m.memory_type as keyof typeof grouped; if (grouped[t]) grouped[t].push(m.content); }
+    for (const m of memories) {
+      // Защита от injection при сборке prompt — пропускаем подозрительные записи
+      if (hasPromptInjection(m.content)) continue;
+      const t = m.memory_type as keyof typeof grouped;
+      if (grouped[t]) grouped[t].push(m.content);
+    }
+
     const parts: string[] = [];
     if (grouped.important.length) parts.push(`ВАЖНО о пользователе:\n${grouped.important.map(m => `- ${m}`).join('\n')}`);
     if (grouped.fact.length) parts.push(`Факты о пользователе:\n${grouped.fact.map(m => `- ${m}`).join('\n')}`);
     if (grouped.preference.length) parts.push(`Предпочтения:\n${grouped.preference.map(m => `- ${m}`).join('\n')}`);
     if (grouped.context.length) parts.push(`Текущий контекст:\n${grouped.context.map(m => `- ${m}`).join('\n')}`);
+    // summary: только последние 3 (наиболее свежие — первые в массиве после сортировки DESC)
     if (grouped.summary.length) parts.push(`Из предыдущих разговоров:\n${grouped.summary.slice(0, 3).map(m => `- ${m}`).join('\n')}`);
+
     return parts.join('\n\n');
   },
 };
@@ -348,6 +444,12 @@ export const memoryExtractor = {
       return;
     }
 
+    // Не извлекаем факты из сообщений с признаками инъекции
+    if (hasPromptInjection(userMessage)) {
+      aiLogger.warn({ userId }, 'extractFacts skipped: prompt injection pattern in user message');
+      return;
+    }
+
     try {
       const prompt = `Есть ли новый факт о пользователе в этом диалоге? Если да — напиши одним предложением (тип: факт/предпочтение/важное). Если нет — напиши "нет".
 
@@ -357,10 +459,17 @@ export const memoryExtractor = {
       const text = response.trim().toLowerCase();
       if (text === 'нет' || text.length < 5) return;
 
-      await userMemoryRepo.add(userId, 'fact', response.trim(), { source: 'inference', confidence: 0.8 });
-      await userLogsRepo.add(userId, 'memory_created', response.trim(), { memory_type: 'fact' });
+      const extracted = response.trim();
+
+      // Финальная проверка: не сохраняем если AI сгенерировал injection-контент
+      if (hasPromptInjection(extracted)) {
+        aiLogger.warn({ userId, extracted: extracted.substring(0, 80) }, 'extractFacts: AI generated injection-like fact — skipping');
+        return;
+      }
+
+      await userMemoryRepo.add(userId, 'fact', extracted, { source: 'inference', confidence: 0.8 });
+      await userLogsRepo.add(userId, 'memory_created', extracted, { memory_type: 'fact' });
       aiLogger.info({ userId }, 'Fact extracted');
-      memoryContextBuilder.invalidateCache(userId);
     } catch (error) { aiLogger.error({ error, userId }, 'Failed to extract facts'); }
   },
 

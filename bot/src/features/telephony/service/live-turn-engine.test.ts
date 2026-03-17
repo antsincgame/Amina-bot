@@ -5,11 +5,16 @@ const assembleConversationContextMock = vi.fn();
 const upsertArtifactMock = vi.fn();
 const recordEventMock = vi.fn();
 const appendTurnMock = vi.fn();
+const verifyTelephonyReplyMock = vi.fn();
 
 vi.mock('../../../ai/openrouter.js', () => ({
   aiService: {
     chat: chatMock,
   },
+}));
+
+vi.mock('../../../ai/llm-verifier.js', () => ({
+  verifyTelephonyReply: verifyTelephonyReplyMock,
 }));
 
 vi.mock('./conversation-context-assembler.js', () => ({
@@ -41,6 +46,8 @@ describe('live turn engine', () => {
     upsertArtifactMock.mockReset();
     recordEventMock.mockReset();
     appendTurnMock.mockReset();
+    verifyTelephonyReplyMock.mockReset();
+    verifyTelephonyReplyMock.mockReturnValue({ isSafe: true, reason: null });
 
     assembleConversationContextMock.mockResolvedValue({
       session: { id: 'session-1' },
@@ -178,6 +185,44 @@ describe('live turn engine', () => {
       expect.objectContaining({
         maxTurnsReached: true,
       }),
+    );
+  });
+
+  it('propagates safety fallback to realtime bridge orchestration', async () => {
+    chatMock.mockResolvedValue({
+      content: JSON.stringify({
+        replyText: 'Я точно обещаю то, чего нет в контексте.',
+        shouldEndCall: true,
+        shouldFallback: false,
+        outcomeLabel: 'успех',
+        resultSummary: '',
+      }),
+    });
+    verifyTelephonyReplyMock.mockReturnValue({
+      isSafe: false,
+      reason: 'unsupported_claim',
+    });
+
+    const { generateLiveAgentTurn } = await import('./live-turn-engine.js');
+    const result = await generateLiveAgentTurn({
+      sessionId: 'session-1',
+      transcript: 'Подскажите итог',
+      isFinal: true,
+      providerEventId: 'evt-safe',
+    });
+
+    expect(result.replyText).toBe('Подождите пожалуйста, уточню информацию.');
+    expect(result.shouldFallback).toBe(true);
+    expect(result.shouldEndCall).toBe(false);
+    expect(result.fallbackReason).toBe('telephony_safety:unsupported_claim');
+    expect(recordEventMock).toHaveBeenCalledWith(
+      'session-1',
+      'agent_turn_completed',
+      expect.objectContaining({
+        shouldFallback: true,
+        fallbackReason: 'telephony_safety:unsupported_claim',
+      }),
+      'evt-safe',
     );
   });
 });

@@ -24,6 +24,7 @@ import { appLogger } from '../config/logger.js';
 import { buildDigestClosing, buildParserOnlyNewsBundle, getTimeGreeting, webSearchWithRetry } from './digest-core.js';
 import { buildHybridDigest, buildHybridDigestDeliveryKey } from './digest-hybrid.js';
 import { digestDeliveryRepo, type DigestDeliveryKind } from './digest-hybrid-repo.js';
+import { buildPersonaSystemPrompt } from '../ai/persona.js';
 
 export {
   chunkHeadlinesForDigest,
@@ -543,9 +544,17 @@ export async function buildDigest(
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   });
 
-  const digestPrompt = `Ты — Amina, персональный AI-ассистент и редактор утреннего дайджеста.
-
-Сейчас ${todayDate}.
+  const digestSystemPrompt = await buildPersonaSystemPrompt({
+    channel: 'digest',
+    extraRules: [
+      'Режим задачи: вступительная narrative-часть утреннего дайджеста.',
+      'Сохраняй образ техножрицы, но не называй себя редактором или безличным сервисом.',
+      'Включай только разделы, явно перечисленные в задаче.',
+      'Не выдумывай отсутствующие данные и не добавляй секции, которые система вставит отдельно.',
+      'Формат ответа: Markdown для Telegram.',
+    ],
+  });
+  const digestPrompt = `Сейчас ${todayDate}.
 Составь вступительную часть дайджеста для ${nameStr} из города ${city}.
 
 ВАЖНО:
@@ -566,15 +575,18 @@ ${rawData.join('\n\n')}${citationsBlock}
 Нужные разделы:
 1. **Приветствие**
 2. **Погода в ${city}**
-3. **Напоминания и задачи**
-
-Формат: Markdown для Telegram.`;
+3. **Напоминания и задачи**`;
 
   let narrativeDigest = '';
   try {
     const llmResponse = await aiService.chat(
-      [{ role: 'user', content: digestPrompt }],
-      'telegram'
+      [
+        { role: 'system', content: digestSystemPrompt },
+        { role: 'user', content: digestPrompt },
+      ],
+      'telegram',
+      undefined,
+      { promptMode: 'passthrough' },
     );
     
     // Пост-обработка: заменяем [N] на кликабельные Markdown-ссылки

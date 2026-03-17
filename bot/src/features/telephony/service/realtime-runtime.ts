@@ -44,6 +44,18 @@ export interface RealtimeBridgeStartPayload {
     storePartialTranscript: boolean;
   };
   latencyBudgetMs: number;
+  telephony: {
+    ai: {
+      provider: string;
+      openrouterModel: string | null;
+    };
+    sip: {
+      server: string | null;
+      login: string | null;
+      password: string | null;
+      externalNumber: string | null;
+    };
+  };
 }
 
 export interface MediaBridgeResponse {
@@ -104,6 +116,18 @@ export async function buildRealtimeBridgeStartPayload(
       storePartialTranscript: runtimeProfile.config.storePartialTranscript,
     },
     latencyBudgetMs: runtimeProfile.config.latencyBudgetMs,
+    telephony: {
+      ai: {
+        provider: runtimeProfile.config.aiProvider,
+        openrouterModel: runtimeProfile.config.openrouterModel || null,
+      },
+      sip: {
+        server: runtimeProfile.config.sipServer || null,
+        login: runtimeProfile.config.sipLogin || null,
+        password: runtimeProfile.config.sipPassword || null,
+        externalNumber: runtimeProfile.config.externalNumber || null,
+      },
+    },
   };
 }
 

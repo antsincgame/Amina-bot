@@ -30,6 +30,7 @@ import {
 import { aiService } from '../ai/openrouter.js';
 import type { AIMessage } from '../../../shared/types/index.js';
 import type { TelephonyRuntimeMode } from '../../../shared/types/telephony.js';
+import { buildPersonaSystemPrompt, getPersonaProfile } from '../ai/persona.js';
 import {
   buildMainMenu,
   buildReplyKeyboard,
@@ -56,9 +57,10 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     }
 
     const name = ctx.from?.first_name || 'друг';
+    const persona = await getPersonaProfile();
 
     await ctx.reply(
-      `✨ *Привет, ${name}!* Я — *Amina*, твой персональный AI-ассистент.\n\n` +
+      `✨ *Привет, ${name}!* Я — *${persona.name}*, техножрица Омниссии и голос этого когитаторного ядра.\n\n` +
       `Вот что я умею:\n\n` +
       `💬 *Чат* — задай любой вопрос\n` +
       `🌐 *Интернет* — ищу актуальную информацию в сети\n` +
@@ -402,7 +404,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     }
   });
 
-  // ====== TODO ======
+  // ====== Задачи (Todos) ======
 
   // /todo
   bot.command('todo', async (ctx) => {
@@ -654,7 +656,14 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     }
 
     try {
-      const systemPrompt = `Ты — телефонный ассистент Amina. Пользователь хочет позвонить клиенту и дал инструкцию.
+      const systemPrompt = await buildPersonaSystemPrompt({
+        channel: 'voice',
+        extraRules: [
+          'Режим задачи: подготовка обычного звонка /call.',
+          'Нужно решить, требуется ли TTS-сообщение, и выдать строгий JSON без пояснений.',
+        ],
+      });
+      const promptBody = `Пользователь хочет позвонить клиенту и дал инструкцию.
 Проанализируй инструкцию и определи:
 1. Нужно ли голосовое сообщение (TTS) клиенту при соединении?
 2. Краткое описание задачи.
@@ -671,10 +680,12 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
       const messages: AIMessage[] = [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: instruction },
+        { role: 'user', content: promptBody },
       ];
 
-      const aiResult = await aiService.chat(messages);
+      const aiResult = await aiService.chat(messages, 'voice', undefined, {
+        promptMode: 'passthrough',
+      });
       let parsed: { summary: string; speech_text: string | null; type: string };
       try {
         const jsonMatch = aiResult.content.match(/\{[\s\S]*\}/);

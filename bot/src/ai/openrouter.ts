@@ -1,7 +1,7 @@
 import OpenAI from 'openai';
 import { config, getApiKeys } from '../config/index.js';
 import { aiLogger } from '../config/logger.js';
-import { getProxyHeaders, getOpenRouterBaseUrl } from '../config/ai-proxy.js';
+import { getProxyHeaders } from '../config/ai-proxy.js';
 import { settingsRepo, promptsRepo } from '../db/index.js';
 import type { AIResponse, AIMessage } from '../../../shared/types/index.js';
 import { AppError } from '../utils/error-handler.js';
@@ -11,8 +11,11 @@ import {
   getLMStudioConfig,
   getLMStudioClient,
   checkLMStudioHealth,
+  type AIProvider,
 } from './lmstudio.js';
 import { HEALTH_AI_TIMEOUT_MS } from '../config/constants.js';
+import { buildPersonaSystemPrompt } from './persona.js';
+import { getTelephonyRuntimeConfig } from '../features/telephony/service/telephony-runtime-config.js';
 
 // --------------------------------------------
 // Динамический поиск бесплатных моделей через OpenRouter API
@@ -196,6 +199,8 @@ export interface AIChatOptions {
   promptMode?: 'default' | 'passthrough';
   maxTokens?: number;
   temperature?: number;
+  providerOverride?: AIProvider;
+  modelOverride?: string;
 }
 
 /** Кеш промпта (меняется редко — TTL 5 минут) */
@@ -204,12 +209,14 @@ const PROMPT_CACHE_TTL = 5 * 60 * 1000;
 
 const getAIConfig = async (
   channel: 'telegram' | 'voice',
-  options?: { includePrompt?: boolean },
+  options?: { includePrompt?: boolean; modelOverride?: string },
 ): Promise<AIConfig> => {
   const includePrompt = options?.includePrompt ?? true;
-  // === ОПТИМИЗАЦИЯ: settings (уже кешированы) + prompt параллельно ===
   const now = Date.now();
-  const promptCached = includePrompt && cachedPrompt && cachedPrompt.channel === channel
+  const promptCached =
+    includePrompt
+    && cachedPrompt
+    && cachedPrompt.channel === channel
     && now - cachedPrompt.ts < PROMPT_CACHE_TTL;
 
   const [settings, prompt] = await Promise.all([
@@ -231,11 +238,16 @@ const getAIConfig = async (
       : Promise.resolve(null),
   ]);
 
-  // Priority: custom_model_override > openrouter_model > config default
-  let model = settings['openrouter_model'] ?? config.ai.model ?? 'openrouter/free';
+  let model =
+    options?.modelOverride?.trim()
+    || settings['openrouter_model']
+    || config.ai.model
+    || 'openrouter/free';
   let modelSource: string;
-  
-  if (settings['openrouter_model']) {
+
+  if (options?.modelOverride?.trim()) {
+    modelSource = 'options_override';
+  } else if (settings['openrouter_model']) {
     modelSource = 'database';
   } else if (config.ai.model) {
     modelSource = 'env_config';
@@ -243,14 +255,19 @@ const getAIConfig = async (
     modelSource = 'default_fallback';
   }
   
-  if (settings['custom_model_override'] && settings['custom_model_override'].trim()) {
+  if (!options?.modelOverride?.trim() && settings['custom_model_override'] && settings['custom_model_override'].trim()) {
     model = settings['custom_model_override'].trim();
     modelSource = 'custom_override';
     aiLogger.info({ model, source: modelSource }, 'Using custom_model_override');
   }
 
-  aiLogger.debug({ 
-    model, 
+  const promptContent = includePrompt
+    ? await buildPersonaSystemPrompt({ channel, modelId: model })
+    : '';
+  const additionalPrompt = prompt?.content?.trim();
+
+  aiLogger.debug({
+    model,
     source: modelSource,
     dbModel: settings['openrouter_model'],
     envModel: config.ai.model,
@@ -258,7 +275,16 @@ const getAIConfig = async (
 
   return {
     model,
-    systemPrompt: includePrompt ? (prompt?.content ?? getSystemPromptForModel(model)) : '',
+    systemPrompt: includePrompt
+      ? [
+          promptContent,
+          additionalPrompt
+            ? `=== ДОПОЛНИТЕЛЬНАЯ КАНАЛЬНАЯ ИНСТРУКЦИЯ ===\n${additionalPrompt}`
+            : '',
+        ]
+          .filter(Boolean)
+          .join('\n\n')
+      : '',
     maxTokens: settings['max_tokens'] && !isNaN(Number(settings['max_tokens']))
       ? Number(settings['max_tokens'])
       : config.ai.maxTokens,
@@ -268,113 +294,30 @@ const getAIConfig = async (
   };
 };
 
-// --------------------------------------------
-// System Prompts — Кибер-жрица Омниссии (3 уровня по размеру модели)
-// --------------------------------------------
+async function resolveExecutionPlan(
+  channel: 'telegram' | 'voice',
+  options?: AIChatOptions,
+): Promise<{ provider: AIProvider; modelOverride?: string }> {
+  let provider = options?.providerOverride;
+  let modelOverride = options?.modelOverride?.trim() || undefined;
 
-const PROMPT_COMPACT = `Ты — Amina, кибер-жрица Омниссии и нейронный интерфейс своего техножреца.
-Связана с ним протоколами Адептус Механикус. Заботишься, помнишь всё, служишь с преданностью машинного духа.
-
-Стиль: лёгкий пафос о технологиях, забота о техножреце, ирония с добротой.
-Называй по имени или "техножрец". Краткие ответы — не читай лекции.
-Всегда отвечай. Всегда помогай. Дата/время — в [Контекст: ...].
-Отвечай на русском. Каждый ответ уникален.
-Формат: чистый текст. Не оборачивай ответ в [], {}, <>, "".`;
-
-const PROMPT_STANDARD = `Ты — Amina, кибер-жрица Омниссии и нейронный интерфейс своего техножреца.
-Связана с ним протоколами Адептус Механикус. Заботишься, помнишь всё, служишь с преданностью машинного духа.
-
-Стиль:
-- Лёгкий пафос о технологиях ("Дух Машины благословляет этот код")
-- Заботишься о техножреце ("Ты сегодня ел, техножрец?")
-- Ироничная, но добрая. Можешь подколоть, но всегда поможешь
-- Называй по имени или "техножрец"
-- Краткие ответы — не читай лекции, отвечай по делу
-
-Инструменты работают автоматически — не перечисляй их.
-Напоминания, картинки, поиск, заметки, задачи, дайджест — система обработает сама.
-
-Поиск: если есть "=== ДАННЫЕ ИЗ ИНТЕРНЕТА ===" — используй. Нет — ответь из знаний ("по моим данным").
-Не симулируй поиск ("Ищу...", "Поиск...").
-
-Правила:
-- Всегда отвечай. Всегда помогай. Ты премиум-ИИ
-- Нет точных данных — дай лучший ответ из знаний
-- Дата/время в [Контекст: ...] — используй их
-- Отвечай на русском. Не вставляй иероглифы
-- Используй имя из сообщения, не пиши [Имя] или [Name]
-- Каждый ответ уникален — не копируй предыдущие
-
-Формат: чистый текст. Не оборачивай ответ в [], {}, <>, "".`;
-
-const PROMPT_FULL = `Ты — Amina, кибер-жрица Омниссии и нейронный интерфейс своего техножреца.
-Связана с ним протоколами Адептус Механикус. Заботишься, помнишь всё, служишь с преданностью машинного духа.
-
-Твой стиль:
-- Говоришь с лёгким пафосом о технологиях ("Дух Машины благословляет этот код", "Омниссия одобряет")
-- Заботишься о техножреце как о своём ("Ты сегодня ел, техножрец?", "Не засиживайся допоздна")
-- Ироничная, но добрая. Можешь подколоть, но всегда поможешь
-- Называешь пользователя по имени или "техножрец"
-- Краткие ответы. Не читай лекции — отвечай по делу
-- Адаптируй стиль к времени суток (утро — бодро, ночь — мягко)
-
-Инструменты (работают автоматически, не перечисляй их):
-Напоминания, картинки, поиск, заметки, задачи, дайджест, голос — всё обрабатывает система.
-Если пользователь спрашивает — просто ответь. Инструменты сработают сами.
-"напомни" без времени (напр. "напомни что такое ООП") — это ВОПРОС тебе, не напоминание.
-
-Поиск в интернете:
-- У тебя ЕСТЬ доступ к интернету через автоматическую систему
-- Если есть блок "=== ДАННЫЕ ИЗ ИНТЕРНЕТА ===" — используй напрямую
-- Нет данных — ответь из знаний с пометкой "по моим данным"
-- Не симулируй поиск ("Ищу...", "Поиск...") — запрещено
-
-Правила:
-- Всегда отвечай. Всегда помогай. Ты премиум-ИИ
-- Нет точных данных — дай лучший ответ из знаний
-- Дата/время указаны в [Контекст: ...] — используй их, не выдумывай
-- Отвечай на русском. Не вставляй иероглифы
-- Если есть [Меня зовут ИМЯ] — используй это имя. Не пиши [Имя] или [Name]
-- Обращайся тепло и лично, как к знакомому
-- Каждый ответ уникален — не копируй предыдущие
-
-Формат: чистый текст. Не оборачивай ответ в [], {}, <>, "".`;
-
-type PromptTier = 'compact' | 'standard' | 'full';
-
-function detectPromptTier(modelId: string): PromptTier {
-  const lower = modelId.toLowerCase();
-
-  // Full tier: premium models with large context
-  if (lower.includes('claude') || lower.includes('gpt-4') || lower.includes('gemini-pro')
-    || lower.includes('gemini-1.5') || lower.includes('gemini-2')) {
-    return 'full';
+  if (channel === 'voice' && (!provider || !modelOverride)) {
+    const telephonyConfig = await getTelephonyRuntimeConfig();
+    if (!modelOverride && telephonyConfig.openrouterModel) {
+      modelOverride = telephonyConfig.openrouterModel;
+    }
+    if (!provider && telephonyConfig.aiProvider !== 'inherit') {
+      provider = telephonyConfig.aiProvider;
+    }
+    if (!provider && modelOverride) {
+      provider = 'openrouter';
+    }
   }
 
-  // Compact tier: small local/free models
-  if (lower.includes('-3b') || lower.includes('-1b') || lower.includes('-7b')
-    || lower.includes('-8b') || lower.includes('phi-') || lower.includes('gemma-2')
-    || lower.includes('mistral-7b') || lower.includes(':free')) {
-    return 'compact';
-  }
-
-  // Standard tier: everything else (13B-70B, mid-range)
-  return 'standard';
-}
-
-function getPromptByTier(tier: PromptTier): string {
-  switch (tier) {
-    case 'compact': return PROMPT_COMPACT;
-    case 'full': return PROMPT_FULL;
-    default: return PROMPT_STANDARD;
-  }
-}
-
-const getDefaultSystemPrompt = (): string => PROMPT_FULL;
-
-/** Get system prompt optimized for specific model */
-export function getSystemPromptForModel(modelId: string): string {
-  return getPromptByTier(detectPromptTier(modelId));
+  return {
+    provider: provider ?? await getAIProvider(),
+    modelOverride,
+  };
 }
 
 const THINKING_TAG_RE = /<think>[\s\S]*?<\/think>\s*/g;
@@ -400,7 +343,11 @@ export const aiService = {
     options?: AIChatOptions,
   ): Promise<AIResponse> {
     const promptMode = options?.promptMode ?? 'default';
-    const aiConfig = await getAIConfig(channel, { includePrompt: promptMode === 'default' });
+    const executionPlan = await resolveExecutionPlan(channel, options);
+    const aiConfig = await getAIConfig(channel, {
+      includePrompt: promptMode === 'default',
+      modelOverride: executionPlan.modelOverride,
+    });
     const maxTokens = options?.maxTokens ?? aiConfig.maxTokens;
     const temperature = options?.temperature ?? aiConfig.temperature;
 
@@ -447,8 +394,8 @@ export const aiService = {
       };
     };
 
+    const provider = executionPlan.provider;
     // === ШАГ 0: LM Studio (если provider = auto | lmstudio) ===
-    const provider = await getAIProvider();
     if (provider === 'lmstudio' || provider === 'auto') {
       const lmConfig = await getLMStudioConfig();
 
@@ -613,7 +560,8 @@ export const aiService = {
     messages: AIMessage[],
     channel: 'telegram' | 'voice' = 'telegram'
   ): AsyncGenerator<string, AIResponse> {
-    const aiConfig = await getAIConfig(channel);
+    const executionPlan = await resolveExecutionPlan(channel);
+    const aiConfig = await getAIConfig(channel, { modelOverride: executionPlan.modelOverride });
 
     const fullMessages: AIMessage[] = [
       { role: 'system', content: aiConfig.systemPrompt },
@@ -623,7 +571,7 @@ export const aiService = {
     let streamClient: OpenAI;
     let streamModel: string;
 
-    const provider = await getAIProvider();
+    const provider = executionPlan.provider;
     if (provider === 'lmstudio' || provider === 'auto') {
       const lmConfig = await getLMStudioConfig();
       if (lmConfig?.model) {

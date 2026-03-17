@@ -367,6 +367,10 @@ export async function respondToRealtimeBridge(
     providerEventId: input.providerEventId ?? null,
   });
 
+  if (result.shouldFallback) {
+    await callSessionRepo.update(input.sessionId, { status: 'fallback' });
+  }
+
   return {
     replyText: result.replyText,
     shouldEndCall: result.shouldEndCall,

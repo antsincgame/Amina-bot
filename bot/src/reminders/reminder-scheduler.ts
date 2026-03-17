@@ -35,9 +35,6 @@ export function startReminderScheduler(bot: BotLike): void {
       appLogger.error({ error: err }, 'Reminder scheduler error');
     });
   }, CHECK_INTERVAL_MS);
-
-  // Не блокируем выход процесса
-  schedulerInterval.unref();
 }
 
 /**

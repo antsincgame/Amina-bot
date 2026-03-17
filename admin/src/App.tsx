@@ -16,6 +16,7 @@ import VoiceMessagesPage from './pages/VoiceMessagesPage';
 import TelephonyPage from './pages/TelephonyPage';
 import { LMStudioPage } from './pages/LMStudioPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import PersonaPage from './pages/PersonaPage';
 
 // Protected Route wrapper
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -63,6 +64,7 @@ const App = () => {
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="users" element={<UsersPage />} />
           <Route path="settings" element={<SettingsPage />} />
+          <Route path="persona" element={<PersonaPage />} />
           <Route path="lmstudio" element={<LMStudioPage />} />
           <Route path="multimodal" element={<MultimodalSettingsPage />} />
           <Route path="api-keys" element={<ApiKeysPage />} />

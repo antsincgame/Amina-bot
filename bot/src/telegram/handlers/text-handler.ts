@@ -167,7 +167,7 @@ export const handleTextMessage = async (ctx: BotContext): Promise<void> => {
   try {
     // Short messages without explicit markers → skip auto-detection, go straight to LLM
     const isShortMessage = userMessage.length < 20;
-    const hasExplicitMarker = /^(напомни|нарисуй|озвучь|запомни|запиши|поищи|найди в интернете)/i.test(userMessage.trim());
+    const hasExplicitMarker = /^(напомни|нарисуй|озвучь|запомни|запиши|поищи|найди в интернете|не забыть|не забудь|через\s+\d|завтра|послезавтра)/i.test(userMessage.trim());
 
     if (isShortMessage && !hasExplicitMarker) {
       // Skip auto-detection for short ambiguous messages like "Чья ты жена?"

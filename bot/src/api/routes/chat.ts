@@ -52,15 +52,14 @@ export async function registerChatRoutes(server: FastifyInstance): Promise<void>
       const messageContent = validateMessageContent(body.message);
 
       aiLogger.info({ userId, channel: body.channel }, 'API chat request');
+      const effectiveChannel = body.channel === 'all' ? 'telegram' : body.channel;
 
       // Get or create conversation
       let conversation: Conversation;
       if (body.conversationId) {
         conversation = await conversationsRepo.get(body.conversationId);
       } else {
-        // For 'all', use 'telegram' as default storage channel
-        const storageChannel = body.channel === 'all' ? 'telegram' : body.channel;
-        conversation = await conversationsRepo.getOrCreate(userId, storageChannel, {
+        conversation = await conversationsRepo.getOrCreate(userId, effectiveChannel, {
           source: 'api',
           userAgent: request.headers['user-agent'] || 'unknown',
         });
@@ -78,7 +77,7 @@ export async function registerChatRoutes(server: FastifyInstance): Promise<void>
       const aiMessages: AIMessage[] = conversation.messages
         .concat([userMessage])
         .map(m => ({ role: m.role, content: m.content }));
-      const aiResponse = await aiService.chat(aiMessages);
+      const aiResponse = await aiService.chat(aiMessages, effectiveChannel);
 
       // Add AI response to conversation
       const assistantMessage: Message = {
@@ -140,7 +139,12 @@ export async function registerChatRoutes(server: FastifyInstance): Promise<void>
         }));
 
         // Get AI response (optionally override settings)
-        const aiResult = await aiService.chat(messages);
+        const aiResult = await aiService.chat(messages, 'telegram', undefined, {
+          promptMode: 'passthrough',
+          modelOverride: body.model,
+          temperature: body.temperature,
+          maxTokens: body.max_tokens,
+        });
 
         aiLogger.info('API completion completed successfully');
 

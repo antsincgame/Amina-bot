@@ -50,7 +50,7 @@ async function buildPlanForScenario(
   phone: string,
 ): Promise<TelephonyAiCallPlan> {
   const aiResult = await aiService.chat(
-    buildPlanPrompt(scenario, task, phone),
+    await buildPlanPrompt(scenario, task, phone),
     'voice',
     undefined,
     {

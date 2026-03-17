@@ -1,11 +1,8 @@
 import { getSpeechRecognitionRuntimeProfile } from '../../../ai/multimodal.js';
 import { config } from '../../../config/index.js';
 import { FETCH_TIMEOUT_MS } from '../../../config/constants.js';
-import { settingsRepo } from '../../../db/index.js';
 import { getTtsRuntimeProfile } from '../../tts.js';
-
-const DEFAULT_LATENCY_BUDGET_MS = 1800;
-const DEFAULT_RECORDING_RETENTION_DAYS = 30;
+import { getTelephonyRuntimeConfig } from './telephony-runtime-config.js';
 
 export interface RealtimeBridgeConfig {
   enabled: boolean;
@@ -16,6 +13,12 @@ export interface RealtimeBridgeConfig {
   latencyBudgetMs: number;
   recordingRetentionDays: number;
   healthUrl: string;
+  sipServer: string;
+  sipLogin: string;
+  sipPassword: string;
+  externalNumber: string;
+  aiProvider: string;
+  openrouterModel: string;
 }
 
 export interface RealtimeBridgeStatus {
@@ -31,73 +34,31 @@ export interface RealtimeBridgeStatus {
   voiceProvider: string;
   voiceModel: string;
   speechModel: string;
-}
-
-function normalizeBoolean(value: string | undefined, fallback: boolean): boolean {
-  if (value === undefined) {
-    return fallback;
-  }
-
-  return value === 'true';
-}
-
-function normalizeNumber(value: string | undefined, fallback: number, min: number, max: number): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
-    return fallback;
-  }
-
-  return parsed;
-}
-
-function buildHealthUrl(url: string): string {
-  if (!url) {
-    return '';
-  }
-
-  return `${url.replace(/\/+$/, '')}/health`;
+  telephonyAiProvider: string;
+  telephonyOpenrouterModel: string;
+  sipServer: string;
+  externalNumber: string;
+  hasSipCredentials: boolean;
 }
 
 export async function getRealtimeBridgeConfig(): Promise<RealtimeBridgeConfig> {
-  const settings = await settingsRepo.getMany([
-    'telephony_realtime_enabled',
-    'telephony_media_bridge_url',
-    'telephony_media_bridge_token',
-    'telephony_recordings_archive_enabled',
-    'telephony_partial_transcript_enabled',
-    'telephony_latency_budget_ms',
-    'telephony_recording_retention_days',
-    'telephony_media_bridge_health_url',
-  ]);
-
-  const url = settings['telephony_media_bridge_url'] || process.env.TELEPHONY_MEDIA_BRIDGE_URL || '';
+  const runtimeConfig = await getTelephonyRuntimeConfig();
 
   return {
-    enabled: settings['telephony_realtime_enabled'] === 'true'
-      || process.env.TELEPHONY_REALTIME_ENABLED === 'true',
-    url,
-    token: settings['telephony_media_bridge_token'] || process.env.TELEPHONY_MEDIA_BRIDGE_TOKEN || '',
-    archiveRecordings: normalizeBoolean(
-      settings['telephony_recordings_archive_enabled'] ?? process.env.TELEPHONY_RECORDINGS_ARCHIVE_ENABLED,
-      true,
-    ),
-    storePartialTranscript: normalizeBoolean(
-      settings['telephony_partial_transcript_enabled'] ?? process.env.TELEPHONY_PARTIAL_TRANSCRIPT_ENABLED,
-      true,
-    ),
-    latencyBudgetMs: normalizeNumber(
-      settings['telephony_latency_budget_ms'] ?? process.env.TELEPHONY_LATENCY_BUDGET_MS,
-      DEFAULT_LATENCY_BUDGET_MS,
-      500,
-      10_000,
-    ),
-    recordingRetentionDays: normalizeNumber(
-      settings['telephony_recording_retention_days'] ?? process.env.TELEPHONY_RECORDING_RETENTION_DAYS,
-      DEFAULT_RECORDING_RETENTION_DAYS,
-      1,
-      365,
-    ),
-    healthUrl: settings['telephony_media_bridge_health_url'] || buildHealthUrl(url),
+    enabled: runtimeConfig.realtimeEnabled,
+    url: runtimeConfig.mediaBridgeUrl,
+    token: runtimeConfig.mediaBridgeToken,
+    archiveRecordings: runtimeConfig.archiveRecordings,
+    storePartialTranscript: runtimeConfig.storePartialTranscript,
+    latencyBudgetMs: runtimeConfig.latencyBudgetMs,
+    recordingRetentionDays: runtimeConfig.recordingRetentionDays,
+    healthUrl: runtimeConfig.mediaBridgeHealthUrl,
+    sipServer: runtimeConfig.sipServer,
+    sipLogin: runtimeConfig.sipLogin,
+    sipPassword: runtimeConfig.sipPassword,
+    externalNumber: runtimeConfig.externalNumber,
+    aiProvider: runtimeConfig.aiProvider,
+    openrouterModel: runtimeConfig.openrouterModel,
   };
 }
 
@@ -173,5 +134,10 @@ export async function getRealtimeBridgeStatus(): Promise<RealtimeBridgeStatus> {
         ? runtimeProfile.voice.openaiModel
         : runtimeProfile.voice.edgeVoice,
     speechModel: runtimeProfile.speech.audioModel,
+    telephonyAiProvider: runtimeProfile.config.aiProvider,
+    telephonyOpenrouterModel: runtimeProfile.config.openrouterModel,
+    sipServer: runtimeProfile.config.sipServer,
+    externalNumber: runtimeProfile.config.externalNumber,
+    hasSipCredentials: Boolean(runtimeProfile.config.sipServer && runtimeProfile.config.sipLogin && runtimeProfile.config.sipPassword),
   };
 }

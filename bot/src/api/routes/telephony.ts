@@ -28,10 +28,12 @@ import {
   processTelephonyAiCallRecording,
 } from '../../features/telephony/ai-call-sessions.js';
 import { getRealtimeBridgeStatus } from '../../features/telephony/service/realtime-bridge-config.js';
+import { getTelephonyRuntimeConfig } from '../../features/telephony/service/telephony-runtime-config.js';
 import { handleRealtimeBridgeEvent, respondToRealtimeBridge } from '../../features/telephony/service/realtime-bridge-service.js';
 import { getTelephonySessionDetails } from '../../features/telephony/service/session-detail-service.js';
 import type { TelephonyAiCallPlan, TelephonyAiScenario, TelephonyRuntimeMode } from '../../../../shared/types/telephony.js';
 import type { AIMessage } from '../../../../shared/types/index.js';
+import { buildPersonaSystemPrompt } from '../../ai/persona.js';
 
 export async function registerTelephonyRoutes(server: FastifyInstance): Promise<void> {
   // ============================================
@@ -63,7 +65,8 @@ export async function registerTelephonyRoutes(server: FastifyInstance): Promise<
         }
 
         const sendTelegramNotification = async (text: string): Promise<void> => {
-          const adminChatId = await settingsRepo.get('admin_chat_id');
+          const runtimeConfig = await getTelephonyRuntimeConfig();
+          const adminChatId = runtimeConfig.adminChatId;
           if (!adminChatId) return;
           const token = config.telegram.token;
           if (!token) return;
@@ -174,25 +177,21 @@ export async function registerTelephonyRoutes(server: FastifyInstance): Promise<
         return;
       }
 
-      const settings = await settingsRepo.getMany([
-        'lirax_url',
-        'lirax_token',
-        'lirax_webhook_token',
-        'lirax_default_ext',
-      ]);
-
-      const hasToken = !!(settings['lirax_token'] || process.env.LIRAX_TOKEN);
-      const url = settings['lirax_url'] || process.env.LIRAX_URL || 'https://api.lirax.net/general';
-      const defaultExt = settings['lirax_default_ext'] || process.env.LIRAX_DEFAULT_EXT || '—';
+      const runtimeConfig = await getTelephonyRuntimeConfig();
 
       return reply.code(200).send({
         success: true,
         data: {
-          configured: hasToken,
-          url,
-          defaultExt,
+          configured: Boolean(runtimeConfig.liraxToken),
+          url: runtimeConfig.liraxUrl,
+          defaultExt: runtimeConfig.liraxDefaultExt || '—',
+          operatorPhone: runtimeConfig.operatorPhone || '—',
+          ownerChatId: runtimeConfig.ownerChatId || '—',
           webhookUrl: `${config.botUrl}/api/lirax`,
-          hasWebhookToken: !!(settings['lirax_webhook_token'] || process.env.LIRAX_WEBHOOK_TOKEN),
+          hasWebhookToken: Boolean(runtimeConfig.liraxWebhookToken),
+          sipServer: runtimeConfig.sipServer || '—',
+          externalNumber: runtimeConfig.externalNumber || '—',
+          hasSipCredentials: Boolean(runtimeConfig.sipServer && runtimeConfig.sipLogin && runtimeConfig.sipPassword),
         },
       });
     } catch (error) {
@@ -626,7 +625,14 @@ export async function registerTelephonyRoutes(server: FastifyInstance): Promise<
           return reply.code(400).send({ success: false, error: 'rule is required' });
         }
 
-        const systemPrompt = `Ты — эксперт по телефонии LiraX. Пользователь описывает сценарий звонка на русском языке. Твоя задача — преобразовать его в конфигурацию вызова LiraX API.
+        const systemPrompt = await buildPersonaSystemPrompt({
+          channel: 'system',
+          extraRules: [
+            'Режим задачи: генерация конфигурации вызова LiraX API.',
+            'Ответ должен быть строго в JSON без пояснений.',
+          ],
+        });
+        const promptBody = `Пользователь описывает сценарий звонка на русском языке. Твоя задача — преобразовать его в конфигурацию вызова LiraX API.
 
 Доступные команды LiraX:
 1. makeCall — позвонить от менеджера клиенту (параметры: from (внутренний номер), to (номер телефона))
@@ -639,14 +645,19 @@ export async function registerTelephonyRoutes(server: FastifyInstance): Promise<
 - Поле "params" — объект с параметрами (используй заглушку {{phone}} для номера клиента и {{ext}} для внутреннего номера оператора)
 - Поле "description" — краткое описание что делает сценарий
 - Текст speech/hello/ask/bye/ok всегда начинается с "ru " для русского языка
-- Не добавляй ничего кроме JSON`;
+- Не добавляй ничего кроме JSON
+
+Правило пользователя:
+${rule}`;
 
         const messages: AIMessage[] = [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: rule },
+          { role: 'user', content: promptBody },
         ];
 
-        const aiResult = await aiService.chat(messages);
+        const aiResult = await aiService.chat(messages, 'voice', undefined, {
+          promptMode: 'passthrough',
+        });
         aiLogger.info({ rule }, '[LiraX] Prompt generated via LLM');
 
         return reply.code(200).send({

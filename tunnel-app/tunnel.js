@@ -56,7 +56,7 @@ const dim = (msg) => { console.log(`${C.dim('[tunnel]')} ${msg}`); pushLog('dim'
 // ============================================
 const CONFIG = {
   botApiUrl: 'https://amina.vibecoding.by',
-  tunnelToken: 'g2xTd4FohTJnkw6zjcs7rg9M1pOaHd-XdEeuVW2OtrA',
+  tunnelToken: '',
   lmstudioPort: 1234,
   dashboardPort: 9876,
   healthInterval: 30,
@@ -655,7 +655,9 @@ async function toggleAutostart(enabled){
 // ============================================
 function startDashboard() {
   const server = http.createServer((req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    const origin = req.headers.origin || '';
+    const isLocalOrigin = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+    if (isLocalOrigin) res.setHeader('Access-Control-Allow-Origin', origin);
     if (req.url === '/' || req.url === '/index.html') {
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(getDashboardHTML());
@@ -718,7 +720,9 @@ async function main() {
   applyConfig();
 
   if (!CONFIG.tunnelToken) {
-    err('LMSTUDIO_TUNNEL_TOKEN not set');
+    err('LMSTUDIO_TUNNEL_TOKEN not set.');
+    err('Add LMSTUDIO_TUNNEL_TOKEN=<your_token> to the .env file next to this app.');
+    err('Get the token from the bot administrator.');
     STATE.phase = 'error'; STATE.error = 'No tunnel token';
     process.exit(1);
   }

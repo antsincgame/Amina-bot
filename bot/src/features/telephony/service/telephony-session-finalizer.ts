@@ -9,14 +9,25 @@ import { callTurnRepo } from '../repository/call-turn-repo.js';
 import { cleanText, escapeHtml, extractJsonObject, safeJsonParse, truncateText } from '../shared.js';
 import { sendTelephonyOwnerMessage } from './notification-service.js';
 import { buildTurnsFromTranscript, extractPlanFromEvents } from './telephony-plan.js';
+import { buildPersonaSystemPrompt } from '../../../ai/persona.js';
 
 const SUMMARY_MAX_TOKENS = 900;
 
-function buildSummaryPrompt(session: TelephonyAiCallSession, transcript: string): AIMessage[] {
+async function buildSummaryPrompt(session: TelephonyAiCallSession, transcript: string): Promise<AIMessage[]> {
+  const personaPrompt = await buildPersonaSystemPrompt({
+    channel: 'system',
+    extraRules: [
+      'Режим задачи: анализ завершённого AI-звонка владельца.',
+      'Нужен строгий JSON без пояснений и художественных отступлений.',
+    ],
+  });
+
   return [
     {
       role: 'system',
-      content: `Ты анализируешь запись исходящего AI-звонка владельца.
+      content: `${personaPrompt}
+
+Ты анализируешь запись исходящего AI-звонка владельца.
 
 Сценарий: ${session.scenarioName}
 Цель сценария: ${session.scenarioGoal || 'не указана'}
@@ -44,7 +55,7 @@ export async function summarizeTelephonyTranscript(
   transcript: string,
 ): Promise<{ outcomeLabel: string; resultSummary: string }> {
   const aiResult = await aiService.chat(
-    buildSummaryPrompt(session, transcript),
+    await buildSummaryPrompt(session, transcript),
     'voice',
     undefined,
     {

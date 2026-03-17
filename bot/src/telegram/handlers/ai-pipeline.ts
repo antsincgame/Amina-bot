@@ -31,6 +31,7 @@ import {
   AUTO_SUMMARY_INTERVAL,
 } from './history-utils.js';
 import { tryPostAIImageInterception } from './auto-detect.js';
+import { buildPersonaSystemPrompt } from '../../ai/persona.js';
 
 /**
  * Обрабатывает AI-ответ: верификация, защита от отказов, симуляции, галлюцинаций.
@@ -71,6 +72,9 @@ export const processAIResponse = async (
 
     const forced = await forceAnswer(userMessage, userId);
     if (forced) return { ...response, content: forced };
+
+    // Последний рубеж: честно сообщаем об ограничении
+    return { ...response, content: getHonestFallback() };
   }
 
   // === Шаг 3: LLM проигнорировала данные из контекста → показать Perplexity напрямую ===
@@ -95,10 +99,21 @@ export const processAIResponse = async (
 
     const forced = await forceAnswer(userMessage, userId);
     if (forced) return { ...response, content: forced };
+
+    // Последний рубеж: честно сообщаем об ограничении
+    return { ...response, content: getHonestFallback() };
   }
 
   return response;
 };
+
+/**
+ * Честный ответ когда ни Perplexity, ни force-answer не дали usable результата.
+ * Пользователь получает внятное объяснение вместо симуляции или тишины.
+ */
+export const getHonestFallback = (): string =>
+  'Извини, сейчас не могу получить актуальные данные по этому вопросу. ' +
+  'Попробуй спросить чуть позже или уточни запрос.';
 
 /**
  * Пытается получить данные из Perplexity: сначала из кэша (контекста), потом свежий запрос.
@@ -139,11 +154,24 @@ export const forceAnswer = async (
 ): Promise<string | null> => {
   try {
     telegramLogger.info({ userId, query: userMessage.substring(0, 60) }, '🔄 Force-answering with strict prompt');
+    const forcePrompt = await buildPersonaSystemPrompt({
+      channel: 'telegram',
+      extraRules: [
+        'Режим задачи: force-answer.',
+        'Ответь кратко, честно и по делу.',
+        'Не отказывайся без необходимости и не симулируй поиск.',
+        'Если данных мало, дай лучший ответ из знаний и не выдумывай факты.',
+      ],
+    });
 
     const forceResult = await aiService.chat(
-      [{ role: 'user', content: userMessage }],
+      [
+        { role: 'system', content: forcePrompt },
+        { role: 'user', content: userMessage },
+      ],
       'telegram',
-      `Ты — Amina, кибер-жрица Омниссии. Ответь техножрецу кратко и по делу. Не отказывай. Отвечай на русском.`
+      undefined,
+      { promptMode: 'passthrough' },
     );
 
     if (forceResult.content &&

@@ -4,6 +4,44 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
+const {
+  buildPersonaSystemPromptMock,
+  getTelephonyRuntimeConfigMock,
+  createTelephonyRuntimeConfig,
+} = vi.hoisted(() => {
+  const createTelephonyRuntimeConfig = () => ({
+    liraxUrl: 'https://api.lirax.net/general',
+    liraxToken: '',
+    liraxWebhookToken: '',
+    liraxDefaultExt: '201',
+    operatorPhone: '',
+    adminChatId: '',
+    ownerChatId: '',
+    notifyCalls: true,
+    notifyRecords: true,
+    realtimeEnabled: false,
+    mediaBridgeUrl: '',
+    mediaBridgeToken: '',
+    mediaBridgeHealthUrl: '',
+    archiveRecordings: true,
+    storePartialTranscript: true,
+    latencyBudgetMs: 1800,
+    recordingRetentionDays: 30,
+    sipServer: '',
+    sipLogin: '',
+    sipPassword: '',
+    externalNumber: '',
+    aiProvider: 'inherit' as const,
+    openrouterModel: '',
+  });
+
+  return {
+    buildPersonaSystemPromptMock: vi.fn().mockResolvedValue('persona-core'),
+    getTelephonyRuntimeConfigMock: vi.fn().mockResolvedValue(createTelephonyRuntimeConfig()),
+    createTelephonyRuntimeConfig,
+  };
+});
+
 // Mock dependencies BEFORE importing the module
 vi.mock('../config/index.js', () => ({
   config: {
@@ -30,6 +68,14 @@ vi.mock('../config/logger.js', () => ({
     warn: vi.fn(),
     error: vi.fn(),
   },
+}));
+
+vi.mock('./persona.js', () => ({
+  buildPersonaSystemPrompt: buildPersonaSystemPromptMock,
+}));
+
+vi.mock('../features/telephony/service/telephony-runtime-config.js', () => ({
+  getTelephonyRuntimeConfig: getTelephonyRuntimeConfigMock,
 }));
 
 vi.mock('../db/index.js', () => ({
@@ -82,6 +128,8 @@ describe('OpenRouter AI Service', () => {
     mockCreate.mockReset();
     mockFetch.mockReset();
     vi.useRealTimers();
+    buildPersonaSystemPromptMock.mockResolvedValue('persona-core');
+    getTelephonyRuntimeConfigMock.mockResolvedValue(createTelephonyRuntimeConfig());
   });
 
   describe('aiService.chat', () => {
@@ -132,6 +180,25 @@ describe('OpenRouter AI Service', () => {
       const callArgs = mockCreate.mock.calls[0][0];
       expect(callArgs.messages[0].role).toBe('system');
       expect(callArgs.messages[1].content).toBe('Hi');
+    });
+
+    it('should use telephony OpenRouter model for voice channel', async () => {
+      getTelephonyRuntimeConfigMock.mockResolvedValue({
+        ...createTelephonyRuntimeConfig(),
+        realtimeEnabled: true,
+        openrouterModel: 'anthropic/claude-3.5-sonnet',
+      });
+      mockCreate.mockResolvedValueOnce({
+        choices: [{ message: { content: 'Voice OK' }, finish_reason: 'stop' }],
+        model: 'anthropic/claude-3.5-sonnet',
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      });
+
+      const result = await aiService.chat([{ role: 'user', content: 'Привет' }], 'voice');
+      const callArgs = mockCreate.mock.calls[0][0];
+
+      expect(result.model).toBe('anthropic/claude-3.5-sonnet');
+      expect(callArgs.model).toBe('anthropic/claude-3.5-sonnet');
     });
 
     it('should support passthrough mode for internal tasks', async () => {

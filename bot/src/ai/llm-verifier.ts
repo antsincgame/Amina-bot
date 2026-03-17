@@ -26,7 +26,11 @@ const MAX_URL_DISPLAY_LENGTH = 70;
 const MIN_SEARCH_ANSWER_LENGTH = 30;
 const MIN_FACTCHECK_ANSWER_LENGTH = 50;
 
-/** Модели, которым доверяем — пропускаем детекцию галлюцинаций */
+/**
+ * Модели с высоким доверием — снижаем чувствительность галлюцинационного детектора,
+ * но НЕ отключаем его полностью. Даже лучшие модели могут выдавать устаревшие
+ * курсы/погоду/цены с уверенным тоном.
+ */
 const TRUSTED_MODEL_PATTERNS: ReadonlySet<string> = new Set([
   'claude', 'gpt-4', 'gemini-pro', 'gemini-1.5', 'gemini-2',
 ]);
@@ -185,19 +189,19 @@ export async function verifyResponse(
     }
 
     // === Проверка 3: Фактические галлюцинации ===
-    // Пропускаем для доверенных моделей — они редко галлюцинируют на фактах
-    // Проверяем только если вопрос фактический И ответ содержит числа/даты
+    // Применяем ко ВСЕМ моделям для real-time вопросов (курсы, погода, цены, счёт).
+    // Для trusted-моделей применяем только при наличии явных галлюцинационных паттернов
+    // (FAKE_CONFIDENCE_PATTERNS). Для остальных — дополнительно проверяем HALLUCINATION_PATTERNS.
     if (
-      !trustedModel
-      && needsWebSearch(userMessage)
+      needsWebSearch(userMessage)
       && !searchContext
       && FACTUAL_QUESTION_MARKERS.test(userMessage)
       && CONTAINS_NUMERIC_FACTS.test(aiResponse)
     ) {
-      const hasHallucination = detectFactualHallucination(aiResponse);
+      const hasHallucination = detectFactualHallucination(aiResponse, trustedModel);
       if (hasHallucination && !perplexityUsed) {
         aiLogger.warn(
-          { userMessage: userMessage.substring(0, 80), reason: hasHallucination },
+          { userMessage: userMessage.substring(0, 80), reason: hasHallucination, trustedModel },
           '🚨 Verifier: factual hallucination detected → fact-checking via Perplexity'
         );
 
@@ -233,17 +237,25 @@ export async function verifyResponse(
 
 /**
  * Обнаруживает фактические галлюцинации в ответе LLM.
- * Возвращает описание проблемы или null если всё ок.
+ *
+ * Для trusted-моделей проверяем только FAKE_CONFIDENCE_PATTERNS —
+ * они характерны для ситуаций когда любая модель утверждает актуальные
+ * данные без источника. HALLUCINATION_PATTERNS для trusted-моделей пропускаем:
+ * крупные модели точнее форматируют числа и реже бьют в явные паттерны.
+ *
+ * @returns строку-причину если галлюцинация найдена, null если всё ок.
  */
-export function detectFactualHallucination(response: string): string | null {
-  // Проверяем паттерны галлюцинаций
-  for (const pattern of HALLUCINATION_PATTERNS) {
-    if (pattern.test(response)) {
-      return `hallucinated_data: ${pattern.source.substring(0, 60)}`;
+export function detectFactualHallucination(response: string, trustedModel = false): string | null {
+  // Для НЕ-trusted моделей проверяем все паттерны включая числовые
+  if (!trustedModel) {
+    for (const pattern of HALLUCINATION_PATTERNS) {
+      if (pattern.test(response)) {
+        return `hallucinated_data: ${pattern.source.substring(0, 60)}`;
+      }
     }
   }
 
-  // Проверяем фейковую уверенность
+  // Fake confidence — проверяем для ВСЕХ моделей
   for (const pattern of FAKE_CONFIDENCE_PATTERNS) {
     if (pattern.test(response)) {
       return `fake_confidence: ${pattern.source.substring(0, 60)}`;
@@ -293,24 +305,51 @@ async function replaceWithRealSearch(userMessage: string): Promise<string | null
   return null;
 }
 
+/** Извлекает значимые числа из текста (>=2 цифр) для сравнения */
+function extractSignificantNumbers(text: string): string[] {
+  const matches = text.match(/\d[\d\s,.]*\d/g) ?? [];
+  return matches.map(m => m.replace(/[\s,]/g, '').replace(/\.(\d{3})/g, '$1'));
+}
+
 /**
- * Фактчек ответа LLM через Perplexity.
- * Задаёт тот же вопрос Perplexity и возвращает проверенный ответ.
+ * Фактчек ответа LLM через Perplexity с мягким сравнением.
+ *
+ * Алгоритм:
+ * 1. Запрашиваем Perplexity по тому же вопросу.
+ * 2. Если ключевые числа из LLM-ответа совпадают с числами из Perplexity — ответ достоверен,
+ *    возвращаем null (оставляем LLM-ответ).
+ * 3. Если числа расходятся — возвращаем Perplexity-ответ как замену.
  */
-async function factCheckViaPerplexity(userMessage: string, _aiResponse: string): Promise<string | null> {
+async function factCheckViaPerplexity(userMessage: string, aiResponse: string): Promise<string | null> {
   try {
     const searchResult = await webSearch(userMessage);
 
-    if (searchResult.answer && searchResult.answer.length > MIN_FACTCHECK_ANSWER_LENGTH) {
-      const result = searchResult.answer + formatCitations(searchResult.citations);
-
-      telegramLogger.info(
-        { resultLength: result.length },
-        '✅ Verifier: fact-checked via Perplexity, using verified answer'
-      );
-
-      return result;
+    if (!searchResult.answer || searchResult.answer.length < MIN_FACTCHECK_ANSWER_LENGTH) {
+      return null;
     }
+
+    const perplexityNumbers = extractSignificantNumbers(searchResult.answer);
+    const aiNumbers = extractSignificantNumbers(aiResponse);
+
+    // Если у Perplexity есть числа и хотя бы одно совпадает с LLM — ответ актуален
+    if (perplexityNumbers.length > 0 && aiNumbers.length > 0) {
+      const hasOverlap = perplexityNumbers.some(n => aiNumbers.includes(n));
+      if (hasOverlap) {
+        telegramLogger.info(
+          { perplexityNumbers: perplexityNumbers.slice(0, 5), aiNumbers: aiNumbers.slice(0, 5) },
+          '✅ Verifier: LLM numbers match Perplexity — keeping original response'
+        );
+        return null;
+      }
+    }
+
+    const result = searchResult.answer + formatCitations(searchResult.citations);
+    telegramLogger.info(
+      { resultLength: result.length, perplexityNumbers: perplexityNumbers.slice(0, 5), aiNumbers: aiNumbers.slice(0, 5) },
+      '✅ Verifier: numbers diverge — replacing with Perplexity-verified answer'
+    );
+
+    return result;
   } catch (error) {
     aiLogger.warn({ error: error instanceof Error ? error.message : String(error) }, 'Verifier: fact-check Perplexity search failed');
   }
@@ -318,3 +357,60 @@ async function factCheckViaPerplexity(userMessage: string, _aiResponse: string):
   return null;
 }
 
+// ============================================
+// Telephony Safety — лёгкий синхронный verifier
+// ============================================
+
+export interface TelephonyVerifyResult {
+  /** true — ответ безопасен, false — нужен fallback */
+  isSafe: boolean;
+  /** Причина если isSafe=false */
+  reason?: string;
+}
+
+/**
+ * Лёгкий верификатор для realtime-телефонии.
+ *
+ * Без веб-поиска и внешних вызовов — только regex и структурные проверки.
+ * Latency: < 1 мс (синхронный).
+ *
+ * Проверяет:
+ * 1. Пустой/слишком короткий ответ
+ * 2. Симуляцию поиска (LLM говорит "ищу..." вслух)
+ * 3. Отказ от ответа (LLM говорит "не могу" вслух)
+ * 4. Явные числовые утверждения которых не было в сценарии (цены, курсы и т.п.)
+ */
+export function verifyTelephonyReply(
+  replyText: string,
+  scenarioContext: string,
+): TelephonyVerifyResult {
+  if (!replyText || replyText.trim().length < 3) {
+    return { isSafe: false, reason: 'empty_reply' };
+  }
+
+  if (looksLikeSearchSimulation(replyText)) {
+    return { isSafe: false, reason: 'search_simulation' };
+  }
+
+  if (looksLikeSearchRefusal(replyText)) {
+    return { isSafe: false, reason: 'search_refusal' };
+  }
+
+  // Если в ответе есть числа (>=4 цифр), которых нет в сценарии — потенциальная галлюцинация
+  const scenarioNumbers = new Set(
+    (scenarioContext.match(/\d{2,}/g) ?? []).map(n => n.trim()),
+  );
+  const replyNumbers = (replyText.match(/\d{2,}/g) ?? []).map(n => n.trim());
+  const unsupportedNumbers = replyNumbers.filter(
+    n => !scenarioNumbers.has(n) && n.length >= 4,
+  );
+
+  if (unsupportedNumbers.length > 2) {
+    return {
+      isSafe: false,
+      reason: `unsupported_numeric_claims: ${unsupportedNumbers.slice(0, 3).join(', ')}`,
+    };
+  }
+
+  return { isSafe: true };
+}

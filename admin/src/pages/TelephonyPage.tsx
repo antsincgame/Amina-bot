@@ -6,6 +6,7 @@ import {
   Bell,
   BellOff,
   CheckCircle,
+  Download,
   Loader2,
   Mic,
   MicOff,
@@ -23,6 +24,11 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { fetchBotApi, settingsApi } from '../api/appwrite';
+import {
+  fetchOpenRouterModels,
+  filterPremiumModels,
+  transformToSimpleModel,
+} from '../api/openrouter';
 import type {
   TelephonyCallArtifact,
   TelephonyCallEvent,
@@ -38,8 +44,13 @@ interface LiraXStatus {
   configured: boolean;
   url: string;
   defaultExt: string;
+  operatorPhone: string;
+  ownerChatId: string;
   webhookUrl: string;
   hasWebhookToken: boolean;
+  sipServer: string;
+  externalNumber: string;
+  hasSipCredentials: boolean;
 }
 
 interface RealtimeBridgeStatus {
@@ -55,6 +66,11 @@ interface RealtimeBridgeStatus {
   voiceProvider: string;
   voiceModel: string;
   speechModel: string;
+  telephonyAiProvider: string;
+  telephonyOpenrouterModel: string;
+  sipServer: string;
+  externalNumber: string;
+  hasSipCredentials: boolean;
 }
 
 interface TelephonyUser {
@@ -83,6 +99,18 @@ interface TelephonySessionDetails {
   outcome: TelephonyCallOutcome | null;
 }
 
+interface SimpleModel {
+  id: string;
+  name: string;
+}
+
+const DEFAULT_PREMIUM_MODELS: SimpleModel[] = [
+  { id: 'anthropic/claude-3.5-sonnet', name: 'Claude 3.5 Sonnet' },
+  { id: 'openai/gpt-4o', name: 'GPT-4o' },
+  { id: 'google/gemini-pro', name: 'Gemini Pro' },
+  { id: 'mistralai/mistral-large', name: 'Mistral Large' },
+];
+
 function createScenarioDraft(): TelephonyAiScenario {
   const now = new Date().toISOString();
 
@@ -109,7 +137,7 @@ function createScenarioDraft(): TelephonyAiScenario {
     },
     goal: '',
     systemPrompt: '',
-    openingLine: 'Здравствуйте. Вас беспокоит AI-ассистент Амина.',
+    openingLine: 'Здравствуйте. Вас беспокоит техножрица Амина, голос владельца через когитаторный канал.',
     questionHint: '',
     successCriteria: '',
     resultPrompt: '',
@@ -236,6 +264,13 @@ async function readJson<T>(response: Response): Promise<T> {
   return json as T;
 }
 
+async function fetchPremiumOpenRouterModels(): Promise<SimpleModel[]> {
+  const response = await fetchOpenRouterModels(undefined, 300);
+  return filterPremiumModels(response.models)
+    .slice(0, 25)
+    .map(transformToSimpleModel);
+}
+
 async function fetchLiraXStatus(): Promise<LiraXStatus> {
   const response = await fetchBotApi('/api/lirax/status');
   const json = await readJson<{ data: LiraXStatus }>(response);
@@ -341,9 +376,17 @@ const TelephonyPage = () => {
 
   const [adminChatId, setAdminChatId] = useState('');
   const [ownerChatId, setOwnerChatId] = useState('');
+  const [liraxUrl, setLiraxUrl] = useState('');
+  const [liraxToken, setLiraxToken] = useState('');
   const [webhookToken, setWebhookToken] = useState('');
   const [defaultExt, setDefaultExt] = useState('201');
   const [operatorPhone, setOperatorPhone] = useState('');
+  const [sipServer, setSipServer] = useState('');
+  const [sipLogin, setSipLogin] = useState('');
+  const [sipPassword, setSipPassword] = useState('');
+  const [externalNumber, setExternalNumber] = useState('');
+  const [telephonyAiProvider, setTelephonyAiProvider] = useState<'inherit' | 'openrouter' | 'lmstudio'>('inherit');
+  const [telephonyOpenrouterModel, setTelephonyOpenrouterModel] = useState('');
   const [notifyCalls, setNotifyCalls] = useState(true);
   const [notifyRecords, setNotifyRecords] = useState(true);
   const [realtimeEnabled, setRealtimeEnabled] = useState(false);
@@ -353,6 +396,9 @@ const TelephonyPage = () => {
   const [storePartialTranscript, setStorePartialTranscript] = useState(true);
   const [latencyBudgetMs, setLatencyBudgetMs] = useState('1800');
   const [recordingRetentionDays, setRecordingRetentionDays] = useState('30');
+  const [premiumModels, setPremiumModels] = useState<SimpleModel[]>(DEFAULT_PREMIUM_MODELS);
+  const [isRefreshingModels, setIsRefreshingModels] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState('');
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [reloadWarning, setReloadWarning] = useState(false);
 
@@ -417,9 +463,20 @@ const TelephonyPage = () => {
     const map = new Map(allSettings.map((item) => [item.key, item.value]));
     setAdminChatId(map.get('lirax_admin_chat_id') || '');
     setOwnerChatId(map.get('lirax_owner_chat_id') || '');
+    setLiraxUrl(map.get('lirax_url') || 'https://api.lirax.net/general');
+    setLiraxToken(map.get('lirax_token') || '');
     setWebhookToken(map.get('lirax_webhook_token') || '');
     setDefaultExt(map.get('lirax_default_ext') || '201');
     setOperatorPhone(map.get('lirax_operator_phone') || '');
+    setSipServer(map.get('telephony_sip_server') || '');
+    setSipLogin(map.get('telephony_sip_login') || '');
+    setSipPassword(map.get('telephony_sip_password') || '');
+    setExternalNumber(map.get('telephony_external_number') || '');
+    const provider = map.get('telephony_ai_provider');
+    setTelephonyAiProvider(
+      provider === 'openrouter' || provider === 'lmstudio' ? provider : 'inherit',
+    );
+    setTelephonyOpenrouterModel(map.get('telephony_openrouter_model') || '');
     setNotifyCalls(map.get('lirax_notify_calls') !== 'false');
     setNotifyRecords(map.get('lirax_notify_records') !== 'false');
     setRealtimeEnabled(map.get('telephony_realtime_enabled') === 'true');
@@ -455,16 +512,38 @@ const TelephonyPage = () => {
     [scenarios],
   );
 
+  const handleRefreshModels = async (): Promise<void> => {
+    setIsRefreshingModels(true);
+    try {
+      const models = await fetchPremiumOpenRouterModels();
+      setPremiumModels(models.length > 0 ? models : DEFAULT_PREMIUM_MODELS);
+      setRefreshMessage(`Загружено ${models.length} премиум моделей`);
+    } catch (error) {
+      setRefreshMessage(`Ошибка загрузки моделей: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setIsRefreshingModels(false);
+      setTimeout(() => setRefreshMessage(''), 4000);
+    }
+  };
+
   const { mutate: saveSettings, isPending: savingSettings } = useMutation({
     mutationFn: async () => {
       await settingsApi.updateMany({
         lirax_admin_chat_id: adminChatId,
         lirax_owner_chat_id: ownerChatId,
+        lirax_url: liraxUrl,
+        lirax_token: liraxToken,
         lirax_webhook_token: webhookToken,
         lirax_default_ext: defaultExt,
         lirax_operator_phone: operatorPhone,
         lirax_notify_calls: notifyCalls ? 'true' : 'false',
         lirax_notify_records: notifyRecords ? 'true' : 'false',
+        telephony_sip_server: sipServer,
+        telephony_sip_login: sipLogin,
+        telephony_sip_password: sipPassword,
+        telephony_external_number: externalNumber,
+        telephony_ai_provider: telephonyAiProvider,
+        telephony_openrouter_model: telephonyOpenrouterModel,
         telephony_realtime_enabled: realtimeEnabled ? 'true' : 'false',
         telephony_media_bridge_url: mediaBridgeUrl,
         telephony_media_bridge_token: mediaBridgeToken,
@@ -661,8 +740,13 @@ const TelephonyPage = () => {
             <StatusRow label="Подключение" value={status.configured ? 'Настроено' : 'Не настроено'} ok={status.configured} />
             <StatusRow label="URL АТС" value={status.url} ok={!!status.url} mono />
             <StatusRow label="Внутренний номер" value={status.defaultExt} ok={!!status.defaultExt} />
+            <StatusRow label="Оператор" value={status.operatorPhone} ok={status.operatorPhone !== '—'} mono />
+            <StatusRow label="Владелец AI-звонков" value={status.ownerChatId} ok={status.ownerChatId !== '—'} />
             <StatusRow label="Webhook URL" value={status.webhookUrl} ok={!!status.webhookUrl} mono />
             <StatusRow label="Webhook токен" value={status.hasWebhookToken ? 'Установлен' : 'Не установлен'} ok={status.hasWebhookToken} />
+            <StatusRow label="SIP server" value={status.sipServer} ok={status.sipServer !== '—'} mono />
+            <StatusRow label="SIP credentials" value={status.hasSipCredentials ? 'Установлены' : 'Не заданы'} ok={status.hasSipCredentials} />
+            <StatusRow label="Внешний номер" value={status.externalNumber} ok={status.externalNumber !== '—'} mono />
           </div>
         ) : (
           !statusLoading && <p className="text-sm text-gray-500">Не удалось загрузить статус LiraX</p>
@@ -688,6 +772,10 @@ const TelephonyPage = () => {
             <StatusRow label="Голос" value={`${realtimeStatus.voiceProvider} / ${realtimeStatus.voiceModel}`} ok={!!realtimeStatus.voiceProvider} mono />
             <StatusRow label="STT" value={realtimeStatus.speechModel} ok={!!realtimeStatus.speechModel} mono />
             <StatusRow label="Latency budget" value={`${realtimeStatus.latencyBudgetMs} ms`} ok={realtimeStatus.latencyBudgetMs > 0} />
+            <StatusRow label="AI provider телефонии" value={realtimeStatus.telephonyAiProvider} ok={!!realtimeStatus.telephonyAiProvider} mono />
+            <StatusRow label="OpenRouter model телефонии" value={realtimeStatus.telephonyOpenrouterModel || 'Не задан'} ok={!!realtimeStatus.telephonyOpenrouterModel} mono />
+            <StatusRow label="SIP server bridge" value={realtimeStatus.sipServer || 'Не задан'} ok={!!realtimeStatus.sipServer} mono />
+            <StatusRow label="SIP учётка" value={realtimeStatus.hasSipCredentials ? 'Готова' : 'Не настроена'} ok={realtimeStatus.hasSipCredentials} />
           </div>
         ) : (
           !realtimeStatusLoading && <p className="text-sm text-gray-500">Не удалось загрузить статус realtime bridge</p>
@@ -712,6 +800,25 @@ const TelephonyPage = () => {
             <input className="input w-full" value={ownerChatId} onChange={(e) => setOwnerChatId(e.target.value)} placeholder="7867087040" />
           </Field>
 
+          <Field label="LiraX API URL" hint="General API URL для команд makeCall / AskQuestion / get_calls.">
+            <input
+              className="input w-full font-mono text-sm"
+              value={liraxUrl}
+              onChange={(e) => setLiraxUrl(e.target.value)}
+              placeholder="https://api.lirax.net/general"
+            />
+          </Field>
+
+          <Field label="LiraX API token" hint="Хранится только в защищённых настройках backend-а и нужен для команд в LiraX.">
+            <input
+              type="password"
+              className="input w-full font-mono text-sm"
+              value={liraxToken}
+              onChange={(e) => setLiraxToken(e.target.value)}
+              placeholder="token из LiraX"
+            />
+          </Field>
+
           <Field label="Webhook токен (from_LiraX_token)" hint="Токен верификации вебхуков LiraX.">
             <input
               className="input w-full font-mono text-sm"
@@ -728,6 +835,107 @@ const TelephonyPage = () => {
           <Field label="Внутренний номер (ext)" hint="Используется как from/ext для LiraX-команд.">
             <input className="input w-48" value={defaultExt} onChange={(e) => setDefaultExt(e.target.value)} placeholder="201" />
           </Field>
+
+          <div className="pt-2 border-t border-white/5">
+            <p className="text-sm font-medium text-white mb-3">SIP / внешняя связность</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Field label="SIP server" hint="Сервер SIP-регистрации для bridge / внешнего voice runtime.">
+                <input
+                  className="input w-full font-mono text-sm"
+                  value={sipServer}
+                  onChange={(e) => setSipServer(e.target.value)}
+                  placeholder="lira.lirax.net"
+                />
+              </Field>
+              <Field label="SIP login" hint="Логин SIP-учётки.">
+                <input
+                  className="input w-full font-mono text-sm"
+                  value={sipLogin}
+                  onChange={(e) => setSipLogin(e.target.value)}
+                  placeholder="1129570"
+                />
+              </Field>
+              <Field label="SIP password" hint="Пароль не отображается в статусе и передаётся только runtime-слою.">
+                <input
+                  type="password"
+                  className="input w-full font-mono text-sm"
+                  value={sipPassword}
+                  onChange={(e) => setSipPassword(e.target.value)}
+                  placeholder="••••••••"
+                />
+              </Field>
+              <Field label="Внешний номер" hint="Номер для внешней телефонии, если runtime или bridge требует явный outbound identity.">
+                <input
+                  className="input w-full"
+                  value={externalNumber}
+                  onChange={(e) => setExternalNumber(e.target.value)}
+                  placeholder="+375291234567"
+                />
+              </Field>
+            </div>
+          </div>
+
+          <div className="pt-2 border-t border-white/5">
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <p className="text-sm font-medium text-white">AI-ядро телефонии</p>
+              <button
+                type="button"
+                onClick={() => void handleRefreshModels()}
+                disabled={isRefreshingModels}
+                className="btn-secondary"
+              >
+                {isRefreshingModels ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Обновление...
+                  </>
+                ) : (
+                  <>
+                    <Download className="w-4 h-4 mr-2" />
+                    Премиум модели OpenRouter
+                  </>
+                )}
+              </button>
+            </div>
+            {refreshMessage && (
+              <div className="mb-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+                {refreshMessage}
+              </div>
+            )}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <Field label="Telephony AI provider" hint="inherit = общий provider бота, openrouter = принудительно премиум модель, lmstudio = локальная модель.">
+                <select
+                  className="input w-full"
+                  value={telephonyAiProvider}
+                  onChange={(e) => setTelephonyAiProvider(e.target.value as 'inherit' | 'openrouter' | 'lmstudio')}
+                >
+                  <option value="inherit">Наследовать общий provider</option>
+                  <option value="openrouter">Принудительно OpenRouter</option>
+                  <option value="lmstudio">Принудительно LM Studio</option>
+                </select>
+              </Field>
+              <Field label="Telephony OpenRouter model" hint="Если модель задана, voice runtime получит отдельный premium model override.">
+                <select
+                  className="input w-full"
+                  value={telephonyOpenrouterModel}
+                  onChange={(e) => setTelephonyOpenrouterModel(e.target.value)}
+                >
+                  <option value="">Не задано</option>
+                  {telephonyOpenrouterModel
+                    && !premiumModels.some((model) => model.id === telephonyOpenrouterModel) && (
+                    <option value={telephonyOpenrouterModel}>
+                      {telephonyOpenrouterModel}
+                    </option>
+                  )}
+                  {premiumModels.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+          </div>
 
           <div className="flex flex-col sm:flex-row gap-4">
             <ToggleButton

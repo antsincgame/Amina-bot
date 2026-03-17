@@ -15,6 +15,7 @@ import {
   slugify,
   truncateText,
 } from './shared.js';
+import { buildPersonaSystemPrompt } from '../../ai/persona.js';
 
 const DEFAULT_MAX_SPEECH_CHARS = 420;
 
@@ -121,7 +122,7 @@ export function getDefaultTelephonyAiScenarios(): TelephonyAiScenario[] {
       goal: 'Коротко напомнить о встрече и получить подтверждение или просьбу связаться позже.',
       systemPrompt:
         'Говори вежливо, спокойно и уверенно. Не импровизируй юридические обещания и не называй несуществующие скидки.',
-      openingLine: 'Здравствуйте. Вас беспокоит AI-ассистент Амина.',
+      openingLine: 'Здравствуйте. Вас беспокоит техножрица Амина, голос владельца через когитаторный канал.',
       questionHint: 'Сформулируй один чёткий вопрос, на который удобно ответить да или нет.',
       successCriteria: 'Собеседник подтвердил встречу, согласился на действие или попросил связаться позже.',
       resultPrompt:
@@ -136,7 +137,7 @@ export function getDefaultTelephonyAiScenarios(): TelephonyAiScenario[] {
       goal: 'Озвучить суть предложения и получить финальное решение или удобное время для ответа.',
       systemPrompt:
         'Не дави на человека. Формулируй выгодно, но честно. Уважай отказ и завершай разговор спокойно.',
-      openingLine: 'Здравствуйте. Я AI-ассистент Амина, звоню по вашему запросу.',
+      openingLine: 'Здравствуйте. Я техножрица Амина, звоню по поручению владельца и сразу перейду к сути.',
       questionHint: 'Сконцентрируй вопрос на решении: интересно, неинтересно или когда вернуться с ответом.',
       successCriteria: 'Получен ответ по интересу, согласие на следующий шаг или явный отказ.',
       resultPrompt:
@@ -151,7 +152,7 @@ export function getDefaultTelephonyAiScenarios(): TelephonyAiScenario[] {
       goal: 'Озвучить важное сообщение по задаче владельца и завершить звонок без длинного диалога.',
       systemPrompt:
         'Сообщение должно звучать как личный помощник владельца. Сразу переходи к сути и говори простыми фразами.',
-      openingLine: 'Здравствуйте. Передаю важное голосовое сообщение от Амины.',
+      openingLine: 'Здравствуйте. Техножрица Амина передаёт важное голосовое сообщение владельца.',
       successCriteria: 'Сообщение доставлено без искажений и человеку понятно, что делать дальше.',
       resultPrompt:
         'Если по записи слышно реакцию человека, выдели согласие, вопросы, сомнения или необходимость личного перезвона.',
@@ -166,7 +167,7 @@ export function getDefaultTelephonyAiScenarios(): TelephonyAiScenario[] {
       goal: 'AI ведёт свободный разговор с собеседником без жёсткого сценария, адаптируясь к теме и контексту задачи владельца.',
       systemPrompt:
         'Ты ведёшь свободный телефонный разговор. Говори естественно, кратко, по делу. Слушай собеседника, задавай уточняющие вопросы. Не навязывай структуру, следуй за ходом беседы. Завершай, когда цель достигнута или собеседник прощается.',
-      openingLine: 'Здравствуйте. Я AI-ассистент Амина, звоню по поручению владельца.',
+      openingLine: 'Здравствуйте. Я техножрица Амина, звоню по поручению владельца.',
       questionHint: 'Не ограничивайся одним вопросом — веди живой диалог, задавай уточнения по ходу разговора.',
       successCriteria: 'Разговор прошёл продуктивно: получена нужная информация или достигнута цель задачи владельца.',
       resultPrompt:
@@ -175,6 +176,10 @@ export function getDefaultTelephonyAiScenarios(): TelephonyAiScenario[] {
         maxTurns: 20,
         maxSilenceMs: 8000,
         fallbackMode: 'scripted' as const,
+        allowedClaims: [],
+        requiredSlots: [],
+        exitConditions: [],
+        handoffRules: [],
       },
     },
   ];
@@ -182,11 +187,11 @@ export function getDefaultTelephonyAiScenarios(): TelephonyAiScenario[] {
   return defaults.map((scenario, index) => normalizeScenario(scenario, index, now));
 }
 
-export function buildPlanPrompt(
+export async function buildPlanPrompt(
   scenario: TelephonyAiScenario,
   task: string,
   phone: string,
-): AIMessage[] {
+): Promise<AIMessage[]> {
   const responseShape = scenario.callMode === 'speech'
     ? `{
   "summary": "кратко что делаем",
@@ -202,10 +207,21 @@ export function buildPlanPrompt(
   "successHint": "что считать успешным итогом"
 }`;
 
+  const personaPrompt = await buildPersonaSystemPrompt({
+    channel: 'voice',
+    extraRules: [
+      'Режим задачи: проектирование исходящего телефонного сценария.',
+      'Тебе нужно собрать план звонка, а не вести сам разговор.',
+      'Ответ должен быть строго в JSON без пояснений.',
+    ],
+  });
+
   return [
     {
       role: 'system',
-      content: `Ты проектируешь исходящий AI-звонок для LiraX.
+      content: `${personaPrompt}
+
+Ты проектируешь исходящий AI-звонок для LiraX.
 
 Режим сценария: ${scenario.callMode === 'speech' ? 'speech-only' : 'ask-question'}.
 Runtime режима: ${scenario.runtimeMode}.

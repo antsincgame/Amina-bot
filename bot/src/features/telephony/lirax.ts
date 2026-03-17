@@ -11,6 +11,7 @@
 import { telegramLogger } from '../../config/logger.js';
 import { settingsRepo } from '../../db/index.js';
 import { LIRAX_FETCH_TIMEOUT_MS } from '../../config/constants.js';
+import { getTelephonyRuntimeConfig, clearTelephonyRuntimeConfigCache } from './service/telephony-runtime-config.js';
 
 // ---------------------------------------------------------------
 // Config helpers
@@ -29,36 +30,21 @@ let configCache: LiraXConfig | null = null;
 export async function getLiraXConfig(): Promise<LiraXConfig> {
   if (configCache) return configCache;
 
-  const settings = await settingsRepo.getMany([
-    'lirax_url',
-    'lirax_token',
-    'lirax_webhook_token',
-    'lirax_default_ext',
-    'lirax_operator_phone',
-  ]);
+  const runtimeConfig = await getTelephonyRuntimeConfig();
 
-  // DB имеет приоритет над env vars для токенов — позволяет менять без редеплоя
-  const url =
-    settings['lirax_url'] ||
-    process.env.LIRAX_URL ||
-    'https://api.lirax.net/general';
-  const token = settings['lirax_token'] || process.env.LIRAX_TOKEN || '';
-  const webhookToken =
-    settings['lirax_webhook_token'] ||
-    process.env.LIRAX_WEBHOOK_TOKEN ||
-    '';
-  const defaultExt =
-    settings['lirax_default_ext'] ||
-    process.env.LIRAX_DEFAULT_EXT ||
-    '201';
-  const operatorPhone = (settings['lirax_operator_phone'] || '').trim();
-
-  configCache = { url, token, webhookToken, defaultExt, operatorPhone };
+  configCache = {
+    url: runtimeConfig.liraxUrl,
+    token: runtimeConfig.liraxToken,
+    webhookToken: runtimeConfig.liraxWebhookToken,
+    defaultExt: runtimeConfig.liraxDefaultExt,
+    operatorPhone: runtimeConfig.operatorPhone,
+  };
   return configCache;
 }
 
 export function clearLiraXConfigCache(): void {
   configCache = null;
+  clearTelephonyRuntimeConfigCache();
 }
 
 // ---------------------------------------------------------------

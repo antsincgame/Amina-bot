@@ -11,6 +11,7 @@ import { callSessionRepo } from '../repository/call-session-repo.js';
 import { callTurnRepo } from '../repository/call-turn-repo.js';
 import { cleanText, truncateText } from '../shared.js';
 import { extractPlanFromEvents } from './telephony-plan.js';
+import { buildPersonaSystemPrompt } from '../../../ai/persona.js';
 
 export interface ConversationAssemblyResult {
   session: TelephonyAiCallSession;
@@ -73,6 +74,14 @@ export async function assembleConversationContext(
   const cleanIncomingText = cleanText(incomingCustomerText);
 
   const isFreeform = scenario.id === 'freeform';
+  const personaPrompt = await buildPersonaSystemPrompt({
+    channel: 'voice',
+    extraRules: [
+      'Режим задачи: realtime AI-звонок владельца.',
+      'Ты не выходишь из образа техножрицы и не называешь себя просто ассистентом.',
+      'Приоритет: безопасный, короткий и естественный разговор по телефону.',
+    ],
+  });
 
   const freeformInstructions = isFreeform
     ? `\nЭто СВОБОДНЫЙ ДИАЛОГ. Не следуй жёсткому сценарию.
@@ -81,7 +90,9 @@ export async function assembleConversationContext(
 Если собеседник прощается или тема исчерпана — завершай звонок.`
     : '';
 
-  const systemPrompt = `Ты управляешь realtime AI-звонком владельца.
+  const systemPrompt = `${personaPrompt}
+
+Ты управляешь realtime AI-звонком владельца.
 Это ТЕЛЕФОННЫЙ разговор: будь кратким, естественным, разговорным. Не пиши длинных монологов.
 
 Сценарий: ${scenario.name}

@@ -54,9 +54,13 @@ function setAutoStart(enabled) {
 // Expose autostart API via HTTP (dashboard uses it)
 const http = require('http');
 const autostartServer = http.createServer((req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  const origin = req.headers.origin || '';
+  const isLocalOrigin = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+  if (isLocalOrigin) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  }
   if (req.method === 'OPTIONS') { res.writeHead(200); res.end(); return; }
 
   if (req.url === '/api/autostart' && req.method === 'GET') {

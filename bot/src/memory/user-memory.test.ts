@@ -4,6 +4,19 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+const getDocumentMock = vi.fn();
+const updateDocumentMock = vi.fn();
+const listDocumentsMock = vi.fn();
+const createDocumentMock = vi.fn();
+
+vi.mock('../config/index.js', () => ({
+  config: {
+    appwrite: {
+      databaseId: 'test-db',
+    },
+  },
+}));
+
 vi.mock('../config/logger.js', () => {
   const createMockLogger = () => ({
     info: vi.fn(),
@@ -26,6 +39,15 @@ vi.mock('../ai/openrouter.js', () => ({
   aiService: {
     complete: vi.fn().mockResolvedValue(''),
   },
+}));
+
+vi.mock('../db/appwrite.js', () => ({
+  getAppwrite: () => ({
+    getDocument: getDocumentMock,
+    updateDocument: updateDocumentMock,
+    listDocuments: listDocumentsMock,
+    createDocument: createDocumentMock,
+  }),
 }));
 
 import {
@@ -61,6 +83,10 @@ describe('memoryContextBuilder', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.clearAllMocks();
+    getDocumentMock.mockReset();
+    updateDocumentMock.mockReset();
+    listDocumentsMock.mockReset();
+    createDocumentMock.mockReset();
     memoryContextBuilder.invalidateCache('123456');
     memoryContextBuilder.invalidateCache('999888');
   });
@@ -104,5 +130,28 @@ describe('memoryContextBuilder', () => {
       expect(context).toContain('Пользователь любит Python');
       expect(context).toContain('Предпочитает краткие ответы');
     });
+  });
+});
+
+describe('userMemoryRepo cache invalidation', () => {
+  beforeEach(() => {
+    getDocumentMock.mockResolvedValue({ user_id: '123456' });
+    updateDocumentMock.mockResolvedValue(undefined);
+  });
+
+  it('invalidates prompt cache after update', async () => {
+    const invalidateSpy = vi.spyOn(memoryContextBuilder, 'invalidateCache');
+
+    await userMemoryRepo.update('memory-1', { is_active: false });
+
+    expect(updateDocumentMock).toHaveBeenCalledWith(
+      'test-db',
+      'amina_user_memory',
+      'memory-1',
+      expect.objectContaining({
+        is_active: false,
+      }),
+    );
+    expect(invalidateSpy).toHaveBeenCalledWith('123456');
   });
 });
