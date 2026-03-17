@@ -208,6 +208,18 @@ export const userProfileRepo = {
 
 // ---------- Memory Safety Helpers ----------
 
+/**
+ * Записи с confidence ниже этого порога, пришедшие через source='inference',
+ * считаются "предположениями" и хранятся в отдельном блоке контекста.
+ */
+const INFERRED_CONFIDENCE_THRESHOLD = 0.85;
+
+/**
+ * Дней бездействия до того, как низкоуверенная inference-запись помечается неактивной.
+ * Подтверждённые факты (confidence >= порога или source='message') не затрагиваются.
+ */
+const INFERRED_DECAY_DAYS = 14;
+
 /** Максимальное количество активных записей каждого типа на пользователя */
 const MEMORY_LIMITS: Record<UserMemory['memory_type'], number> = {
   important: 20,
@@ -359,23 +371,95 @@ export const userMemoryRepo = {
     const memories = await this.getAll(userId, 30);
     if (!memories.length) return '';
 
-    const grouped = { important: [] as string[], fact: [] as string[], preference: [] as string[], context: [] as string[], summary: [] as string[] };
+    // Разделяем подтверждённые факты (stated/observed) и низкоуверенные предположения (inferred)
+    const stated = {
+      important: [] as string[],
+      fact: [] as string[],
+      preference: [] as string[],
+      context: [] as string[],
+      summary: [] as string[],
+    };
+    const inferred: string[] = [];
+
     for (const m of memories) {
-      // Защита от injection при сборке prompt — пропускаем подозрительные записи
-      if (hasPromptInjection(m.content)) continue;
-      const t = m.memory_type as keyof typeof grouped;
-      if (grouped[t]) grouped[t].push(m.content);
+      if (hasPromptInjection(m.content)) {
+        continue;
+      }
+
+      const isLowConfidenceInference = m.source === 'inference' && m.confidence < INFERRED_CONFIDENCE_THRESHOLD;
+
+      if (isLowConfidenceInference) {
+        inferred.push(m.content);
+        continue;
+      }
+
+      const t = m.memory_type as keyof typeof stated;
+      if (stated[t]) {
+        stated[t].push(m.content);
+      }
     }
 
     const parts: string[] = [];
-    if (grouped.important.length) parts.push(`ВАЖНО о пользователе:\n${grouped.important.map(m => `- ${m}`).join('\n')}`);
-    if (grouped.fact.length) parts.push(`Факты о пользователе:\n${grouped.fact.map(m => `- ${m}`).join('\n')}`);
-    if (grouped.preference.length) parts.push(`Предпочтения:\n${grouped.preference.map(m => `- ${m}`).join('\n')}`);
-    if (grouped.context.length) parts.push(`Текущий контекст:\n${grouped.context.map(m => `- ${m}`).join('\n')}`);
-    // summary: только последние 3 (наиболее свежие — первые в массиве после сортировки DESC)
-    if (grouped.summary.length) parts.push(`Из предыдущих разговоров:\n${grouped.summary.slice(0, 3).map(m => `- ${m}`).join('\n')}`);
+    if (stated.important.length) {
+      parts.push(`ВАЖНО о пользователе:\n${stated.important.map(m => `- ${m}`).join('\n')}`);
+    }
+    if (stated.fact.length) {
+      parts.push(`Факты о пользователе:\n${stated.fact.map(m => `- ${m}`).join('\n')}`);
+    }
+    if (stated.preference.length) {
+      parts.push(`Предпочтения:\n${stated.preference.map(m => `- ${m}`).join('\n')}`);
+    }
+    if (stated.context.length) {
+      parts.push(`Текущий контекст:\n${stated.context.map(m => `- ${m}`).join('\n')}`);
+    }
+    if (stated.summary.length) {
+      parts.push(`Из предыдущих разговоров:\n${stated.summary.slice(0, 3).map(m => `- ${m}`).join('\n')}`);
+    }
+
+    // Низкоуверенные предположения идут отдельным блоком с явным дисклеймером
+    if (inferred.length) {
+      parts.push(
+        `Предположения (не подтверждены, использовать осторожно):\n${inferred.slice(0, 5).map(m => `- ${m}`).join('\n')}`,
+      );
+    }
 
     return parts.join('\n\n');
+  },
+
+  /**
+   * Деактивирует устаревшие низкоуверенные записи (decay for inferred memory).
+   * Должен вызываться периодически — например, из digest scheduler или при сборке контекста.
+   */
+  async decayInferredMemories(userId: string): Promise<void> {
+    const cutoffDate = new Date(Date.now() - INFERRED_DECAY_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    try {
+      const aw = await getAW();
+      const old = await aw.listDocuments(DB_ID(), COLL.memory, [
+        Query.equal('user_id', userId),
+        Query.equal('is_active', true),
+        Query.equal('is_pinned', false),
+        Query.lessThan('created_at', cutoffDate),
+        Query.limit(20),
+      ]);
+
+      const toDeactivate = old.documents.filter(
+        (d) => d.source === 'inference' && (d.confidence ?? 1.0) < INFERRED_CONFIDENCE_THRESHOLD,
+      );
+
+      for (const doc of toDeactivate) {
+        await aw.updateDocument(DB_ID(), COLL.memory, doc.$id, {
+          is_active: false,
+          updated_at: new Date().toISOString(),
+        }).catch(() => {});
+      }
+
+      if (toDeactivate.length > 0) {
+        dbLogger.info({ userId, deactivated: toDeactivate.length }, 'Inferred memory decay: deactivated stale items');
+        memoryContextBuilder.invalidateCache(userId);
+      }
+    } catch (error) {
+      dbLogger.warn({ error, userId }, 'Failed to run inferred memory decay');
+    }
   },
 };
 
@@ -467,9 +551,11 @@ export const memoryExtractor = {
         return;
       }
 
-      await userMemoryRepo.add(userId, 'fact', extracted, { source: 'inference', confidence: 0.8 });
-      await userLogsRepo.add(userId, 'memory_created', extracted, { memory_type: 'fact' });
-      aiLogger.info({ userId }, 'Fact extracted');
+      // Inference-факты сохраняем с явно пониженным confidence (< INFERRED_CONFIDENCE_THRESHOLD)
+      // Они попадут в «предположения»-блок, а не в основной контекст
+      await userMemoryRepo.add(userId, 'fact', extracted, { source: 'inference', confidence: 0.75 });
+      await userLogsRepo.add(userId, 'memory_created', extracted, { memory_type: 'fact', source: 'inference' });
+      aiLogger.info({ userId }, 'Fact extracted (inferred, low-confidence)');
     } catch (error) { aiLogger.error({ error, userId }, 'Failed to extract facts'); }
   },
 
@@ -488,10 +574,21 @@ export const memoryExtractor = {
 
 const memoryContextCache = new Map<string, { context: string; ts: number }>();
 
+/** Счётчик вызовов buildContext per-user для периодического запуска decay */
+const decayCounters = new Map<string, number>();
+const DECAY_RUN_INTERVAL = 20;
+
 export const memoryContextBuilder = {
   async buildContext(userId: string, telegramInfo?: TelegramUserInfo): Promise<string> {
     const cached = memoryContextCache.get(userId);
     if (cached && Date.now() - cached.ts < 45_000) return cached.context;
+
+    // Периодически запускаем decay для inferred memories (раз в ~20 вызовов)
+    const callCount = (decayCounters.get(userId) ?? 0) + 1;
+    decayCounters.set(userId, callCount);
+    if (callCount % DECAY_RUN_INTERVAL === 0) {
+      userMemoryRepo.decayInferredMemories(userId).catch(() => {});
+    }
 
     const [profile, memoryContext] = await Promise.all([
       userProfileRepo.getOrCreate(userId, telegramInfo),

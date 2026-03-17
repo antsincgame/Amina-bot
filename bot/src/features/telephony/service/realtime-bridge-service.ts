@@ -121,6 +121,52 @@ function buildRetentionUntil(retentionDays: number): string {
   return new Date(Date.now() + retentionDays * 24 * 60 * 60 * 1000).toISOString();
 }
 
+/**
+ * Допустимые переходы состояний session-level.
+ * Ключ = текущий статус, значение = набор статусов, в которые можно перейти.
+ * Терминальные (processed, failed, cancelled) не принимают новых переходов.
+ */
+const SESSION_VALID_TRANSITIONS: Partial<Record<TelephonyAiSessionStatus, ReadonlySet<TelephonyAiSessionStatus>>> = {
+  initiated: new Set(['queued', 'dialing', 'failed', 'cancelled']),
+  queued: new Set(['dialing', 'live', 'fallback', 'failed', 'cancelled']),
+  dialing: new Set(['live', 'fallback', 'failed', 'cancelled']),
+  live: new Set(['linked', 'fallback', 'recorded', 'completed', 'failed', 'cancelled']),
+  linked: new Set(['live', 'fallback', 'recorded', 'completed', 'failed', 'cancelled']),
+  recorded: new Set(['completed', 'processed', 'failed']),
+  completed: new Set(['processed', 'failed']),
+  fallback: new Set(['completed', 'processed', 'failed', 'cancelled']),
+};
+
+function isValidTransition(from: TelephonyAiSessionStatus, to: TelephonyAiSessionStatus): boolean {
+  if (from === to) {
+    return true;
+  }
+  return SESSION_VALID_TRANSITIONS[from]?.has(to) ?? false;
+}
+
+/** In-memory dedup set для providerEventId в рамках текущего процесса */
+const processedProviderEvents = new Set<string>();
+
+function isEventAlreadyProcessed(providerEventId: string | null | undefined): boolean {
+  if (!providerEventId) {
+    return false;
+  }
+  return processedProviderEvents.has(providerEventId);
+}
+
+function markEventProcessed(providerEventId: string | null | undefined): void {
+  if (!providerEventId) {
+    return;
+  }
+  processedProviderEvents.add(providerEventId);
+  if (processedProviderEvents.size > 10_000) {
+    const [first] = processedProviderEvents;
+    if (first) {
+      processedProviderEvents.delete(first);
+    }
+  }
+}
+
 async function updateRecordingArtifact(
   sessionId: string,
   event: RealtimeBridgeEventInput,
@@ -169,6 +215,8 @@ async function appendBridgeAgentTurn(
   });
 }
 
+const TERMINAL_STATUSES = new Set<TelephonyAiSessionStatus>(['processed', 'failed', 'cancelled']);
+
 async function applySessionState(
   session: TelephonyAiCallSession,
   eventType: TelephonyCallEventType | string,
@@ -206,21 +254,44 @@ async function applySessionState(
     return session;
   }
 
-  const preserveTerminalStatus = session.status === 'processed'
-    || session.status === 'failed'
-    || session.status === 'cancelled';
+  // Не переписываем терминальные статусы
+  if (TERMINAL_STATUSES.has(session.status)) {
+    if (nextStatus && nextStatus !== session.status) {
+      return session;
+    }
+  }
+
+  // Проверяем допустимость перехода через state-machine
+  const safeNextStatus = (nextStatus && isValidTransition(session.status, nextStatus))
+    ? nextStatus
+    : session.status;
 
   return callSessionRepo.update(session.id, {
     requestId: cleanText(event.requestId) || session.requestId,
     callId: cleanText(event.callId) || session.callId,
     provider: 'media_bridge',
-    status: preserveTerminalStatus ? session.status : (nextStatus ?? session.status),
+    status: safeNextStatus,
   });
 }
 
 export async function handleRealtimeBridgeEvent(
   event: RealtimeBridgeEventInput,
 ): Promise<TelephonyAiCallSession> {
+  if (!event.sessionId || typeof event.sessionId !== 'string') {
+    throw new Error('Bridge event: отсутствует sessionId');
+  }
+  if (!event.eventType || typeof event.eventType !== 'string') {
+    throw new Error('Bridge event: отсутствует eventType');
+  }
+
+  // Idempotency: дубликат по providerEventId → возвращаем текущую сессию без обработки
+  if (event.providerEventId && isEventAlreadyProcessed(event.providerEventId)) {
+    const session = await callSessionRepo.getById(event.sessionId);
+    if (session) {
+      return session;
+    }
+  }
+
   const session = await callSessionRepo.getById(event.sessionId);
   if (!session) {
     throw new Error('Сессия realtime bridge не найдена');
@@ -249,6 +320,7 @@ export async function handleRealtimeBridgeEvent(
 
   const updatedSession = await applySessionState(session, normalizedType, event);
   await callEventRepo.record(updatedSession.id, normalizedType, payload, event.providerEventId);
+  markEventProcessed(event.providerEventId);
 
   if (normalizedType === 'partial_transcript_updated') {
     const bridgeConfig = await getRealtimeBridgeConfig();

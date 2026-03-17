@@ -31,7 +31,11 @@ import {
   AUTO_SUMMARY_INTERVAL,
 } from './history-utils.js';
 import { tryPostAIImageInterception } from './auto-detect.js';
-import { buildPersonaSystemPrompt } from '../../ai/persona.js';
+import {
+  buildPersonaSystemPrompt,
+  buildPersonaSelfIntro,
+  detectSelfDisclosureIntent,
+} from '../../ai/persona.js';
 
 /**
  * Обрабатывает AI-ответ: верификация, защита от отказов, симуляции, галлюцинаций.
@@ -142,6 +146,39 @@ export const tryGetPerplexityData = async (
     telegramLogger.debug({ error: err }, 'Perplexity search failed');
   }
 
+  return null;
+};
+
+/**
+ * Специальный ответ на вопросы про саму Амину.
+ * Использует self-disclosure канон вместо general system prompt,
+ * чтобы ответы были живыми и личными, а не функциональными.
+ */
+export const selfDisclosureAnswer = async (
+  userMessage: string,
+  userId: string,
+): Promise<string | null> => {
+  try {
+    telegramLogger.info({ userId, query: userMessage.substring(0, 60) }, '💬 Self-disclosure intent detected');
+    const isShortQuery = userMessage.trim().length < 30;
+    const selfIntroPrompt = await buildPersonaSelfIntro({ mode: isShortQuery ? 'short' : 'warm' });
+
+    const result = await aiService.chat(
+      [
+        { role: 'system', content: selfIntroPrompt },
+        { role: 'user', content: userMessage },
+      ],
+      'telegram',
+      undefined,
+      { promptMode: 'passthrough', temperature: 0.75 },
+    );
+
+    if (result.content && result.content.length > 20) {
+      return result.content;
+    }
+  } catch (err) {
+    telegramLogger.warn({ error: err, userId }, 'Self-disclosure answer failed, falling back to normal pipeline');
+  }
   return null;
 };
 
@@ -271,6 +308,28 @@ export const processMessageThroughAI = async (
   // Build full context with search warning
   let fullContext = memoryContext + webSearchContext;
   fullContext = addSearchWarning(fullContext, userText, webSearchContext, userId);
+
+  // === Self-disclosure fast path: вопросы про саму Амину ===
+  // Перехватываем до обычного пайплайна — используем canon self-description
+  if (detectSelfDisclosureIntent(userText)) {
+    const selfAnswer = await selfDisclosureAnswer(userText, userId);
+    if (selfAnswer) {
+      const selfResponse: AIResponse = {
+        content: selfAnswer,
+        model: 'persona-self-disclosure',
+        tokens_used: { prompt: 0, completion: 0, total: 0 },
+        finish_reason: 'stop',
+      };
+      ctx.session.messageHistory.push({ role: 'assistant', content: selfAnswer });
+      await sendLongMessage(ctx, selfAnswer);
+      analyticsRepo.log('message_received', 'telegram', {
+        event: 'self_disclosure_answered', messageType,
+        responseLength: selfAnswer.length,
+      }, userId).catch(() => {});
+      memoryExtractor.extractFacts(userId, userText, selfAnswer).catch(() => {});
+      return;
+    }
+  }
 
   // Get AI response
   let aiResponse = await aiService.chat(messagesForAI, 'telegram', fullContext);

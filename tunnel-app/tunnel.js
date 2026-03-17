@@ -79,6 +79,8 @@ const STATE = {
   startedAt: new Date().toISOString(),
   cloudflaredVersion: '',
   error: null,
+  deviceId: '',
+  hostname: os.hostname(),
 };
 
 let tunnelProcess = null;
@@ -123,6 +125,28 @@ function applyConfig() {
   if (process.env.LMSTUDIO_PORT) CONFIG.lmstudioPort = parseInt(process.env.LMSTUDIO_PORT, 10);
   if (process.env.DASHBOARD_PORT) CONFIG.dashboardPort = parseInt(process.env.DASHBOARD_PORT, 10);
   if (process.env.HEALTH_INTERVAL) CONFIG.healthInterval = parseInt(process.env.HEALTH_INTERVAL, 10);
+}
+
+/**
+ * Возвращает стабильный идентификатор устройства.
+ * Основан на hostname + username + platform для детерминированности между запусками.
+ */
+function getDeviceId() {
+  const raw = [os.hostname(), os.userInfo().username, process.platform].join(':');
+  let hash = 0;
+  for (let i = 0; i < raw.length; i++) {
+    hash = (((hash << 5) - hash) + raw.charCodeAt(i)) | 0;
+  }
+  return `tunnel-${Math.abs(hash).toString(16)}`;
+}
+
+/**
+ * Проверяет что запрос к dashboard control plane приходит с localhost.
+ * Предотвращает несанкционированный доступ к control plane с внешней сети.
+ */
+function isLocalRequest(req) {
+  const remoteAddr = req.socket?.remoteAddress ?? '';
+  return remoteAddr === '127.0.0.1' || remoteAddr === '::1' || remoteAddr === '::ffff:127.0.0.1';
 }
 
 // ============================================
@@ -357,7 +381,9 @@ async function startSingleAttempt(cfBin) {
 }
 
 async function registerUrl(url) {
-  const { status, body } = await httpPost(`${CONFIG.botApiUrl}/api/tunnel/register`, { url },
+  const deviceId = getDeviceId();
+  const { status, body } = await httpPost(`${CONFIG.botApiUrl}/api/tunnel/register`,
+    { url, deviceId, hostname: os.hostname(), platform: process.platform },
     { 'X-Amina-Tunnel-Token': CONFIG.tunnelToken });
   try {
     const json = JSON.parse(body);
@@ -708,6 +734,8 @@ function cleanup() {
 }
 
 async function main() {
+  STATE.deviceId = getDeviceId();
+
   console.log('');
   console.log(C.cyan('============================================'));
   console.log(C.cyan('  Amina LM Studio Tunnel Supervisor'));

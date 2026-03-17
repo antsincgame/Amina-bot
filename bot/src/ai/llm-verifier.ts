@@ -414,3 +414,78 @@ export function verifyTelephonyReply(
 
   return { isSafe: true };
 }
+
+// ============================================
+// Общий channel-aware policy layer
+// ============================================
+
+export type VerifierChannel = 'telegram' | 'voice' | 'digest' | 'postcall';
+
+export interface ChannelPolicyResult {
+  passed: boolean;
+  reasons: string[];
+}
+
+/**
+ * Агрессивные persona-нарушения: LLM называет себя тем, чем не является.
+ * Проверяются для всех каналов.
+ */
+const PERSONA_VIOLATION_PATTERNS: ReadonlyArray<RegExp> = [
+  /\bя\s+(просто\s+)?(языковая\s+модель|чат-?бот|ассистент\s+ИИ|artificial\s+intelligence)\b/i,
+  /\bя\s+не\s+(живой|настоящий|реальный|человек)\b/i,
+  /\bas\s+an\s+ai\b/i,
+  /\bкак\s+языковая\s+модель\b/i,
+  /\bi\s+am\s+just\s+an\s+ai\b/i,
+];
+
+/**
+ * Агрессивное самоуверенное описание без данных (только для digest и postcall).
+ * LLM говорит "по официальным данным" / "согласно последним сведениям" без источника.
+ */
+const UNSOURCED_AUTHORITY_PATTERNS: ReadonlyArray<RegExp> = [
+  /(?:по\s+официальным\s+данным|согласно\s+официальным\s+(?:источникам|данным))(?!\s*\[)/i,
+  /(?:источники\s+сообщают|инсайдеры\s+утверждают)(?!\s*\[|\s*«)/i,
+];
+
+/**
+ * Проверяет ответ через channel-specific policy.
+ * Синхронный (без I/O), < 1 мс.
+ *
+ * Использовать как последний барьер перед отправкой пользователю
+ * во всех каналах: telegram, voice, digest, postcall.
+ */
+export function checkChannelPolicy(
+  response: string,
+  channel: VerifierChannel,
+): ChannelPolicyResult {
+  const reasons: string[] = [];
+
+  if (!response || response.trim().length < 2) {
+    return { passed: false, reasons: ['empty_response'] };
+  }
+
+  // Persona-нарушения проверяем везде, кроме system
+  if (PERSONA_VIOLATION_PATTERNS.some((p) => p.test(response))) {
+    reasons.push('persona_violation: LLM раскрывает AI-природу вместо образа техножрицы');
+  }
+
+  if (channel === 'voice') {
+    if (looksLikeSearchSimulation(response)) {
+      reasons.push('voice_search_simulation: голосовой ответ симулирует поиск');
+    }
+    if (response.length > 800) {
+      reasons.push(`voice_too_long: ответ ${response.length} символов — слишком длинный для телефонии`);
+    }
+    if (/[#*_`[\]]/u.test(response)) {
+      reasons.push('voice_markdown: голосовой ответ содержит Markdown-разметку');
+    }
+  }
+
+  if (channel === 'digest' || channel === 'postcall') {
+    if (UNSOURCED_AUTHORITY_PATTERNS.some((p) => p.test(response))) {
+      reasons.push('unsourced_authority_claim: ответ содержит утверждения из "официальных источников" без ссылки');
+    }
+  }
+
+  return { passed: reasons.length === 0, reasons };
+}

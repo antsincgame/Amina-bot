@@ -7,6 +7,8 @@ import {
   BellOff,
   CheckCircle,
   Download,
+  Eye,
+  EyeOff,
   Loader2,
   Mic,
   MicOff,
@@ -401,6 +403,12 @@ const TelephonyPage = () => {
   const [refreshMessage, setRefreshMessage] = useState('');
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [reloadWarning, setReloadWarning] = useState(false);
+
+  // Show/hide toggles for sensitive fields
+  const [showLiraxToken, setShowLiraxToken] = useState(false);
+  const [showWebhookToken, setShowWebhookToken] = useState(false);
+  const [showSipPassword, setShowSipPassword] = useState(false);
+  const [showBridgeToken, setShowBridgeToken] = useState(false);
 
   const [newUserId, setNewUserId] = useState('');
   const [newUserName, setNewUserName] = useState('');
@@ -809,14 +817,24 @@ const TelephonyPage = () => {
             />
           </Field>
 
-          <Field label="LiraX API token" hint="Хранится только в защищённых настройках backend-а и нужен для команд в LiraX.">
-            <input
-              type="password"
-              className="input w-full font-mono text-sm"
-              value={liraxToken}
-              onChange={(e) => setLiraxToken(e.target.value)}
-              placeholder="token из LiraX"
-            />
+          <Field label="LiraX API token" hint="Значение из БД. Fallback: переменная окружения LIRAX_TOKEN.">
+            <div className="relative">
+              <input
+                type={showLiraxToken ? 'text' : 'password'}
+                className="input w-full font-mono text-sm pr-10"
+                value={liraxToken}
+                onChange={(e) => setLiraxToken(e.target.value)}
+                placeholder="token из LiraX"
+              />
+              <button
+                type="button"
+                onClick={() => setShowLiraxToken((v) => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-200"
+                aria-label={showLiraxToken ? 'Скрыть' : 'Показать'}
+              >
+                {showLiraxToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
           </Field>
 
           <Field label="Webhook токен (from_LiraX_token)" hint="Токен верификации вебхуков LiraX.">
@@ -855,14 +873,24 @@ const TelephonyPage = () => {
                   placeholder="1129570"
                 />
               </Field>
-              <Field label="SIP password" hint="Пароль не отображается в статусе и передаётся только runtime-слою.">
-                <input
-                  type="password"
-                  className="input w-full font-mono text-sm"
-                  value={sipPassword}
-                  onChange={(e) => setSipPassword(e.target.value)}
-                  placeholder="••••••••"
-                />
+              <Field label="SIP password" hint="Fallback: переменная окружения TELEPHONY_SIP_PASSWORD.">
+                <div className="relative">
+                  <input
+                    type={showSipPassword ? 'text' : 'password'}
+                    className="input w-full font-mono text-sm pr-10"
+                    value={sipPassword}
+                    onChange={(e) => setSipPassword(e.target.value)}
+                    placeholder="••••••••"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowSipPassword((v) => !v)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-200"
+                    aria-label={showSipPassword ? 'Скрыть' : 'Показать'}
+                  >
+                    {showSipPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </Field>
               <Field label="Внешний номер" hint="Номер для внешней телефонии, если runtime или bridge требует явный outbound identity.">
                 <input
@@ -966,13 +994,24 @@ const TelephonyPage = () => {
                 />
               </Field>
 
-              <Field label="Bridge bearer token" hint="Используется и для outbound start, и для входящих callbackов bridge.">
-                <input
-                  className="input w-full font-mono text-sm"
-                  value={mediaBridgeToken}
-                  onChange={(e) => setMediaBridgeToken(e.target.value)}
-                  placeholder="bridge-secret-token"
-                />
+              <Field label="Bridge bearer token" hint="Используется и для outbound start, и для входящих callbackов bridge. Fallback: TELEPHONY_MEDIA_BRIDGE_TOKEN.">
+                <div className="relative">
+                  <input
+                    type={showBridgeToken ? 'text' : 'password'}
+                    className="input w-full font-mono text-sm pr-10"
+                    value={mediaBridgeToken}
+                    onChange={(e) => setMediaBridgeToken(e.target.value)}
+                    placeholder="bridge-secret-token"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowBridgeToken((v) => !v)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-200"
+                    aria-label={showBridgeToken ? 'Скрыть' : 'Показать'}
+                  >
+                    {showBridgeToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </Field>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

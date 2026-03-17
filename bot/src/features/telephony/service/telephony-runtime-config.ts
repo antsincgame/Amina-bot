@@ -35,37 +35,66 @@ export interface TelephonyRuntimeConfig {
   openrouterModel: string;
 }
 
-function normalizeText(value: string | undefined): string {
-  return value?.trim() || '';
-}
-
-function normalizeBoolean(value: string | undefined, fallback: boolean): boolean {
-  if (value === undefined) {
-    return fallback;
+/**
+ * Единый helper: приоритет DB -> env -> code default.
+ * Строковое значение: обрезаем пробелы, пустая строка → следующий источник.
+ */
+function resolveStringSetting(...sources: (string | undefined)[]): string {
+  for (const source of sources) {
+    const trimmed = source?.trim();
+    if (trimmed) {
+      return trimmed;
+    }
   }
-
-  return value === 'true';
+  return '';
 }
 
-function normalizeNumber(
-  value: string | undefined,
+/**
+ * Единый helper для булевых настроек.
+ * 'true' → true, 'false' → false, undefined → fallback.
+ */
+function resolveBooleanSetting(
+  dbValue: string | undefined,
+  envValue: string | undefined,
+  fallback: boolean,
+): boolean {
+  if (dbValue !== undefined) {
+    return dbValue === 'true';
+  }
+  if (envValue !== undefined) {
+    return envValue === 'true';
+  }
+  return fallback;
+}
+
+/**
+ * Единый helper для числовых настроек с валидацией диапазона.
+ */
+function resolveNumberSetting(
+  dbValue: string | undefined,
+  envValue: string | undefined,
   fallback: number,
   min: number,
   max: number,
 ): number {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < min || parsed > max) {
-    return fallback;
+  for (const raw of [dbValue, envValue]) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed >= min && parsed <= max) {
+      return parsed;
+    }
   }
-
-  return parsed;
+  return fallback;
 }
 
-function normalizeAiProvider(value: string | undefined): TelephonyAiProvider {
-  if (value === 'openrouter' || value === 'lmstudio') {
-    return value;
+function resolveAiProvider(
+  dbValue: string | undefined,
+  envValue: string | undefined,
+): TelephonyAiProvider {
+  for (const v of [dbValue, envValue]) {
+    if (v === 'openrouter' || v === 'lmstudio') {
+      return v;
+    }
   }
-
   return 'inherit';
 }
 
@@ -110,67 +139,117 @@ export async function getTelephonyRuntimeConfig(): Promise<TelephonyRuntimeConfi
     'telephony_openrouter_model',
   ]);
 
-  const liraxUrl = normalizeText(settings['lirax_url'])
-    || normalizeText(process.env.LIRAX_URL)
-    || DEFAULT_LIRAX_URL;
-  const mediaBridgeUrl = normalizeText(settings['telephony_media_bridge_url'])
-    || normalizeText(process.env.TELEPHONY_MEDIA_BRIDGE_URL);
+  // Единый приоритет для всех telephony полей: DB -> env -> code default
+  const liraxUrl = resolveStringSetting(
+    settings['lirax_url'],
+    process.env.LIRAX_URL,
+    DEFAULT_LIRAX_URL,
+  );
+  const mediaBridgeUrl = resolveStringSetting(
+    settings['telephony_media_bridge_url'],
+    process.env.TELEPHONY_MEDIA_BRIDGE_URL,
+  );
 
   const runtimeConfig: TelephonyRuntimeConfig = {
     liraxUrl,
-    liraxToken: normalizeText(settings['lirax_token']) || normalizeText(process.env.LIRAX_TOKEN),
-    liraxWebhookToken:
-      normalizeText(settings['lirax_webhook_token']) || normalizeText(process.env.LIRAX_WEBHOOK_TOKEN),
-    liraxDefaultExt:
-      normalizeText(settings['lirax_default_ext']) || normalizeText(process.env.LIRAX_DEFAULT_EXT) || DEFAULT_LIRAX_EXT,
-    operatorPhone: normalizeText(settings['lirax_operator_phone']),
-    adminChatId: normalizeText(settings['lirax_admin_chat_id']) || normalizeText(settings['admin_chat_id']),
-    ownerChatId:
-      normalizeText(settings['lirax_owner_chat_id'])
-      || normalizeText(settings['lirax_admin_chat_id'])
-      || normalizeText(settings['admin_chat_id']),
-    notifyCalls: normalizeBoolean(settings['lirax_notify_calls'], true),
-    notifyRecords: normalizeBoolean(settings['lirax_notify_records'], true),
-    realtimeEnabled:
-      settings['telephony_realtime_enabled'] === 'true'
-      || process.env.TELEPHONY_REALTIME_ENABLED === 'true',
+    liraxToken: resolveStringSetting(settings['lirax_token'], process.env.LIRAX_TOKEN),
+    liraxWebhookToken: resolveStringSetting(
+      settings['lirax_webhook_token'],
+      process.env.LIRAX_WEBHOOK_TOKEN,
+    ),
+    liraxDefaultExt: resolveStringSetting(
+      settings['lirax_default_ext'],
+      process.env.LIRAX_DEFAULT_EXT,
+      DEFAULT_LIRAX_EXT,
+    ),
+    operatorPhone: resolveStringSetting(
+      settings['lirax_operator_phone'],
+      process.env.LIRAX_OPERATOR_PHONE,
+    ),
+    adminChatId: resolveStringSetting(
+      settings['lirax_admin_chat_id'],
+      settings['admin_chat_id'],
+      process.env.LIRAX_ADMIN_CHAT_ID,
+    ),
+    ownerChatId: resolveStringSetting(
+      settings['lirax_owner_chat_id'],
+      settings['lirax_admin_chat_id'],
+      settings['admin_chat_id'],
+      process.env.LIRAX_OWNER_CHAT_ID,
+    ),
+    notifyCalls: resolveBooleanSetting(
+      settings['lirax_notify_calls'],
+      process.env.LIRAX_NOTIFY_CALLS,
+      true,
+    ),
+    notifyRecords: resolveBooleanSetting(
+      settings['lirax_notify_records'],
+      process.env.LIRAX_NOTIFY_RECORDS,
+      true,
+    ),
+    realtimeEnabled: resolveBooleanSetting(
+      settings['telephony_realtime_enabled'],
+      process.env.TELEPHONY_REALTIME_ENABLED,
+      false,
+    ),
     mediaBridgeUrl,
-    mediaBridgeToken:
-      normalizeText(settings['telephony_media_bridge_token'])
-      || normalizeText(process.env.TELEPHONY_MEDIA_BRIDGE_TOKEN),
-    mediaBridgeHealthUrl:
-      normalizeText(settings['telephony_media_bridge_health_url']) || buildHealthUrl(mediaBridgeUrl),
-    archiveRecordings: normalizeBoolean(
-      settings['telephony_recordings_archive_enabled'] ?? process.env.TELEPHONY_RECORDINGS_ARCHIVE_ENABLED,
+    mediaBridgeToken: resolveStringSetting(
+      settings['telephony_media_bridge_token'],
+      process.env.TELEPHONY_MEDIA_BRIDGE_TOKEN,
+    ),
+    mediaBridgeHealthUrl: resolveStringSetting(
+      settings['telephony_media_bridge_health_url'],
+      process.env.TELEPHONY_MEDIA_BRIDGE_HEALTH_URL,
+      buildHealthUrl(mediaBridgeUrl),
+    ),
+    archiveRecordings: resolveBooleanSetting(
+      settings['telephony_recordings_archive_enabled'],
+      process.env.TELEPHONY_RECORDINGS_ARCHIVE_ENABLED,
       true,
     ),
-    storePartialTranscript: normalizeBoolean(
-      settings['telephony_partial_transcript_enabled'] ?? process.env.TELEPHONY_PARTIAL_TRANSCRIPT_ENABLED,
+    storePartialTranscript: resolveBooleanSetting(
+      settings['telephony_partial_transcript_enabled'],
+      process.env.TELEPHONY_PARTIAL_TRANSCRIPT_ENABLED,
       true,
     ),
-    latencyBudgetMs: normalizeNumber(
-      settings['telephony_latency_budget_ms'] ?? process.env.TELEPHONY_LATENCY_BUDGET_MS,
+    latencyBudgetMs: resolveNumberSetting(
+      settings['telephony_latency_budget_ms'],
+      process.env.TELEPHONY_LATENCY_BUDGET_MS,
       DEFAULT_LATENCY_BUDGET_MS,
       500,
       10_000,
     ),
-    recordingRetentionDays: normalizeNumber(
-      settings['telephony_recording_retention_days'] ?? process.env.TELEPHONY_RECORDING_RETENTION_DAYS,
+    recordingRetentionDays: resolveNumberSetting(
+      settings['telephony_recording_retention_days'],
+      process.env.TELEPHONY_RECORDING_RETENTION_DAYS,
       DEFAULT_RECORDING_RETENTION_DAYS,
       1,
       365,
     ),
-    sipServer: normalizeText(settings['telephony_sip_server']) || normalizeText(process.env.TELEPHONY_SIP_SERVER),
-    sipLogin: normalizeText(settings['telephony_sip_login']) || normalizeText(process.env.TELEPHONY_SIP_LOGIN),
-    sipPassword:
-      normalizeText(settings['telephony_sip_password']) || normalizeText(process.env.TELEPHONY_SIP_PASSWORD),
-    externalNumber:
-      normalizeText(settings['telephony_external_number'])
-      || normalizeText(process.env.TELEPHONY_EXTERNAL_NUMBER),
-    aiProvider: normalizeAiProvider(settings['telephony_ai_provider']),
-    openrouterModel:
-      normalizeText(settings['telephony_openrouter_model'])
-      || normalizeText(process.env.TELEPHONY_OPENROUTER_MODEL),
+    sipServer: resolveStringSetting(
+      settings['telephony_sip_server'],
+      process.env.TELEPHONY_SIP_SERVER,
+    ),
+    sipLogin: resolveStringSetting(
+      settings['telephony_sip_login'],
+      process.env.TELEPHONY_SIP_LOGIN,
+    ),
+    sipPassword: resolveStringSetting(
+      settings['telephony_sip_password'],
+      process.env.TELEPHONY_SIP_PASSWORD,
+    ),
+    externalNumber: resolveStringSetting(
+      settings['telephony_external_number'],
+      process.env.TELEPHONY_EXTERNAL_NUMBER,
+    ),
+    aiProvider: resolveAiProvider(
+      settings['telephony_ai_provider'],
+      process.env.TELEPHONY_AI_PROVIDER,
+    ),
+    openrouterModel: resolveStringSetting(
+      settings['telephony_openrouter_model'],
+      process.env.TELEPHONY_OPENROUTER_MODEL,
+    ),
   };
 
   RUNTIME_CONFIG_CACHE.set(runtimeConfig);

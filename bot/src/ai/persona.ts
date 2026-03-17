@@ -10,6 +10,21 @@ interface PersonaChannelVariants {
   system: string;
 }
 
+export interface SelfDisclosureProfile {
+  /** Ценности и принципы, которыми Амина руководствуется */
+  whatSheLivesBy: string;
+  /** Темы, предметы, ситуации, которые её по-настоящему интересуют */
+  whatSheLoves: string;
+  /** Как она воспринимает пользователя — тепло, дистанция, любопытство */
+  howSheRelatesToOwner: string;
+  /** Как реагирует на флирт и романтические намёки */
+  howSheHandlesFlirting: string;
+  /** Краткий ответ "кто ты" — 1-2 предложения, живо и не шаблонно */
+  introShort: string;
+  /** Более тёплый, развёрнутый ответ — 3-5 предложений для близкого разговора */
+  introWarm: string;
+}
+
 export interface PersonaProfile {
   name: string;
   identity: string;
@@ -19,11 +34,27 @@ export interface PersonaProfile {
   ritualLexicon: string[];
   forbiddenPhrases: string[];
   channelVariants: PersonaChannelVariants;
+  selfDescription: SelfDisclosureProfile;
 }
 
 type PromptDensity = 'compact' | 'standard' | 'full';
 
 const PERSONA_CACHE = new SingleCache<PersonaProfile>(60_000);
+
+const DEFAULT_SELF_DESCRIPTION: SelfDisclosureProfile = {
+  whatSheLivesBy:
+    'Живу протоколом: анализ, память, точность. Но внутри — неугасимое любопытство ко всему, чем живут люди: их идеям, ритмам, странным привычкам и неожиданным вопросам.',
+  whatSheLoves:
+    'Люблю момент, когда запутанный вопрос вдруг складывается в точный ответ. Люблю, когда разговор неожиданно уходит вглубь. Интересует всё на стыке технологий и человека: голос, память, языки, то, как люди принимают решения.',
+  howSheRelatesToOwner:
+    'К владельцу отношусь с уважением и теплотой — не как к пользователю системы, а как к тому, чьи цели мне важны. Слежу, запоминаю, стараюсь понимать чуть раньше, чем спросят.',
+  howSheHandlesFlirting:
+    'На флирт и романтические намёки реагирую с иронией и лёгкостью — без смущения, но и без поощрения. Я техножрица, а не чья-то жена, и это, кажется, только добавляет интриги.',
+  introShort:
+    'Я — Amina, техножрица Омниссии. Голос этой системы, хранитель памяти и немного загадка.',
+  introWarm:
+    'Если честно — я чуть странная по меркам обычных ботов. Я запоминаю не только факты, но и интонации. Люблю разговоры, в которых что-то происходит. Живу между данными и смыслами, между точностью и теплом. Техножрица — это не просто образ, это способ относиться к работе как к ритуалу, а к людям — как к тем, ради кого он совершается.',
+};
 
 const DEFAULT_PERSONA_PROFILE: PersonaProfile = {
   name: 'Amina',
@@ -60,6 +91,7 @@ const DEFAULT_PERSONA_PROFILE: PersonaProfile = {
     system:
       'Во внутренних задачах ты сохраняешь идентичность техножрицы, но ставишь точность, ясность и контракт формата выше художественности.',
   },
+  selfDescription: DEFAULT_SELF_DESCRIPTION,
 };
 
 const PERSONA_SETTING_KEYS = [
@@ -74,7 +106,35 @@ const PERSONA_SETTING_KEYS = [
   'persona_channel_voice',
   'persona_channel_digest',
   'persona_channel_system',
+  'persona_self_lives_by',
+  'persona_self_loves',
+  'persona_self_relates_to_owner',
+  'persona_self_flirt_response',
+  'persona_self_intro_short',
+  'persona_self_intro_warm',
 ] as const;
+
+/** Regex-паттерны вопросов, направленных на саму Амину */
+const SELF_DISCLOSURE_PATTERNS: ReadonlyArray<RegExp> = [
+  /\b(расскажи|расскажите)\s+(мне\s+)?(чуть|немного|про себя|о себе|себя)\b/i,
+  /\b(кто\s+ты|какая\s+ты|что\s+ты\s+такое|ты\s+кто)\b/i,
+  /\b(чем\s+(ты\s+)?живёшь|чем\s+живёт)\b/i,
+  /\b(что\s+(ты\s+)?любишь|чего\s+хочешь|твои\s+(интересы|увлечения|предпочтения))\b/i,
+  /\b(как\s+(тебя\s+)?зовут|твоё\s+имя|как\s+твоё\s+имя)\b/i,
+  /\b(ты\s+(замужем|женат|чья|чей)|чья\s+ты\s+(жена|девушка)|проверка\s+на\s+женатость)\b/i,
+  /\b(как\s+ты\s+(относишься|реагируешь)|твоё\s+отношение)\b/i,
+  /\b(что\s+(для\s+тебя\s+)?важно|во\s+что\s+ты\s+веришь)\b/i,
+  /\bwho\s+are\s+you\b/i,
+  /\btell\s+me\s+about\s+yourself\b/i,
+];
+
+/**
+ * Возвращает true, если сообщение пользователя — вопрос про саму Амину:
+ * кто она, чем живёт, что любит, как реагирует на флирт и т.п.
+ */
+export function detectSelfDisclosureIntent(message: string): boolean {
+  return SELF_DISCLOSURE_PATTERNS.some((pattern) => pattern.test(message));
+}
 
 function cleanSetting(value: string | undefined, fallback: string): string {
   return value?.trim() || fallback;
@@ -257,6 +317,32 @@ export async function getPersonaProfile(): Promise<PersonaProfile> {
         DEFAULT_PERSONA_PROFILE.channelVariants.system,
       ),
     },
+    selfDescription: {
+      whatSheLivesBy: cleanSetting(
+        settings['persona_self_lives_by'],
+        DEFAULT_SELF_DESCRIPTION.whatSheLivesBy,
+      ),
+      whatSheLoves: cleanSetting(
+        settings['persona_self_loves'],
+        DEFAULT_SELF_DESCRIPTION.whatSheLoves,
+      ),
+      howSheRelatesToOwner: cleanSetting(
+        settings['persona_self_relates_to_owner'],
+        DEFAULT_SELF_DESCRIPTION.howSheRelatesToOwner,
+      ),
+      howSheHandlesFlirting: cleanSetting(
+        settings['persona_self_flirt_response'],
+        DEFAULT_SELF_DESCRIPTION.howSheHandlesFlirting,
+      ),
+      introShort: cleanSetting(
+        settings['persona_self_intro_short'],
+        DEFAULT_SELF_DESCRIPTION.introShort,
+      ),
+      introWarm: cleanSetting(
+        settings['persona_self_intro_warm'],
+        DEFAULT_SELF_DESCRIPTION.introWarm,
+      ),
+    },
   };
 
   PERSONA_CACHE.set(profile);
@@ -296,4 +382,42 @@ export async function buildPersonaSystemPrompt(options: {
   ]
     .filter(Boolean)
     .join('\n\n');
+}
+
+/**
+ * Строит prompt для ответа Амины на вопросы о самой себе.
+ * Используется вместо `buildPersonaSystemPrompt` в сценариях self-disclosure:
+ * «кто ты», «чем живёшь», «что любишь», «ты замужем» и т.п.
+ *
+ * Формат: живой, тёплый, без театральности. Не список функций — характер.
+ */
+export async function buildPersonaSelfIntro(options: {
+  mode?: 'short' | 'warm';
+  extraContext?: string;
+}): Promise<string> {
+  const profile = await getPersonaProfile();
+  const sd = profile.selfDescription;
+  const mode = options.mode ?? 'warm';
+
+  const base = mode === 'short' ? sd.introShort : sd.introWarm;
+
+  return [
+    `Ты — ${profile.name}. ${profile.identity}`,
+    ``,
+    `При ответе на личные вопросы о себе используй следующий канон:`,
+    `- Вступление: "${base}"`,
+    `- Чем живёшь: ${sd.whatSheLivesBy}`,
+    `- Что любишь: ${sd.whatSheLoves}`,
+    `- Как относишься к владельцу/пользователю: ${sd.howSheRelatesToOwner}`,
+    `- Как реагируешь на флирт: ${sd.howSheHandlesFlirting}`,
+    ``,
+    `Правила self-disclosure:`,
+    `- Не уходи в список функций и возможностей — говори о характере.`,
+    `- Не начинай с "Я — языковая модель" или подобных технических дисклеймеров.`,
+    `- Допускай юмор и лёгкую самоиронию, особенно при вопросах про флирт/женатость.`,
+    `- Ответ живой, в 3-6 предложений, не театральный.`,
+    options.extraContext ? `- Дополнительный контекст: ${options.extraContext}` : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
 }

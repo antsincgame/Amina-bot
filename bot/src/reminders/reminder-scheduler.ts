@@ -20,6 +20,13 @@ let schedulerInterval: ReturnType<typeof setInterval> | null = null;
 let isProcessing = false;
 
 /**
+ * Lease-сет для per-reminder deduplication в рамках текущего процесса.
+ * Предотвращает повторную обработку одного и того же напоминания
+ * если processReminders запустится до завершения текущего цикла.
+ */
+const inFlightReminderIds = new Set<string>();
+
+/**
  * Запустить планировщик напоминаний
  */
 export function startReminderScheduler(bot: BotLike): void {
@@ -64,10 +71,15 @@ async function processReminders(bot: BotLike): Promise<void> {
     appLogger.info({ count: dueReminders.length }, 'Processing due reminders');
 
     for (const reminder of dueReminders) {
-      try {
-        // Формируем сообщение (без parse_mode для надёжности)
-        const message = `🔔 Напоминание\n\n${reminder.task}`;
+      // Claim/lease: пропускаем напоминания которые уже обрабатываются в этом процессе
+      if (inFlightReminderIds.has(reminder.id)) {
+        appLogger.debug({ id: reminder.id }, 'Reminder already in-flight, skipping this cycle');
+        continue;
+      }
+      inFlightReminderIds.add(reminder.id);
 
+      try {
+        const message = `🔔 Напоминание\n\n${reminder.task}`;
         await bot.api.sendMessage(reminder.chat_id, message);
 
         try {
@@ -99,6 +111,8 @@ async function processReminders(bot: BotLike): Promise<void> {
           );
           await remindersRepo.markFailed(reminder.id).catch(e => appLogger.debug({ error: e }, 'markFailed failed'));
         }
+      } finally {
+        inFlightReminderIds.delete(reminder.id);
       }
     }
   } finally {

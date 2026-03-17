@@ -58,10 +58,12 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
     const name = ctx.from?.first_name || 'друг';
     const persona = await getPersonaProfile();
+    const sd = persona.selfDescription;
 
     await ctx.reply(
-      `✨ *Привет, ${name}!* Я — *${persona.name}*, техножрица Омниссии и голос этого когитаторного ядра.\n\n` +
-      `Вот что я умею:\n\n` +
+      `✨ *${sd.introShort}*\n\n` +
+      `Рада видеть тебя, ${name}. ${sd.whatSheLivesBy.split('.')[0]}.\n\n` +
+      `*Вот что умею:*\n\n` +
       `💬 *Чат* — задай любой вопрос\n` +
       `🌐 *Интернет* — ищу актуальную информацию в сети\n` +
       `🎨 *Картинки* — «нарисуй...» или кнопка ниже\n` +
@@ -73,7 +75,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
       `☀️ *Дайджест* — утренняя сводка с погодой и новостями\n` +
       `🧠 *Полный дайджест* — /digest\\_all для полного дайджеста\n` +
       `🔊 *Озвучка* — «скажи голосом...»\n\n` +
-      `👇 *Используй кнопки ниже или просто напиши!*`,
+      `👇 *Используй кнопки ниже или просто напиши — я слушаю.*`,
       { parse_mode: 'Markdown', reply_markup: buildReplyKeyboard() }
     );
 
