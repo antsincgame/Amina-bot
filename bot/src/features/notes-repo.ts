@@ -39,7 +39,10 @@ export const notesRepo = {
         Query.equal('user_id', userId), Query.orderDesc('created_at'), Query.limit(100),
       ]);
       return r.documents.map(docToNote);
-    } catch { return []; }
+    } catch (error) {
+      dbLogger.warn({ error, userId }, 'Failed to load notes for user');
+      return [];
+    }
   },
 
   async deleteByIndex(userId: string, index: number): Promise<Note | null> {
@@ -50,13 +53,19 @@ export const notesRepo = {
     try {
       await (await getAW()).deleteDocument(DB_ID(), COLL, note.id);
       return note;
-    } catch { return null; }
+    } catch (error) {
+      dbLogger.warn({ error, userId, noteId: note.id }, 'Failed to delete note by index');
+      return null;
+    }
   },
 
   async countByUser(userId: string): Promise<number> {
     try {
       const r = await (await getAW()).listDocuments(DB_ID(), COLL, [Query.equal('user_id', userId), Query.limit(1)]);
       return r.total;
-    } catch { return 0; }
+    } catch (error) {
+      dbLogger.warn({ error, userId }, 'Failed to count notes for user');
+      return 0;
+    }
   },
 };

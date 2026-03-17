@@ -11,7 +11,8 @@
  * - inlineCitations: замена [N] на ссылки
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import { InlineKeyboard } from 'grammy';
 
 import {
   looksLikeSearchSimulation,
@@ -24,6 +25,7 @@ import {
   stripHtml,
   inlineCitations,
   buildTimeContext,
+  sendLongMessage,
 } from './format.js';
 
 // ============================================
@@ -254,6 +256,35 @@ describe('splitIntoChunks', () => {
   });
 });
 
+describe('sendLongMessage', () => {
+  it('should replace save_to_notes with save_to_notes_full for multi-chunk replies', async () => {
+    const reply = vi.fn().mockResolvedValue(undefined);
+    const ctx = { reply } as unknown as Parameters<typeof sendLongMessage>[0];
+    const longText = Array.from(
+      { length: 140 },
+      (_, index) => `Абзац ${index + 1}: ` + 'контекст '.repeat(30),
+    ).join('\n\n');
+    const keyboard = new InlineKeyboard()
+      .text('📌 В заметки', 'save_to_notes')
+      .text('🔊 Озвучить', 'read_aloud');
+
+    await sendLongMessage(ctx, longText, keyboard);
+
+    const lastCall = reply.mock.calls.at(-1);
+    const options = lastCall?.[1] as {
+      reply_markup?: {
+        inline_keyboard?: Array<Array<{ callback_data?: string }>>;
+      };
+    };
+    const callbackData = (options.reply_markup?.inline_keyboard ?? [])
+      .flat()
+      .map((button) => button.callback_data);
+
+    expect(callbackData.some((value) => value?.startsWith('save_to_notes_full:'))).toBe(true);
+    expect(callbackData.some((value) => value?.startsWith('read_aloud_full:'))).toBe(true);
+  });
+});
+
 // ============================================
 // escapeMarkdown / escapeHtml
 // ============================================
@@ -265,6 +296,11 @@ describe('escapeMarkdown', () => {
 
   it('should escape brackets', () => {
     expect(escapeMarkdown('[link](url)')).toContain('\\[');
+  });
+
+  it('should escape reminder task with Telegram markdown symbols', () => {
+    expect(escapeMarkdown('Оплатить _счёт_ [сегодня] (важно)!'))
+      .toBe('Оплатить \\_счёт\\_ \\[сегодня\\] \\(важно\\)\\!');
   });
 });
 

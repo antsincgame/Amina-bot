@@ -152,7 +152,10 @@ export const remindersRepo = {
         Query.orderAsc('scheduled_at'), Query.limit(100),
       ]);
       return r.documents.map(docToReminder);
-    } catch { return []; }
+    } catch (error) {
+      dbLogger.warn({ error, userId }, 'Failed to load reminders for user');
+      return [];
+    }
   },
 
   async delete(id: string, userId: string): Promise<boolean> {
@@ -162,7 +165,10 @@ export const remindersRepo = {
       if (doc.user_id !== userId) return false;
       await aw.deleteDocument(DB_ID(), COLL, id);
       return true;
-    } catch { return false; }
+    } catch (error) {
+      dbLogger.warn({ error, userId, reminderId: id }, 'Failed to delete reminder');
+      return false;
+    }
   },
 
   async countByUser(userId: string): Promise<number> {
@@ -171,6 +177,9 @@ export const remindersRepo = {
         Query.equal('user_id', userId), Query.equal('is_completed', false), Query.limit(1),
       ]);
       return r.total;
-    } catch { return 0; }
+    } catch (error) {
+      dbLogger.warn({ error, userId }, 'Failed to count reminders for user');
+      return 0;
+    }
   },
 };

@@ -18,7 +18,7 @@ import { userPrefsRepo } from '../features/user-prefs-repo.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';
 import { textToSpeech, detectLanguage } from '../features/tts.js';
 import { sendDigestNow, getDigestFullText } from '../features/digest-scheduler.js';
-import { getFullText } from './format.js';
+import { getFullText, escapeMarkdown } from './format.js';
 import {
   buildMainMenu,
   todoDoneKeyboard,
@@ -30,6 +30,43 @@ import {
 import { escapeHtml } from './format.js';
 
 export const setupCallbacks = (bot: Bot<BotContext>): void => {
+  const sanitizeNoteContent = (rawText: string): string => {
+    let content = rawText;
+
+    const aiNoteMatch = content.match(/[Зз]аметка\s+создана[:\s]*["«'"](.+?)["»'"]/s);
+    if (aiNoteMatch?.[1]) {
+      content = aiNoteMatch[1];
+    }
+
+    const aiNoteRequestMatch = content.match(/(?:просил[аи]?\s+)?создать\s+заметку\s+["«'"](.+?)["»'"]/i);
+    if (aiNoteRequestMatch?.[1]) {
+      content = aiNoteRequestMatch[1];
+    }
+
+    // Срезаем только явный хвост с источниками, не удаляя смысловой текст выше.
+    content = content.replace(/\n*📚\s*Источники?:[\s\S]*$/i, '');
+    content = content.replace(/\n*Источники?:\s*\n[\s\S]*$/i, '');
+
+    // Убираем только стартовые служебные фразы, а не весь хвост ответа.
+    content = content.replace(/^(Конечно!?\s*)?Сейчас\s+(я\s+)?найду[^\n]*\n*/i, '');
+    content = content.replace(/^(Конечно!?\s*)?Сейчас\s+(я\s+)?(поищу|найду|посмотрю)[^\n]*\n*/i, '');
+    content = content.replace(/^🔍?\s*Ищу[.…]{0,3}\s*\n*/gm, '');
+    content = content.replace(/\(Поиск в интернете\)\s*/gi, '');
+    content = content.replace(/^(привет[,!\s]?\s*(?:[а-яё]+[,!\s]?\s*)?(?:👋\s*)?[\n\r]*)/i, '');
+    content = content.replace(/^(здравствуй(?:те)?[,!\s]?\s*(?:[а-яё]+[,!\s]?\s*)?[\n\r]*)/i, '');
+
+    // Сносим только типичный завершающий chatter, если он действительно стоит в конце.
+    content = content.replace(/\n*Хочешь узнать больше[\s\S]*$/i, '');
+    content = content.replace(/\n*Если (?:у тебя есть|хочешь)[\s\S]*$/i, '');
+    content = content.replace(/\n*Дай знать[\s\S]*$/i, '');
+
+    content = content.replace(/\[(\d+)\]/g, '');
+    content = content.replace(/https?:\/\/[^\s)>\]]+/g, '');
+    content = content.replace(/\n{3,}/g, '\n\n').trim();
+
+    return content.slice(0, 4000).trim();
+  };
+
   // ====== ЗАМЕТКИ ======
 
   bot.callbackQuery('notes_list', async (ctx) => {
@@ -68,55 +105,7 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
     }
 
     try {
-      // Очищаем текст от служебного мусора перед сохранением
-      let content = messageText;
-
-      // 1. Извлекаем из AI-формата заметки (разные кавычки: "", «», '')
-      const aiNoteMatch = content.match(/[Зз]аметка\s+создана[:\s]*["«'"](.+?)["»'"]/s);
-      if (aiNoteMatch?.[1]) {
-        content = aiNoteMatch[1];
-      }
-
-      // 1b. Если AI-ответ о создании заметки ("Ты просил создать заметку X...") — извлекаем суть
-      const aiNoteRequestMatch = content.match(/(?:просил[аи]?\s+)?создать\s+заметку\s+["«'"](.+?)["»'"]/i);
-      if (aiNoteRequestMatch?.[1]) {
-        content = aiNoteRequestMatch[1];
-      }
-
-      // 2. Убираем секцию "📚 Источники:" и всё после неё
-      content = content.replace(/\n*📚\s*Источники?:[\s\S]*$/i, '');
-      content = content.replace(/\n*Источники?:\s*\n[\s\S]*$/i, '');
-
-      // 3. Убираем служебные фразы бота (поиск, ожидание)
-      // Фикс: .*? → .* для захвата всей строки; + Unicode-эллипсис "…" + "..."
-      content = content.replace(/^(Конечно!?\s*)?Сейчас\s+(я\s+)?найду[^\n]*\n*/i, '');
-      content = content.replace(/^(Конечно!?\s*)?Сейчас\s+(я\s+)?(поищу|найду|посмотрю)[^\n]*\n*/i, '');
-      content = content.replace(/^🔍?\s*Ищу[.…]{0,3}\s*\n*/gm, '');
-      content = content.replace(/\(Поиск в интернете\)\s*/gi, '');
-
-      // 3b. Убираем приветствия из начала (мусор от AI)
-      content = content.replace(/^(привет[,!\s]?\s*(?:[а-яё]+[,!\s]?\s*)?(?:👋\s*)?[\n\r]*)/i, '');
-      content = content.replace(/^(здравствуй(?:те)?[,!\s]?\s*(?:[а-яё]+[,!\s]?\s*)?[\n\r]*)/i, '');
-
-      // 3c. Убираем AI-метаразговор ("Я готова помочь!", "Пожалуйста, уточни:")
-      content = content.replace(/\n*(?:Я\s+)?готов[аы]?\s+помочь[!.]*[\s\S]*/i, '');
-      content = content.replace(/\n*Пожалуйста,?\s+уточни[\s\S]*/i, '');
-      content = content.replace(/\n*Как только ты уточнишь[\s\S]*/i, '');
-
-      // 4. Убираем голые URL и citation маркеры
-      content = content.replace(/\[(\d+)\]/g, '');
-      content = content.replace(/https?:\/\/[^\s)>\]]+/g, '');
-
-      // 5. Убираем "Хочешь узнать больше..." в конце
-      content = content.replace(/\n*Хочешь узнать больше[\s\S]*$/i, '');
-      content = content.replace(/\n*Если (?:у тебя есть|хочешь)[\s\S]*$/i, '');
-      content = content.replace(/\n*Дай знать[\s\S]*$/i, '');
-
-      // 6. Убираем пустые строки и лишние пробелы
-      content = content.replace(/\n{3,}/g, '\n\n').trim();
-
-      // 7. Проверяем: если после очистки осталось < 3 символов или только мусор — отказываем
-      content = content.slice(0, 500).trim();
+      const content = sanitizeNoteContent(messageText);
 
       if (!content) {
         await ctx.answerCallbackQuery({ text: '❌ Нечего сохранять' });
@@ -127,6 +116,31 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
       await ctx.answerCallbackQuery({ text: '📌 Сохранено в заметки!' });
     } catch (err) {
       telegramLogger.warn({ error: err, userId }, 'Failed to save note (callback)');
+      await ctx.answerCallbackQuery({ text: '❌ Не удалось сохранить' });
+    }
+  });
+
+  bot.callbackQuery(/^save_to_notes_full:(.+)$/, async (ctx) => {
+    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const textId = ctx.match?.[1];
+    const fullText = textId ? getFullText(textId) : null;
+
+    if (!fullText) {
+      await ctx.answerCallbackQuery({ text: '❌ Полный текст не найден, попробуй снова' });
+      return;
+    }
+
+    try {
+      const content = sanitizeNoteContent(fullText);
+      if (!content) {
+        await ctx.answerCallbackQuery({ text: '❌ Нечего сохранять' });
+        return;
+      }
+
+      await notesRepo.create(userId, content);
+      await ctx.answerCallbackQuery({ text: '📌 Полный текст сохранён в заметки!' });
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to save full note (callback)');
       await ctx.answerCallbackQuery({ text: '❌ Не удалось сохранить' });
     }
   });
@@ -350,7 +364,7 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
       } else {
         const lines = reminders.map((r, i) => {
           const dateStr = new Date(r.scheduled_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-          return `${i + 1}. ${r.task}\n   ⏰ ${dateStr}`;
+          return `${i + 1}. ${escapeMarkdown(r.task)}\n   ⏰ ${escapeMarkdown(dateStr)}`;
         });
         await ctx.reply(
           `⏰ *Напоминания (${reminders.length}):*\n\n${lines.join('\n\n')}\n\n_Отмена: /remind\\_cancel номер_`,

@@ -185,7 +185,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
         const dateStr = new Date(r.scheduled_at).toLocaleString('ru-RU', {
           day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
         });
-        return `${i + 1}. ${r.task}\n   ⏰ ${dateStr}`;
+        return `${i + 1}. ${escapeMarkdown(r.task)}\n   ⏰ ${escapeMarkdown(dateStr)}`;
       });
 
       await ctx.reply(

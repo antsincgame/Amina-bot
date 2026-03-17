@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { fetchBotApi } from '../api/appwrite';
 import {
@@ -57,6 +57,11 @@ interface UserLog {
   tokens_completion?: number;
   response_time_ms?: number;
   timestamp: string;
+}
+
+interface UserLogMetadataValue {
+  label: string;
+  value: string;
 }
 
 // API functions
@@ -142,7 +147,7 @@ const UsersPage = () => {
   // Fetch logs for selected user
   const { data: logs, isLoading: logsLoading } = useQuery({
     queryKey: ['user-logs', selectedUser?.user_id],
-    queryFn: () => usersApi.getLogs(selectedUser!.user_id),
+    queryFn: () => usersApi.getLogs(selectedUser!.user_id, 150),
     enabled: !!selectedUser && activeTab === 'logs',
   });
 
@@ -170,14 +175,21 @@ const UsersPage = () => {
   });
 
   // Filter users by search
-  const filteredUsers = users?.filter((user) => {
+  const filteredUsers = useMemo(() => {
     const searchLower = searchQuery.toLowerCase();
-    return (
+    const matches = (users ?? []).filter((user) => (
       user.user_id.includes(searchLower) ||
       user.username?.toLowerCase().includes(searchLower) ||
-      user.first_name?.toLowerCase().includes(searchLower)
-    );
-  });
+      user.first_name?.toLowerCase().includes(searchLower) ||
+      user.last_name?.toLowerCase().includes(searchLower)
+    ));
+
+    return matches.sort((left, right) => {
+      const leftActivity = new Date(left.last_message_at || left.last_seen_at).getTime();
+      const rightActivity = new Date(right.last_message_at || right.last_seen_at).getTime();
+      return rightActivity - leftActivity;
+    });
+  }, [searchQuery, users]);
 
   // Format date
   const formatDate = (date: string) => {
@@ -193,6 +205,21 @@ const UsersPage = () => {
   // Get user display name
   const getUserName = (user: UserProfile) => {
     return user.first_name || user.username || `User ${user.user_id}`;
+  };
+
+  const getLastActivityLabel = (user: UserProfile) => {
+    const date = user.last_message_at || user.last_seen_at;
+    return formatDate(date);
+  };
+
+  const getLogMetadataEntries = (metadata: Record<string, unknown>): UserLogMetadataValue[] => {
+    return Object.entries(metadata)
+      .filter(([, value]) => value !== null && value !== undefined && value !== '')
+      .slice(0, 8)
+      .map(([key, value]) => ({
+        label: key,
+        value: typeof value === 'string' ? value : JSON.stringify(value),
+      }));
   };
 
   return (
@@ -259,6 +286,9 @@ const UsersPage = () => {
                         <p className="text-xs text-white/50">
                           {user.username ? `@${user.username}` : `ID: ${user.user_id}`}
                         </p>
+                        <p className="text-[11px] text-white/40 mt-1">
+                          Активность: {getLastActivityLabel(user)}
+                        </p>
                       </div>
                       <ChevronRight className="w-4 h-4 text-gray-400" />
                     </div>
@@ -309,6 +339,10 @@ const UsersPage = () => {
                       <span className="flex items-center gap-1 text-white/60">
                         <Clock className="w-4 h-4" />
                         Первый визит: {formatDate(selectedUser.first_seen_at)}
+                      </span>
+                      <span className="flex items-center gap-1 text-white/60">
+                        <History className="w-4 h-4" />
+                        Последний запрос: {getLastActivityLabel(selectedUser)}
                       </span>
                       <span className="flex items-center gap-1 text-white/60">
                         <Zap className="w-4 h-4" />
@@ -505,13 +539,30 @@ const UsersPage = () => {
                               </span>
                               <div className="flex-1 min-w-0">
                                 {log.content && (
-                                  <p className="text-sm text-white truncate">{log.content}</p>
+                                  <p className="text-sm text-white whitespace-pre-wrap break-words">{log.content}</p>
                                 )}
                                 <div className="flex items-center gap-3 text-xs text-white/50 mt-1">
                                   <span>{formatDate(log.timestamp)}</span>
                                   {log.model && <span>Модель: {log.model}</span>}
                                   {log.response_time_ms && <span>{log.response_time_ms}ms</span>}
                                 </div>
+                                {getLogMetadataEntries(log.metadata).length > 0 && (
+                                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
+                                    {getLogMetadataEntries(log.metadata).map((entry) => (
+                                      <div
+                                        key={`${log.id}-${entry.label}`}
+                                        className="rounded-lg border border-white/10 bg-white/5 px-3 py-2"
+                                      >
+                                        <p className="text-[11px] uppercase tracking-wide text-white/40">
+                                          {entry.label}
+                                        </p>
+                                        <p className="mt-1 text-xs text-white/80 whitespace-pre-wrap break-words">
+                                          {entry.value}
+                                        </p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
                               </div>
                             </div>
                           </div>

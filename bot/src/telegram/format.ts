@@ -306,9 +306,9 @@ export function getFullText(id: string): string | null {
  * Отправляет длинное сообщение, разбивая на чанки.
  * Конвертирует Markdown → HTML, при ошибке fallback на plain text.
  * 
- * Если сообщение разбивается на несколько чанков И есть keyboard с кнопкой озвучки,
- * полный текст кэшируется и кнопка заменяется на read_aloud_full:ID
- * для озвучки ВСЕГО текста целиком.
+ * Если сообщение разбивается на несколько чанков И есть keyboard с callback-кнопками,
+ * которые должны работать с полным текстом (`read_aloud`, `save_to_notes`),
+ * полный текст кэшируется и callback заменяется на *_full:ID.
  */
 export const sendLongMessage = async (
   ctx: Context,
@@ -334,6 +334,8 @@ export const sendLongMessage = async (
           for (const btn of row) {
             if (btn.callback_data === 'read_aloud') {
               effectiveKeyboard.text(btn.text, `read_aloud_full:${fullTextId}`);
+            } else if (btn.callback_data === 'save_to_notes') {
+              effectiveKeyboard.text(btn.text, `save_to_notes_full:${fullTextId}`);
             } else if (btn.callback_data) {
               effectiveKeyboard.text(btn.text, btn.callback_data);
             }
