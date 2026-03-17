@@ -837,13 +837,24 @@ const TelephonyPage = () => {
             </div>
           </Field>
 
-          <Field label="Webhook токен (from_LiraX_token)" hint="Токен верификации вебхуков LiraX.">
-            <input
-              className="input w-full font-mono text-sm"
-              value={webhookToken}
-              onChange={(e) => setWebhookToken(e.target.value)}
-              placeholder="Токен из LiraX → Интеграция General"
-            />
+          <Field label="Webhook токен (from_LiraX_token)" hint="Токен верификации вебхуков LiraX. Fallback: LIRAX_WEBHOOK_TOKEN.">
+            <div className="relative">
+              <input
+                type={showWebhookToken ? 'text' : 'password'}
+                className="input w-full font-mono text-sm pr-10"
+                value={webhookToken}
+                onChange={(e) => setWebhookToken(e.target.value)}
+                placeholder="Токен из LiraX → Интеграция General"
+              />
+              <button
+                type="button"
+                onClick={() => setShowWebhookToken((v) => !v)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-200"
+                aria-label={showWebhookToken ? 'Скрыть' : 'Показать'}
+              >
+                {showWebhookToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
           </Field>
 
           <Field label="Телефон оператора" hint="Нужен для обычных /call и connectCall. Для AI-сценариев с AskQuestion основной упор идёт на автозвонок.">
