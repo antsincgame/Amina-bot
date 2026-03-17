@@ -363,8 +363,12 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
         );
       } else {
         const lines = reminders.map((r, i) => {
-          const dateStr = new Date(r.scheduled_at).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-          return `${i + 1}. ${escapeMarkdown(r.task)}\n   ⏰ ${escapeMarkdown(dateStr)}`;
+          const d = new Date(r.scheduled_at ?? '');
+          const dateStr = Number.isNaN(d.getTime())
+            ? '—'
+            : d.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+          const task = typeof r.task === 'string' ? r.task : String(r.task ?? '—');
+          return `${i + 1}. ${escapeMarkdown(task)}\n   ⏰ ${escapeMarkdown(dateStr)}`;
         });
         await ctx.reply(
           `⏰ *Напоминания (${reminders.length}):*\n\n${lines.join('\n\n')}\n\n_Отмена: /remind\\_cancel номер_`,

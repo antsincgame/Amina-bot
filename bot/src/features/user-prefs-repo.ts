@@ -4,7 +4,9 @@
 
 import { config } from '../config/index.js';
 import { dbLogger } from '../config/logger.js';
-import { ID, Query } from 'node-appwrite';
+import { ID, Query, type Models } from 'node-appwrite';
+
+type AppwriteDoc = Models.Document & Record<string, unknown>;
 
 let _aw: import('node-appwrite').Databases | null = null;
 async function getAW() { if (!_aw) { const { getAppwrite } = await import('../db/appwrite.js'); _aw = getAppwrite(); } return _aw; }
@@ -16,8 +18,7 @@ export interface UserPreferences {
   digest_city: string; first_name: string | null; timezone: string; created_at: string; updated_at: string;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function docToPrefs(d: any): UserPreferences {
+function docToPrefs(d: AppwriteDoc): UserPreferences {
   return { id: d.$id ?? d.id, user_id: d.user_id, chat_id: d.chat_id, digest_enabled: d.digest_enabled ?? false,
     digest_hour: d.digest_hour ?? 8, digest_city: d.digest_city || '', first_name: d.first_name || null,
     timezone: d.timezone || 'Europe/Moscow', created_at: d.created_at || d.$createdAt, updated_at: d.updated_at || d.$updatedAt };

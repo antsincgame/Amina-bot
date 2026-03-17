@@ -51,6 +51,8 @@ const VoiceMessagesPage = () => {
   // Playing audio
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [audioEl, setAudioEl] = useState<HTMLAudioElement | null>(null);
+  const [audioObjectUrl, setAudioObjectUrl] = useState<string | null>(null);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
 
   // Query: list
   const { data: listResult, isLoading } = useQuery({
@@ -93,34 +95,59 @@ const VoiceMessagesPage = () => {
   const handlePlay = async (msg: VoiceMessage) => {
     if (playingId === msg.id) {
       audioEl?.pause();
+      if (audioObjectUrl) {
+        URL.revokeObjectURL(audioObjectUrl);
+      }
       setPlayingId(null);
       setAudioEl(null);
+      setAudioObjectUrl(null);
       return;
     }
 
     try {
-      const url = await voiceMessagesApi.getDownloadUrl(msg.id);
-      const audio = new Audio(url);
-      audio.onended = () => { setPlayingId(null); setAudioEl(null); };
-      audio.play();
+      setPlaybackError(null);
+      audioEl?.pause();
+      if (audioObjectUrl) {
+        URL.revokeObjectURL(audioObjectUrl);
+      }
+
+      const blob = await voiceMessagesApi.download(msg.id);
+      const objectUrl = URL.createObjectURL(blob);
+      const audio = new Audio(objectUrl);
+      audio.onended = () => {
+        URL.revokeObjectURL(objectUrl);
+        setPlayingId(null);
+        setAudioEl(null);
+        setAudioObjectUrl(null);
+      };
+      audio.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        setPlaybackError('Не удалось воспроизвести голосовое сообщение.');
+        setPlayingId(null);
+        setAudioEl(null);
+        setAudioObjectUrl(null);
+      };
+      await audio.play();
       setPlayingId(msg.id);
       setAudioEl(audio);
-    } catch {
-      // ignore
+      setAudioObjectUrl(objectUrl);
+    } catch (error) {
+      setPlaybackError(error instanceof Error ? error.message : 'Не удалось воспроизвести голосовое сообщение.');
     }
   };
 
   // Download single
   const handleDownload = async (msg: VoiceMessage) => {
     try {
-      const url = await voiceMessagesApi.getDownloadUrl(msg.id);
+      const blob = await voiceMessagesApi.download(msg.id);
+      const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `voice_${msg.user_id}_${msg.duration}s.ogg`;
-      a.target = '_blank';
       a.click();
-    } catch {
-      // ignore
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setPlaybackError(error instanceof Error ? error.message : 'Не удалось скачать голосовое сообщение.');
     }
   };
 
@@ -258,6 +285,11 @@ const VoiceMessagesPage = () => {
       </div>
 
       {/* Table */}
+      {playbackError && (
+        <div className="mb-4 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+          {playbackError}
+        </div>
+      )}
       <div
         className="rounded-2xl overflow-hidden"
         style={{

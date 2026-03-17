@@ -4,7 +4,9 @@
 
 import { config } from '../../../config/index.js';
 
-import { ID, Query } from 'node-appwrite';
+import { ID, Query, type Models } from 'node-appwrite';
+
+type AppwriteDoc = Models.Document & Record<string, unknown>;
 import type { TelephonyCallTurn } from '../../../../../shared/types/telephony.js';
 import { ensureTelephonyInfra } from './telephony-infra.js';
 
@@ -37,8 +39,7 @@ function mapRowToTurn(row: TelephonyCallTurnRow): TelephonyCallTurn {
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function docToTurn(d: any): TelephonyCallTurn {
+function docToTurn(d: AppwriteDoc): TelephonyCallTurn {
   return {
     id: d.$id,
     sessionId: d.session_id,

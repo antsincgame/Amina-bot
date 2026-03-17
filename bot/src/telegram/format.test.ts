@@ -390,21 +390,22 @@ describe('inlineCitations', () => {
 describe('buildTimeContext', () => {
   it('should include date and time', () => {
     const ctx = buildTimeContext('Дмитрий');
-    expect(ctx).toContain('Контекст:');
-    expect(ctx).toContain('TZ');
+    // format: [dd.mm.yyyy, день, hh:mm. Дмитрий]
+    expect(ctx).toMatch(/\d{2}\.\d{2}\.\d{4}/);
     expect(ctx).toContain('Дмитрий');
+    expect(ctx).not.toContain('undefined');
   });
 
   it('should work without name', () => {
     const ctx = buildTimeContext();
-    expect(ctx).toContain('Контекст:');
+    expect(ctx).toMatch(/\d{2}\.\d{2}\.\d{4}/);
     expect(ctx).not.toContain('undefined');
   });
 
   it('should include day of week', () => {
     const ctx = buildTimeContext();
-    // Should contain one of the Russian weekday names
-    const weekdays = ['понедельник', 'вторник', 'среда', 'четверг', 'пятница', 'суббота', 'воскресенье'];
-    expect(weekdays.some(day => ctx.includes(day))).toBe(true);
+    // abbreviated Russian weekday names (Intl short format)
+    const weekdays = ['пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'];
+    expect(weekdays.some(day => ctx.toLowerCase().includes(day))).toBe(true);
   });
 });

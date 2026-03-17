@@ -4,7 +4,9 @@
 
 import { config } from '../../../config/index.js';
 import { settingsRepo } from '../../../db/index.js';
-import { ID, Query } from 'node-appwrite';
+import { ID, Query, type Models } from 'node-appwrite';
+
+type AppwriteDoc = Models.Document & Record<string, unknown>;
 import type { TelephonyAiScenario } from '../../../../../shared/types/telephony.js';
 import { getDefaultTelephonyAiScenarios, normalizeScenario } from '../scenario-compiler.js';
 import { LEGACY_SCENARIOS_KEY, cleanText, safeJsonParse } from '../shared.js';
@@ -80,8 +82,7 @@ function mapScenarioToRow(scenario: TelephonyAiScenario): TelephonyScenarioRow {
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function docToScenario(d: any, index: number): TelephonyAiScenario {
+function docToScenario(d: AppwriteDoc, index: number): TelephonyAiScenario {
   const policy = typeof d.policy === 'string' ? safeJsonParse(d.policy) ?? {} : (d.policy ?? {});
   return normalizeScenario(
     {

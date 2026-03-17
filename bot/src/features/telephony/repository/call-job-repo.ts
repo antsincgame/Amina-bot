@@ -4,7 +4,9 @@
 
 import { config } from '../../../config/index.js';
 
-import { ID, Query } from 'node-appwrite';
+import { ID, Query, type Models } from 'node-appwrite';
+
+type AppwriteDoc = Models.Document & Record<string, unknown>;
 import type { TelephonyCallJob } from '../../../../../shared/types/telephony.js';
 import { cleanText } from '../shared.js';
 import { ensureTelephonyInfra } from './telephony-infra.js';
@@ -50,8 +52,7 @@ function mapRowToJob(row: TelephonyCallJobRow): TelephonyCallJob {
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function docToJob(d: any): TelephonyCallJob {
+function docToJob(d: AppwriteDoc): TelephonyCallJob {
   const payload = typeof d.payload === 'string' ? (JSON.parse(d.payload || '{}')) : (d.payload ?? {});
   return {
     id: d.$id,
@@ -95,7 +96,7 @@ export const callJobRepo = {
     ]);
 
     if (existing.documents.length > 0) {
-      return docToJob(existing.documents[0]);
+      return docToJob(existing.documents[0]!);
     }
 
     const doc = await aw.createDocument(DB_ID(), COLL, ID.unique(), {

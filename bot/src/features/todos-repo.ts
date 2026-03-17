@@ -4,7 +4,9 @@
 
 import { config } from '../config/index.js';
 import { dbLogger } from '../config/logger.js';
-import { ID, Query } from 'node-appwrite';
+import { ID, Query, type Models } from 'node-appwrite';
+
+type AppwriteDoc = Models.Document & Record<string, unknown>;
 
 let _aw: import('node-appwrite').Databases | null = null;
 async function getAW() { if (!_aw) { const { getAppwrite } = await import('../db/appwrite.js'); _aw = getAppwrite(); } return _aw; }
@@ -15,8 +17,7 @@ export interface Todo { id: string; user_id: string; task: string; is_done: bool
 
 const MAX_TODOS_PER_USER = 50;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function docToTodo(d: any): Todo {
+function docToTodo(d: AppwriteDoc): Todo {
   return { id: d.$id ?? d.id, user_id: d.user_id, task: d.task, is_done: d.is_done ?? false,
     done_at: d.done_at || null, created_at: d.created_at || d.$createdAt };
 }

@@ -4,7 +4,9 @@
 
 import { config } from '../../../config/index.js';
 
-import { ID, Query } from 'node-appwrite';
+import { ID, Query, type Models } from 'node-appwrite';
+
+type AppwriteDoc = Models.Document & Record<string, unknown>;
 import type { TelephonyCallArtifact } from '../../../../../shared/types/telephony.js';
 import { ensureTelephonyInfra } from './telephony-infra.js';
 
@@ -55,8 +57,7 @@ function mapRowToArtifact(row: TelephonyCallArtifactRow): TelephonyCallArtifact 
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function docToArtifact(d: any): TelephonyCallArtifact {
+function docToArtifact(d: AppwriteDoc): TelephonyCallArtifact {
   const metadata = typeof d.metadata === 'string' ? (JSON.parse(d.metadata || '{}')) : (d.metadata ?? {});
   return {
     id: d.$id,
@@ -150,7 +151,7 @@ export const callArtifactRepo = {
       Query.equal('artifact_type', artifactType),
       Query.limit(1),
     ]);
-    return r.documents.length > 0 ? docToArtifact(r.documents[0]) : null;
+    return r.documents.length > 0 ? docToArtifact(r.documents[0]!) : null;
 
   },
 };

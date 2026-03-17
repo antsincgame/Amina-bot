@@ -4,7 +4,9 @@
 
 import { config } from '../config/index.js';
 import { dbLogger } from '../config/logger.js';
-import { ID, Query } from 'node-appwrite';
+import { ID, Query, type Models } from 'node-appwrite';
+
+type AppwriteDoc = Models.Document & Record<string, unknown>;
 
 let _aw: import('node-appwrite').Databases | null = null;
 async function getAW() { if (!_aw) { const { getAppwrite } = await import('../db/appwrite.js'); _aw = getAppwrite(); } return _aw; }
@@ -15,9 +17,8 @@ export interface Note { id: string; user_id: string; content: string; created_at
 
 const MAX_NOTES_PER_USER = 100;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function docToNote(d: any): Note {
-  return { id: d.$id ?? d.id, user_id: d.user_id, content: d.content, created_at: d.created_at || d.$createdAt };
+function docToNote(d: AppwriteDoc): Note {
+  return { id: d.$id ?? d.id, user_id: d.user_id as string, content: d.content as string, created_at: (d.created_at || d.$createdAt) as string };
 }
 
 export const notesRepo = {

@@ -139,7 +139,7 @@ function createScenarioDraft(): TelephonyAiScenario {
     },
     goal: '',
     systemPrompt: '',
-    openingLine: 'Здравствуйте. Вас беспокоит техножрица Амина, голос владельца через когитаторный канал.',
+    openingLine: 'Здравствуйте. Вас беспокоит Амина, жена Дмитрия Орлова — звоню по его поручению.',
     questionHint: '',
     successCriteria: '',
     resultPrompt: '',
@@ -646,6 +646,21 @@ const TelephonyPage = () => {
     },
   });
 
+  const renderSettingsSaveButton = (label: string) => (
+    <div className="flex justify-end pt-4 border-t border-white/5">
+      <button className="btn-gold flex items-center gap-2" disabled={savingSettings} onClick={() => saveSettings()}>
+        {savingSettings ? (
+          <Loader2 className="w-4 h-4 animate-spin" />
+        ) : settingsSaved ? (
+          <CheckCircle className="w-4 h-4" />
+        ) : (
+          <Save className="w-4 h-4" />
+        )}
+        {settingsSaved ? 'Сохранено!' : label}
+      </button>
+    </div>
+  );
+
   const updateScenario = (id: string, field: keyof TelephonyAiScenario, value: string | boolean | number) => {
     setScenarios((prev) =>
       prev.map((scenario) =>
@@ -865,6 +880,8 @@ const TelephonyPage = () => {
             <input className="input w-48" value={defaultExt} onChange={(e) => setDefaultExt(e.target.value)} placeholder="201" />
           </Field>
 
+          {renderSettingsSaveButton('Сохранить блок LiraX')}
+
           <div className="pt-2 border-t border-white/5">
             <p className="text-sm font-medium text-white mb-3">SIP / внешняя связность</p>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -912,6 +929,8 @@ const TelephonyPage = () => {
                 />
               </Field>
             </div>
+
+            {renderSettingsSaveButton('Сохранить SIP и внешнюю связность')}
           </div>
 
           <div className="pt-2 border-t border-white/5">
@@ -974,6 +993,8 @@ const TelephonyPage = () => {
                 </select>
               </Field>
             </div>
+
+            {renderSettingsSaveButton('Сохранить AI-ядро телефонии')}
           </div>
 
           <div className="flex flex-col sm:flex-row gap-4">
@@ -992,6 +1013,8 @@ const TelephonyPage = () => {
               onClick={() => setNotifyRecords((value) => !value)}
             />
           </div>
+
+          {renderSettingsSaveButton('Сохранить уведомления')}
 
           <div className="pt-2 border-t border-white/5">
             <p className="text-sm font-medium text-white mb-3">Realtime AI voice</p>
@@ -1070,20 +1093,11 @@ const TelephonyPage = () => {
                 />
               </div>
             </div>
+
+            {renderSettingsSaveButton('Сохранить Realtime voice')}
           </div>
 
-          <div className="flex items-center gap-3">
-            <button className="btn-gold flex items-center gap-2" disabled={savingSettings} onClick={() => saveSettings()}>
-              {savingSettings ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : settingsSaved ? (
-                <CheckCircle className="w-4 h-4" />
-              ) : (
-                <Save className="w-4 h-4" />
-              )}
-              {settingsSaved ? 'Сохранено!' : 'Сохранить настройки'}
-            </button>
-          </div>
+          {renderSettingsSaveButton('Сохранить все настройки')}
         </div>
       </div>
 

@@ -4,7 +4,9 @@
 
 import { config } from '../config/index.js';
 import { dbLogger } from '../config/logger.js';
-import { ID, Query } from 'node-appwrite';
+import { ID, Query, type Models } from 'node-appwrite';
+
+type AppwriteDoc = Models.Document & Record<string, unknown>;
 import type { ParsedHeadline, ParsedHeadlineCategory, DigestPipelineMode } from '../../../shared/types/index.js';
 import type { DigestSearchResult } from './digest-core.js';
 
@@ -51,8 +53,7 @@ interface UpsertDigestDeliveryInput {
 
 const HYBRID_PIPELINE: Exclude<DigestPipelineMode, 'legacy'> = 'hybrid_appwrite';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function docToCache(d: any): DigestCacheRecord {
+function docToCache(d: AppwriteDoc): DigestCacheRecord {
   return {
     id: d.$id ?? d.id, cache_key: d.cache_key, pipeline: d.pipeline, digest_date: d.digest_date,
     city: d.city, source_hash: d.source_hash,
@@ -62,8 +63,7 @@ function docToCache(d: any): DigestCacheRecord {
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function docToDelivery(d: any): DigestDeliveryRecord {
+function docToDelivery(d: AppwriteDoc): DigestDeliveryRecord {
   return {
     id: d.$id ?? d.id, delivery_key: d.delivery_key, pipeline: d.pipeline, delivery_kind: d.delivery_kind,
     user_id: d.user_id, chat_id: d.chat_id, city: d.city, digest_date: d.digest_date, cache_key: d.cache_key,
@@ -76,7 +76,7 @@ export const digestCacheRepo = {
   async getByKey(cacheKey: string): Promise<DigestCacheRecord | null> {
     try {
       const r = await (await getAW()).listDocuments(DB_ID(), COLL_CACHE, [Query.equal('cache_key', cacheKey), Query.limit(1)]);
-      return r.documents.length > 0 ? docToCache(r.documents[0]) : null;
+      return r.documents.length > 0 ? docToCache(r.documents[0]!) : null;
     } catch (e) { dbLogger.error({ error: e, cacheKey }, 'Failed to get digest cache'); throw e; }
   },
 
@@ -97,7 +97,7 @@ export const digestCacheRepo = {
         Query.equal('pipeline', HYBRID_PIPELINE), Query.equal('city', city),
         Query.orderDesc('digest_date'), Query.orderDesc('updated_at'), Query.limit(1),
       ]);
-      return r.documents.length > 0 ? docToCache(r.documents[0]) : null;
+      return r.documents.length > 0 ? docToCache(r.documents[0]!) : null;
     } catch (e) { dbLogger.error({ error: e, city }, 'Failed to get latest cache'); throw e; }
   },
 
@@ -124,7 +124,7 @@ export const digestDeliveryRepo = {
   async getByKey(deliveryKey: string): Promise<DigestDeliveryRecord | null> {
     try {
       const r = await (await getAW()).listDocuments(DB_ID(), COLL_DELIVERY, [Query.equal('delivery_key', deliveryKey), Query.limit(1)]);
-      return r.documents.length > 0 ? docToDelivery(r.documents[0]) : null;
+      return r.documents.length > 0 ? docToDelivery(r.documents[0]!) : null;
     } catch (e) { dbLogger.error({ error: e, deliveryKey }, 'Failed to get delivery'); throw e; }
   },
 

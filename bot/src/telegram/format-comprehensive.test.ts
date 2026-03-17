@@ -392,77 +392,77 @@ describe('buildTimeContext', () => {
       vi.useRealTimers();
     });
 
-    it('утро (08:00 MSK)', () => {
+    it('08:00 MSK — содержит время', () => {
       vi.setSystemTime(new Date('2026-03-16T05:00:00Z')); // 08:00 MSK
       const ctx = buildTimeContext('Amina');
-      expect(ctx).toContain('утро');
+      expect(ctx).toContain('08:00');
       expect(ctx).toContain('Amina');
     });
 
-    it('утро (05:00 MSK)', () => {
+    it('05:00 MSK — содержит время', () => {
       vi.setSystemTime(new Date('2026-03-16T02:00:00Z')); // 05:00 MSK
       const ctx = buildTimeContext();
-      expect(ctx).toContain('утро');
+      expect(ctx).toContain('05:00');
     });
 
-    it('утро (11:59 MSK)', () => {
+    it('11:59 MSK — содержит время', () => {
       vi.setSystemTime(new Date('2026-03-16T08:59:00Z')); // 11:59 MSK
       const ctx = buildTimeContext();
-      expect(ctx).toContain('утро');
+      expect(ctx).toContain('11:59');
     });
 
-    it('день (12:00 MSK)', () => {
+    it('12:00 MSK — содержит время', () => {
       vi.setSystemTime(new Date('2026-03-16T09:00:00Z')); // 12:00 MSK
       const ctx = buildTimeContext();
-      expect(ctx).toContain('день');
+      expect(ctx).toContain('12:00');
     });
 
-    it('день (14:00 MSK)', () => {
+    it('14:00 MSK — содержит время', () => {
       vi.setSystemTime(new Date('2026-03-16T11:00:00Z')); // 14:00 MSK
       const ctx = buildTimeContext();
-      expect(ctx).toContain('день');
+      expect(ctx).toContain('14:00');
     });
 
-    it('день (16:59 MSK)', () => {
+    it('16:59 MSK — содержит время', () => {
       vi.setSystemTime(new Date('2026-03-16T13:59:00Z')); // 16:59 MSK
       const ctx = buildTimeContext();
-      expect(ctx).toContain('день');
+      expect(ctx).toContain('16:59');
     });
 
-    it('вечер (17:00 MSK)', () => {
+    it('17:00 MSK — содержит время', () => {
       vi.setSystemTime(new Date('2026-03-16T14:00:00Z')); // 17:00 MSK
       const ctx = buildTimeContext();
-      expect(ctx).toContain('вечер');
+      expect(ctx).toContain('17:00');
     });
 
-    it('вечер (20:00 MSK)', () => {
+    it('20:00 MSK — содержит время', () => {
       vi.setSystemTime(new Date('2026-03-16T17:00:00Z')); // 20:00 MSK
       const ctx = buildTimeContext();
-      expect(ctx).toContain('вечер');
+      expect(ctx).toContain('20:00');
     });
 
-    it('вечер (21:59 MSK)', () => {
+    it('21:59 MSK — содержит время', () => {
       vi.setSystemTime(new Date('2026-03-16T18:59:00Z')); // 21:59 MSK
       const ctx = buildTimeContext();
-      expect(ctx).toContain('вечер');
+      expect(ctx).toContain('21:59');
     });
 
-    it('ночь (22:00 MSK)', () => {
+    it('22:00 MSK — содержит время', () => {
       vi.setSystemTime(new Date('2026-03-16T19:00:00Z')); // 22:00 MSK
       const ctx = buildTimeContext();
-      expect(ctx).toContain('ночь');
+      expect(ctx).toContain('22:00');
     });
 
-    it('ночь (02:00 MSK)', () => {
+    it('02:00 MSK — содержит время', () => {
       vi.setSystemTime(new Date('2026-03-15T23:00:00Z')); // 02:00 MSK
       const ctx = buildTimeContext();
-      expect(ctx).toContain('ночь');
+      expect(ctx).toContain('02:00');
     });
 
-    it('ночь (04:59 MSK)', () => {
+    it('04:59 MSK — содержит время', () => {
       vi.setSystemTime(new Date('2026-03-16T01:59:00Z')); // 04:59 MSK
       const ctx = buildTimeContext();
-      expect(ctx).toContain('ночь');
+      expect(ctx).toContain('04:59');
     });
   });
 
@@ -481,14 +481,14 @@ describe('buildTimeContext', () => {
       expect(ctx).toMatch(/^\[.+\]$/);
     });
 
-    it('содержит TZ', () => {
+    it('содержит дату в формате dd.mm.yyyy', () => {
       const ctx = buildTimeContext();
-      expect(ctx).toContain('TZ');
+      expect(ctx).toMatch(/\d{2}\.\d{2}\.\d{4}/);
     });
 
-    it('содержит "Контекст"', () => {
+    it('содержит время в формате hh:mm', () => {
       const ctx = buildTimeContext();
-      expect(ctx).toContain('Контекст');
+      expect(ctx).toMatch(/\d{2}:\d{2}/);
     });
 
     it('содержит имя пользователя если передано', () => {

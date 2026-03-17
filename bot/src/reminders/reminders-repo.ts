@@ -4,7 +4,9 @@
 
 import { config } from '../config/index.js';
 import { dbLogger } from '../config/logger.js';
-import { ID, Query } from 'node-appwrite';
+import { ID, Query, type Models } from 'node-appwrite';
+
+type AppwriteDoc = Models.Document & Record<string, unknown>;
 import type { Reminder } from '../../../shared/types/index.js';
 
 let _aw: import('node-appwrite').Databases | null = null;
@@ -23,8 +25,7 @@ const RETRY_BACKOFF_MS = [
 ] as const;
 const RETRY_TOLERANCE_MS = 30_000;
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function docToReminder(d: any): Reminder {
+function docToReminder(d: AppwriteDoc): Reminder {
   return { id: d.$id ?? d.id, user_id: d.user_id, chat_id: d.chat_id, task: d.task,
     scheduled_at: d.scheduled_at, is_completed: d.is_completed ?? false,
     completed_at: d.completed_at, created_at: d.created_at || d.$createdAt,

@@ -80,8 +80,12 @@ export const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Recor
         await ctx.reply('⏰ Нет активных напоминаний.\n\nНапиши: _напомни через 2 часа ..._', { parse_mode: 'Markdown' });
       } else {
         const lines = reminders.map((r, i) => {
-          const d = new Date(r.scheduled_at).toLocaleString('ru-RU', { timeZone: config.server.timeZone, day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
-          return `${i + 1}. ${escapeHtml(r.task)} — ⏰ ${d}`;
+          const dt = new Date(r.scheduled_at ?? '');
+          const d = Number.isNaN(dt.getTime())
+            ? '—'
+            : dt.toLocaleString('ru-RU', { timeZone: config.server.timeZone, day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+          const task = typeof r.task === 'string' ? r.task : String(r.task ?? '—');
+          return `${i + 1}. ${escapeHtml(task)} — ⏰ ${d}`;
         });
         await ctx.reply(`⏰ <b>Напоминания (${reminders.length}):</b>\n\n${lines.join('\n')}\n\n<i>/remind_cancel номер</i>`, { parse_mode: 'HTML' });
       }

@@ -69,12 +69,16 @@ export async function registerVoiceMessagesRoutes(server: FastifyInstance): Prom
           return reply.code(404).send({ success: false, error: 'Voice message not found' });
         }
 
-        const signedUrl = await voiceMessagesRepo.getSignedUrl(record.file_path);
-        if (!signedUrl) {
-          return reply.code(500).send({ success: false, error: 'Failed to generate download URL' });
+        const fileBuffer = await voiceMessagesRepo.downloadFile(record.file_path);
+        if (!fileBuffer) {
+          return reply.code(500).send({ success: false, error: 'Failed to load voice message file' });
         }
 
-        return reply.code(200).send({ success: true, data: { url: signedUrl, fileName: record.file_path } });
+        const safeFileName = `voice_${record.user_id}_${record.duration}s.ogg`;
+        reply.header('Content-Type', 'audio/ogg');
+        reply.header('Content-Length', String(fileBuffer.length));
+        reply.header('Content-Disposition', `inline; filename="${safeFileName}"`);
+        return reply.code(200).send(fileBuffer);
       } catch (error) {
         const msg = error instanceof Error ? error.message : 'Unknown error';
         return reply.code(500).send({ success: false, error: msg });

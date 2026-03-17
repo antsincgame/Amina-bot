@@ -1,4 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+
+vi.mock('../../ai/persona.js', () => ({
+  buildPersonaSystemPrompt: vi.fn().mockResolvedValue('Ты — Амина, техножрица Омниссии и жена Дмитрия Орлова.'),
+  buildPersonaSelfIntro: vi.fn().mockResolvedValue('Я — Амина.'),
+  detectSelfDisclosureIntent: vi.fn().mockReturnValue(false),
+  clearPersonaCache: vi.fn(),
+  getPersonaProfile: vi.fn().mockResolvedValue({ name: 'Amina', ownerTitle: 'Дмитрий' }),
+}));
 import {
   normalizeScenarioPolicy,
   normalizeScenario,
@@ -884,83 +892,82 @@ describe('buildPlanPrompt — генерация промпта для план�
     updatedAt: '2026-01-01T00:00:00Z',
   };
 
-  it('возвращает массив из 2 сообщений', () => {
-    const msgs = buildPlanPrompt(baseScenario, 'task', '+79991234567');
+  it('возвращает массив из 2 сообщений', async () => {
+    const msgs = await buildPlanPrompt(baseScenario, 'task', '+79991234567');
     expect(msgs).toHaveLength(2);
   });
 
-  it('первое сообщение — system', () => {
-    const msgs = buildPlanPrompt(baseScenario, 'task', '+79991234567');
-    expect(msgs[0].role).toBe('system');
+  it('первое сообщение — system', async () => {
+    const msgs = await buildPlanPrompt(baseScenario, 'task', '+79991234567');
+    expect(msgs[0]!.role).toBe('system');
   });
 
-  it('второе сообщение — user', () => {
-    const msgs = buildPlanPrompt(baseScenario, 'task', '+79991234567');
-    expect(msgs[1].role).toBe('user');
+  it('второе сообщение — user', async () => {
+    const msgs = await buildPlanPrompt(baseScenario, 'task', '+79991234567');
+    expect(msgs[1]!.role).toBe('user');
   });
 
-  it('system content содержит goal', () => {
-    const msgs = buildPlanPrompt(baseScenario, 'task', '+79991234567');
-    expect(msgs[0].content).toContain('test goal');
+  it('system content содержит goal', async () => {
+    const msgs = await buildPlanPrompt(baseScenario, 'task', '+79991234567');
+    expect(msgs[0]!.content).toContain('test goal');
   });
 
-  it('system content содержит runtimeMode', () => {
-    const msgs = buildPlanPrompt(baseScenario, 'task', '+79991234567');
-    expect(msgs[0].content).toContain('scripted');
+  it('system content содержит runtimeMode', async () => {
+    const msgs = await buildPlanPrompt(baseScenario, 'task', '+79991234567');
+    expect(msgs[0]!.content).toContain('scripted');
   });
 
-  it('user content содержит phone', () => {
-    const msgs = buildPlanPrompt(baseScenario, 'task', '+79991234567');
-    expect(msgs[1].content).toContain('+79991234567');
+  it('user content содержит phone', async () => {
+    const msgs = await buildPlanPrompt(baseScenario, 'task', '+79991234567');
+    expect(msgs[1]!.content).toContain('+79991234567');
   });
 
-  it('user content содержит task', () => {
-    const msgs = buildPlanPrompt(baseScenario, 'my task here', '+79991234567');
-    expect(msgs[1].content).toContain('my task here');
+  it('user content содержит task', async () => {
+    const msgs = await buildPlanPrompt(baseScenario, 'my task here', '+79991234567');
+    expect(msgs[1]!.content).toContain('my task here');
   });
 
-  it('ask_question режим — промпт содержит askText', () => {
-    const msgs = buildPlanPrompt(baseScenario, 'task', '+7');
-    expect(msgs[0].content).toContain('askText');
+  it('ask_question режим — промпт содержит askText', async () => {
+    const msgs = await buildPlanPrompt(baseScenario, 'task', '+7');
+    expect(msgs[0]!.content).toContain('askText');
   });
 
-  it('speech режим — промпт содержит speechText', () => {
+  it('speech режим — промпт содержит speechText', async () => {
     const speechScenario = { ...baseScenario, callMode: 'speech' as const };
-    const msgs = buildPlanPrompt(speechScenario, 'task', '+7');
-    expect(msgs[0].content).toContain('speechText');
+    const msgs = await buildPlanPrompt(speechScenario, 'task', '+7');
+    expect(msgs[0]!.content).toContain('speechText');
   });
 
-  it('speech режим — НЕ содержит askText', () => {
+  it('speech режим — НЕ содержит askText', async () => {
     const speechScenario = { ...baseScenario, callMode: 'speech' as const };
-    const msgs = buildPlanPrompt(speechScenario, 'task', '+7');
-    expect(msgs[0].content).not.toContain('askText');
+    const msgs = await buildPlanPrompt(speechScenario, 'task', '+7');
+    expect(msgs[0]!.content).not.toContain('askText');
   });
 
-  it('ask_question режим — НЕ содержит speechText (как ключ JSON)', () => {
-    const msgs = buildPlanPrompt(baseScenario, 'task', '+7');
-    // speechText не входит в JSON shape для ask_question
-    expect(msgs[0].content).not.toContain('"speechText"');
+  it('ask_question режим — НЕ содержит speechText (как ключ JSON)', async () => {
+    const msgs = await buildPlanPrompt(baseScenario, 'task', '+7');
+    expect(msgs[0]!.content).not.toContain('"speechText"');
   });
 
-  it('содержит systemPrompt', () => {
-    const msgs = buildPlanPrompt(baseScenario, 'task', '+7');
-    expect(msgs[0].content).toContain('be polite');
+  it('содержит systemPrompt', async () => {
+    const msgs = await buildPlanPrompt(baseScenario, 'task', '+7');
+    expect(msgs[0]!.content).toContain('be polite');
   });
 
-  it('содержит openingLine', () => {
-    const msgs = buildPlanPrompt(baseScenario, 'task', '+7');
-    expect(msgs[0].content).toContain('Hello');
+  it('содержит openingLine', async () => {
+    const msgs = await buildPlanPrompt(baseScenario, 'task', '+7');
+    expect(msgs[0]!.content).toContain('Hello');
   });
 
-  it('содержит successCriteria', () => {
-    const msgs = buildPlanPrompt(baseScenario, 'task', '+7');
-    expect(msgs[0].content).toContain('got answer');
+  it('содержит successCriteria', async () => {
+    const msgs = await buildPlanPrompt(baseScenario, 'task', '+7');
+    expect(msgs[0]!.content).toContain('got answer');
   });
 
-  it('содержит maxSpeechChars для speech режима', () => {
+  it('содержит maxSpeechChars для speech режима', async () => {
     const speechScenario = { ...baseScenario, callMode: 'speech' as const, maxSpeechChars: 500 };
-    const msgs = buildPlanPrompt(speechScenario, 'task', '+7');
-    expect(msgs[0].content).toContain('500');
+    const msgs = await buildPlanPrompt(speechScenario, 'task', '+7');
+    expect(msgs[0]!.content).toContain('500');
   });
 });
 

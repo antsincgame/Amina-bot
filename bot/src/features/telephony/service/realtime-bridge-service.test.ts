@@ -65,9 +65,9 @@ describe('realtime bridge service', () => {
 
     getSessionByIdMock.mockResolvedValue({
       id: 'session-1',
-      requestId: null,
-      callId: null,
-      status: 'initiated',
+      requestId: 'req-1',
+      callId: 'call-1',
+      status: 'live',
       recordLink: null,
     });
     updateSessionMock.mockResolvedValue({

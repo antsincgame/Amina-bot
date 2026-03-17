@@ -4,7 +4,9 @@
 
 import { config } from '../../../config/index.js';
 import { settingsRepo } from '../../../db/index.js';
-import { ID, Query } from 'node-appwrite';
+import { ID, Query, type Models } from 'node-appwrite';
+
+type AppwriteDoc = Models.Document & Record<string, unknown>;
 import type { TelephonyAiCallSession } from '../../../../../shared/types/telephony.js';
 import {
   LEGACY_SESSIONS_KEY,
@@ -110,8 +112,7 @@ function mapSessionToRow(session: TelephonyAiCallSession): TelephonySessionRow {
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function docToSession(d: any): TelephonyAiCallSession {
+function docToSession(d: AppwriteDoc): TelephonyAiCallSession {
   return {
     id: d.$id,
     ownerTelegramId: d.owner_telegram_id,
@@ -244,7 +245,7 @@ export const callSessionRepo = {
     const r = await aw.listDocuments(DB_ID(), COLL, [
       Query.equal('request_id', normalized), Query.limit(1),
     ]);
-    return r.documents.length > 0 ? docToSession(r.documents[0]) : null;
+    return r.documents.length > 0 ? docToSession(r.documents[0]!) : null;
 
   },
 
@@ -257,7 +258,7 @@ export const callSessionRepo = {
     const r = await aw.listDocuments(DB_ID(), COLL, [
       Query.equal('call_id', normalized), Query.limit(1),
     ]);
-    return r.documents.length > 0 ? docToSession(r.documents[0]) : null;
+    return r.documents.length > 0 ? docToSession(r.documents[0]!) : null;
 
   },
 
@@ -274,7 +275,7 @@ export const callSessionRepo = {
       Query.orderDesc('created_at'),
       Query.limit(1),
     ]);
-    return r.documents.length > 0 ? docToSession(r.documents[0]) : null;
+    return r.documents.length > 0 ? docToSession(r.documents[0]!) : null;
 
   },
 

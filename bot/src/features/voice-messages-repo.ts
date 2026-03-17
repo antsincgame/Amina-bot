@@ -5,7 +5,9 @@
 
 import { config } from '../config/index.js';
 import { dbLogger } from '../config/logger.js';
-import { ID, Query } from 'node-appwrite';
+import { ID, Query, type Models } from 'node-appwrite';
+
+type AppwriteDoc = Models.Document & Record<string, unknown>;
 import { Storage } from 'node-appwrite';
 
 let _aw: import('node-appwrite').Databases | null = null;
@@ -25,8 +27,7 @@ export interface VoiceMessageWithUser extends VoiceMessage { username?: string; 
 export interface VoiceMessagesFilter { userId?: string; dateFrom?: string; dateTo?: string; limit?: number; offset?: number; }
 export interface VoiceMessagesStats { totalCount: number; totalSize: number; totalDuration: number; byUser: { user_id: string; count: number; totalDuration: number }[]; }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function docToVoice(d: any): VoiceMessage {
+function docToVoice(d: AppwriteDoc): VoiceMessage {
   return { id: d.$id ?? d.id, user_id: d.user_id, file_path: d.file_path, duration: d.duration ?? 0,
     file_size: d.file_size ?? 0, transcription: d.transcription || null,
     telegram_file_id: d.telegram_file_id || null, created_at: d.created_at || d.$createdAt };
@@ -104,7 +105,7 @@ export const voiceMessagesRepo = {
 
   async stats(): Promise<VoiceMessagesStats> {
     try {
-      const all: any[] = []; let offset = 0;
+      const all: AppwriteDoc[] = []; let offset = 0;
       while (offset < 5000) {
         const r = await (await getAW()).listDocuments(DB_ID(), COLL, [Query.limit(100), Query.offset(offset)]);
         all.push(...r.documents); if (r.documents.length < 100) break; offset += 100;

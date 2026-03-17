@@ -561,18 +561,20 @@ describe('Reminder Parser', () => {
     });
   });
 
-  describe('detectReminderListIntent — не матчит кириллицу из-за \\b (known limitation)', () => {
-    // \b word boundary не работает с Unicode/кириллицей в JS regex
-    const knownLimitationCases: [string, string][] = [
-      ['мои напоминания', '\\b не матчит "мои" (кириллица)'],
-      ['покажи напоминания', '\\b не матчит "покажи"'],
-      ['список напоминаний', '\\b не матчит "список"'],
-      ['все напоминания', '\\b не матчит "все"'],
-      ['активные напоминания', '\\b не матчит "активн"'],
+  describe('detectReminderListIntent — матчит кириллицу (lookaround вместо \\b)', () => {
+    const trueCases: [string, string][] = [
+      ['мои напоминания', 'lookaround матчит "мои"'],
+      ['покажи напоминания', 'lookaround матчит "покажи"'],
+      ['список напоминаний', 'lookaround матчит "список"'],
+      ['все напоминания', 'lookaround матчит "все"'],
     ];
 
-    it.each(knownLimitationCases)('%s → false (known: %s)', (text) => {
-      expect(detectReminderListIntent(text)).toBe(false);
+    it.each(trueCases)('%s → true (%s)', (text) => {
+      expect(detectReminderListIntent(text)).toBe(true);
+    });
+
+    it('активные напоминания → false (паттерн требует точный суффикс "активн", не "активн+ые")', () => {
+      expect(detectReminderListIntent('активные напоминания')).toBe(false);
     });
   });
 

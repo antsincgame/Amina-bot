@@ -65,10 +65,16 @@ const REMINDER_LIST_PATTERNS = [
   /(?<=\s|^)show.{0,10}remind/i,
 ];
 
+const REMINDER_DELETE_PATTERNS = [
+  /(?<=\s|^)(удали|удалить|сотри|стереть|отмени|отменить|убери|убрать|очисти|очистить)(?=\s|$)/i,
+  /(?<=\s|^)(delete|remove|cancel|clear)(?=\s|$)/i,
+];
+
 /**
  * Проверка: пользователь хочет ПОСМОТРЕТЬ список напоминаний (а не создать)?
  */
 export function detectReminderListIntent(text: string): boolean {
+  if (REMINDER_DELETE_PATTERNS.some(p => p.test(text))) return false;
   return REMINDER_LIST_PATTERNS.some(pattern => pattern.test(text));
 }
 

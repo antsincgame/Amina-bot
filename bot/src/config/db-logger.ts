@@ -5,8 +5,10 @@
 
 import { config } from './index.js';
 
-import { ID, Query } from 'node-appwrite';
+import { ID, Query, type Models } from 'node-appwrite';
 import type { SystemLog, LogLevel } from '../../../shared/types/index.js';
+
+type AppwriteDoc = Models.Document & Record<string, unknown>;
 
 let _aw: import('node-appwrite').Databases | null = null;
 async function getAW() { if (!_aw) { const { getAppwrite } = await import('../db/appwrite.js'); _aw = getAppwrite(); } return _aw; }
@@ -121,7 +123,7 @@ export async function getLogs(params: { level?: LogLevel; module?: string; from?
     if (params.to) queries.push(Query.lessThanEqual('timestamp', params.to.toISOString()));
     queries.push(Query.limit(params.limit || 100));
     const r = await (await getAW()).listDocuments(DB_ID(), COLL, queries);
-    return r.documents.map((d: any) => ({
+    return r.documents.map((d: AppwriteDoc) => ({
       id: d.$id, level: d.level, module: d.module, message: d.message,
       data: d.data ? JSON.parse(d.data) : undefined, error_stack: d.error_stack,
       user_id: d.user_id, request_id: d.request_id, timestamp: d.timestamp,
@@ -134,7 +136,7 @@ export async function getLogStats(from: Date, to: Date): Promise<{ total: number
   const empty = { total: 0, byLevel: { debug: 0, info: 0, warn: 0, error: 0, fatal: 0 } as Record<LogLevel, number>, byModule: {} as Record<string, number> };
   try {
     let logs: Array<{ level: string; module: string }> = [];
-    const all: any[] = []; let offset = 0;
+    const all: AppwriteDoc[] = []; let offset = 0;
     while (offset < 5000) {
       const r = await (await getAW()).listDocuments(DB_ID(), COLL, [
         Query.greaterThanEqual('timestamp', from.toISOString()),

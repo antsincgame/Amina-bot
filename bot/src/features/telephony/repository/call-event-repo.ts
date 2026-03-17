@@ -4,7 +4,9 @@
 
 import { config } from '../../../config/index.js';
 
-import { ID, Query } from 'node-appwrite';
+import { ID, Query, type Models } from 'node-appwrite';
+
+type AppwriteDoc = Models.Document & Record<string, unknown>;
 import type { TelephonyCallEvent } from '../../../../../shared/types/telephony.js';
 import { ensureTelephonyInfra } from './telephony-infra.js';
 
@@ -33,8 +35,7 @@ function mapRowToEvent(row: TelephonyCallEventRow): TelephonyCallEvent {
   };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function docToEvent(d: any): TelephonyCallEvent {
+function docToEvent(d: AppwriteDoc): TelephonyCallEvent {
   const payload = typeof d.payload === 'string' ? (JSON.parse(d.payload || '{}')) : (d.payload ?? {});
   return {
     id: d.$id,

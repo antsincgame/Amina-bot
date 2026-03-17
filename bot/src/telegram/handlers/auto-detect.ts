@@ -27,10 +27,12 @@ export const handleAutoDetections = async (
         await ctx.reply('⏰ У тебя нет активных напоминаний.\n\nНапиши, например: «Напомни через 2 часа позвонить маме»');
       } else {
         const lines = reminders.map((r, i) => {
-          const dateStr = new Date(r.scheduled_at).toLocaleString('ru-RU', {
-            day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: config.server.timeZone,
-          });
-          return `${i + 1}. ${escapeHtml(r.task)}\n   ⏰ ${dateStr}`;
+          const d = new Date(r.scheduled_at ?? '');
+          const dateStr = Number.isNaN(d.getTime())
+            ? '—'
+            : d.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: config.server.timeZone });
+          const task = typeof r.task === 'string' ? r.task : String(r.task ?? '—');
+          return `${i + 1}. ${escapeHtml(task)}\n   ⏰ ${dateStr}`;
         });
         await ctx.reply(
           `⏰ <b>Напоминания (${reminders.length}):</b>\n\n${lines.join('\n\n')}\n\n<i>Отмена: /remind_cancel номер</i>`,

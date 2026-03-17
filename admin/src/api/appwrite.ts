@@ -277,13 +277,12 @@ export const voiceMessagesApi = {
     return result.data;
   },
 
-  async getDownloadUrl(id: string): Promise<string> {
-    const result = await fetchBotApiJson<{ data: { url: string } }>(
-      `/api/voice-messages/${id}/download`,
-      {},
-      'Failed to get download URL',
-    );
-    return result.data.url;
+  async download(id: string): Promise<Blob> {
+    const response = await fetchBotApi(`/api/voice-messages/${id}/download`);
+    if (!response.ok) {
+      throw new Error(await readApiError(response, 'Failed to download voice message'));
+    }
+    return response.blob();
   },
 
   async downloadArchive(params: { userId?: string; dateFrom?: string; dateTo?: string } = {}): Promise<Blob> {

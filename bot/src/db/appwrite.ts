@@ -1,4 +1,4 @@
-import { Client, Databases, ID, Query } from 'node-appwrite';
+import { Client, Databases, ID, Query, type Models } from 'node-appwrite';
 import { config } from '../config/index.js';
 import { dbLogger } from '../config/logger.js';
 import type {
@@ -63,8 +63,10 @@ function parseJson<T>(raw: string | null | undefined, fallback: T): T {
   try { return JSON.parse(raw); } catch { return fallback; }
 }
 
+type AppwriteDoc = Models.Document & Record<string, unknown>;
+
 /** Map Appwrite document → Settings type */
-function docToSettings(doc: any): Settings {
+function docToSettings(doc: AppwriteDoc): Settings {
   return {
     id: doc.$id,
     key: doc.key,
@@ -74,7 +76,7 @@ function docToSettings(doc: any): Settings {
 }
 
 /** Map Appwrite document → Prompt type */
-function docToPrompt(doc: any): Prompt {
+function docToPrompt(doc: AppwriteDoc): Prompt {
   return {
     id: doc.$id,
     name: doc.name,
@@ -87,7 +89,7 @@ function docToPrompt(doc: any): Prompt {
 }
 
 /** Map Appwrite document → Conversation type */
-function docToConversation(doc: any): Conversation {
+function docToConversation(doc: AppwriteDoc): Conversation {
   return {
     id: doc.$id,
     user_id: doc.user_id,
@@ -168,7 +170,7 @@ export const settingsRepo = {
 
       const now = new Date().toISOString();
 
-      if (result.documents[0]) {
+      if (result.documents[0]!) {
         await getAppwrite().updateDocument(DB_ID(), COLL.settings, result.documents[0].$id, {
           value,
           updated_at: now,
@@ -190,7 +192,7 @@ export const settingsRepo = {
 
   async getAll(): Promise<Settings[]> {
     try {
-      const allDocs: any[] = [];
+      const allDocs: AppwriteDoc[] = [];
       let offset = 0;
       const limit = 100;
 
@@ -280,7 +282,7 @@ export const promptsRepo = {
       ]);
 
       if (result.documents.length === 0) return null;
-      return docToPrompt(result.documents[0]);
+      return docToPrompt(result.documents[0]!);
     } catch (error) {
       dbLogger.error({ error, channel }, 'Failed to get active prompt');
       throw error;
@@ -289,7 +291,7 @@ export const promptsRepo = {
 
   async getAll(): Promise<Prompt[]> {
     try {
-      const allDocs: any[] = [];
+      const allDocs: AppwriteDoc[] = [];
       let offset = 0;
 
       while (true) {
@@ -330,8 +332,7 @@ export const promptsRepo = {
 
   async update(id: string, updates: Partial<Omit<Prompt, 'id' | 'created_at'>>): Promise<Prompt> {
     try {
-      const data: any = { ...updates, updated_at: new Date().toISOString() };
-      // Remove undefined fields
+      const data: Record<string, unknown> = { ...updates, updated_at: new Date().toISOString() };
       for (const k of Object.keys(data)) {
         if (data[k] === undefined) delete data[k];
       }
@@ -419,7 +420,7 @@ export const conversationsRepo = {
       ]);
 
       if (result.documents.length > 0) {
-        return docToConversation(result.documents[0]);
+        return docToConversation(result.documents[0]!);
       }
 
       // Create new

@@ -7,7 +7,9 @@ import { config } from '../config/index.js';
 
 import { dbLogger, aiLogger } from '../config/logger.js';
 import { aiService } from '../ai/openrouter.js';
-import { ID, Query } from 'node-appwrite';
+import { ID, Query, type Models } from 'node-appwrite';
+
+type AppwriteDoc = Models.Document & Record<string, unknown>;
 
 // Lazy Appwrite import
 let _aw: import('node-appwrite').Databases | null = null;
@@ -65,8 +67,7 @@ function createEmptyProfile(userId: string, ti?: TelegramUserInfo): UserProfile 
     total_tokens_used: 0, first_seen_at: now, last_seen_at: now, preferences: {}, created_at: now, updated_at: now };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function docToProfile(d: any): UserProfile {
+function docToProfile(d: AppwriteDoc): UserProfile {
   return { id: d.$id ?? d.id, user_id: d.user_id, username: d.username, first_name: d.first_name, last_name: d.last_name,
     language_code: d.language_code || 'ru', total_messages: d.total_messages ?? 0, total_voice_messages: d.total_voice_messages ?? 0,
     total_images: d.total_images ?? 0, total_tokens_used: d.total_tokens_used ?? 0,
@@ -75,15 +76,13 @@ function docToProfile(d: any): UserProfile {
     created_at: d.created_at || d.$createdAt, updated_at: d.updated_at || d.$updatedAt };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function docToMemory(d: any): UserMemory {
+function docToMemory(d: AppwriteDoc): UserMemory {
   return { id: d.$id ?? d.id, user_id: d.user_id, memory_type: d.memory_type, content: d.content, source: d.source,
     confidence: d.confidence ?? 1.0, created_at: d.created_at || d.$createdAt, updated_at: d.updated_at || d.$updatedAt,
     expires_at: d.expires_at, is_active: d.is_active ?? true, is_pinned: d.is_pinned ?? false };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function docToLog(d: any): UserLog {
+function docToLog(d: AppwriteDoc): UserLog {
   return { id: d.$id ?? d.id, user_id: d.user_id, event_type: d.event_type, content: d.content,
     metadata: typeof d.metadata === 'string' ? parseJson(d.metadata, {}) : (d.metadata ?? {}),
     model: d.model, tokens_prompt: d.tokens_prompt, tokens_completion: d.tokens_completion,
@@ -129,8 +128,7 @@ export const userProfileRepo = {
       const now = new Date().toISOString();
       if (r.documents.length > 0) {
         const doc = r.documents[0]!;
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const u: any = { last_seen_at: now, last_message_at: now, updated_at: now };
+        const u: Record<string, unknown> = { last_seen_at: now, last_message_at: now, updated_at: now };
         if (messageType === 'message') u.total_messages = (doc.total_messages ?? 0) + 1;
         else if (messageType === 'voice') u.total_voice_messages = (doc.total_voice_messages ?? 0) + 1;
         else if (messageType === 'image') u.total_images = (doc.total_images ?? 0) + 1;
@@ -156,7 +154,7 @@ export const userProfileRepo = {
     try {
       const aw = await getAW();
       const r = await aw.listDocuments(DB_ID(), COLL.profiles, [Query.equal('user_id', userId), Query.limit(1)]);
-      return r.documents.length > 0 ? docToProfile(r.documents[0]) : null;
+      return r.documents.length > 0 ? docToProfile(r.documents[0]!) : null;
 
     } catch { return null; }
   },
@@ -200,7 +198,7 @@ export const userProfileRepo = {
         aw.listDocuments(DB_ID(), COLL.memory, [Query.equal('user_id', userId), Query.equal('is_active', true), Query.limit(1)]),
         aw.listDocuments(DB_ID(), 'amina_conversations', [Query.equal('user_id', userId), Query.limit(1)]),
       ]);
-      return { profile: p.documents[0] ? docToProfile(p.documents[0]) : null, memory_count: m.total, conversation_count: c.total };
+      return { profile: p.documents[0] ? docToProfile(p.documents[0]!) : null, memory_count: m.total, conversation_count: c.total };
 
     } catch { return {}; }
   },
@@ -501,8 +499,7 @@ export const userLogsRepo = {
   async getEventStats(userId: string, days = 30): Promise<Record<string, number>> {
     try {
       const from = new Date(); from.setDate(from.getDate() - days);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const all: any[] = []; let offset = 0;
+      const all: AppwriteDoc[] = []; let offset = 0;
       while (offset < 5000) {
         const r = await (await getAW()).listDocuments(DB_ID(), COLL.logs, [
           Query.equal('user_id', userId), Query.greaterThanEqual('timestamp', from.toISOString()),
