@@ -50,7 +50,36 @@ import type {
 } from '../../../shared/types/index.js';
 
 // Bot API URL
-const BOT_URL = import.meta.env.VITE_BOT_URL ?? '';
+function resolveBotUrl(): string {
+  const configuredBotUrl = import.meta.env.VITE_BOT_URL?.trim() ?? '';
+
+  if (typeof window === 'undefined') {
+    return configuredBotUrl;
+  }
+
+  const currentOrigin = window.location.origin;
+  const currentHostname = window.location.hostname;
+  const isAminaProductionHost = currentHostname === 'amina.vibecoding.by';
+
+  if (!configuredBotUrl) {
+    return isAminaProductionHost ? currentOrigin : '';
+  }
+
+  try {
+    const parsedBotUrl = new URL(configuredBotUrl);
+    const isLegacyRenderHost = parsedBotUrl.hostname === 'amina-bot.onrender.com';
+
+    if (isAminaProductionHost && isLegacyRenderHost) {
+      return currentOrigin;
+    }
+
+    return parsedBotUrl.origin;
+  } catch {
+    return isAminaProductionHost ? currentOrigin : configuredBotUrl;
+  }
+}
+
+const BOT_URL = resolveBotUrl();
 
 export async function fetchBotApi(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
