@@ -55,15 +55,20 @@ export const buildFullContext = async (
   const { getSearchContext } = await import('../../ai/websearch.js');
   const timeContext = buildTimeContext(firstName, userTimezone);
 
-  const [memoryContextRaw, webSearchContext] = await Promise.all([
+  const { buildSelfCoreContext } = await import('../../ai/self-core.js');
+
+  const [memoryContextRaw, webSearchContext, selfCoreContext] = await Promise.all([
     buildMemoryWithRetry(userId, telegramInfo ?? ({} as TelegramUserInfo)),
     getSearchContext(userText).catch((err) => {
       telegramLogger.warn({ error: err, userId }, 'Failed to get search context');
       return '';
     }),
+    buildSelfCoreContext().catch(() => ''),
   ]);
 
-  let memoryContext = timeContext + (memoryContextRaw ? '\n' + memoryContextRaw : '');
+  let memoryContext = timeContext
+    + (selfCoreContext ? '\n' + selfCoreContext : '')
+    + (memoryContextRaw ? '\n' + memoryContextRaw : '');
 
   // Антиповтор приветствия: если сегодня уже здоровалась — запрет
   if (alreadyGreetedToday) {

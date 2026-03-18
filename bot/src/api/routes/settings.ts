@@ -7,6 +7,7 @@ import { clearLiraXConfigCache } from '../../features/telephony/lirax.js';
 import { clearLMStudioCache } from '../../ai/lmstudio.js';
 import { invalidateTTSConfig } from '../../features/tts.js';
 import { clearPersonaCache } from '../../ai/persona.js';
+import { clearSelfCoreCache } from '../../ai/self-core.js';
 import { clearTelephonyRuntimeConfigCache } from '../../features/telephony/service/telephony-runtime-config.js';
 
 export async function registerSettingsRoutes(server: FastifyInstance): Promise<void> {
@@ -65,6 +66,7 @@ export async function registerSettingsRoutes(server: FastifyInstance): Promise<v
         clearLiraXConfigCache();
         clearLMStudioCache();
         clearPersonaCache();
+        clearSelfCoreCache();
         clearTelephonyRuntimeConfigCache();
         settingsRepo.invalidateCache?.();
         invalidateTTSConfig();
@@ -116,6 +118,7 @@ export async function registerSettingsRoutes(server: FastifyInstance): Promise<v
         clearLiraXConfigCache();
         clearLMStudioCache();
         clearPersonaCache();
+        clearSelfCoreCache();
         clearTelephonyRuntimeConfigCache();
         settingsRepo.invalidateCache?.();
         invalidateTTSConfig();
