@@ -89,19 +89,6 @@ interface VisionModel {
   description: string;
 }
 
-interface VisionRuntimeState {
-  preferredModel: string;
-  effectiveModel: string;
-  overrideModel: string;
-  source: string;
-  fallbackStatus?: {
-    reason: string | null;
-    time: string | null;
-    fromModel: string | null;
-    toModel: string | null;
-  };
-}
-
 interface AudioRuntimeState {
   preferredModel: string;
   effectiveModel: string;
@@ -128,7 +115,6 @@ const MultimodalSettingsPage = () => {
   const [isRefreshingVision, setIsRefreshingVision] = useState(false);
   const [isRefreshingImage, setIsRefreshingImage] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState('');
-  const [visionRuntimeState, setVisionRuntimeState] = useState<VisionRuntimeState | null>(null);
   const [audioRuntimeState, setAudioRuntimeState] = useState<AudioRuntimeState | null>(null);
 
   // Fetch current settings
@@ -156,13 +142,6 @@ const MultimodalSettingsPage = () => {
       if (response.ok) {
         const result = await response.json();
         const models = result.data?.models;
-        setVisionRuntimeState({
-          preferredModel: result.data?.preferredModel || DEFAULT_VISION_MODEL,
-          effectiveModel: result.data?.effectiveModel || DEFAULT_VISION_MODEL,
-          overrideModel: result.data?.overrideModel || '',
-          source: result.data?.source || 'default',
-          fallbackStatus: result.data?.fallbackStatus,
-        });
         if (models && models.length > 0) {
           setVisionModels(models);
           if (force) {
@@ -459,57 +438,6 @@ const MultimodalSettingsPage = () => {
           </div>
         </div>
 
-        <div className="card animate-fade-in-up stagger-1">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2.5 bg-gradient-to-br from-violet-500 to-fuchsia-500 rounded-xl shadow-lg shadow-violet-500/25">
-              <Eye className="w-6 h-6 text-white" />
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold text-white">Vision Runtime State</h2>
-              <p className="text-sm text-white/50">Ручной выбор и фактическая рабочая модель теперь разделены</p>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-              <p className="text-xs uppercase tracking-wide text-white/40 mb-2">Preferred model</p>
-              <p className="text-sm text-white break-all">{visionRuntimeState?.preferredModel || selectedVisionModel || DEFAULT_VISION_MODEL}</p>
-              <p className="text-xs text-white/50 mt-2">Это ручной выбор в админке.</p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-              <p className="text-xs uppercase tracking-wide text-white/40 mb-2">Effective model</p>
-              <p className="text-sm text-white break-all">{visionRuntimeState?.effectiveModel || visionRuntimeState?.preferredModel || selectedVisionModel || DEFAULT_VISION_MODEL}</p>
-              <p className="text-xs text-white/50 mt-2">Это модель, которой runtime реально пользуется сейчас.</p>
-            </div>
-            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
-              <p className="text-xs uppercase tracking-wide text-white/40 mb-2">Source</p>
-              <p className="text-sm text-white">{visionRuntimeState?.source || 'default'}</p>
-              <p className="text-xs text-white/50 mt-2">
-                {visionRuntimeState?.overrideModel
-                  ? `Активен override: ${visionRuntimeState.overrideModel}`
-                  : 'Override для vision сейчас не активен.'}
-              </p>
-            </div>
-          </div>
-
-          {visionRuntimeState?.fallbackStatus?.toModel && (
-            <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 p-4">
-              <div className="flex items-start gap-3">
-                <AlertCircle className="w-5 h-5 text-amber-300 mt-0.5" />
-                <div className="text-sm text-amber-100">
-                  <p className="font-medium">Runtime переключил vision fallback отдельно от ручного выбора</p>
-                  <p className="mt-1">
-                    {visionRuntimeState.fallbackStatus.fromModel || 'unknown'} {'->'} {visionRuntimeState.fallbackStatus.toModel}
-                  </p>
-                  {visionRuntimeState.fallbackStatus.reason && (
-                    <p className="mt-1 text-amber-200/80">{visionRuntimeState.fallbackStatus.reason}</p>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-
         {/* ============ TTS (ОЗВУЧКА) ============ */}
         <div className="card animate-fade-in-up stagger-2">
           <div className="flex items-center gap-3 mb-6">
@@ -802,7 +730,7 @@ const MultimodalSettingsPage = () => {
             </div>
             <div className="flex-1">
               <h2 className="text-lg font-semibold text-white">Анализ изображений</h2>
-              <p className="text-sm text-white/50">Бесплатные vision модели с авто-fallback</p>
+              <p className="text-sm text-white/50">Только анализ изображений и распознавание текста, не модели общего чата</p>
             </div>
             <button
               type="button"
@@ -876,7 +804,7 @@ const MultimodalSettingsPage = () => {
               </div>
             )}
             <p className="text-white/40 text-xs mt-2">
-              При недоступности выбранной модели runtime запустит гонку бесплатных vision моделей и обновит effective model. Ручной preferred выбор в админке остаётся каноническим ориентиром.
+              Бесплатные vision модели с авто-fallback могут распознавать изображения, присылать их описания и извлекать текст из фото. Этот блок используется только для анализа изображений.
             </p>
           </div>
 
