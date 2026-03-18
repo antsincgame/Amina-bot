@@ -133,7 +133,17 @@ export const handleVoiceMessage = async (ctx: BotContext): Promise<void> => {
     }
 
     // Use shared AI pipeline
-    await processMessageThroughAI(ctx, transcribedText, userId, chatId, startTime, telegramInfo, 'voice', { type: 'voice', voice_duration: duration });
+    await processMessageThroughAI(
+      ctx,
+      transcribedText,
+      userId,
+      chatId,
+      startTime,
+      telegramInfo,
+      'voice',
+      { type: 'voice', voice_duration: duration },
+      { fallbackStrategy: 'sequential', fallbackModelLimit: 3 },
+    );
   } catch (error) {
     telegramLogger.error({ error, userId }, 'Failed to process voice message');
     const errorCode = getErrorCode(error);

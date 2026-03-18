@@ -37,6 +37,7 @@ import {
   detectSelfDisclosureIntent,
 } from '../../ai/persona.js';
 import { captureSelfCoreFromInteraction } from '../../ai/self-core.js';
+import type { AIChatOptions } from '../../ai/openrouter.js';
 
 /**
  * Обрабатывает AI-ответ: верификация, защита от отказов, симуляции, галлюцинаций.
@@ -273,6 +274,7 @@ export const processMessageThroughAI = async (
   telegramInfo: TelegramUserInfo,
   messageType: 'message' | 'voice',
   extraMetadata?: Record<string, unknown>,
+  aiOptions?: AIChatOptions,
 ): Promise<void> => {
   await ensureConversation(ctx, userId, chatId);
 
@@ -342,7 +344,7 @@ export const processMessageThroughAI = async (
   }
 
   // Get AI response
-  let aiResponse = await aiService.chat(messagesForAI, 'telegram', fullContext);
+  let aiResponse = await aiService.chat(messagesForAI, 'telegram', fullContext, aiOptions);
 
   // Enhance with web search if AI is uncertain
   if (!webSearchContext) {

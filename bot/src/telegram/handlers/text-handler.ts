@@ -8,6 +8,7 @@ import { getErrorCode } from '../../utils/error-handler.js';
 import { userLogsRepo, type TelegramUserInfo } from '../../memory/user-memory.js';
 import { detectImageEditIntent, generateImage, classifyImageEditIntentGroq } from '../../ai/image-gen.js';
 import { searchAndFormat } from '../../ai/websearch.js';
+import { normalizeNoteInput } from '../../features/note-normalizer.js';
 import { notesRepo } from '../../features/notes-repo.js';
 import { todosRepo } from '../../features/todos-repo.js';
 import { escapeHtml, sendLongMessage } from '../format.js';
@@ -80,8 +81,14 @@ export const handleTextMessage = async (ctx: BotContext): Promise<void> => {
   if (ctx.session.awaitingNoteContent) {
     ctx.session.awaitingNoteContent = false;
     try {
-      await notesRepo.create(userId, userMessage);
-      await ctx.reply(`📌 Заметка сохранена!\n\n<i>${escapeHtml(userMessage)}</i>`, {
+      const normalized = normalizeNoteInput(userMessage, 'awaiting_note');
+      await notesRepo.create(userId, normalized.content);
+      void userLogsRepo.add(userId, 'command', 'note_created_from_awaiting', {
+        noteSource: normalized.source,
+        rawLength: normalized.rawLength,
+        normalizedLength: normalized.normalizedLength,
+      });
+      await ctx.reply(`📌 Заметка сохранена!\n\n<i>${escapeHtml(normalized.content)}</i>`, {
         parse_mode: 'HTML',
         reply_markup: notesListKeyboard(),
       });

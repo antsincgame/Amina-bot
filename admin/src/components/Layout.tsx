@@ -18,6 +18,7 @@ import {
   Monitor,
   BrainCircuit,
   ShieldCheck,
+  GitCompareArrows,
 } from 'lucide-react';
 
 const Layout = () => {
@@ -36,6 +37,7 @@ const Layout = () => {
     { to: '/settings', icon: Settings, label: 'Настройки AI' },
     { to: '/persona', icon: BrainCircuit, label: 'Persona Core' },
     { to: '/self-core', icon: ShieldCheck, label: 'Self Core' },
+    { to: '/reconciliation', icon: GitCompareArrows, label: 'Reconciliation' },
     { to: '/lmstudio', icon: Monitor, label: 'LM Studio' },
     { to: '/multimodal', icon: Mic, label: 'Голос и Фото' },
     { to: '/prompts', icon: MessageSquare, label: 'Промпты' },

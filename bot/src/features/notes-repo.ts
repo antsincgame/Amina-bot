@@ -5,6 +5,7 @@
 import { config } from '../config/index.js';
 import { dbLogger } from '../config/logger.js';
 import { ID, Query, type Models } from 'node-appwrite';
+import { getNotesSoftArchiveMap } from './notes-soft-archive.js';
 
 type AppwriteDoc = Models.Document & Record<string, unknown>;
 
@@ -36,13 +37,44 @@ export const notesRepo = {
 
   async getByUser(userId: string): Promise<Note[]> {
     try {
-      const r = await (await getAW()).listDocuments(DB_ID(), COLL, [
+      const [r, archiveMap] = await Promise.all([
+        (await getAW()).listDocuments(DB_ID(), COLL, [
         Query.equal('user_id', userId), Query.orderDesc('created_at'), Query.limit(100),
+        ]),
+        getNotesSoftArchiveMap(),
       ]);
-      return r.documents.map(docToNote);
+      return r.documents.map(docToNote).filter((note) => !archiveMap.has(note.id));
     } catch (error) {
       dbLogger.warn({ error, userId }, 'Failed to load notes for user');
       return [];
+    }
+  },
+
+  async listRecent(limit = 100, offset = 0, options: { includeArchived?: boolean } = {}): Promise<Note[]> {
+    try {
+      const [r, archiveMap] = await Promise.all([
+        (await getAW()).listDocuments(DB_ID(), COLL, [
+        Query.orderDesc('created_at'),
+        Query.limit(limit),
+        Query.offset(offset),
+        ]),
+        getNotesSoftArchiveMap(),
+      ]);
+      const notes = r.documents.map(docToNote);
+      return options.includeArchived ? notes : notes.filter((note) => !archiveMap.has(note.id));
+    } catch (error) {
+      dbLogger.warn({ error, limit, offset }, 'Failed to list recent notes');
+      return [];
+    }
+  },
+
+  async getById(noteId: string): Promise<Note | null> {
+    try {
+      const doc = await (await getAW()).getDocument(DB_ID(), COLL, noteId);
+      return docToNote(doc);
+    } catch (error) {
+      dbLogger.warn({ error, noteId }, 'Failed to load note by id');
+      return null;
     }
   },
 
@@ -62,8 +94,11 @@ export const notesRepo = {
 
   async countByUser(userId: string): Promise<number> {
     try {
-      const r = await (await getAW()).listDocuments(DB_ID(), COLL, [Query.equal('user_id', userId), Query.limit(1)]);
-      return r.total;
+      const [r, archiveMap] = await Promise.all([
+        (await getAW()).listDocuments(DB_ID(), COLL, [Query.equal('user_id', userId), Query.limit(100)]),
+        getNotesSoftArchiveMap(),
+      ]);
+      return r.documents.map(docToNote).filter((note) => !archiveMap.has(note.id)).length;
     } catch (error) {
       dbLogger.warn({ error, userId }, 'Failed to count notes for user');
       return 0;

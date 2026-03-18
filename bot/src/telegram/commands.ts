@@ -16,8 +16,10 @@ import { generateImage } from '../ai/image-gen.js';
 import { searchAndFormat } from '../ai/websearch.js';
 import { getErrorCode } from '../utils/error-handler.js';
 import { notesRepo } from '../features/notes-repo.js';
+import { normalizeNoteInput } from '../features/note-normalizer.js';
 import { todosRepo } from '../features/todos-repo.js';
 import { userPrefsRepo } from '../features/user-prefs-repo.js';
+import { userLogsRepo } from '../memory/user-memory.js';
 import { sendDigestNow, sendHybridDigestNow } from '../features/digest-scheduler.js';
 import { parseAllConfiguredSites, getConfiguredSites } from '../features/news-parser.js';
 import { escapeMarkdown, escapeHtml, sendLongMessage } from './format.js';
@@ -327,8 +329,14 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     }
 
     try {
-      const note = await notesRepo.create(userId, content);
-      await ctx.reply(`📌 Заметка сохранена!\n\n<i>${escapeHtml(content)}</i>`, {
+      const normalized = normalizeNoteInput(content, 'command_note');
+      const note = await notesRepo.create(userId, normalized.content);
+      void userLogsRepo.add(userId, 'command', 'note_created_from_command', {
+        noteSource: normalized.source,
+        rawLength: normalized.rawLength,
+        normalizedLength: normalized.normalizedLength,
+      });
+      await ctx.reply(`📌 Заметка сохранена!\n\n<i>${escapeHtml(normalized.content)}</i>`, {
         parse_mode: 'HTML',
         reply_markup: notesListKeyboard(),
       });

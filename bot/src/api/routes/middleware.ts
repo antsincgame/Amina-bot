@@ -110,6 +110,7 @@ const ADMIN_GUARDED_API_ROUTES = [
   /^\/voice-messages(?:\/|$)/,
   /^\/lmstudio(?:\/|$)/,
   /^\/self-core(?:\/|$)/,
+  /^\/reconciliation(?:\/|$)/,
   /^\/debug\/raw-news$/,
 ] as const;
 

@@ -18,6 +18,7 @@ import { LMStudioPage } from './pages/LMStudioPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import PersonaPage from './pages/PersonaPage';
 import SelfCorePage from './pages/SelfCorePage';
+import ReconciliationPage from './pages/ReconciliationPage';
 
 // Protected Route wrapper
 const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
@@ -67,6 +68,7 @@ const App = () => {
           <Route path="settings" element={<SettingsPage />} />
           <Route path="persona" element={<PersonaPage />} />
           <Route path="self-core" element={<SelfCorePage />} />
+          <Route path="reconciliation" element={<ReconciliationPage />} />
           <Route path="lmstudio" element={<LMStudioPage />} />
           <Route path="multimodal" element={<MultimodalSettingsPage />} />
           <Route path="api-keys" element={<ApiKeysPage />} />

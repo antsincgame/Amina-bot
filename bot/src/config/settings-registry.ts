@@ -889,6 +889,26 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     uiPages: [],
     runtimeConsumers: ['bot/src/index.ts'],
   }),
+  defineSetting({
+    key: 'notes_soft_archive_registry',
+    label: 'Notes Soft Archive Registry',
+    domain: 'system',
+    visibility: 'internal',
+    valueType: 'json',
+    description: 'Журнал soft-archive решений по notes reconciliation без изменения исторических note-документов.',
+    uiPages: ['ReconciliationPage'],
+    runtimeConsumers: ['bot/src/features/notes-repo.ts', 'bot/src/features/reconciliation/notes-reconciliation.ts'],
+  }),
+  defineSetting({
+    key: 'reminder_delivery_registry',
+    label: 'Reminder Delivery Registry',
+    domain: 'system',
+    visibility: 'internal',
+    valueType: 'json',
+    description: 'Реестр reminders, уже отправленных пользователю, но ещё не подтверждённых markCompleted в БД.',
+    uiPages: [],
+    runtimeConsumers: ['bot/src/reminders/reminder-scheduler.ts'],
+  }),
 ];
 
 export const SETTINGS_REGISTRY_MAP = new Map(

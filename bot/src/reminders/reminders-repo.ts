@@ -85,6 +85,7 @@ export const remindersRepo = {
       let offset = 0;
       const PAGE_SIZE = 100;
       const MAX_PAGES = 5;
+      let reachedPageLimitWithFullPage = false;
 
       for (let page = 0; page < MAX_PAGES; page++) {
         const r = await aw.listDocuments(DB_ID(), COLL, [
@@ -96,7 +97,17 @@ export const remindersRepo = {
         ]);
         allDue.push(...r.documents.map(docToReminder));
         if (r.documents.length < PAGE_SIZE) break;
+        if (page === MAX_PAGES - 1) {
+          reachedPageLimitWithFullPage = true;
+        }
         offset += PAGE_SIZE;
+      }
+
+      if (reachedPageLimitWithFullPage) {
+        dbLogger.warn(
+          { returnedCount: allDue.length, pageSize: PAGE_SIZE, maxPages: MAX_PAGES },
+          'Reminder due scan reached hard page limit; backlog may be truncated'
+        );
       }
 
       return allDue;

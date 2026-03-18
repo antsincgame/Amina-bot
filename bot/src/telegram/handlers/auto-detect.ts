@@ -7,10 +7,12 @@ import { detectReminderIntent, detectReminderListIntent, extractReminder } from 
 import { remindersRepo } from '../../reminders/reminders-repo.js';
 import { detectImageGenIntent, extractImagePrompt, generateImage, classifyImageIntentGroq, isAIResponseAboutImages } from '../../ai/image-gen.js';
 import { notesRepo } from '../../features/notes-repo.js';
+import { normalizeNoteInput } from '../../features/note-normalizer.js';
 import { textToSpeech, detectLanguage } from '../../features/tts.js';
 import { escapeHtml } from '../format.js';
 import { notesListKeyboard } from '../keyboards.js';
 import { ensureConversation } from './context-builder.js';
+import { userLogsRepo } from '../../memory/user-memory.js';
 
 /** Обрабатывает автодетекции (напоминания, картинки, TTS, заметки). Возвращает true если обработано. */
 export const handleAutoDetections = async (
@@ -141,8 +143,14 @@ export const handleAutoDetections = async (
     const noteContent = noteMatch[2]?.trim();
     if (noteContent && noteContent.length > 1) {
       try {
-        await notesRepo.create(userId, noteContent);
-        await ctx.reply(`📌 Сохранено!\n\n<i>${escapeHtml(noteContent)}</i>`, {
+        const normalized = normalizeNoteInput(noteContent, 'auto_detect');
+        await notesRepo.create(userId, normalized.content);
+        void userLogsRepo.add(userId, 'command', 'note_created_from_auto_detect', {
+          noteSource: normalized.source,
+          rawLength: normalized.rawLength,
+          normalizedLength: normalized.normalizedLength,
+        });
+        await ctx.reply(`📌 Сохранено!\n\n<i>${escapeHtml(normalized.content)}</i>`, {
           parse_mode: 'HTML',
           reply_markup: notesListKeyboard(),
         });

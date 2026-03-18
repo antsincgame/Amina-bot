@@ -15,8 +15,10 @@ import { telegramLogger } from '../config/logger.js';
 import { notesRepo } from '../features/notes-repo.js';
 import { todosRepo } from '../features/todos-repo.js';
 import { userPrefsRepo } from '../features/user-prefs-repo.js';
+import { normalizeNoteInput } from '../features/note-normalizer.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';
 import { textToSpeech, detectLanguage } from '../features/tts.js';
+import { userLogsRepo } from '../memory/user-memory.js';
 import { sendDigestNow, getDigestFullText } from '../features/digest-scheduler.js';
 import { getFullText, escapeMarkdown } from './format.js';
 import {
@@ -30,43 +32,6 @@ import {
 import { escapeHtml } from './format.js';
 
 export const setupCallbacks = (bot: Bot<BotContext>): void => {
-  const sanitizeNoteContent = (rawText: string): string => {
-    let content = rawText;
-
-    const aiNoteMatch = content.match(/[Зз]аметка\s+создана[:\s]*["«'"](.+?)["»'"]/s);
-    if (aiNoteMatch?.[1]) {
-      content = aiNoteMatch[1];
-    }
-
-    const aiNoteRequestMatch = content.match(/(?:просил[аи]?\s+)?создать\s+заметку\s+["«'"](.+?)["»'"]/i);
-    if (aiNoteRequestMatch?.[1]) {
-      content = aiNoteRequestMatch[1];
-    }
-
-    // Срезаем только явный хвост с источниками, не удаляя смысловой текст выше.
-    content = content.replace(/\n*📚\s*Источники?:[\s\S]*$/i, '');
-    content = content.replace(/\n*Источники?:\s*\n[\s\S]*$/i, '');
-
-    // Убираем только стартовые служебные фразы, а не весь хвост ответа.
-    content = content.replace(/^(Конечно!?\s*)?Сейчас\s+(я\s+)?найду[^\n]*\n*/i, '');
-    content = content.replace(/^(Конечно!?\s*)?Сейчас\s+(я\s+)?(поищу|найду|посмотрю)[^\n]*\n*/i, '');
-    content = content.replace(/^🔍?\s*Ищу[.…]{0,3}\s*\n*/gm, '');
-    content = content.replace(/\(Поиск в интернете\)\s*/gi, '');
-    content = content.replace(/^(привет[,!\s]?\s*(?:[а-яё]+[,!\s]?\s*)?(?:👋\s*)?[\n\r]*)/i, '');
-    content = content.replace(/^(здравствуй(?:те)?[,!\s]?\s*(?:[а-яё]+[,!\s]?\s*)?[\n\r]*)/i, '');
-
-    // Сносим только типичный завершающий chatter, если он действительно стоит в конце.
-    content = content.replace(/\n*Хочешь узнать больше[\s\S]*$/i, '');
-    content = content.replace(/\n*Если (?:у тебя есть|хочешь)[\s\S]*$/i, '');
-    content = content.replace(/\n*Дай знать[\s\S]*$/i, '');
-
-    content = content.replace(/\[(\d+)\]/g, '');
-    content = content.replace(/https?:\/\/[^\s)>\]]+/g, '');
-    content = content.replace(/\n{3,}/g, '\n\n').trim();
-
-    return content.slice(0, 4000).trim();
-  };
-
   // ====== ЗАМЕТКИ ======
 
   bot.callbackQuery('notes_list', async (ctx) => {
@@ -105,7 +70,8 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
     }
 
     try {
-      const content = sanitizeNoteContent(messageText);
+      const normalized = normalizeNoteInput(messageText, 'callback_save_to_notes');
+      const content = normalized.content;
 
       if (!content) {
         await ctx.answerCallbackQuery({ text: '❌ Нечего сохранять' });
@@ -113,6 +79,11 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
       }
 
       await notesRepo.create(userId, content);
+      void userLogsRepo.add(userId, 'command', 'note_saved_from_callback', {
+        noteSource: normalized.source,
+        rawLength: normalized.rawLength,
+        normalizedLength: normalized.normalizedLength,
+      });
       await ctx.answerCallbackQuery({ text: '📌 Сохранено в заметки!' });
     } catch (err) {
       telegramLogger.warn({ error: err, userId }, 'Failed to save note (callback)');
@@ -131,13 +102,19 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
     }
 
     try {
-      const content = sanitizeNoteContent(fullText);
+      const normalized = normalizeNoteInput(fullText, 'callback_save_to_notes_full');
+      const content = normalized.content;
       if (!content) {
         await ctx.answerCallbackQuery({ text: '❌ Нечего сохранять' });
         return;
       }
 
       await notesRepo.create(userId, content);
+      void userLogsRepo.add(userId, 'command', 'note_saved_from_full_callback', {
+        noteSource: normalized.source,
+        rawLength: normalized.rawLength,
+        normalizedLength: normalized.normalizedLength,
+      });
       await ctx.answerCallbackQuery({ text: '📌 Полный текст сохранён в заметки!' });
     } catch (err) {
       telegramLogger.warn({ error: err, userId }, 'Failed to save full note (callback)');

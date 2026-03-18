@@ -16,20 +16,37 @@ export type {
   Prompt,
   AnalyticsEvent,
   AnalyticsEventType,
+  NotesReconciliationDetail,
+  NotesReconciliationItem,
+  NotesApplyBatchResult,
+  ReconciliationBatchPreview,
+  ReconciliationApplyContract,
+  ReconciliationCounts,
+  ReconciliationSummary,
   SettingRegistryEntry,
   SelfFact,
   SelfCoreEffectiveState,
   SelfCorePromptPreview,
+  TelephonyReconciliationDetail,
+  TelephonyReconciliationItem,
 } from '../../../shared/types/index.js';
 
 import type {
   Settings,
   Prompt,
   AnalyticsEvent,
+  NotesReconciliationDetail,
+  NotesReconciliationItem,
+  NotesApplyBatchResult,
+  ReconciliationBatchPreview,
+  ReconciliationApplyContract,
+  ReconciliationSummary,
   SettingRegistryEntry,
   SelfFact,
   SelfCoreEffectiveState,
   SelfCorePromptPreview,
+  TelephonyReconciliationDetail,
+  TelephonyReconciliationItem,
 } from '../../../shared/types/index.js';
 
 // Bot API URL
@@ -105,6 +122,75 @@ export const settingsApi = {
       'Failed to fetch settings registry',
     );
     return result.data ?? [];
+  },
+
+  async getRuntimeTruth(): Promise<{
+    chat: {
+      savedProvider: string;
+      resolvedProvider: string;
+      providerSource: string;
+      savedModel: string;
+      resolvedModel: string;
+      modelSource: string;
+      customModelOverride: string;
+      isLmStudioReady: boolean;
+      reason: string;
+    };
+    tts: {
+      enabled: boolean;
+      enabledSource: string;
+      savedProvider: string;
+      resolvedProvider: string;
+      providerSource: string;
+      fallbackReason: string | null;
+      voice: string;
+      model: string;
+    };
+    persona: {
+      name: string;
+      ownerTitle: string;
+      identity: string;
+      relationshipToOwner: string;
+      telegramStyle: string;
+      voiceStyle: string;
+      digestStyle: string;
+      systemStyle: string;
+    };
+  }> {
+    const result = await fetchBotApiJson<{ data: {
+      chat: {
+        savedProvider: string;
+        resolvedProvider: string;
+        providerSource: string;
+        savedModel: string;
+        resolvedModel: string;
+        modelSource: string;
+        customModelOverride: string;
+        isLmStudioReady: boolean;
+        reason: string;
+      };
+      tts: {
+        enabled: boolean;
+        enabledSource: string;
+        savedProvider: string;
+        resolvedProvider: string;
+        providerSource: string;
+        fallbackReason: string | null;
+        voice: string;
+        model: string;
+      };
+      persona: {
+        name: string;
+        ownerTitle: string;
+        identity: string;
+        relationshipToOwner: string;
+        telegramStyle: string;
+        voiceStyle: string;
+        digestStyle: string;
+        systemStyle: string;
+      };
+    } }>('/api/settings/runtime-truth', {}, 'Failed to fetch runtime truth');
+    return result.data;
   },
 };
 
@@ -397,6 +483,96 @@ export const selfCoreApi = {
       `/api/self-core/prompt-preview${query ? `?${query}` : ''}`,
       {},
       'Failed to fetch self-core prompt preview',
+    );
+    return result.data;
+  },
+};
+
+export const reconciliationApi = {
+  async getContract(): Promise<ReconciliationApplyContract> {
+    const result = await fetchBotApiJson<{ data: ReconciliationApplyContract }>(
+      '/api/reconciliation/contract',
+      {},
+      'Failed to fetch reconciliation contract',
+    );
+    return result.data;
+  },
+
+  async getTelephony(limit = 100): Promise<{
+    summary: ReconciliationSummary;
+    items: TelephonyReconciliationItem[];
+  }> {
+    const result = await fetchBotApiJson<{ data: {
+      summary: ReconciliationSummary;
+      items: TelephonyReconciliationItem[];
+    } }>(`/api/reconciliation/telephony?limit=${limit}`, {}, 'Failed to fetch telephony reconciliation');
+    return result.data;
+  },
+
+  async getTelephonyDetail(sessionId: string): Promise<TelephonyReconciliationDetail> {
+    const result = await fetchBotApiJson<{ data: TelephonyReconciliationDetail }>(
+      `/api/reconciliation/telephony/${sessionId}`,
+      {},
+      'Failed to fetch telephony reconciliation detail',
+    );
+    return result.data;
+  },
+
+  async previewTelephonyBatch(ids: string[]): Promise<ReconciliationBatchPreview<TelephonyReconciliationDetail>> {
+    const result = await fetchBotApiJson<{ data: ReconciliationBatchPreview<TelephonyReconciliationDetail> }>(
+      '/api/reconciliation/telephony/batches/preview',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      },
+      'Failed to preview telephony reconciliation batch',
+    );
+    return result.data;
+  },
+
+  async getNotes(limit = 120): Promise<{
+    summary: ReconciliationSummary;
+    items: NotesReconciliationItem[];
+  }> {
+    const result = await fetchBotApiJson<{ data: {
+      summary: ReconciliationSummary;
+      items: NotesReconciliationItem[];
+    } }>(`/api/reconciliation/notes?limit=${limit}`, {}, 'Failed to fetch notes reconciliation');
+    return result.data;
+  },
+
+  async getNotesDetail(noteId: string): Promise<NotesReconciliationDetail> {
+    const result = await fetchBotApiJson<{ data: NotesReconciliationDetail }>(
+      `/api/reconciliation/notes/${noteId}`,
+      {},
+      'Failed to fetch notes reconciliation detail',
+    );
+    return result.data;
+  },
+
+  async previewNotesBatch(ids: string[]): Promise<ReconciliationBatchPreview<NotesReconciliationDetail>> {
+    const result = await fetchBotApiJson<{ data: ReconciliationBatchPreview<NotesReconciliationDetail> }>(
+      '/api/reconciliation/notes/batches/preview',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids }),
+      },
+      'Failed to preview notes reconciliation batch',
+    );
+    return result.data;
+  },
+
+  async applyNotesBatch(ids: string[], snapshotToken: string, approvalNote: string): Promise<NotesApplyBatchResult> {
+    const result = await fetchBotApiJson<{ data: NotesApplyBatchResult }>(
+      '/api/reconciliation/notes/batches/apply',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids, snapshotToken, approvalNote }),
+      },
+      'Failed to apply notes reconciliation batch',
     );
     return result.data;
   },

@@ -256,6 +256,36 @@ describe('OpenRouter AI Service', () => {
         aiService.chat([{ role: 'user', content: 'Hi' }])
       ).rejects.toThrow();
     });
+
+    it('should use sequential fallback without fan-out storm', async () => {
+      mockCreate.mockRejectedValueOnce(new Error('503 Service Unavailable'));
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          data: [
+            { id: 'meta-llama/llama-3.1-8b-instruct:free', pricing: { prompt: '0', completion: '0' }, context_length: 8000 },
+            { id: 'google/gemma-2-9b-it:free', pricing: { prompt: '0', completion: '0' }, context_length: 8000 },
+          ],
+        }),
+      });
+      mockCreate
+        .mockRejectedValueOnce(new Error('503 first fallback failed'))
+        .mockResolvedValueOnce({
+          choices: [{ message: { content: 'Recovered sequentially' }, finish_reason: 'stop' }],
+          model: 'google/gemma-2-9b-it:free',
+          usage: { prompt_tokens: 9, completion_tokens: 4, total_tokens: 13 },
+        });
+
+      const result = await aiService.chat(
+        [{ role: 'user', content: 'Hi' }],
+        'telegram',
+        undefined,
+        { fallbackStrategy: 'sequential', fallbackModelLimit: 2 },
+      );
+
+      expect(result.content).toBe('Recovered sequentially');
+      expect(mockCreate).toHaveBeenCalledTimes(3);
+    });
   });
 
   describe('aiService.complete', () => {

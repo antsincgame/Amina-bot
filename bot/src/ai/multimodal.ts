@@ -375,7 +375,7 @@ export async function getVisionModelState(): Promise<{
  * Анализировать изображение с авто-recovery:
  * 1. Пробуем основную модель
  * 2. При ошибке — обновляем список бесплатных vision моделей
- * 3. Запускаем гонку всех бесплатных vision моделей
+ * 3. Последовательно пробуем бесплатные vision модели без fan-out шторма
  * 4. Победитель сохраняется как effective runtime модель
  * 5. Всё прозрачно для пользователя — контекст сохраняется
  */
@@ -437,52 +437,71 @@ export async function analyzeImage(
       throw primaryError;
     }
 
-    aiLogger.info({ originalError: errorMessage }, '🔄 Vision: refreshing models + starting race');
+  aiLogger.info({ originalError: errorMessage }, '🔄 Vision: refreshing models + starting sequential fallback');
   }
 
   // === ШАГ 2: Обновляем список бесплатных vision моделей ===
   const freshModels = await refreshFreeVisionModelsCache();
-  const modelsToRace = freshModels
+  const modelsToTry = freshModels
     .filter(m => m.id !== multiConfig.visionModel) // Исключаем упавшую
-    .slice(0, 5); // Максимум 5 для гонки
+    .slice(0, 3); // Максимум 3 для снижения пикового fan-out
 
-  if (modelsToRace.length === 0) {
+  if (modelsToTry.length === 0) {
     throw new AppError('ALL_VISION_MODELS_FAILED', 'Нет доступных бесплатных vision моделей. Попробуйте позже.');
   }
 
   aiLogger.info(
-    { count: modelsToRace.length, models: modelsToRace.map(m => m.id) },
-    '🏁 Starting vision models race'
+    { count: modelsToTry.length, models: modelsToTry.map(m => m.id) },
+    '🪜 Starting sequential vision fallback'
   );
 
-  // === ШАГ 3: Гонка vision моделей ===
-  let raceTimeoutId: ReturnType<typeof setTimeout> | undefined;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    raceTimeoutId = setTimeout(() => {
-      reject(new AppError('VISION_RACE_TIMEOUT', 'Превышено время ожидания ответа от vision моделей'));
-    }, VISION_RACE_TIMEOUT_MS);
-  });
-
-  const racePromises = modelsToRace.map(async (m) => {
+  const tryVisionModelWithTimeout = async (model: string): Promise<VisionAnalysisResult & { usedModel: string }> => {
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     try {
-      const result = await tryVisionModel(m.id);
-      aiLogger.debug({ model: m.id }, 'Vision model responded in race');
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => {
+          reject(new AppError('VISION_RACE_TIMEOUT', `Превышено время ожидания ответа от vision модели ${model}`));
+        }, VISION_RACE_TIMEOUT_MS);
+      });
+
+      const result = await Promise.race([
+        tryVisionModel(model),
+        timeoutPromise,
+      ]);
+      aiLogger.debug({ model }, 'Vision model succeeded in sequential fallback');
       return result;
-    } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error);
-      aiLogger.debug({ model: m.id, error: msg }, 'Vision model failed in race');
-      throw error;
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
     }
-  });
+  };
 
   try {
-    const winner = await Promise.race([Promise.any(racePromises), timeoutPromise]);
-    if (raceTimeoutId) clearTimeout(raceTimeoutId);
+    let winner: VisionAnalysisResult & { usedModel: string } | null = null;
+    let lastError: unknown;
 
-    aiLogger.info({ winner: winner.usedModel, tokens: winner.tokens_used }, '🏆 Vision race winner! Saving as effective model');
+    for (const model of modelsToTry) {
+      try {
+        winner = await tryVisionModelWithTimeout(model.id);
+        break;
+      } catch (error) {
+        lastError = error;
+        const msg = error instanceof Error ? error.message : String(error);
+        aiLogger.warn({ model: model.id, error: msg }, 'Vision model failed in sequential fallback');
+      }
+    }
+
+    if (!winner) {
+      throw new AppError(
+        'ALL_VISION_MODELS_FAILED',
+        `Все ${modelsToTry.length} vision моделей недоступны. Попробуйте позже.`,
+        lastError,
+      );
+    }
+
+    aiLogger.info({ winner: winner.usedModel, tokens: winner.tokens_used }, '🏆 Vision sequential fallback winner! Saving as effective model');
 
     lastVisionFallbackSwitch = {
-      reason: `Vision race winner: ${winner.usedModel} (primary ${multiConfig.visionModel} failed)`,
+      reason: `Vision sequential fallback winner: ${winner.usedModel} (primary ${multiConfig.visionModel} failed)`,
       time: new Date(),
       fromModel: multiConfig.visionModel,
       toModel: winner.usedModel,
@@ -490,20 +509,18 @@ export async function analyzeImage(
 
     // Сохраняем победителя отдельно как effective runtime модель, не трогая ручной выбор администратора.
     settingsRepo.set('effective_vision_model', winner.usedModel).catch(err => {
-      aiLogger.warn({ error: err }, 'Failed to save effective vision race winner');
+      aiLogger.warn({ error: err }, 'Failed to save effective vision fallback winner');
     });
 
     return winner;
   } catch (raceError) {
-    if (raceTimeoutId) clearTimeout(raceTimeoutId);
-
     if (raceError instanceof AppError && raceError.code === 'VISION_RACE_TIMEOUT') {
-      aiLogger.error({ timeoutMs: VISION_RACE_TIMEOUT_MS }, '⏰ Vision race timeout');
+      aiLogger.error({ timeoutMs: VISION_RACE_TIMEOUT_MS }, '⏰ Vision sequential fallback timeout');
       throw raceError;
     }
 
-    aiLogger.error({ count: modelsToRace.length }, '💀 All free vision models failed');
-    throw new AppError('ALL_VISION_MODELS_FAILED', `Все ${modelsToRace.length} vision моделей недоступны. Попробуйте позже.`, raceError);
+    aiLogger.error({ count: modelsToTry.length }, '💀 All free vision models failed');
+    throw new AppError('ALL_VISION_MODELS_FAILED', `Все ${modelsToTry.length} vision моделей недоступны. Попробуйте позже.`, raceError);
   }
 }
 
@@ -738,6 +755,10 @@ export async function processImageWithLLM(
     messages,
     includeMemory: false,
     includeSearch: false,
+    options: {
+      fallbackStrategy: 'sequential',
+      fallbackModelLimit: 3,
+    },
   });
 
   return response;

@@ -7,6 +7,7 @@
 
 import type { Api, RawApi } from 'grammy';
 import { remindersRepo } from './reminders-repo.js';
+import { clearReminderSent, getReminderDeliveryMap, markReminderSent } from './reminder-delivery-registry.js';
 import { appLogger } from '../config/logger.js';
 
 /** Минимальный интерфейс бота — нужен только api.sendMessage */
@@ -65,6 +66,7 @@ async function processReminders(bot: BotLike): Promise<void> {
 
   try {
     const dueReminders = await remindersRepo.getDue();
+    const deliveryMap = await getReminderDeliveryMap();
 
     if (dueReminders.length === 0) return;
 
@@ -79,11 +81,33 @@ async function processReminders(bot: BotLike): Promise<void> {
       inFlightReminderIds.add(reminder.id);
 
       try {
+        const sentEntry = deliveryMap.get(reminder.id);
+        if (sentEntry) {
+          appLogger.warn(
+            { id: reminder.id, userId: reminder.user_id, sentAt: sentEntry.sentAt },
+            'Reminder already sent earlier; retrying markCompleted without duplicate delivery'
+          );
+
+          try {
+            await remindersRepo.markCompleted(reminder.id);
+            await clearReminderSent(reminder.id);
+          } catch (dbErr) {
+            appLogger.error(
+              { error: dbErr, id: reminder.id, userId: reminder.user_id, sentAt: sentEntry.sentAt },
+              'Reminder still pending DB confirmation after prior successful send'
+            );
+          }
+
+          continue;
+        }
+
         const message = `🔔 Напоминание\n\n${reminder.task}`;
         await bot.api.sendMessage(reminder.chat_id, message);
+        await markReminderSent(reminder.id, new Date().toISOString());
 
         try {
           await remindersRepo.markCompleted(reminder.id);
+          await clearReminderSent(reminder.id);
         } catch (dbErr) {
           appLogger.error(
             { error: dbErr, id: reminder.id, userId: reminder.user_id },
@@ -103,7 +127,9 @@ async function processReminders(bot: BotLike): Promise<void> {
             { id: reminder.id, userId: reminder.user_id },
             'User blocked bot, marking reminder completed'
           );
-          await remindersRepo.markCompleted(reminder.id).catch(e => appLogger.debug({ error: e }, 'markCompleted failed'));
+          await remindersRepo.markCompleted(reminder.id).then(
+            () => clearReminderSent(reminder.id),
+          ).catch(e => appLogger.debug({ error: e }, 'markCompleted failed'));
         } else {
           appLogger.error(
             { error: sendError, id: reminder.id, userId: reminder.user_id },

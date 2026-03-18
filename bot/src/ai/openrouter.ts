@@ -204,6 +204,8 @@ export interface AIChatOptions {
   temperature?: number;
   providerOverride?: AIProvider;
   modelOverride?: string;
+  fallbackStrategy?: 'race' | 'sequential' | 'off';
+  fallbackModelLimit?: number;
 }
 
 /** Кеш промпта (меняется редко — TTL 5 минут) */
@@ -353,6 +355,8 @@ export const aiService = {
     });
     const maxTokens = options?.maxTokens ?? aiConfig.maxTokens;
     const temperature = options?.temperature ?? aiConfig.temperature;
+    const fallbackStrategy = options?.fallbackStrategy ?? 'race';
+    const fallbackModelLimit = options?.fallbackModelLimit ?? 7;
 
     const fullMessages: AIMessage[] = promptMode === 'passthrough'
       ? messages
@@ -482,78 +486,113 @@ export const aiService = {
         throw primaryError;
       }
 
-      aiLogger.info({ originalError: errorMessage }, '🔄 Will try free models race');
+      if (fallbackStrategy === 'off') {
+        throw new AppError('SERVER_ERROR', 'Основная AI модель временно недоступна. Повторите позже.', primaryError);
+      }
+
+      aiLogger.info({ originalError: errorMessage, fallbackStrategy }, '🔄 Will try free models fallback');
     }
 
-    // === ШАГ 2: Динамическая гонка бесплатных моделей ===
+    // === ШАГ 2: Динамический fallback бесплатных моделей ===
     // Принудительно обновляем список: модель упала → кэш может быть устаревшим
     const freeModels = await refreshFreeModelsCache();
-    
+
     aiLogger.info(
-      { modelsCount: freeModels.length, timeoutMs: RACE_TIMEOUT_MS, models: freeModels.slice(0, 5) },
-      '🏁 Starting dynamic free models race'
+      { modelsCount: freeModels.length, timeoutMs: RACE_TIMEOUT_MS, models: freeModels.slice(0, fallbackModelLimit), fallbackStrategy },
+      '🏁 Starting dynamic free models fallback'
     );
 
-    // Таймаут-промис для ограничения гонки (с cleanup)
-    let raceTimeoutId: ReturnType<typeof setTimeout> | undefined;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      raceTimeoutId = setTimeout(() => {
-        reject(new AppError('RACE_TIMEOUT', 'Превышено время ожидания ответа от моделей'));
-      }, RACE_TIMEOUT_MS);
-    });
+    const modelsToTry = freeModels.slice(0, fallbackModelLimit);
 
-    // Запускаем модели параллельно (максимум первые 7 для экономии rate limit)
-    const modelsToTry = freeModels.slice(0, 7);
-    const racePromises = modelsToTry.map(async (model) => {
-      try {
-        const result = await tryModel(model);
-        aiLogger.debug({ model }, 'Model responded in race');
-        return result;
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        aiLogger.debug({ model, error: msg }, 'Model failed in race');
-        throw error; // Promise.any игнорирует отклонённые
-      }
-    });
-
-    try {
-      // Promise.any с таймаутом — возвращает первый успешный результат или таймаут
-      const winner = await Promise.race([
-        Promise.any(racePromises),
-        timeoutPromise,
-      ]);
-      
-      // Очищаем таймаут после успешного завершения
-      if (raceTimeoutId) clearTimeout(raceTimeoutId);
-      
-      aiLogger.info(
-        { winner: winner.usedModel, tokens: winner.tokens_used.total },
-        '🏆 Race winner used as fallback (NOT saved as default)'
-      );
-
-      // Трекаем переключение (только в памяти, не перезаписываем выбор админа)
+    const finalizeWinner = (winner: AIResponse & { usedModel: string }) => {
       lastFallbackSwitch = {
-        reason: `Race fallback: ${winner.usedModel} (primary ${aiConfig.model} failed)`,
+        reason: `${fallbackStrategy === 'sequential' ? 'Sequential' : 'Race'} fallback: ${winner.usedModel} (primary ${aiConfig.model} failed)`,
         time: new Date(),
         fromModel: aiConfig.model,
         toModel: winner.usedModel,
       };
 
       return winner;
-    } catch (raceError) {
-      // Очищаем таймаут при ошибке
+    };
+
+    const runSequentialFallback = async (): Promise<AIResponse & { usedModel: string }> => {
+      let lastError: unknown;
+
+      for (const model of modelsToTry) {
+        try {
+          const result = await Promise.race([
+            tryModel(model),
+            new Promise<never>((_, reject) => {
+              setTimeout(() => {
+                reject(new AppError('RACE_TIMEOUT', `Превышено время ожидания ответа от модели ${model}`));
+              }, RACE_TIMEOUT_MS);
+            }),
+          ]);
+          aiLogger.info({ model }, 'Sequential fallback model succeeded');
+          return finalizeWinner(result);
+        } catch (error) {
+          lastError = error;
+          const msg = error instanceof Error ? error.message : String(error);
+          aiLogger.warn({ model, error: msg }, 'Sequential fallback model failed');
+        }
+      }
+
+      throw new AppError(
+        'ALL_MODELS_FAILED',
+        `Все ${modelsToTry.length} бесплатных моделей недоступны. Попробуйте позже.`,
+        lastError,
+      );
+    };
+
+    try {
+      if (fallbackStrategy === 'sequential') {
+        return await runSequentialFallback();
+      }
+
+      // Таймаут-промис для ограничения гонки (с cleanup)
+      let raceTimeoutId: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        raceTimeoutId = setTimeout(() => {
+          reject(new AppError('RACE_TIMEOUT', 'Превышено время ожидания ответа от моделей'));
+        }, RACE_TIMEOUT_MS);
+      });
+
+      const racePromises = modelsToTry.map(async (model) => {
+        try {
+          const result = await tryModel(model);
+          aiLogger.debug({ model }, 'Model responded in race');
+          return result;
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          aiLogger.debug({ model, error: msg }, 'Model failed in race');
+          throw error;
+        }
+      });
+
+      const winner = await Promise.race([
+        Promise.any(racePromises),
+        timeoutPromise,
+      ]);
+
       if (raceTimeoutId) clearTimeout(raceTimeoutId);
-      
+
+      aiLogger.info(
+        { winner: winner.usedModel, tokens: winner.tokens_used.total },
+        '🏆 Race winner used as fallback (NOT saved as default)'
+      );
+
+      return finalizeWinner(winner);
+    } catch (raceError) {
       // Проверяем таймаут
       if (raceError instanceof AppError && raceError.code === 'RACE_TIMEOUT') {
-        aiLogger.error({ timeoutMs: RACE_TIMEOUT_MS }, '⏰ Race timeout — all models too slow');
+        aiLogger.error({ timeoutMs: RACE_TIMEOUT_MS, fallbackStrategy }, '⏰ Fallback timeout — all models too slow');
         throw raceError;
       }
 
       // Все модели упали
       aiLogger.error(
-        { modelsCount: modelsToTry.length, triedModels: modelsToTry },
-        '💀 All free models failed in race'
+        { modelsCount: modelsToTry.length, triedModels: modelsToTry, fallbackStrategy },
+        '💀 All free models failed in fallback'
       );
 
       throw new AppError(
