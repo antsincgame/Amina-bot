@@ -281,8 +281,16 @@ export const processMessageThroughAI = async (
   const lastGreetingDate = await userProfileRepo.getLastGreetingDate(userId);
   const alreadyGreetedToday = lastGreetingDate === todayStr;
 
+  // Resolve user timezone for time context
+  let userTimezone: string | undefined;
+  try {
+    const { userPrefsRepo } = await import('../../features/user-prefs-repo.js');
+    const prefs = await userPrefsRepo.get(userId);
+    if (prefs?.timezone) userTimezone = prefs.timezone;
+  } catch { /* fallback to server timezone */ }
+
   // Build context in parallel
-  const { memoryContext, webSearchContext } = await buildFullContext(userId, userText, telegramInfo.first_name, telegramInfo, alreadyGreetedToday);
+  const { memoryContext, webSearchContext } = await buildFullContext(userId, userText, telegramInfo.first_name, telegramInfo, alreadyGreetedToday, userTimezone);
 
   // Build user message — inject user name/context directly so weak models can't miss it
   const userName = telegramInfo.first_name || telegramInfo.username || null;

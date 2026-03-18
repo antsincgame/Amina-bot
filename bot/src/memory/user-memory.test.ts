@@ -104,7 +104,7 @@ describe('memoryContextBuilder', () => {
       const context = await memoryContextBuilder.buildContext('123456');
 
       expect(context).toContain('Имя: Test');
-      expect(context).toContain('Всего сообщений: 1');
+      expect(context).toContain('Всего взаимодействий: 1');
       expect(context).toContain('ОБЯЗАТЕЛЬНО используй имя пользователя "Test"');
       expect(context).not.toContain('ЧТО ТЫ ЗНАЕШЬ');
     });

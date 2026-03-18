@@ -127,6 +127,7 @@ const UsersPage = () => {
   const queryClient = useQueryClient();
   const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState<'activity' | 'messages' | 'first_seen' | 'tokens'>('activity');
   const [activeTab, setActiveTab] = useState<'memory' | 'logs'>('memory');
   const [newMemory, setNewMemory] = useState({ type: 'fact', content: '', isPinned: false });
   const [showAddMemory, setShowAddMemory] = useState(false);
@@ -185,11 +186,25 @@ const UsersPage = () => {
     ));
 
     return matches.sort((left, right) => {
-      const leftActivity = new Date(left.last_message_at || left.last_seen_at).getTime();
-      const rightActivity = new Date(right.last_message_at || right.last_seen_at).getTime();
-      return rightActivity - leftActivity;
+      switch (sortBy) {
+        case 'messages': {
+          const leftTotal = left.total_messages + left.total_voice_messages + left.total_images;
+          const rightTotal = right.total_messages + right.total_voice_messages + right.total_images;
+          return rightTotal - leftTotal;
+        }
+        case 'first_seen':
+          return new Date(right.first_seen_at).getTime() - new Date(left.first_seen_at).getTime();
+        case 'tokens':
+          return right.total_tokens_used - left.total_tokens_used;
+        case 'activity':
+        default: {
+          const leftActivity = new Date(left.last_message_at || left.last_seen_at).getTime();
+          const rightActivity = new Date(right.last_message_at || right.last_seen_at).getTime();
+          return rightActivity - leftActivity;
+        }
+      }
     });
-  }, [searchQuery, users]);
+  }, [searchQuery, users, sortBy]);
 
   // Format date
   const formatDate = (date: string) => {
@@ -252,6 +267,16 @@ const UsersPage = () => {
                   className="input pl-9 py-2 text-sm"
                 />
               </div>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+                className="input py-1.5 text-xs mt-2 bg-white/5 text-gray-300"
+              >
+                <option value="activity">По активности</option>
+                <option value="messages">По частоте (сообщения)</option>
+                <option value="first_seen">По дате регистрации</option>
+                <option value="tokens">По токенам</option>
+              </select>
             </div>
 
             {/* Users List */}
@@ -293,6 +318,10 @@ const UsersPage = () => {
                       <ChevronRight className="w-4 h-4 text-gray-400" />
                     </div>
                     <div className="flex items-center gap-3 mt-2 text-xs text-white/50">
+                      <span className="flex items-center gap-1 font-medium text-white/70" title="Всего взаимодействий">
+                        <Zap className="w-3 h-3" />
+                        {user.total_messages + user.total_voice_messages + user.total_images}
+                      </span>
                       <span className="flex items-center gap-1">
                         <MessageSquare className="w-3 h-3" />
                         {user.total_messages}

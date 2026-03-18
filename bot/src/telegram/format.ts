@@ -376,9 +376,9 @@ export const sendLongMessage = async (
  * Контекст времени суток + день недели + имя для system prompt.
  * Использует серверную TZ (из env.TZ).
  */
-export const buildTimeContext = (firstName?: string): string => {
+export const buildTimeContext = (firstName?: string, userTimezone?: string): string => {
   const now = new Date();
-  const TZ = config.server.timeZone;
+  const TZ = userTimezone || config.server.timeZone;
 
   const dateFmt = new Intl.DateTimeFormat('ru-RU', {
     timeZone: TZ,

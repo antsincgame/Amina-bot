@@ -50,9 +50,10 @@ export const buildFullContext = async (
   firstName?: string,
   telegramInfo?: TelegramUserInfo,
   alreadyGreetedToday?: boolean,
+  userTimezone?: string,
 ): Promise<{ memoryContext: string; webSearchContext: string }> => {
   const { getSearchContext } = await import('../../ai/websearch.js');
-  const timeContext = buildTimeContext(firstName);
+  const timeContext = buildTimeContext(firstName, userTimezone);
 
   const [memoryContextRaw, webSearchContext] = await Promise.all([
     buildMemoryWithRetry(userId, telegramInfo ?? ({} as TelegramUserInfo)),

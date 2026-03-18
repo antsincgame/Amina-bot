@@ -149,7 +149,11 @@ export const settingsRepo = {
       const value = result.documents[0]?.value ?? null;
 
       if (SETTINGS_CACHE.size >= SETTINGS_CACHE_MAX_SIZE) {
-        const oldestKey = SETTINGS_CACHE.keys().next().value;
+        let oldestKey: string | undefined;
+        let oldestTs = Infinity;
+        for (const [k, v] of SETTINGS_CACHE) {
+          if (v.ts < oldestTs) { oldestTs = v.ts; oldestKey = k; }
+        }
         if (oldestKey) SETTINGS_CACHE.delete(oldestKey);
       }
       SETTINGS_CACHE.set(key, { value, ts: Date.now() });

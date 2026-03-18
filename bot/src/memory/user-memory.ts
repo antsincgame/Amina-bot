@@ -132,6 +132,7 @@ export const userProfileRepo = {
         if (messageType === 'message') u.total_messages = (doc.total_messages ?? 0) + 1;
         else if (messageType === 'voice') u.total_voice_messages = (doc.total_voice_messages ?? 0) + 1;
         else if (messageType === 'image') u.total_images = (doc.total_images ?? 0) + 1;
+        u.interaction_count = (doc.interaction_count ?? 0) + 1;
         if (tokensUsed > 0) u.total_tokens_used = (doc.total_tokens_used ?? 0) + tokensUsed;
         if (telegramInfo?.username) u.username = telegramInfo.username;
         if (telegramInfo?.first_name) u.first_name = telegramInfo.first_name;
@@ -172,7 +173,7 @@ export const userProfileRepo = {
     try {
       const r = await (await getAW()).listDocuments(DB_ID(), COLL.profiles, [Query.equal('user_id', userId), Query.limit(1)]);
       if (!r.documents.length) return null;
-      return parseJson<Record<string, any>>(r.documents[0]!.preferences, {}).last_greeting_date ?? null;
+      return parseJson<Record<string, unknown>>(r.documents[0]!.preferences, {}).last_greeting_date as string | null ?? null;
 
     } catch { return null; }
   },
@@ -183,7 +184,7 @@ export const userProfileRepo = {
       const aw = await getAW();
       const r = await aw.listDocuments(DB_ID(), COLL.profiles, [Query.equal('user_id', userId), Query.limit(1)]);
       if (!r.documents.length) return;
-      const prefs = parseJson<Record<string, any>>(r.documents[0]!.preferences, {});
+      const prefs = parseJson<Record<string, unknown>>(r.documents[0]!.preferences, {});
       prefs.last_greeting_date = date;
       await aw.updateDocument(DB_ID(), COLL.profiles, r.documents[0]!.$id, { preferences: JSON.stringify(prefs) });
 
@@ -593,10 +594,14 @@ export const memoryContextBuilder = {
     ]);
 
     const userName = profile.first_name || profile.username || 'Пользователь';
+    const interactionCount = (profile.total_messages ?? 0) + (profile.total_voice_messages ?? 0) + (profile.total_images ?? 0);
     const parts: string[] = [`=== ИНФОРМАЦИЯ О ПОЛЬЗОВАТЕЛЕ ===`, `Имя: ${userName}`];
-    if (profile.total_messages > 0) {
+    if (profile.language_code && profile.language_code !== 'ru') {
+      parts.push(`Язык Telegram: ${profile.language_code}`);
+    }
+    if (interactionCount > 0) {
       parts.push(`Общается с тобой с ${new Date(profile.first_seen_at).toLocaleDateString('ru-RU')}`);
-      parts.push(`Всего сообщений: ${profile.total_messages}`);
+      parts.push(`Всего взаимодействий: ${interactionCount} (сообщений: ${profile.total_messages}, голосовых: ${profile.total_voice_messages}, фото: ${profile.total_images})`);
     }
     if (memoryContext) { parts.push(`\n=== ЧТО ТЫ ЗНАЕШЬ О ${userName.toUpperCase()} ===`); parts.push(memoryContext); }
     parts.push(`\n=== ОБЯЗАТЕЛЬНЫЕ ИНСТРУКЦИИ ===`);
@@ -606,7 +611,14 @@ export const memoryContextBuilder = {
     parts.push(`НЕ пиши фразы вроде "Теперь я буду обращаться к тебе по имени" — ты УЖЕ его знаешь.`);
 
     const result = parts.join('\n');
-    if (memoryContextCache.size >= 200) { const k = memoryContextCache.keys().next().value; if (k) memoryContextCache.delete(k); }
+    if (memoryContextCache.size >= 200) {
+      let oldestKey: string | undefined;
+      let oldestTs = Infinity;
+      for (const [k, v] of memoryContextCache) {
+        if (v.ts < oldestTs) { oldestTs = v.ts; oldestKey = k; }
+      }
+      if (oldestKey) memoryContextCache.delete(oldestKey);
+    }
     memoryContextCache.set(userId, { context: result, ts: Date.now() });
     return result;
   },
