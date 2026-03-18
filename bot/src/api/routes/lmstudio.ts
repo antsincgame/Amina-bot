@@ -8,6 +8,7 @@ import {
   probeLMStudioDirect,
   probeLMStudioTunnelUrl,
   recordHeartbeat,
+  getLMStudioCircuitStatus,
 } from '../../ai/lmstudio.js';
 import {
   getTunnelAuthFailure,
@@ -28,6 +29,7 @@ export async function registerLmstudioRoutes(server: FastifyInstance): Promise<v
       }
 
       const status = await getLMStudioHealthStatus(cfg);
+      const circuitBreaker = getLMStudioCircuitStatus();
       return reply.code(200).send({
         success: true,
         data: {
@@ -37,6 +39,7 @@ export async function registerLmstudioRoutes(server: FastifyInstance): Promise<v
           model: cfg.model,
           source: status.source,
           heartbeatAt: status.heartbeatAt ?? undefined,
+          circuitBreaker,
         },
       });
     } catch (error) {

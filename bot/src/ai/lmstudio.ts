@@ -37,6 +37,91 @@ const configCache = new SingleCache<LMStudioConfig>(CONFIG_CACHE_TTL_MS);
 const RETRY_BACKOFF_MS = [1500, 3000, 5000] as const;
 const MAX_CONSECUTIVE_FAILURES = 3;
 
+// --------------------------------------------
+// Circuit Breaker — защита от шторма таймаутов
+// --------------------------------------------
+// После CIRCUIT_THRESHOLD ошибок за CIRCUIT_WINDOW_MS
+// LM Studio отключается на CIRCUIT_COOLDOWN_MS.
+// Через cooldown допускается один «half-open» запрос:
+// успех → закрываем, неудача → снова cooldown.
+
+const CIRCUIT_THRESHOLD = 5;
+const CIRCUIT_WINDOW_MS = 60_000;       // 1 мин
+const CIRCUIT_COOLDOWN_MS = 3 * 60_000; // 3 мин
+
+type CircuitState = 'closed' | 'open' | 'half-open';
+
+let circuitState: CircuitState = 'closed';
+let circuitOpenedAt = 0;
+let recentFailures: number[] = [];
+
+function pruneOldFailures(): void {
+  const cutoff = Date.now() - CIRCUIT_WINDOW_MS;
+  recentFailures = recentFailures.filter(ts => ts > cutoff);
+}
+
+/** Зафиксировать ошибку запроса к LM Studio */
+export function recordLMStudioFailure(): void {
+  recentFailures.push(Date.now());
+  pruneOldFailures();
+
+  if (circuitState === 'half-open') {
+    circuitState = 'open';
+    circuitOpenedAt = Date.now();
+    aiLogger.warn('⚡ LM Studio circuit breaker: half-open → OPEN (проба не удалась)');
+    return;
+  }
+
+  if (circuitState === 'closed' && recentFailures.length >= CIRCUIT_THRESHOLD) {
+    circuitState = 'open';
+    circuitOpenedAt = Date.now();
+    aiLogger.warn(
+      { failures: recentFailures.length, windowMs: CIRCUIT_WINDOW_MS, cooldownMs: CIRCUIT_COOLDOWN_MS },
+      `⚡ LM Studio circuit breaker: OPEN — ${recentFailures.length} ошибок за ${CIRCUIT_WINDOW_MS / 1000}с, пауза ${CIRCUIT_COOLDOWN_MS / 1000}с`,
+    );
+  }
+}
+
+/** Зафиксировать успех запроса к LM Studio */
+export function recordLMStudioSuccess(): void {
+  if (circuitState !== 'closed') {
+    aiLogger.info('✅ LM Studio circuit breaker: → CLOSED (запрос успешен)');
+  }
+  circuitState = 'closed';
+  recentFailures = [];
+}
+
+/** Проверить, заблокирован ли LM Studio circuit breaker'ом */
+export function isLMStudioCircuitOpen(): boolean {
+  if (circuitState === 'closed') return false;
+
+  if (circuitState === 'open') {
+    const elapsed = Date.now() - circuitOpenedAt;
+    if (elapsed >= CIRCUIT_COOLDOWN_MS) {
+      circuitState = 'half-open';
+      aiLogger.info('🔄 LM Studio circuit breaker: OPEN → half-open (cooldown истёк, пробуем)');
+      return false; // допускаем один запрос
+    }
+    return true; // ещё в cooldown
+  }
+
+  // half-open — пропускаем один запрос
+  return false;
+}
+
+/** Состояние для логов/админки */
+export function getLMStudioCircuitStatus(): {
+  state: CircuitState;
+  recentFailures: number;
+  cooldownRemainingSec: number;
+} {
+  pruneOldFailures();
+  const remaining = circuitState === 'open'
+    ? Math.max(0, Math.ceil((CIRCUIT_COOLDOWN_MS - (Date.now() - circuitOpenedAt)) / 1000))
+    : 0;
+  return { state: circuitState, recentFailures: recentFailures.length, cooldownRemainingSec: remaining };
+}
+
 let lmStudioClient: OpenAI | null = null;
 let currentLmStudioUrl = '';
 let currentLmStudioKey = '';
@@ -447,5 +532,8 @@ export function clearLMStudioCache(): void {
   lmStudioClient = null;
   currentLmStudioUrl = '';
   currentLmStudioKey = '';
-  aiLogger.info('LM Studio caches cleared');
+  // Сбрасываем circuit breaker при ручной очистке
+  circuitState = 'closed';
+  recentFailures = [];
+  aiLogger.info('LM Studio caches + circuit breaker cleared');
 }

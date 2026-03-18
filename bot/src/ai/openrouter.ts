@@ -11,6 +11,9 @@ import {
   getLMStudioConfig,
   getLMStudioClient,
   checkLMStudioHealth,
+  isLMStudioCircuitOpen,
+  recordLMStudioFailure,
+  recordLMStudioSuccess,
   type AIProvider,
 } from './lmstudio.js';
 import { HEALTH_AI_TIMEOUT_MS } from '../config/constants.js';
@@ -397,40 +400,49 @@ export const aiService = {
     const provider = executionPlan.provider;
     // === ШАГ 0: LM Studio (если provider = auto | lmstudio) ===
     if (provider === 'lmstudio' || provider === 'auto') {
-      const lmConfig = await getLMStudioConfig();
+      // Circuit breaker: в auto-режиме пропускаем LM Studio если circuit открыт
+      const circuitOpen = isLMStudioCircuitOpen();
+      if (circuitOpen && provider === 'auto') {
+        aiLogger.debug('LM Studio circuit breaker open — пропускаем, идём на OpenRouter');
+      } else {
+        const lmConfig = await getLMStudioConfig();
 
-      if (lmConfig && lmConfig.model) {
-        const healthy = await checkLMStudioHealth(lmConfig);
+        if (lmConfig && lmConfig.model) {
+          const healthy = await checkLMStudioHealth(lmConfig);
 
-        if (healthy) {
-          try {
-            const lmClient = getLMStudioClient(lmConfig);
-            aiLogger.debug(
-              { model: lmConfig.model, provider: 'lmstudio' },
-              'Trying LM Studio'
-            );
-            const result = await tryWithClient(lmClient, lmConfig.model);
-            aiLogger.info(
-              { model: result.model, tokens: result.tokens_used.total, provider: 'lmstudio' },
-              'LM Studio response received'
-            );
-            return result;
-          } catch (lmError) {
-            const msg = lmError instanceof Error ? lmError.message : String(lmError);
-            aiLogger.warn({ error: msg, model: lmConfig.model }, 'LM Studio request failed');
+          if (healthy) {
+            try {
+              const lmClient = getLMStudioClient(lmConfig);
+              aiLogger.debug(
+                { model: lmConfig.model, provider: 'lmstudio' },
+                'Trying LM Studio'
+              );
+              const result = await tryWithClient(lmClient, lmConfig.model);
+              recordLMStudioSuccess();
+              aiLogger.info(
+                { model: result.model, tokens: result.tokens_used.total, provider: 'lmstudio' },
+                'LM Studio response received'
+              );
+              return result;
+            } catch (lmError) {
+              const msg = lmError instanceof Error ? lmError.message : String(lmError);
+              recordLMStudioFailure();
+              aiLogger.warn({ error: msg, model: lmConfig.model }, 'LM Studio request failed');
 
-            if (provider === 'lmstudio') {
-              throw new AppError('LMSTUDIO_ERROR', `LM Studio ошибка: ${msg}`, lmError);
+              if (provider === 'lmstudio') {
+                throw new AppError('LMSTUDIO_ERROR', `LM Studio ошибка: ${msg}`, lmError);
+              }
+              aiLogger.info('Falling back to OpenRouter (auto mode)');
             }
-            aiLogger.info('Falling back to OpenRouter (auto mode)');
+          } else if (provider === 'lmstudio') {
+            throw new AppError('LMSTUDIO_OFFLINE', 'LM Studio недоступна. Проверьте туннель и сервер.');
+          } else {
+            aiLogger.warn('LM Studio offline, falling back to OpenRouter (auto mode)');
           }
         } else if (provider === 'lmstudio') {
-          throw new AppError('LMSTUDIO_OFFLINE', 'LM Studio недоступна. Проверьте туннель и сервер.');
-        } else {
-          aiLogger.warn('LM Studio offline, falling back to OpenRouter (auto mode)');
+          throw new AppError('LMSTUDIO_NOT_CONFIGURED', 'LM Studio не настроена. Укажите URL и модель в админке.');
         }
-      } else if (provider === 'lmstudio') {
-        throw new AppError('LMSTUDIO_NOT_CONFIGURED', 'LM Studio не настроена. Укажите URL и модель в админке.');
+      }
       }
     }
 
@@ -573,23 +585,29 @@ export const aiService = {
 
     const provider = executionPlan.provider;
     if (provider === 'lmstudio' || provider === 'auto') {
-      const lmConfig = await getLMStudioConfig();
-      if (lmConfig?.model) {
-        const healthy = await checkLMStudioHealth(lmConfig);
-        if (healthy) {
-          streamClient = getLMStudioClient(lmConfig);
-          streamModel = lmConfig.model;
+      const circuitOpen = isLMStudioCircuitOpen();
+      if (circuitOpen && provider === 'auto') {
+        streamClient = await getClient();
+        streamModel = aiConfig.model;
+      } else {
+        const lmConfig = await getLMStudioConfig();
+        if (lmConfig?.model) {
+          const healthy = await checkLMStudioHealth(lmConfig);
+          if (healthy) {
+            streamClient = getLMStudioClient(lmConfig);
+            streamModel = lmConfig.model;
+          } else if (provider === 'lmstudio') {
+            throw new AppError('LMSTUDIO_OFFLINE', 'LM Studio недоступна.');
+          } else {
+            streamClient = await getClient();
+            streamModel = aiConfig.model;
+          }
         } else if (provider === 'lmstudio') {
-          throw new AppError('LMSTUDIO_OFFLINE', 'LM Studio недоступна.');
+          throw new AppError('LMSTUDIO_NOT_CONFIGURED', 'LM Studio не настроена.');
         } else {
           streamClient = await getClient();
           streamModel = aiConfig.model;
         }
-      } else if (provider === 'lmstudio') {
-        throw new AppError('LMSTUDIO_NOT_CONFIGURED', 'LM Studio не настроена.');
-      } else {
-        streamClient = await getClient();
-        streamModel = aiConfig.model;
       }
     } else {
       streamClient = await getClient();
