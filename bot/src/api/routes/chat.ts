@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { aiService } from '../../ai/openrouter.js';
+import { respondWithAminaCore } from '../../ai/amina-core-runtime.js';
 import { conversationsRepo } from '../../db/index.js';
 import { validateMessageContent, validateUserId } from '../../utils/validation.js';
 import { aiLogger } from '../../config/logger.js';
@@ -73,11 +74,19 @@ export async function registerChatRoutes(server: FastifyInstance): Promise<void>
       };
       await conversationsRepo.addMessage(conversation.id, userMessage);
 
-      // Get AI response
+      // Get AI response through unified Amina Core Runtime
       const aiMessages: AIMessage[] = conversation.messages
         .concat([userMessage])
         .map(m => ({ role: m.role, content: m.content }));
-      const aiResponse = await aiService.chat(aiMessages, effectiveChannel);
+      const { response: aiResponse } = await respondWithAminaCore({
+        channel: effectiveChannel,
+        userId,
+        userText: messageContent,
+        messages: aiMessages,
+        includeMemory: true,
+        includeSearch: effectiveChannel === 'telegram',
+        enableSelfGrowth: true,
+      });
 
       // Add AI response to conversation
       const assistantMessage: Message = {

@@ -674,9 +674,9 @@ describe('normalizeScenario — нормализация сценария', () =
     expect(s.callMode).toBe('ask_question');
   });
 
-  it('runtimeMode=shadow', () => {
-    const s = normalizeScenario({ runtimeMode: 'shadow' }, 0, now);
-    expect(s.runtimeMode).toBe('shadow');
+  it('runtimeMode=shadow мягко мигрирует в scripted', () => {
+    const s = normalizeScenario({ runtimeMode: 'shadow' as never }, 0, now);
+    expect(s.runtimeMode).toBe('scripted');
   });
 
   it('runtimeMode=hybrid', () => {
@@ -835,7 +835,7 @@ describe('getDefaultTelephonyAiScenarios — стандартные сценар
   it('каждый имеет валидный runtimeMode', () => {
     const scenarios = getDefaultTelephonyAiScenarios();
     scenarios.forEach(s => {
-      expect(['scripted', 'shadow', 'hybrid', 'realtime']).toContain(s.runtimeMode);
+      expect(['scripted', 'hybrid', 'realtime']).toContain(s.runtimeMode);
     });
   });
 

@@ -7,8 +7,49 @@ import { clearLiraXConfigCache } from '../../features/telephony/lirax.js';
 import { clearLMStudioCache } from '../../ai/lmstudio.js';
 import { invalidateTTSConfig } from '../../features/tts.js';
 import { clearPersonaCache } from '../../ai/persona.js';
-import { clearSelfCoreCache } from '../../ai/self-core.js';
+import { clearSelfCoreCache, syncSelfCoreSystemFacts } from '../../ai/self-core.js';
 import { clearTelephonyRuntimeConfigCache } from '../../features/telephony/service/telephony-runtime-config.js';
+import { SETTINGS_REGISTRY, getSettingRegistryEntry, isKnownSettingKey } from '../../config/settings-registry.js';
+
+function validateSettingValue(key: string, value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return 'Value must be a string.';
+  }
+
+  const registryEntry = getSettingRegistryEntry(key);
+  if (!registryEntry) {
+    return 'Unknown setting key.';
+  }
+
+  if (registryEntry.visibility === 'derived') {
+    return 'Derived setting cannot be updated manually.';
+  }
+
+  const trimmedValue = value.trim();
+
+  if (registryEntry.valueType === 'number' && trimmedValue.length > 0) {
+    const parsed = Number(trimmedValue);
+    if (!Number.isFinite(parsed)) {
+      return 'Value must be a valid number.';
+    }
+  }
+
+  if (registryEntry.valueType === 'boolean' && trimmedValue.length > 0) {
+    if (!['true', 'false'].includes(trimmedValue)) {
+      return 'Value must be true or false.';
+    }
+  }
+
+  if (registryEntry.valueType === 'json' && trimmedValue.length > 0) {
+    try {
+      JSON.parse(trimmedValue);
+    } catch {
+      return 'Value must be valid JSON.';
+    }
+  }
+
+  return null;
+}
 
 export async function registerSettingsRoutes(server: FastifyInstance): Promise<void> {
   /**
@@ -30,6 +71,13 @@ export async function registerSettingsRoutes(server: FastifyInstance): Promise<v
         error: 'Failed to fetch settings',
       });
     }
+  });
+
+  server.get('/settings/registry', async (_request: FastifyRequest, reply: FastifyReply) => {
+    return reply.code(200).send({
+      success: true,
+      data: SETTINGS_REGISTRY,
+    });
   });
 
   /**
@@ -54,11 +102,34 @@ export async function registerSettingsRoutes(server: FastifyInstance): Promise<v
           });
         }
 
-        // Update each setting
-        for (const [key, value] of Object.entries(settings)) {
-          if (typeof value === 'string') {
-            await settingsRepo.set(key, value);
+        const entries = Object.entries(settings);
+        const unknownKeys = entries
+          .map(([key]) => key)
+          .filter((key) => !isKnownSettingKey(key));
+
+        if (unknownKeys.length > 0) {
+          return reply.code(400).send({
+            success: false,
+            error: `Unknown setting keys: ${unknownKeys.join(', ')}`,
+          });
+        }
+
+        for (const [key, value] of entries) {
+          const validationError = validateSettingValue(key, value);
+          if (validationError) {
+            return reply.code(400).send({
+              success: false,
+              error: `${key}: ${validationError}`,
+            });
           }
+        }
+
+        for (const [key, value] of entries) {
+          await settingsRepo.set(key, value);
+        }
+
+        if ('preferred_vision_model' in settings) {
+          await settingsRepo.set('effective_vision_model', settings.preferred_vision_model);
         }
 
         clearApiKeysCache();
@@ -70,6 +141,7 @@ export async function registerSettingsRoutes(server: FastifyInstance): Promise<v
         clearTelephonyRuntimeConfigCache();
         settingsRepo.invalidateCache?.();
         invalidateTTSConfig();
+        await syncSelfCoreSystemFacts();
 
         aiLogger.info({ keys: Object.keys(settings) }, 'Settings updated via API (caches invalidated)');
 
@@ -111,7 +183,19 @@ export async function registerSettingsRoutes(server: FastifyInstance): Promise<v
           });
         }
 
+        const validationError = validateSettingValue(key, value);
+        if (validationError) {
+          return reply.code(400).send({
+            success: false,
+            error: validationError,
+          });
+        }
+
         await settingsRepo.set(key, value);
+
+        if (key === 'preferred_vision_model') {
+          await settingsRepo.set('effective_vision_model', value);
+        }
 
         clearApiKeysCache();
         clearPerplexityCache();
@@ -122,6 +206,7 @@ export async function registerSettingsRoutes(server: FastifyInstance): Promise<v
         clearTelephonyRuntimeConfigCache();
         settingsRepo.invalidateCache?.();
         invalidateTTSConfig();
+        await syncSelfCoreSystemFacts();
 
         aiLogger.info({ key }, 'Setting updated via API (caches invalidated)');
 

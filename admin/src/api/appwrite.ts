@@ -16,9 +16,21 @@ export type {
   Prompt,
   AnalyticsEvent,
   AnalyticsEventType,
+  SettingRegistryEntry,
+  SelfFact,
+  SelfCoreEffectiveState,
+  SelfCorePromptPreview,
 } from '../../../shared/types/index.js';
 
-import type { Settings, Prompt, AnalyticsEvent } from '../../../shared/types/index.js';
+import type {
+  Settings,
+  Prompt,
+  AnalyticsEvent,
+  SettingRegistryEntry,
+  SelfFact,
+  SelfCoreEffectiveState,
+  SelfCorePromptPreview,
+} from '../../../shared/types/index.js';
 
 // Bot API URL
 const BOT_URL = import.meta.env.VITE_BOT_URL ?? '';
@@ -84,6 +96,15 @@ export const settingsApi = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(settings),
     }, 'Failed to update settings');
+  },
+
+  async getRegistry(): Promise<SettingRegistryEntry[]> {
+    const result = await fetchBotApiJson<{ data?: SettingRegistryEntry[] }>(
+      '/api/settings/registry',
+      {},
+      'Failed to fetch settings registry',
+    );
+    return result.data ?? [];
   },
 };
 
@@ -294,5 +315,89 @@ export const voiceMessagesApi = {
       throw new Error(await readApiError(response, 'Failed to create archive'));
     }
     return response.blob();
+  },
+};
+
+export const selfCoreApi = {
+  async getEffective(): Promise<SelfCoreEffectiveState> {
+    const result = await fetchBotApiJson<{ data: SelfCoreEffectiveState }>(
+      '/api/self-core/effective',
+      {},
+      'Failed to fetch effective self-core state',
+    );
+    return result.data;
+  },
+
+  async getFacts(params: {
+    category?: SelfFact['category'];
+    source?: SelfFact['source'];
+    includeInactive?: boolean;
+    limit?: number;
+  } = {}): Promise<SelfFact[]> {
+    const searchParams = new URLSearchParams();
+    if (params.category) searchParams.set('category', params.category);
+    if (params.source) searchParams.set('source', params.source);
+    if (params.includeInactive !== undefined) searchParams.set('includeInactive', String(params.includeInactive));
+    if (params.limit) searchParams.set('limit', String(params.limit));
+
+    const result = await fetchBotApiJson<{ data: SelfFact[] }>(
+      `/api/self-core/facts?${searchParams.toString()}`,
+      {},
+      'Failed to fetch self-core facts',
+    );
+    return result.data;
+  },
+
+  async createFact(payload: {
+    category: SelfFact['category'];
+    content: string;
+    source?: SelfFact['source'];
+  }): Promise<SelfFact> {
+    const result = await fetchBotApiJson<{ data: SelfFact }>(
+      '/api/self-core/facts',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      },
+      'Failed to create self-core fact',
+    );
+    return result.data;
+  },
+
+  async updateFact(id: string, payload: {
+    content?: string;
+    is_active?: boolean;
+  }): Promise<void> {
+    await fetchBotApiJson(
+      `/api/self-core/facts/${id}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      },
+      'Failed to update self-core fact',
+    );
+  },
+
+  async sync(): Promise<SelfCoreEffectiveState> {
+    const result = await fetchBotApiJson<{ data: SelfCoreEffectiveState }>(
+      '/api/self-core/sync',
+      { method: 'POST' },
+      'Failed to sync self-core',
+    );
+    return result.data;
+  },
+
+  async getPromptPreviews(channel?: SelfCorePromptPreview['channel']): Promise<SelfCorePromptPreview[]> {
+    const searchParams = new URLSearchParams();
+    if (channel) searchParams.set('channel', channel);
+    const query = searchParams.toString();
+    const result = await fetchBotApiJson<{ data: SelfCorePromptPreview[] }>(
+      `/api/self-core/prompt-preview${query ? `?${query}` : ''}`,
+      {},
+      'Failed to fetch self-core prompt preview',
+    );
+    return result.data;
   },
 };

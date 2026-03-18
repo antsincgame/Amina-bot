@@ -9,6 +9,7 @@ import { Save, Loader2, RefreshCw, Eye, Mic, CheckCircle, AlertCircle, Sparkles,
 // Bot API URL
 // Schema
 const settingsSchema = z.object({
+  tts_enabled: z.boolean(),
   audio_model: z.string().min(1),
   vision_model: z.string().min(1),
   vision_prompt: z.string().min(10).max(500),
@@ -88,6 +89,26 @@ interface VisionModel {
   description: string;
 }
 
+interface VisionRuntimeState {
+  preferredModel: string;
+  effectiveModel: string;
+  overrideModel: string;
+  source: string;
+  fallbackStatus?: {
+    reason: string | null;
+    time: string | null;
+    fromModel: string | null;
+    toModel: string | null;
+  };
+}
+
+interface AudioRuntimeState {
+  preferredModel: string;
+  effectiveModel: string;
+  overrideModel: string;
+  source: string;
+}
+
 interface ImageModel {
   id: string;
   name: string;
@@ -107,6 +128,8 @@ const MultimodalSettingsPage = () => {
   const [isRefreshingVision, setIsRefreshingVision] = useState(false);
   const [isRefreshingImage, setIsRefreshingImage] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState('');
+  const [visionRuntimeState, setVisionRuntimeState] = useState<VisionRuntimeState | null>(null);
+  const [audioRuntimeState, setAudioRuntimeState] = useState<AudioRuntimeState | null>(null);
 
   // Fetch current settings
   const { data: settings, isLoading } = useQuery({
@@ -128,6 +151,13 @@ const MultimodalSettingsPage = () => {
       if (response.ok) {
         const result = await response.json();
         const models = result.data?.models;
+        setVisionRuntimeState({
+          preferredModel: result.data?.preferredModel || DEFAULT_VISION_MODEL,
+          effectiveModel: result.data?.effectiveModel || DEFAULT_VISION_MODEL,
+          overrideModel: result.data?.overrideModel || '',
+          source: result.data?.source || 'default',
+          fallbackStatus: result.data?.fallbackStatus,
+        });
         if (models && models.length > 0) {
           setVisionModels(models);
           if (force) {
@@ -153,10 +183,33 @@ const MultimodalSettingsPage = () => {
     }
   }, []);
 
+  const fetchAudioState = useCallback(async () => {
+    try {
+      const response = await fetchBotApi('/api/models/audio');
+      if (!response.ok) {
+        setAudioRuntimeState(null);
+        return;
+      }
+      const result = await response.json();
+      setAudioRuntimeState({
+        preferredModel: result.data?.preferredModel || DEFAULT_AUDIO_MODEL,
+        effectiveModel: result.data?.effectiveModel || DEFAULT_AUDIO_MODEL,
+        overrideModel: result.data?.overrideModel || '',
+        source: result.data?.source || 'default',
+      });
+    } catch {
+      setAudioRuntimeState(null);
+    }
+  }, []);
+
   // Load vision models on mount
   useEffect(() => {
     fetchVisionModels(false);
   }, [fetchVisionModels]);
+
+  useEffect(() => {
+    fetchAudioState();
+  }, [fetchAudioState]);
 
   // Fetch image generation models from OpenRouter
   const fetchImageModels = useCallback(async () => {
@@ -206,6 +259,8 @@ const MultimodalSettingsPage = () => {
     mutationFn: (data: Record<string, string>) => settingsApi.updateMany(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] });
+      void fetchVisionModels(false);
+      void fetchAudioState();
       setSaveMessage('Настройки сохранены!');
       setTimeout(() => setSaveMessage(''), 3000);
     },
@@ -219,11 +274,13 @@ const MultimodalSettingsPage = () => {
     register,
     handleSubmit,
     reset,
+    setValue,
     watch,
     formState: { isDirty, errors },
   } = useForm<SettingsForm>({
     resolver: zodResolver(settingsSchema),
     defaultValues: {
+      tts_enabled: true,
       audio_model: DEFAULT_AUDIO_MODEL,
       vision_model: DEFAULT_VISION_MODEL,
       vision_prompt: DEFAULT_VISION_PROMPT,
@@ -256,8 +313,9 @@ const MultimodalSettingsPage = () => {
       );
 
       reset({
+        tts_enabled: map['tts_enabled'] !== 'false',
         audio_model: map['audio_model'] || DEFAULT_AUDIO_MODEL,
-        vision_model: map['vision_model'] || DEFAULT_VISION_MODEL,
+        vision_model: map['preferred_vision_model'] || map['vision_model'] || DEFAULT_VISION_MODEL,
         vision_prompt: map['vision_prompt'] || DEFAULT_VISION_PROMPT,
         vision_max_tokens: parseInt(map['vision_max_tokens'] || String(DEFAULT_VISION_MAX_TOKENS), 10),
         openrouter_image_model: map['openrouter_image_model'] || 'google/gemini-2.5-flash-image',
@@ -279,7 +337,8 @@ const MultimodalSettingsPage = () => {
   const onSubmit = (data: SettingsForm) => {
     const toSave: Record<string, string> = {
       audio_model: data.audio_model,
-      vision_model: data.vision_model,
+      tts_enabled: data.tts_enabled ? 'true' : 'false',
+      preferred_vision_model: data.vision_model,
       vision_prompt: data.vision_prompt,
       vision_max_tokens: String(data.vision_max_tokens),
       openrouter_image_model: data.openrouter_image_model || 'google/gemini-2.5-flash-image',
@@ -343,6 +402,30 @@ const MultimodalSettingsPage = () => {
             </div>
           </div>
 
+          {audioRuntimeState && (
+            <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <p className="text-xs uppercase tracking-wide text-white/40 mb-2">Preferred audio model</p>
+                <p className="text-sm text-white break-all">{audioRuntimeState.preferredModel}</p>
+                <p className="text-xs text-white/50 mt-2">Это приоритетный выбор из админки.</p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <p className="text-xs uppercase tracking-wide text-white/40 mb-2">Effective audio model</p>
+                <p className="text-sm text-white break-all">{audioRuntimeState.effectiveModel}</p>
+                <p className="text-xs text-white/50 mt-2">Это модель, которой runtime реально пользуется сейчас.</p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <p className="text-xs uppercase tracking-wide text-white/40 mb-2">Source</p>
+                <p className="text-sm text-white">{audioRuntimeState.source}</p>
+                <p className="text-xs text-white/50 mt-2">
+                  {audioRuntimeState.overrideModel
+                    ? `Активен internal override: ${audioRuntimeState.overrideModel}`
+                    : 'Скрытый override аудио-модели сейчас не активен.'}
+                </p>
+              </div>
+            </div>
+          )}
+
           <div className="space-y-3">
             {AUDIO_MODELS.map((model) => (
               <label key={model.id} className={`block p-4 rounded-xl border-2 cursor-pointer transition-all ${
@@ -370,6 +453,57 @@ const MultimodalSettingsPage = () => {
           </div>
         </div>
 
+        <div className="card animate-fade-in-up stagger-1">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2.5 bg-gradient-to-br from-violet-500 to-fuchsia-500 rounded-xl shadow-lg shadow-violet-500/25">
+              <Eye className="w-6 h-6 text-white" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold text-white">Vision Runtime State</h2>
+              <p className="text-sm text-white/50">Ручной выбор и фактическая рабочая модель теперь разделены</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+              <p className="text-xs uppercase tracking-wide text-white/40 mb-2">Preferred model</p>
+              <p className="text-sm text-white break-all">{visionRuntimeState?.preferredModel || selectedVisionModel || DEFAULT_VISION_MODEL}</p>
+              <p className="text-xs text-white/50 mt-2">Это ручной выбор в админке.</p>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+              <p className="text-xs uppercase tracking-wide text-white/40 mb-2">Effective model</p>
+              <p className="text-sm text-white break-all">{visionRuntimeState?.effectiveModel || visionRuntimeState?.preferredModel || selectedVisionModel || DEFAULT_VISION_MODEL}</p>
+              <p className="text-xs text-white/50 mt-2">Это модель, которой runtime реально пользуется сейчас.</p>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+              <p className="text-xs uppercase tracking-wide text-white/40 mb-2">Source</p>
+              <p className="text-sm text-white">{visionRuntimeState?.source || 'default'}</p>
+              <p className="text-xs text-white/50 mt-2">
+                {visionRuntimeState?.overrideModel
+                  ? `Активен override: ${visionRuntimeState.overrideModel}`
+                  : 'Override для vision сейчас не активен.'}
+              </p>
+            </div>
+          </div>
+
+          {visionRuntimeState?.fallbackStatus?.toModel && (
+            <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 p-4">
+              <div className="flex items-start gap-3">
+                <AlertCircle className="w-5 h-5 text-amber-300 mt-0.5" />
+                <div className="text-sm text-amber-100">
+                  <p className="font-medium">Runtime переключил vision fallback отдельно от ручного выбора</p>
+                  <p className="mt-1">
+                    {visionRuntimeState.fallbackStatus.fromModel || 'unknown'} {'->'} {visionRuntimeState.fallbackStatus.toModel}
+                  </p>
+                  {visionRuntimeState.fallbackStatus.reason && (
+                    <p className="mt-1 text-amber-200/80">{visionRuntimeState.fallbackStatus.reason}</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* ============ TTS (ОЗВУЧКА) ============ */}
         <div className="card animate-fade-in-up stagger-2">
           <div className="flex items-center gap-3 mb-6">
@@ -379,6 +513,24 @@ const MultimodalSettingsPage = () => {
             <div>
               <h2 className="text-lg font-semibold text-white">Озвучка ответов (TTS)</h2>
               <p className="text-sm text-white/50">Текст в речь — голосовые ответы бота</p>
+            </div>
+          </div>
+
+          <div className="mb-6 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="font-medium text-white">Master toggle TTS</p>
+                <p className="text-sm text-white/60 mt-1">
+                  Если выключено, `textToSpeech()` и realtime synthesis перестают генерировать аудио во всех runtime-путях.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setValue('tts_enabled', !watch('tts_enabled'), { shouldDirty: true })}
+                className={`toggle ${watch('tts_enabled') ? 'toggle-checked' : ''}`}
+              >
+                <span className={`toggle-dot ${watch('tts_enabled') ? 'toggle-dot-checked' : ''}`} />
+              </button>
             </div>
           </div>
 
@@ -692,7 +844,7 @@ const MultimodalSettingsPage = () => {
               </div>
             )}
             <p className="text-white/40 text-xs mt-2">
-              При недоступности выбранной модели автоматически запустится гонка всех бесплатных vision моделей. Победитель станет новой основной моделью.
+              При недоступности выбранной модели runtime запустит гонку бесплатных vision моделей и обновит effective model. Ручной preferred выбор в админке остаётся каноническим ориентиром.
             </p>
           </div>
 
@@ -923,7 +1075,7 @@ const MultimodalSettingsPage = () => {
                   );
                   reset({
                     audio_model: map['audio_model'] || DEFAULT_AUDIO_MODEL,
-                    vision_model: map['vision_model'] || DEFAULT_VISION_MODEL,
+                    vision_model: map['preferred_vision_model'] || map['vision_model'] || DEFAULT_VISION_MODEL,
                     vision_prompt: map['vision_prompt'] || DEFAULT_VISION_PROMPT,
                     vision_max_tokens: parseInt(map['vision_max_tokens'] || String(DEFAULT_VISION_MAX_TOKENS), 10),
                     tts_provider: map['tts_provider'] || 'edge',

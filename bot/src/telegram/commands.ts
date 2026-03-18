@@ -776,8 +776,6 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
       switch ((value ?? '').trim().toLowerCase()) {
         case 'scripted':
           return 'scripted';
-        case 'shadow':
-          return 'shadow';
         case 'hybrid':
           return 'hybrid';
         case 'realtime':

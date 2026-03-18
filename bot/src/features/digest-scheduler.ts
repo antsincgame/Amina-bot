@@ -18,13 +18,12 @@ import { todosRepo } from './todos-repo.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';
 import { inlineCitations, markdownToTelegramHtml, splitIntoChunks, stripHtml } from '../telegram/format.js';
 import { parseAllConfiguredSites } from './news-parser.js';
-import { aiService } from '../ai/openrouter.js';
+import { summarizeWithAminaCore } from '../ai/amina-core-runtime.js';
 import { config } from '../config/index.js';
 import { appLogger } from '../config/logger.js';
 import { buildDigestClosing, buildParserOnlyNewsBundle, getTimeGreeting, webSearchWithRetry } from './digest-core.js';
 import { buildHybridDigest, buildHybridDigestDeliveryKey } from './digest-hybrid.js';
 import { digestDeliveryRepo, type DigestDeliveryKind } from './digest-hybrid-repo.js';
-import { buildPersonaSystemPrompt } from '../ai/persona.js';
 
 export {
   chunkHeadlinesForDigest,
@@ -544,16 +543,6 @@ export async function buildDigest(
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
   });
 
-  const digestSystemPrompt = await buildPersonaSystemPrompt({
-    channel: 'digest',
-    extraRules: [
-      'Режим задачи: вступительная narrative-часть утреннего дайджеста.',
-      'Сохраняй образ техножрицы, но не называй себя редактором или безличным сервисом.',
-      'Включай только разделы, явно перечисленные в задаче.',
-      'Не выдумывай отсутствующие данные и не добавляй секции, которые система вставит отдельно.',
-      'Формат ответа: Markdown для Telegram.',
-    ],
-  });
   const digestPrompt = `Сейчас ${todayDate}.
 Составь вступительную часть дайджеста для ${nameStr} из города ${city}.
 
@@ -579,15 +568,25 @@ ${rawData.join('\n\n')}${citationsBlock}
 
   let narrativeDigest = '';
   try {
-    const llmResponse = await aiService.chat(
-      [
-        { role: 'system', content: digestSystemPrompt },
-        { role: 'user', content: digestPrompt },
+    const { response: llmResponse } = await summarizeWithAminaCore({
+      channel: 'digest',
+      messages: [{ role: 'user', content: digestPrompt }],
+      extraRules: [
+        'Режим задачи: вступительная narrative-часть утреннего дайджеста.',
+        'Сохраняй образ техножрицы, но не называй себя редактором или безличным сервисом.',
+        'Включай только разделы, явно перечисленные в задаче.',
+        'Не выдумывай отсутствующие данные и не добавляй секции, которые система вставит отдельно.',
+        'Формат ответа: Markdown для Telegram.',
       ],
-      'telegram',
-      undefined,
-      { promptMode: 'passthrough' },
-    );
+      context: {
+        includeTime: false,
+        includeMemory: false,
+        includeSearch: false,
+        firstName,
+        taskContext: `Утренний дайджест для ${nameStr} из города ${city}.`,
+      },
+      options: { promptMode: 'passthrough' },
+    });
     
     // Пост-обработка: заменяем [N] на кликабельные Markdown-ссылки
     narrativeDigest = llmResponse.content;

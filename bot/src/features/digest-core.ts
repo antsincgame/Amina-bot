@@ -1,5 +1,5 @@
 import { webSearch } from '../ai/websearch.js';
-import { aiService } from '../ai/openrouter.js';
+import { summarizeWithAminaCore } from '../ai/amina-core-runtime.js';
 import { appLogger } from '../config/logger.js';
 import { countMergedDuplicates, groupHeadlinesByCategory } from './news-parser.js';
 import { shouldTranslateHeadlineDescription } from './news-localization.js';
@@ -270,16 +270,26 @@ async function annotateHeadlineBatch(
 ${inputLines}`;
 
   try {
-    const response = await aiService.chat(
-      [{ role: 'user', content: prompt }],
-      'telegram',
-      undefined,
-      {
+    const { response } = await summarizeWithAminaCore({
+      channel: 'digest',
+      messages: [{ role: 'user', content: prompt }],
+      extraRules: [
+        'Режим задачи: структурированная аннотация новостных headline batches.',
+        'Сохраняй образ техножрицы-летописца, но не нарушай формат.',
+        'Верни только готовый Markdown-блок без пояснений.',
+      ],
+      context: {
+        includeTime: false,
+        includeMemory: false,
+        includeSearch: false,
+        taskContext: heading,
+      },
+      options: {
         promptMode: 'passthrough',
         maxTokens: DIGEST_HEADLINE_ANNOTATION_MAX_TOKENS,
         temperature: DIGEST_HEADLINE_ANNOTATION_TEMPERATURE,
       },
-    );
+    });
     const content = response.content.trim();
     const normalizedContent = content.startsWith('##') ? content : `## ${heading}\n\n${content}`;
     if (!content || !validateAnnotatedBatch(normalizedContent, batch.headlines)) {

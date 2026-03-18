@@ -69,7 +69,17 @@ interface RealtimeBridgeStatus {
   voiceModel: string;
   speechModel: string;
   telephonyAiProvider: string;
-  telephonyOpenrouterModel: string;
+  telephonyAiProviderSource: string;
+  telephonyAiProviderReason: string;
+  telephonyPreferredOpenrouterModel: string;
+  telephonyPreferredOpenrouterModelSource: string;
+  telephonyPreferredOpenrouterModelReason: string;
+  telephonyEffectiveAiProvider: string;
+  telephonyEffectiveAiProviderSource: string;
+  telephonyEffectiveAiProviderReason: string;
+  telephonyEffectiveModel: string;
+  telephonyEffectiveModelSource: string;
+  telephonyEffectiveModelReason: string;
   sipServer: string;
   externalNumber: string;
   hasSipCredentials: boolean;
@@ -155,8 +165,6 @@ function formatScenarioMode(mode: TelephonyAiScenario['callMode']): string {
 
 function formatRuntimeMode(mode: TelephonyAiScenario['runtimeMode']): string {
   switch (mode) {
-    case 'shadow':
-      return 'Shadow';
     case 'hybrid':
       return 'Hybrid';
     case 'realtime':
@@ -226,6 +234,21 @@ function formatBridgeReachability(value: boolean | null): string {
   }
 
   return 'Проверка недоступна';
+}
+
+function formatSourceLabel(value: string): string {
+  switch (value) {
+    case 'db':
+      return 'db';
+    case 'env':
+      return 'env';
+    case 'default':
+      return 'default';
+    case 'derived':
+      return 'derived';
+    default:
+      return value || 'unknown';
+  }
 }
 
 function formatEventType(value: string): string {
@@ -795,13 +818,55 @@ const TelephonyPage = () => {
             <StatusRow label="Голос" value={`${realtimeStatus.voiceProvider} / ${realtimeStatus.voiceModel}`} ok={!!realtimeStatus.voiceProvider} mono />
             <StatusRow label="STT" value={realtimeStatus.speechModel} ok={!!realtimeStatus.speechModel} mono />
             <StatusRow label="Latency budget" value={`${realtimeStatus.latencyBudgetMs} ms`} ok={realtimeStatus.latencyBudgetMs > 0} />
-            <StatusRow label="AI provider телефонии" value={realtimeStatus.telephonyAiProvider} ok={!!realtimeStatus.telephonyAiProvider} mono />
-            <StatusRow label="OpenRouter model телефонии" value={realtimeStatus.telephonyOpenrouterModel || 'Не задан'} ok={!!realtimeStatus.telephonyOpenrouterModel} mono />
+            <StatusRow
+              label="Предпочитаемый AI provider телефонии"
+              value={`${realtimeStatus.telephonyAiProvider} · ${formatSourceLabel(realtimeStatus.telephonyAiProviderSource)}`}
+              ok={!!realtimeStatus.telephonyAiProvider}
+              mono
+            />
+            <StatusRow
+              label="Предпочитаемая OpenRouter model"
+              value={`${realtimeStatus.telephonyPreferredOpenrouterModel || 'Не задана'} · ${formatSourceLabel(realtimeStatus.telephonyPreferredOpenrouterModelSource)}`}
+              ok
+              mono
+            />
+            <StatusRow
+              label="Effective AI provider телефонии"
+              value={`${realtimeStatus.telephonyEffectiveAiProvider} · ${formatSourceLabel(realtimeStatus.telephonyEffectiveAiProviderSource)}`}
+              ok={!!realtimeStatus.telephonyEffectiveAiProvider}
+              mono
+            />
+            <StatusRow
+              label="Effective AI model телефонии"
+              value={`${realtimeStatus.telephonyEffectiveModel || 'Не задана'} · ${formatSourceLabel(realtimeStatus.telephonyEffectiveModelSource)}`}
+              ok={!!realtimeStatus.telephonyEffectiveModel}
+              mono
+            />
             <StatusRow label="SIP server bridge" value={realtimeStatus.sipServer || 'Не задан'} ok={!!realtimeStatus.sipServer} mono />
             <StatusRow label="SIP учётка" value={realtimeStatus.hasSipCredentials ? 'Готова' : 'Не настроена'} ok={realtimeStatus.hasSipCredentials} />
           </div>
         ) : (
           !realtimeStatusLoading && <p className="text-sm text-gray-500">Не удалось загрузить статус realtime bridge</p>
+        )}
+        {realtimeStatus && (
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-gray-400">
+            <div className="rounded-xl border border-white/5 bg-white/[0.02] px-3 py-2">
+              <p className="text-gray-500 mb-1">Почему preferred provider такой</p>
+              <p>{realtimeStatus.telephonyAiProviderReason}</p>
+            </div>
+            <div className="rounded-xl border border-white/5 bg-white/[0.02] px-3 py-2">
+              <p className="text-gray-500 mb-1">Почему preferred model такая</p>
+              <p>{realtimeStatus.telephonyPreferredOpenrouterModelReason}</p>
+            </div>
+            <div className="rounded-xl border border-white/5 bg-white/[0.02] px-3 py-2">
+              <p className="text-gray-500 mb-1">Почему effective provider такой</p>
+              <p>{realtimeStatus.telephonyEffectiveAiProviderReason}</p>
+            </div>
+            <div className="rounded-xl border border-white/5 bg-white/[0.02] px-3 py-2">
+              <p className="text-gray-500 mb-1">Почему effective model такая</p>
+              <p>{realtimeStatus.telephonyEffectiveModelReason}</p>
+            </div>
+          </div>
         )}
       </div>
 
@@ -872,7 +937,7 @@ const TelephonyPage = () => {
             </div>
           </Field>
 
-          <Field label="Телефон оператора" hint="Нужен для обычных /call и connectCall. Для AI-сценариев с AskQuestion основной упор идёт на автозвонок.">
+          <Field label="Телефон оператора" hint="Нужен для обычных /call и connectCall. Для AI-сценариев может использоваться другой runtime path в зависимости от сценария и провайдера.">
             <input className="input w-full" value={operatorPhone} onChange={(e) => setOperatorPhone(e.target.value)} placeholder="+375291234567" />
           </Field>
 
@@ -961,7 +1026,7 @@ const TelephonyPage = () => {
               </div>
             )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Field label="Telephony AI provider" hint="inherit = общий provider бота, openrouter = принудительно премиум модель, lmstudio = локальная модель.">
+              <Field label="Telephony AI provider" hint="Это preferred provider телефонии. При inherit телефония строит собственный effective stack из глобального runtime и показывает результат выше в статусе.">
                 <select
                   className="input w-full"
                   value={telephonyAiProvider}
@@ -972,7 +1037,7 @@ const TelephonyPage = () => {
                   <option value="lmstudio">Принудительно LM Studio</option>
                 </select>
               </Field>
-              <Field label="Telephony OpenRouter model" hint="Если модель задана, voice runtime получит отдельный premium model override.">
+              <Field label="Telephony OpenRouter model" hint="Это preferred OpenRouter model телефонии. Она применяется напрямую при provider=openrouter и используется как telephony-specific model, если inherit в итоге резолвится в OpenRouter.">
                 <select
                   className="input w-full"
                   value={telephonyOpenrouterModel}
@@ -1049,7 +1114,7 @@ const TelephonyPage = () => {
               </Field>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <Field label="Latency budget (ms)" hint="Если realtime pipeline выходит за бюджет, bridge должен инициировать fallback.">
+                <Field label="Latency budget (ms)" hint="Если realtime pipeline выходит за бюджет, bridge или runtime может уйти в fallback. Это целевой бюджет, а не жёсткая гарантия поведения.">
                   <input
                     type="number"
                     className="input w-full"
@@ -1169,7 +1234,7 @@ const TelephonyPage = () => {
         </div>
 
         <p className="text-xs text-gray-500 mb-4">
-          Сценарий хранит бизнес-цель, тональность, стартовую реплику и правила summary после звонка. Генерация речи идёт через LM Studio, а если он недоступен — через OpenRouter fallback.
+          Сценарий хранит бизнес-цель, тональность, стартовую реплику и правила summary после звонка. Фактический AI runtime для звонка выбирается из preferred/effective telephony stack и может отличаться от глобального chat runtime.
         </p>
 
         {scenariosLoading ? (
@@ -1198,7 +1263,7 @@ const TelephonyPage = () => {
         </div>
 
         <p className="text-xs text-gray-500 mb-4">
-          Preview показывает, что именно скажет AI по сценарию. Запуск создаёт реальный звонок и потом присылает владельцу summary по записи.
+          Preview показывает план ответа по сценарию. Запуск действительно создаёт звонок, но итоговый runtime path может уйти в fallback, а summary зависит от записи и post-call обработки.
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
@@ -1431,7 +1496,6 @@ const ScenarioEditor = ({ scenario, onUpdate, onPolicyUpdate, onRemove }: Scenar
       <Field label="Runtime">
         <select className="input w-full" value={scenario.runtimeMode} onChange={(e) => onUpdate(scenario.id, 'runtimeMode', e.target.value)}>
           <option value="scripted">Scripted</option>
-          <option value="shadow">Shadow</option>
           <option value="hybrid">Hybrid</option>
           <option value="realtime">Realtime</option>
         </select>

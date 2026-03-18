@@ -36,6 +36,7 @@ import {
   buildPersonaSelfIntro,
   detectSelfDisclosureIntent,
 } from '../../ai/persona.js';
+import { captureSelfCoreFromInteraction } from '../../ai/self-core.js';
 
 /**
  * Обрабатывает AI-ответ: верификация, защита от отказов, симуляции, галлюцинаций.
@@ -335,6 +336,7 @@ export const processMessageThroughAI = async (
         responseLength: selfAnswer.length,
       }, userId).catch(() => {});
       memoryExtractor.extractFacts(userId, userText, selfAnswer).catch(() => {});
+      captureSelfCoreFromInteraction({ userMessage: userText, aiResponse: selfAnswer }).catch(() => {});
       return;
     }
   }
@@ -419,6 +421,9 @@ export const processMessageThroughAI = async (
   }).catch(() => {});
   memoryExtractor.extractFacts(userId, userText, aiResponse.content).catch((err) => {
     telegramLogger.warn({ error: err, userId }, 'extractFacts failed');
+  });
+  captureSelfCoreFromInteraction({ userMessage: userText, aiResponse: finalContent }).catch((err) => {
+    telegramLogger.warn({ error: err, userId }, 'self-core growth failed');
   });
 
   // Автосуммаризация

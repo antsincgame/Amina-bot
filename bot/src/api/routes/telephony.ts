@@ -406,7 +406,6 @@ export async function registerTelephonyRoutes(server: FastifyInstance): Promise<
         if (
           runtimeOverride
           && runtimeOverride !== 'scripted'
-          && runtimeOverride !== 'shadow'
           && runtimeOverride !== 'hybrid'
           && runtimeOverride !== 'realtime'
         ) {

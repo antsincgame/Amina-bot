@@ -136,6 +136,7 @@ const VISION_RACE_TIMEOUT_MS = 20000;
 // --------------------------------------------
 
 import { getApiKeys } from '../config/index.js';
+import { respondWithAminaCore } from './amina-core-runtime.js';
 
 let openai: OpenAI | null = null;
 let currentOpenRouterKey: string = '';
@@ -206,6 +207,7 @@ interface MultimodalConfig {
 export interface SpeechRecognitionRuntimeProfile {
   audioModel: string;
   maxTokens: number;
+  source: string;
 }
 
 // Дефолтные модели
@@ -216,6 +218,8 @@ const DEFAULT_VISION_MAX_TOKENS = 1024;
 
 const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
   const settings = await settingsRepo.getMany([
+    'preferred_vision_model',
+    'effective_vision_model',
     'vision_model',
     'audio_model',
     'vision_model_override',
@@ -225,12 +229,20 @@ const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
     'vision_max_tokens',
   ]);
 
-  // Vision model: override > setting > default
+  // Vision model: explicit override > effective runtime state > preferred admin choice > legacy key > default
   let visionModel = DEFAULT_VISION_MODEL;
   let visionSource = 'default';
   if (settings['vision_model']?.trim()) {
     visionModel = settings['vision_model'].trim();
     visionSource = 'database';
+  }
+  if (settings['preferred_vision_model']?.trim()) {
+    visionModel = settings['preferred_vision_model'].trim();
+    visionSource = 'preferred';
+  }
+  if (settings['effective_vision_model']?.trim()) {
+    visionModel = settings['effective_vision_model'].trim();
+    visionSource = 'effective';
   }
   if (settings['vision_model_override']?.trim()) {
     visionModel = settings['vision_model_override'].trim();
@@ -273,10 +285,34 @@ const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
 
 export async function getSpeechRecognitionRuntimeProfile(): Promise<SpeechRecognitionRuntimeProfile> {
   const config = await getMultimodalConfig();
+  const state = await getAudioModelState();
   return {
     audioModel: config.audioModel,
     maxTokens: config.maxTokens,
+    source: state.source,
   };
+}
+
+export async function getAudioModelState(): Promise<{
+  preferredModel: string;
+  effectiveModel: string;
+  overrideModel: string;
+  source: string;
+}> {
+  const settings = await settingsRepo.getMany([
+    'audio_model',
+    'audio_model_override',
+  ]);
+  const preferredModel = settings['audio_model']?.trim() || DEFAULT_AUDIO_MODEL;
+  const overrideModel = settings['audio_model_override']?.trim() || '';
+  const effectiveModel = overrideModel || preferredModel;
+  const source = overrideModel
+    ? 'override'
+    : settings['audio_model']?.trim()
+      ? 'preferred'
+      : 'default';
+
+  return { preferredModel, effectiveModel, overrideModel, source };
 }
 
 // --------------------------------------------
@@ -303,12 +339,44 @@ export function getVisionFallbackStatus() {
   return { ...lastVisionFallbackSwitch };
 }
 
+export async function getVisionModelState(): Promise<{
+  preferredModel: string;
+  effectiveModel: string;
+  overrideModel: string;
+  source: string;
+}> {
+  const settings = await settingsRepo.getMany([
+    'preferred_vision_model',
+    'effective_vision_model',
+    'vision_model',
+    'vision_model_override',
+  ]);
+  const preferredModel = settings['preferred_vision_model']?.trim()
+    || settings['vision_model']?.trim()
+    || DEFAULT_VISION_MODEL;
+  const effectiveModel = settings['vision_model_override']?.trim()
+    || settings['effective_vision_model']?.trim()
+    || preferredModel;
+  const overrideModel = settings['vision_model_override']?.trim() || '';
+  const source = overrideModel
+    ? 'override'
+    : settings['effective_vision_model']?.trim()
+      ? 'effective'
+      : settings['preferred_vision_model']?.trim()
+        ? 'preferred'
+        : settings['vision_model']?.trim()
+          ? 'legacy'
+          : 'default';
+
+  return { preferredModel, effectiveModel, overrideModel, source };
+}
+
 /**
  * Анализировать изображение с авто-recovery:
  * 1. Пробуем основную модель
  * 2. При ошибке — обновляем список бесплатных vision моделей
  * 3. Запускаем гонку всех бесплатных vision моделей
- * 4. Победитель сохраняется как новая основная модель
+ * 4. Победитель сохраняется как effective runtime модель
  * 5. Всё прозрачно для пользователя — контекст сохраняется
  */
 export async function analyzeImage(
@@ -411,7 +479,7 @@ export async function analyzeImage(
     const winner = await Promise.race([Promise.any(racePromises), timeoutPromise]);
     if (raceTimeoutId) clearTimeout(raceTimeoutId);
 
-    aiLogger.info({ winner: winner.usedModel, tokens: winner.tokens_used }, '🏆 Vision race winner! Saving as default');
+    aiLogger.info({ winner: winner.usedModel, tokens: winner.tokens_used }, '🏆 Vision race winner! Saving as effective model');
 
     lastVisionFallbackSwitch = {
       reason: `Vision race winner: ${winner.usedModel} (primary ${multiConfig.visionModel} failed)`,
@@ -420,9 +488,9 @@ export async function analyzeImage(
       toModel: winner.usedModel,
     };
 
-    // Сохраняем победителя как новую основную vision модель
-    settingsRepo.set('vision_model', winner.usedModel).catch(err => {
-      aiLogger.warn({ error: err }, 'Failed to save vision race winner');
+    // Сохраняем победителя отдельно как effective runtime модель, не трогая ручной выбор администратора.
+    settingsRepo.set('effective_vision_model', winner.usedModel).catch(err => {
+      aiLogger.warn({ error: err }, 'Failed to save effective vision race winner');
     });
 
     return winner;
@@ -658,15 +726,19 @@ export async function processImageWithLLM(
 
   const imageContext = `${descriptionBlock}\n\n${userBlock}\n\n${instruction}`;
 
-  // 3. Отправляем в основную LLM
-  const { aiService } = await import('./openrouter.js');
-  
+  // 3. Отправляем в основной Amina Core Runtime
   const messages = [
     ...(chatHistory || []),
     { role: 'user' as const, content: imageContext },
   ];
 
-  const response = await aiService.chat(messages, 'telegram');
+  const { response } = await respondWithAminaCore({
+    channel: 'telegram',
+    userText: userCaption || 'Пользователь прислал изображение.',
+    messages,
+    includeMemory: false,
+    includeSearch: false,
+  });
 
   return response;
 }
@@ -683,16 +755,20 @@ async function processVoiceWithLLM(
   // 1. Транскрибируем аудио (пользователь НЕ видит этот шаг)
   const transcription = await transcribeAudio(audioBase64, mimeType);
 
-  // 2. Отправляем текст в основную LLM как обычное сообщение пользователя
+  // 2. Отправляем текст в основной Amina Core Runtime как обычное сообщение пользователя
   // LLM не должна упоминать что это было голосовое сообщение
-  const { aiService } = await import('./openrouter.js');
-  
   const messages = [
     ...(chatHistory || []),
     { role: 'user' as const, content: transcription.text },
   ];
 
-  const response = await aiService.chat(messages, 'telegram');
+  const { response } = await respondWithAminaCore({
+    channel: 'telegram',
+    userText: transcription.text,
+    messages,
+    includeMemory: false,
+    includeSearch: false,
+  });
 
   return {
     transcription: transcription.text,

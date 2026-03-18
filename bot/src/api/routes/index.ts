@@ -12,6 +12,7 @@ import { registerNewsRoutes } from './news.js';
 import { registerVoiceMessagesRoutes } from './voice-messages.js';
 import { registerLmstudioRoutes } from './lmstudio.js';
 import { registerTelephonyRoutes } from './telephony.js';
+import { registerSelfCoreRoutes } from './self-core.js';
 
 export async function registerApiRoutes(server: FastifyInstance): Promise<void> {
   // Register application/x-www-form-urlencoded parser at root level
@@ -48,6 +49,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
       await registerVoiceMessagesRoutes(apiServer);
       await registerLmstudioRoutes(apiServer);
       await registerTelephonyRoutes(apiServer);
+      await registerSelfCoreRoutes(apiServer);
     },
     { prefix: '/api' }
   );

@@ -11,7 +11,10 @@ import { callSessionRepo } from '../repository/call-session-repo.js';
 import { callTurnRepo } from '../repository/call-turn-repo.js';
 import { cleanText, truncateText } from '../shared.js';
 import { extractPlanFromEvents } from './telephony-plan.js';
-import { buildPersonaSystemPrompt } from '../../../ai/persona.js';
+import {
+  buildAminaPassthroughSystemPrompt,
+  buildAminaRuntimeContext,
+} from '../../../ai/amina-core-runtime.js';
 
 export interface ConversationAssemblyResult {
   session: TelephonyAiCallSession;
@@ -74,13 +77,13 @@ export async function assembleConversationContext(
   const cleanIncomingText = cleanText(incomingCustomerText);
 
   const isFreeform = scenario.id === 'freeform';
-  const personaPrompt = await buildPersonaSystemPrompt({
+  const runtimeContext = await buildAminaRuntimeContext({
     channel: 'voice',
-    extraRules: [
-      'Режим задачи: realtime AI-звонок владельца.',
-      'Ты не выходишь из образа техножрицы и не называешь себя просто ассистентом.',
-      'Приоритет: безопасный, короткий и естественный разговор по телефону.',
-    ],
+    includeTime: false,
+    includeMemory: false,
+    includeSearch: false,
+    channelContext: 'Realtime AI-звонок владельца по внешнему телеком-каналу.',
+    taskContext: session.task,
   });
 
   const freeformInstructions = isFreeform
@@ -90,9 +93,15 @@ export async function assembleConversationContext(
 Если собеседник прощается или тема исчерпана — завершай звонок.`
     : '';
 
-  const systemPrompt = `${personaPrompt}
-
-Ты управляешь realtime AI-звонком владельца.
+  const systemPrompt = await buildAminaPassthroughSystemPrompt({
+    channel: 'voice',
+    context: runtimeContext,
+    extraRules: [
+      'Режим задачи: realtime AI-звонок владельца.',
+      'Ты не выходишь из образа техножрицы и не называешь себя просто ассистентом.',
+      'Приоритет: безопасный, короткий и естественный разговор по телефону.',
+    ],
+    systemInstruction: `Ты управляешь realtime AI-звонком владельца.
 Это ТЕЛЕФОННЫЙ разговор: будь кратким, естественным, разговорным. Не пиши длинных монологов.
 
 Сценарий: ${scenario.name}
@@ -131,7 +140,8 @@ ${freeformInstructions}
   "fallbackReason": null,
   "outcomeLabel": "успех | нужен перезвон | отказ | неясно",
   "resultSummary": "краткий итог для владельца"
-}`;
+}`,
+  });
 
   const messages: AIMessage[] = [
     { role: 'system', content: systemPrompt },

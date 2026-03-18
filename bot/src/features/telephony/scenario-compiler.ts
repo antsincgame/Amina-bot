@@ -24,8 +24,12 @@ function normalizeFallbackMode(value: string | null | undefined): TelephonyFallb
 }
 
 function normalizeRuntimeMode(value: string | null | undefined): TelephonyRuntimeMode {
-  if (value === 'shadow' || value === 'hybrid' || value === 'realtime') {
+  if (value === 'hybrid' || value === 'realtime') {
     return value;
+  }
+
+  if (value === 'shadow') {
+    return 'scripted';
   }
 
   return DEFAULT_RUNTIME_MODE;

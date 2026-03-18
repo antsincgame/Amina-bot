@@ -168,6 +168,22 @@ const sections = [
     ],
   },
   {
+    id: 'amina_self_core',
+    name: 'Amina Self Core',
+    waitMs: 2500,
+    attributes: [
+      { type: 'string', key: 'category', size: 100, required: true },
+      { type: 'text', key: 'content', size: 50_000, required: true },
+      { type: 'string', key: 'source', size: 50, required: true },
+      { type: 'boolean', key: 'is_active', default: true },
+      { type: 'string', key: 'created_at', size: 100, required: true },
+    ],
+    indexes: [
+      { key: 'idx_category_active', type: 'key', attributes: ['category', 'is_active'], orders: ['ASC', 'ASC'] },
+      { key: 'idx_source_active', type: 'key', attributes: ['source', 'is_active'], orders: ['ASC', 'ASC'] },
+    ],
+  },
+  {
     id: 'amina_todos',
     name: 'Amina Todos',
     waitMs: 2500,

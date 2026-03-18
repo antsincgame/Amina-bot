@@ -3,7 +3,14 @@ import { settingsRepo } from '../../db/index.js';
 import { aiLogger } from '../../config/logger.js';
 import { config, getApiKeys } from '../../config/index.js';
 import { getProxyHeaders } from '../../config/ai-proxy.js';
-import { getAllAudioModels, getFreeVisionModels, refreshFreeVisionModelsCache, getVisionFallbackStatus } from '../../ai/multimodal.js';
+import {
+  getAllAudioModels,
+  getAudioModelState,
+  getFreeVisionModels,
+  refreshFreeVisionModelsCache,
+  getVisionFallbackStatus,
+  getVisionModelState,
+} from '../../ai/multimodal.js';
 
 export async function registerModelsRoutes(server: FastifyInstance): Promise<void> {
   /**
@@ -13,12 +20,16 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
     try {
       const models = await getFreeVisionModels();
       const fallbackStatus = getVisionFallbackStatus();
-      const currentModel = await settingsRepo.get('vision_model');
+      const visionState = await getVisionModelState();
       return reply.code(200).send({
         success: true,
         data: {
           models,
-          currentModel: currentModel || 'allenai/molmo-2-8b:free',
+          currentModel: visionState.effectiveModel,
+          preferredModel: visionState.preferredModel,
+          effectiveModel: visionState.effectiveModel,
+          overrideModel: visionState.overrideModel,
+          source: visionState.source,
           fallbackStatus,
         },
       });
@@ -37,9 +48,20 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
   server.post('/models/vision/refresh', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const freshModels = await refreshFreeVisionModelsCache();
+      const fallbackStatus = getVisionFallbackStatus();
+      const visionState = await getVisionModelState();
       return reply.code(200).send({
         success: true,
-        data: { models: freshModels, count: freshModels.length },
+        data: {
+          models: freshModels,
+          count: freshModels.length,
+          currentModel: visionState.effectiveModel,
+          preferredModel: visionState.preferredModel,
+          effectiveModel: visionState.effectiveModel,
+          overrideModel: visionState.overrideModel,
+          source: visionState.source,
+          fallbackStatus,
+        },
       });
     } catch (error) {
       aiLogger.error({ error }, 'Refresh vision models error');
@@ -56,9 +78,16 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
   server.get('/models/audio', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const models = getAllAudioModels();
+      const audioState = await getAudioModelState();
       return reply.code(200).send({
         success: true,
-        data: models,
+        data: {
+          models,
+          preferredModel: audioState.preferredModel,
+          effectiveModel: audioState.effectiveModel,
+          overrideModel: audioState.overrideModel,
+          source: audioState.source,
+        },
       });
     } catch (error) {
       aiLogger.error({ error }, 'Get audio models error');

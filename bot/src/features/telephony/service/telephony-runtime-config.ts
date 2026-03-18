@@ -1,3 +1,4 @@
+import { config } from '../../../config/index.js';
 import { settingsRepo } from '../../../db/index.js';
 import { SingleCache } from '../../../utils/cache.js';
 
@@ -8,6 +9,21 @@ const DEFAULT_LATENCY_BUDGET_MS = 1800;
 const DEFAULT_RECORDING_RETENTION_DAYS = 30;
 
 export type TelephonyAiProvider = 'inherit' | 'openrouter' | 'lmstudio';
+
+export interface TelephonyAiEffectiveState {
+  preferredProvider: TelephonyAiProvider;
+  preferredProviderSource: 'db' | 'env' | 'default';
+  preferredProviderReason: string;
+  preferredOpenrouterModel: string;
+  preferredOpenrouterModelSource: 'db' | 'env' | 'default';
+  preferredOpenrouterModelReason: string;
+  effectiveProvider: 'auto' | 'openrouter' | 'lmstudio';
+  effectiveProviderSource: 'db' | 'env' | 'default' | 'derived';
+  effectiveProviderReason: string;
+  effectiveModel: string;
+  effectiveModelSource: 'db' | 'env' | 'default' | 'derived';
+  effectiveModelReason: string;
+}
 
 export interface TelephonyRuntimeConfig {
   liraxUrl: string;
@@ -33,6 +49,7 @@ export interface TelephonyRuntimeConfig {
   externalNumber: string;
   aiProvider: TelephonyAiProvider;
   openrouterModel: string;
+  aiEffectiveState: TelephonyAiEffectiveState;
 }
 
 /**
@@ -98,6 +115,196 @@ function resolveAiProvider(
   return 'inherit';
 }
 
+function resolveGlobalAiProvider(dbValue: string | undefined): 'auto' | 'openrouter' | 'lmstudio' {
+  if (dbValue === 'openrouter' || dbValue === 'lmstudio') {
+    return dbValue;
+  }
+  return 'auto';
+}
+
+function resolveEffectiveTelephonyAiState(input: {
+  telephonyProviderDb: string | undefined;
+  telephonyProviderEnv: string | undefined;
+  telephonyModelDb: string | undefined;
+  telephonyModelEnv: string | undefined;
+  globalProviderDb: string | undefined;
+  globalOpenrouterModelDb: string | undefined;
+  globalOpenrouterModelEnv: string | undefined;
+  globalCustomModelOverrideDb: string | undefined;
+  lmstudioModelDb: string | undefined;
+}): TelephonyAiEffectiveState {
+  const providerDb = input.telephonyProviderDb?.trim();
+  const providerEnv = input.telephonyProviderEnv?.trim();
+  const preferredProvider = resolveAiProvider(providerDb, providerEnv);
+  const preferredProviderSource = providerDb
+    ? 'db'
+    : providerEnv
+      ? 'env'
+      : 'default';
+  const preferredProviderReason = providerDb
+    ? 'Telephony AI provider задан в Appwrite.'
+    : providerEnv
+      ? 'Telephony AI provider пришёл из env.'
+      : 'Telephony AI provider использует режим inherit по умолчанию.';
+
+  const modelDb = input.telephonyModelDb?.trim();
+  const modelEnv = input.telephonyModelEnv?.trim();
+  const preferredOpenrouterModel = modelDb || modelEnv || '';
+  const preferredOpenrouterModelSource = modelDb
+    ? 'db'
+    : modelEnv
+      ? 'env'
+      : 'default';
+  const preferredOpenrouterModelReason = modelDb
+    ? 'Telephony OpenRouter model задана в Appwrite.'
+    : modelEnv
+      ? 'Telephony OpenRouter model пришла из env.'
+      : 'Отдельная telephony OpenRouter model не задана.';
+
+  if (preferredProvider === 'openrouter') {
+    const customOverride = input.globalCustomModelOverrideDb?.trim();
+    const globalModelDb = input.globalOpenrouterModelDb?.trim();
+    const globalModelEnv = input.globalOpenrouterModelEnv?.trim();
+    const effectiveModel = preferredOpenrouterModel || customOverride || globalModelDb || globalModelEnv || config.ai.model || 'openrouter/free';
+    const effectiveModelSource = preferredOpenrouterModel
+      ? preferredOpenrouterModelSource
+      : customOverride
+        ? 'derived'
+        : globalModelDb
+          ? 'db'
+          : globalModelEnv
+            ? 'env'
+            : 'default';
+    const effectiveModelReason = preferredOpenrouterModel
+      ? 'Telephony использует собственную preferred OpenRouter model.'
+      : customOverride
+        ? 'Telephony provider принудительно OpenRouter, поэтому применяется общий custom_model_override.'
+        : globalModelDb || globalModelEnv
+          ? 'Telephony provider принудительно OpenRouter, используется общий chat model fallback.'
+          : 'Telephony provider принудительно OpenRouter, используется кодовый default модели.';
+
+    return {
+      preferredProvider,
+      preferredProviderSource,
+      preferredProviderReason,
+      preferredOpenrouterModel,
+      preferredOpenrouterModelSource,
+      preferredOpenrouterModelReason,
+      effectiveProvider: 'openrouter',
+      effectiveProviderSource: preferredProviderSource,
+      effectiveProviderReason: 'Telephony provider принудительно переключён на OpenRouter.',
+      effectiveModel,
+      effectiveModelSource,
+      effectiveModelReason,
+    };
+  }
+
+  if (preferredProvider === 'lmstudio') {
+    const lmstudioModel = input.lmstudioModelDb?.trim() || '';
+    return {
+      preferredProvider,
+      preferredProviderSource,
+      preferredProviderReason,
+      preferredOpenrouterModel,
+      preferredOpenrouterModelSource,
+      preferredOpenrouterModelReason,
+      effectiveProvider: 'lmstudio',
+      effectiveProviderSource: preferredProviderSource,
+      effectiveProviderReason: 'Telephony provider принудительно переключён на LM Studio.',
+      effectiveModel: lmstudioModel,
+      effectiveModelSource: lmstudioModel ? 'db' : 'default',
+      effectiveModelReason: lmstudioModel
+        ? 'Используется модель из LM Studio конфигурации.'
+        : 'LM Studio выбран, но явная модель не задана в настройках.',
+    };
+  }
+
+  const globalProvider = resolveGlobalAiProvider(input.globalProviderDb?.trim());
+  const customOverride = input.globalCustomModelOverrideDb?.trim();
+  const globalModelDb = input.globalOpenrouterModelDb?.trim();
+  const globalModelEnv = input.globalOpenrouterModelEnv?.trim();
+  const lmstudioModel = input.lmstudioModelDb?.trim() || '';
+
+  if (globalProvider === 'openrouter') {
+    const effectiveModel = preferredOpenrouterModel || customOverride || globalModelDb || globalModelEnv || config.ai.model || 'openrouter/free';
+    const effectiveModelSource = preferredOpenrouterModel
+      ? preferredOpenrouterModelSource
+      : customOverride
+        ? 'derived'
+        : globalModelDb
+          ? 'db'
+          : globalModelEnv
+            ? 'env'
+            : 'default';
+    const effectiveModelReason = preferredOpenrouterModel
+      ? 'Telephony наследует provider=openrouter, но использует собственную preferred OpenRouter model.'
+      : customOverride
+        ? 'Telephony наследует provider=openrouter и использует общий custom_model_override.'
+        : globalModelDb || globalModelEnv
+          ? 'Telephony наследует глобальную OpenRouter model.'
+          : 'Telephony наследует OpenRouter и использует кодовый default модели.';
+
+    return {
+      preferredProvider,
+      preferredProviderSource,
+      preferredProviderReason,
+      preferredOpenrouterModel,
+      preferredOpenrouterModelSource,
+      preferredOpenrouterModelReason,
+      effectiveProvider: 'openrouter',
+      effectiveProviderSource: 'derived',
+      effectiveProviderReason: 'Telephony provider = inherit, поэтому унаследован глобальный OpenRouter runtime.',
+      effectiveModel,
+      effectiveModelSource,
+      effectiveModelReason,
+    };
+  }
+
+  if (globalProvider === 'lmstudio') {
+    return {
+      preferredProvider,
+      preferredProviderSource,
+      preferredProviderReason,
+      preferredOpenrouterModel,
+      preferredOpenrouterModelSource,
+      preferredOpenrouterModelReason,
+      effectiveProvider: 'lmstudio',
+      effectiveProviderSource: 'derived',
+      effectiveProviderReason: 'Telephony provider = inherit, поэтому унаследован глобальный LM Studio runtime.',
+      effectiveModel: lmstudioModel,
+      effectiveModelSource: lmstudioModel ? 'db' : 'default',
+      effectiveModelReason: lmstudioModel
+        ? 'Telephony наследует модель из LM Studio конфигурации.'
+        : 'Telephony наследует LM Studio, но явная модель не задана.',
+    };
+  }
+
+  return {
+    preferredProvider,
+    preferredProviderSource,
+    preferredProviderReason,
+    preferredOpenrouterModel,
+    preferredOpenrouterModelSource,
+    preferredOpenrouterModelReason,
+    effectiveProvider: 'auto',
+    effectiveProviderSource: 'derived',
+    effectiveProviderReason: 'Telephony provider = inherit, а глобальный provider не закреплён жёстко.',
+    effectiveModel: preferredOpenrouterModel || customOverride || globalModelDb || globalModelEnv || config.ai.model || 'openrouter/free',
+    effectiveModelSource: preferredOpenrouterModel
+      ? preferredOpenrouterModelSource
+      : customOverride
+        ? 'derived'
+        : globalModelDb
+          ? 'db'
+          : globalModelEnv
+            ? 'env'
+            : 'default',
+    effectiveModelReason: preferredOpenrouterModel
+      ? 'Если auto-runtime выберет OpenRouter, будет использована telephony preferred OpenRouter model.'
+      : 'Telephony provider в auto-режиме; effective model показывает вероятный OpenRouter fallback.',
+  };
+}
+
 function buildHealthUrl(url: string): string {
   if (!url) {
     return '';
@@ -137,6 +344,10 @@ export async function getTelephonyRuntimeConfig(): Promise<TelephonyRuntimeConfi
     'telephony_external_number',
     'telephony_ai_provider',
     'telephony_openrouter_model',
+    'ai_provider',
+    'openrouter_model',
+    'custom_model_override',
+    'lmstudio_model',
   ]);
 
   // Единый приоритет для всех telephony полей: DB -> env -> code default
@@ -149,6 +360,18 @@ export async function getTelephonyRuntimeConfig(): Promise<TelephonyRuntimeConfi
     settings['telephony_media_bridge_url'],
     process.env.TELEPHONY_MEDIA_BRIDGE_URL,
   );
+
+  const aiEffectiveState = resolveEffectiveTelephonyAiState({
+    telephonyProviderDb: settings['telephony_ai_provider'],
+    telephonyProviderEnv: process.env.TELEPHONY_AI_PROVIDER,
+    telephonyModelDb: settings['telephony_openrouter_model'],
+    telephonyModelEnv: process.env.TELEPHONY_OPENROUTER_MODEL,
+    globalProviderDb: settings['ai_provider'],
+    globalOpenrouterModelDb: settings['openrouter_model'],
+    globalOpenrouterModelEnv: process.env.OPENROUTER_MODEL,
+    globalCustomModelOverrideDb: settings['custom_model_override'],
+    lmstudioModelDb: settings['lmstudio_model'],
+  });
 
   const runtimeConfig: TelephonyRuntimeConfig = {
     liraxUrl,
@@ -242,14 +465,9 @@ export async function getTelephonyRuntimeConfig(): Promise<TelephonyRuntimeConfi
       settings['telephony_external_number'],
       process.env.TELEPHONY_EXTERNAL_NUMBER,
     ),
-    aiProvider: resolveAiProvider(
-      settings['telephony_ai_provider'],
-      process.env.TELEPHONY_AI_PROVIDER,
-    ),
-    openrouterModel: resolveStringSetting(
-      settings['telephony_openrouter_model'],
-      process.env.TELEPHONY_OPENROUTER_MODEL,
-    ),
+    aiProvider: aiEffectiveState.preferredProvider,
+    openrouterModel: aiEffectiveState.preferredOpenrouterModel,
+    aiEffectiveState,
   };
 
   RUNTIME_CONFIG_CACHE.set(runtimeConfig);

@@ -25,7 +25,7 @@ export async function startThroughRuntimeRouter(
 ): Promise<CallRuntimeResult> {
   const selectedRuntime = context.scenario.runtimeMode;
 
-  if (selectedRuntime === 'scripted' || selectedRuntime === 'shadow') {
+  if (selectedRuntime === 'scripted') {
     const result = await scriptedRuntime.start(context);
     return withRuntimeMetadata(result, selectedRuntime, 'scripted');
   }

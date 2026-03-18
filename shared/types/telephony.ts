@@ -1,5 +1,5 @@
 export type TelephonyAiScenarioMode = 'speech' | 'ask_question';
-export type TelephonyRuntimeMode = 'scripted' | 'shadow' | 'hybrid' | 'realtime';
+export type TelephonyRuntimeMode = 'scripted' | 'hybrid' | 'realtime';
 export type TelephonyFallbackMode = 'scripted' | 'fail';
 export type TelephonyProvider = 'lirax' | 'media_bridge' | 'unknown';
 

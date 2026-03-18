@@ -31,7 +31,6 @@ const apiKeysSchema = z.object({
   web_search_enabled: z.string().optional(),
   perplexity_model: z.string().optional(),
   web_search_max_tokens: z.string().optional(),
-  llm_verify_enabled: z.string().optional(),
 });
 
 type ApiKeysForm = z.infer<typeof apiKeysSchema>;
@@ -140,7 +139,6 @@ const ApiKeysPage = () => {
       web_search_enabled: 'false',
       perplexity_model: 'sonar',
       web_search_max_tokens: '1200',
-      llm_verify_enabled: 'false',
     },
   });
 
@@ -151,7 +149,6 @@ const ApiKeysPage = () => {
   const webSearchEnabled = watch('web_search_enabled');
   const perplexityModel = watch('perplexity_model');
   const searchMaxTokens = watch('web_search_max_tokens');
-  const llmVerifyEnabled = watch('llm_verify_enabled');
 
   // Load settings
   useEffect(() => {
@@ -169,7 +166,6 @@ const ApiKeysPage = () => {
         web_search_enabled: map['web_search_enabled'] || 'false',
         perplexity_model: map['perplexity_model'] || 'sonar',
         web_search_max_tokens: map['web_search_max_tokens'] || '1200',
-        llm_verify_enabled: map['llm_verify_enabled'] || 'false',
       });
     }
   }, [settings, reset]);
@@ -183,7 +179,6 @@ const ApiKeysPage = () => {
       web_search_enabled: data.web_search_enabled || 'false',
       perplexity_model: data.perplexity_model || 'sonar',
       web_search_max_tokens: data.web_search_max_tokens || '1200',
-      llm_verify_enabled: data.llm_verify_enabled || 'false',
     });
   };
 
@@ -621,7 +616,7 @@ const ApiKeysPage = () => {
           </div>
         </div>
 
-        {/* LLM Verification */}
+        {/* LLM Verification Diagnostics */}
         <div className="card animate-fade-in-up stagger-5" style={{ opacity: 0 }}>
           <div className="flex items-center gap-4 mb-5">
             <div className="w-12 h-12 rounded-xl flex items-center justify-center"
@@ -636,13 +631,13 @@ const ApiKeysPage = () => {
               <h2 className="text-lg font-semibold text-white" style={{ fontFamily: 'var(--font-heading)' }}>
                 Верификация ответов
               </h2>
-              <p className="text-sm text-gray-500">Вторая LLM проверяет ответы на корректность</p>
+              <p className="text-sm text-gray-500">Diagnostics-only блок: runtime всегда сам решает политику верификации</p>
             </div>
           </div>
 
-          <div className="p-4 rounded-xl"
+          <div className="p-4 rounded-xl space-y-4"
                style={{ background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-lg flex items-center justify-center"
                      style={{ background: 'rgba(245, 158, 11, 0.15)' }}>
@@ -650,30 +645,26 @@ const ApiKeysPage = () => {
                 </div>
                 <div>
                   <h3 className="font-medium text-white" style={{ fontFamily: 'var(--font-heading)' }}>
-                    Двойная проверка LLM
+                    Политика верификации активна
                   </h3>
                   <p className="text-xs text-gray-500">
-                    Бесплатная модель проверяет: галлюцинации, выдуманные факты, симуляцию поиска
+                    Runtime слой сам проверяет симуляцию поиска, фактические галлюцинации и отказы использовать поиск.
                   </p>
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={() => setValue('llm_verify_enabled', llmVerifyEnabled === 'true' ? 'false' : 'true', { shouldDirty: true })}
-                className={`toggle ${llmVerifyEnabled === 'true' ? 'toggle-checked' : ''}`}
-              >
-                <span className={`toggle-dot ${llmVerifyEnabled === 'true' ? 'toggle-dot-checked' : ''}`} />
-              </button>
+              <span className="badge-success">
+                <CheckCircle className="w-3.5 h-3.5 mr-1" />
+                Всегда под контролем runtime
+              </span>
             </div>
 
-            {llmVerifyEnabled === 'true' && (
-              <div className="mt-3 p-2.5 rounded-lg text-xs"
-                   style={{ background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.15)' }}>
-                <span className="text-gray-400">
-                  ⚡ Ответ будет немного дольше (+2-5 сек), но точнее. Бесплатные модели используются для проверки.
-                </span>
-              </div>
-            )}
+            <div className="p-3 rounded-lg text-xs"
+                 style={{ background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.15)' }}>
+              <span className="text-gray-400">
+                Этот блок больше не сохраняет настройку. Если понадобится управляемый policy toggle, его нужно будет
+                ввести как отдельный честный runtime contract, а не как мёртвое UI-поле.
+              </span>
+            </div>
           </div>
         </div>
 

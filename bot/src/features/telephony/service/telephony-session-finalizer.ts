@@ -1,4 +1,4 @@
-import { aiService } from '../../../ai/openrouter.js';
+import { summarizeWithAminaCore } from '../../../ai/amina-core-runtime.js';
 import type { AIMessage } from '../../../../../shared/types/index.js';
 import type { TelephonyAiCallSession, TelephonyAiSessionStatus } from '../../../../../shared/types/telephony.js';
 import { callArtifactRepo } from '../repository/call-artifact-repo.js';
@@ -9,25 +9,14 @@ import { callTurnRepo } from '../repository/call-turn-repo.js';
 import { cleanText, escapeHtml, extractJsonObject, safeJsonParse, truncateText } from '../shared.js';
 import { sendTelephonyOwnerMessage } from './notification-service.js';
 import { buildTurnsFromTranscript, extractPlanFromEvents } from './telephony-plan.js';
-import { buildPersonaSystemPrompt } from '../../../ai/persona.js';
 
 const SUMMARY_MAX_TOKENS = 900;
 
 async function buildSummaryPrompt(session: TelephonyAiCallSession, transcript: string): Promise<AIMessage[]> {
-  const personaPrompt = await buildPersonaSystemPrompt({
-    channel: 'system',
-    extraRules: [
-      'Режим задачи: анализ завершённого AI-звонка владельца.',
-      'Нужен строгий JSON без пояснений и художественных отступлений.',
-    ],
-  });
-
   return [
     {
       role: 'system',
-      content: `${personaPrompt}
-
-Ты анализируешь запись исходящего AI-звонка владельца.
+      content: `Ты анализируешь запись исходящего AI-звонка владельца.
 
 Сценарий: ${session.scenarioName}
 Цель сценария: ${session.scenarioGoal || 'не указана'}
@@ -54,16 +43,26 @@ export async function summarizeTelephonyTranscript(
   session: TelephonyAiCallSession,
   transcript: string,
 ): Promise<{ outcomeLabel: string; resultSummary: string }> {
-  const aiResult = await aiService.chat(
-    await buildSummaryPrompt(session, transcript),
-    'voice',
-    undefined,
-    {
+  const { response: aiResult } = await summarizeWithAminaCore({
+    channel: 'system',
+    messages: await buildSummaryPrompt(session, transcript),
+    extraRules: [
+      'Режим задачи: анализ завершённого AI-звонка владельца.',
+      'Нужен строгий JSON без пояснений и художественных отступлений.',
+    ],
+    context: {
+      includeTime: false,
+      includeMemory: false,
+      includeSearch: false,
+      channelContext: 'Post-call analysis.',
+      taskContext: session.task,
+    },
+    options: {
       promptMode: 'passthrough',
       maxTokens: SUMMARY_MAX_TOKENS,
       temperature: 0.2,
     },
-  );
+  });
 
   const parsed = safeJsonParse<Record<string, unknown>>(extractJsonObject(aiResult.content) ?? '');
   return {

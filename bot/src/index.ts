@@ -30,6 +30,7 @@ import { ensureVoiceMessagesInfra } from './features/voice-messages-repo.js';
 import { ensureTelephonyInfra } from './features/telephony/repository/telephony-infra.js';
 import { startTelephonyJobWorker, stopTelephonyJobWorker } from './features/telephony/service/postcall-job-worker.js';
 import { ensureTelephonyRecordingsInfra } from './features/telephony/telephony-recordings-repo.js';
+import { syncSelfCoreSystemFacts } from './ai/self-core.js';
 
 // --------------------------------------------
 // Application Entry Point (v1.0.1)
@@ -319,6 +320,9 @@ const initBotAndServices = async (): Promise<void> => {
   );
   ensureTelephonyRecordingsInfra().catch(err =>
     appLogger.warn({ error: err }, 'Telephony recordings infra init failed')
+  );
+  syncSelfCoreSystemFacts().catch(err =>
+    appLogger.warn({ error: err }, 'Self-core sync failed')
   );
   startTelephonyJobWorker();
 

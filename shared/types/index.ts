@@ -211,6 +211,117 @@ export interface SettingsUpdate {
   temperature?: number;
 }
 
+export type SettingVisibility = 'visible' | 'internal' | 'derived' | 'deprecated';
+export type SettingValueType = 'string' | 'number' | 'boolean' | 'json' | 'secret';
+export type SettingDomain =
+  | 'chat'
+  | 'api_keys'
+  | 'multimodal'
+  | 'tts'
+  | 'telephony'
+  | 'persona'
+  | 'self_core'
+  | 'news'
+  | 'lmstudio'
+  | 'system';
+
+export interface SettingRegistryEntry {
+  key: string;
+  label: string;
+  domain: SettingDomain;
+  visibility: SettingVisibility;
+  valueType: SettingValueType;
+  description: string;
+  uiPages: string[];
+  runtimeConsumers: string[];
+  sourceOrder: string[];
+}
+
+// --------------------------------------------
+// Self-Core Types
+// --------------------------------------------
+
+export type SelfFactCategory =
+  | 'identity'
+  | 'relationship'
+  | 'capability'
+  | 'limitation'
+  | 'configuration'
+  | 'observation'
+  | 'lesson'
+  | 'question'
+  | 'preference';
+
+export type SelfFactSource =
+  | 'system'
+  | 'interaction'
+  | 'admin'
+  | 'manual'
+  | 'reflection';
+
+export interface SelfFact {
+  id: string;
+  category: SelfFactCategory;
+  content: string;
+  source: SelfFactSource;
+  created_at: string;
+  is_active: boolean;
+}
+
+export type EffectiveValueSource = 'db' | 'env' | 'default' | 'derived' | 'manual';
+
+export type EffectiveCapabilityKey =
+  | 'chat'
+  | 'vision'
+  | 'audio'
+  | 'web_search'
+  | 'image_generation'
+  | 'telephony'
+  | 'realtime_voice'
+  | 'memory'
+  | 'notes'
+  | 'reminders'
+  | 'digest'
+  | 'tts';
+
+export interface EffectiveCapability {
+  key: EffectiveCapabilityKey;
+  label: string;
+  enabled: boolean;
+  source: EffectiveValueSource;
+  reason: string;
+  provider?: string;
+  model?: string;
+  detail?: string;
+}
+
+export interface EffectiveConfigurationEntry {
+  key: string;
+  label: string;
+  value: string;
+  source: EffectiveValueSource;
+  reason: string;
+}
+
+export interface EffectivePersonaSummary {
+  name: string;
+  ownerTitle: string;
+  identity: string;
+  relationshipToOwner: string;
+}
+
+export interface SelfCorePromptPreview {
+  channel: 'telegram' | 'voice' | 'digest' | 'system';
+  prompt: string;
+}
+
+export interface SelfCoreEffectiveState {
+  generated_at: string;
+  persona: EffectivePersonaSummary;
+  capabilities: EffectiveCapability[];
+  configuration: EffectiveConfigurationEntry[];
+}
+
 // --------------------------------------------
 // Digest Types
 // --------------------------------------------

@@ -26,6 +26,7 @@ type TTSProvider = 'elevenlabs' | 'openai' | 'edge';
 type OpenAIVoice = 'nova' | 'alloy' | 'echo' | 'fable' | 'onyx' | 'shimmer';
 
 interface TTSConfig {
+  enabled: boolean;
   provider: TTSProvider;
   // ElevenLabs
   elevenlabsApiKey: string | null;
@@ -40,6 +41,7 @@ interface TTSConfig {
 }
 
 export interface TtsRuntimeProfile {
+  enabled: boolean;
   provider: TTSProvider;
   elevenlabsVoiceId: string;
   elevenlabsModelId: string;
@@ -86,6 +88,7 @@ async function getTTSConfig(): Promise<TTSConfig> {
   }
 
   const settings = await settingsRepo.getMany([
+    'tts_enabled',
     'tts_provider',
     'elevenlabs_api_key',
     'elevenlabs_voice_id',
@@ -97,6 +100,7 @@ async function getTTSConfig(): Promise<TTSConfig> {
   ]);
 
   const config: TTSConfig = {
+    enabled: settings.tts_enabled !== 'false',
     provider: (settings.tts_provider as TTSProvider) || 'edge',
     // ElevenLabs
     elevenlabsApiKey: settings.elevenlabs_api_key || null,
@@ -132,6 +136,7 @@ export function invalidateTTSConfig(): void {
 export async function getTtsRuntimeProfile(): Promise<TtsRuntimeProfile> {
   const config = await getTTSConfig();
   return {
+    enabled: config.enabled,
     provider: config.provider,
     elevenlabsVoiceId: config.elevenlabsVoiceId,
     elevenlabsModelId: config.elevenlabsModelId,
@@ -160,6 +165,10 @@ export async function textToSpeech(
   }
 
   const config = await getTTSConfig();
+  if (!config.enabled) {
+    appLogger.info({ textLen: cleanText.length }, 'TTS: disabled by tts_enabled setting');
+    return null;
+  }
 
   // === ElevenLabs (премиум) ===
   if (config.provider === 'elevenlabs' && config.elevenlabsApiKey) {

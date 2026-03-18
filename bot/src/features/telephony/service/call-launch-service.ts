@@ -1,4 +1,4 @@
-import { aiService } from '../../../ai/openrouter.js';
+import { planWithAminaCore } from '../../../ai/amina-core-runtime.js';
 import { analyticsRepo } from '../../../db/index.js';
 import type {
   TelephonyAiCallPlan,
@@ -49,16 +49,26 @@ async function buildPlanForScenario(
   task: string,
   phone: string,
 ): Promise<TelephonyAiCallPlan> {
-  const aiResult = await aiService.chat(
-    await buildPlanPrompt(scenario, task, phone),
-    'voice',
-    undefined,
-    {
+  const { response: aiResult } = await planWithAminaCore({
+    channel: 'voice',
+    messages: await buildPlanPrompt(scenario, task, phone),
+    extraRules: [
+      'Режим задачи: планирование исходящего звонка владельца.',
+      'Нужен строгий JSON без лишнего текста.',
+    ],
+    context: {
+      includeTime: false,
+      includeMemory: false,
+      includeSearch: false,
+      taskContext: task,
+      channelContext: `Телефон ${phone}, сценарий ${scenario.name}.`,
+    },
+    options: {
       promptMode: 'passthrough',
       maxTokens: PLAN_MAX_TOKENS,
       temperature: PLAN_TEMPERATURE,
     },
-  );
+  });
 
   const rawPlan = safeJsonParse<Record<string, unknown>>(extractJsonObject(aiResult.content) ?? '');
   return normalizePlan(scenario, rawPlan, task);
