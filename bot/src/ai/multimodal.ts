@@ -36,10 +36,10 @@ export interface AudioTranscriptionResult {
 
 // Статический fallback vision моделей (если API недоступен)
 const STATIC_FREE_VISION_MODELS = [
-  { id: 'qwen/qwen-2.5-vl-72b-instruct:free', name: 'Qwen 2.5 VL 72B', description: 'Qwen vision модель (бесплатная)' },
-  { id: 'google/gemini-2.0-flash-exp:free', name: 'Gemini 2.0 Flash', description: 'Google Gemini vision (бесплатная)' },
-  { id: 'meta-llama/llama-4-maverick:free', name: 'Llama 4 Maverick', description: 'Meta Llama 4 vision (бесплатная)' },
-  { id: 'allenai/molmo-2-8b:free', name: 'Molmo2 8B', description: 'AllenAI vision модель' },
+  { id: 'google/gemma-3-27b-it:free', name: 'Gemma 3 27B', description: 'Google Gemma 3 vision (бесплатная)' },
+  { id: 'google/gemma-3-12b-it:free', name: 'Gemma 3 12B', description: 'Google Gemma 3 12B vision (бесплатная)' },
+  { id: 'mistralai/mistral-small-3.1-24b-instruct:free', name: 'Mistral Small 3.1', description: 'Mistral vision модель (бесплатная)' },
+  { id: 'nvidia/nemotron-nano-12b-v2-vl:free', name: 'Nemotron Nano VL', description: 'NVIDIA Nemotron vision (бесплатная)' },
 ];
 
 // Кэш динамических бесплатных vision моделей
@@ -208,7 +208,7 @@ export interface SpeechRecognitionRuntimeProfile {
 }
 
 // Дефолтные модели
-const DEFAULT_VISION_MODEL = 'qwen/qwen-2.5-vl-72b-instruct:free';
+const DEFAULT_VISION_MODEL = 'google/gemma-3-27b-it:free';
 const DEFAULT_AUDIO_MODEL = 'groq/whisper-large-v3';
 const DEFAULT_VISION_PROMPT = 'Внимательно рассмотри изображение. Если на нём есть текст — прочитай его полностью и точно. Затем опиши что изображено: объекты, сцена, детали. Ответ структурируй: сначала текст (если есть), потом описание.';
 const DEFAULT_VISION_MAX_TOKENS = 1024;
