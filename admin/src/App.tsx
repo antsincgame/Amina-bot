@@ -7,7 +7,6 @@ import DashboardPage from './pages/DashboardPage';
 import SettingsPage from './pages/SettingsPage';
 import MultimodalSettingsPage from './pages/MultimodalSettingsPage';
 import ApiKeysPage from './pages/ApiKeysPage';
-import PromptsPage from './pages/PromptsPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import LogsPage from './pages/LogsPage';
 import UsersPage from './pages/UsersPage';
@@ -16,7 +15,6 @@ import VoiceMessagesPage from './pages/VoiceMessagesPage';
 import TelephonyPage from './pages/TelephonyPage';
 import { LMStudioPage } from './pages/LMStudioPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import PersonaPage from './pages/PersonaPage';
 import SelfCorePage from './pages/SelfCorePage';
 import ReconciliationPage from './pages/ReconciliationPage';
 
@@ -66,13 +64,11 @@ const App = () => {
           <Route path="dashboard" element={<DashboardPage />} />
           <Route path="users" element={<UsersPage />} />
           <Route path="settings" element={<SettingsPage />} />
-          <Route path="persona" element={<PersonaPage />} />
           <Route path="self-core" element={<SelfCorePage />} />
           <Route path="reconciliation" element={<ReconciliationPage />} />
           <Route path="lmstudio" element={<LMStudioPage />} />
           <Route path="multimodal" element={<MultimodalSettingsPage />} />
           <Route path="api-keys" element={<ApiKeysPage />} />
-          <Route path="prompts" element={<PromptsPage />} />
           <Route path="news-sources" element={<NewsSourcesPage />} />
           <Route path="voice-messages" element={<VoiceMessagesPage />} />
           <Route path="telephony" element={<TelephonyPage />} />

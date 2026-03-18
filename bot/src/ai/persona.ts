@@ -1,41 +1,9 @@
 import { settingsRepo } from '../db/index.js';
 import { SingleCache } from '../utils/cache.js';
+import type { PersonaCoreState, SelfDisclosureProfile } from '../../../shared/types/index.js';
 
 export type PersonaChannel = 'telegram' | 'voice' | 'digest' | 'system';
-
-interface PersonaChannelVariants {
-  telegram: string;
-  voice: string;
-  digest: string;
-  system: string;
-}
-
-export interface SelfDisclosureProfile {
-  /** Ценности и принципы, которыми Амина руководствуется */
-  whatSheLivesBy: string;
-  /** Темы, предметы, ситуации, которые её по-настоящему интересуют */
-  whatSheLoves: string;
-  /** Как она воспринимает пользователя — тепло, дистанция, любопытство */
-  howSheRelatesToOwner: string;
-  /** Как реагирует на флирт и романтические намёки */
-  howSheHandlesFlirting: string;
-  /** Краткий ответ "кто ты" — 1-2 предложения, живо и не шаблонно */
-  introShort: string;
-  /** Более тёплый, развёрнутый ответ — 3-5 предложений для близкого разговора */
-  introWarm: string;
-}
-
-export interface PersonaProfile {
-  name: string;
-  identity: string;
-  relationshipToOwner: string;
-  ownerTitle: string;
-  styleIntensity: number;
-  ritualLexicon: string[];
-  forbiddenPhrases: string[];
-  channelVariants: PersonaChannelVariants;
-  selfDescription: SelfDisclosureProfile;
-}
+export type PersonaProfile = PersonaCoreState;
 
 type PromptDensity = 'compact' | 'standard' | 'full';
 
@@ -386,40 +354,3 @@ export async function buildPersonaSystemPrompt(options: {
     .join('\n\n');
 }
 
-/**
- * Строит prompt для ответа Амины на вопросы о самой себе.
- * Используется вместо `buildPersonaSystemPrompt` в сценариях self-disclosure:
- * «кто ты», «чем живёшь», «что любишь», «ты замужем» и т.п.
- *
- * Формат: живой, тёплый, без театральности. Не список функций — характер.
- */
-export async function buildPersonaSelfIntro(options: {
-  mode?: 'short' | 'warm';
-  extraContext?: string;
-}): Promise<string> {
-  const profile = await getPersonaProfile();
-  const sd = profile.selfDescription;
-  const mode = options.mode ?? 'warm';
-
-  const base = mode === 'short' ? sd.introShort : sd.introWarm;
-
-  return [
-    `Ты — ${profile.name}. ${profile.identity}`,
-    ``,
-    `При ответе на личные вопросы о себе используй следующий канон:`,
-    `- Вступление: "${base}"`,
-    `- Чем живёшь: ${sd.whatSheLivesBy}`,
-    `- Что любишь: ${sd.whatSheLoves}`,
-    `- Как относишься к владельцу/пользователю: ${sd.howSheRelatesToOwner}`,
-    `- Как реагируешь на флирт: ${sd.howSheHandlesFlirting}`,
-    ``,
-    `Правила self-disclosure:`,
-    `- Не уходи в список функций и возможностей — говори о характере.`,
-    `- Не начинай с "Я — языковая модель" или подобных технических дисклеймеров.`,
-    `- Допускай юмор и лёгкую самоиронию, особенно при вопросах про флирт/женатость.`,
-    `- Ответ живой, в 3-6 предложений, не театральный.`,
-    options.extraContext ? `- Дополнительный контекст: ${options.extraContext}` : '',
-  ]
-    .filter(Boolean)
-    .join('\n');
-}

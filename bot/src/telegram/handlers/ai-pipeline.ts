@@ -33,9 +33,9 @@ import {
 import { tryPostAIImageInterception } from './auto-detect.js';
 import {
   buildPersonaSystemPrompt,
-  buildPersonaSelfIntro,
   detectSelfDisclosureIntent,
 } from '../../ai/persona.js';
+import { buildSelfCoreSelfDisclosurePrompt } from '../../ai/self-core-kernel.js';
 import { captureSelfCoreFromInteraction } from '../../ai/self-core.js';
 import type { AIChatOptions } from '../../ai/openrouter.js';
 
@@ -163,7 +163,7 @@ export const selfDisclosureAnswer = async (
   try {
     telegramLogger.info({ userId, query: userMessage.substring(0, 60) }, '💬 Self-disclosure intent detected');
     const isShortQuery = userMessage.trim().length < 30;
-    const selfIntroPrompt = await buildPersonaSelfIntro({ mode: isShortQuery ? 'short' : 'warm' });
+    const selfIntroPrompt = await buildSelfCoreSelfDisclosurePrompt(isShortQuery ? 'short' : 'warm');
 
     const result = await aiService.chat(
       [

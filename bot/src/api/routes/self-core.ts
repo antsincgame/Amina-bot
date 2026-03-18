@@ -1,7 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { buildAminaPromptPreviews } from '../../ai/amina-core-runtime.js';
-import { getEffectiveSelfCoreState } from '../../ai/effective-capabilities.js';
+import { buildSelfCorePromptPreviews, getSelfCoreKernel } from '../../ai/self-core-kernel.js';
 import {
   isManualSelfCoreCategory,
   selfCoreRepo,
@@ -54,11 +53,11 @@ const promptPreviewQuerySchema = z.object({
 export async function registerSelfCoreRoutes(server: FastifyInstance): Promise<void> {
   server.get('/self-core/effective', async (_request: FastifyRequest, reply: FastifyReply) => {
     try {
-      const effective = await getEffectiveSelfCoreState();
-      return reply.code(200).send({ success: true, data: effective });
+      const kernel = await getSelfCoreKernel();
+      return reply.code(200).send({ success: true, data: kernel });
     } catch (error) {
-      aiLogger.error({ error }, 'Failed to fetch self-core effective state');
-      return reply.code(500).send({ success: false, error: 'Failed to fetch effective self-core state' });
+      aiLogger.error({ error }, 'Failed to fetch self-core kernel');
+      return reply.code(500).send({ success: false, error: 'Failed to fetch self-core kernel' });
     }
   });
 
@@ -168,7 +167,7 @@ export async function registerSelfCoreRoutes(server: FastifyInstance): Promise<v
     ) => {
       try {
         const query = promptPreviewQuerySchema.parse(request.query);
-        const previews = await buildAminaPromptPreviews();
+        const previews = await buildSelfCorePromptPreviews();
         const filtered = query.channel
           ? previews.filter((preview) => preview.channel === query.channel)
           : previews;
@@ -186,8 +185,8 @@ export async function registerSelfCoreRoutes(server: FastifyInstance): Promise<v
   server.post('/self-core/sync', async (_request: FastifyRequest, reply: FastifyReply) => {
     try {
       await syncSelfCoreSystemFacts();
-      const effective = await getEffectiveSelfCoreState();
-      return reply.code(200).send({ success: true, data: effective });
+      const kernel = await getSelfCoreKernel();
+      return reply.code(200).send({ success: true, data: kernel });
     } catch (error) {
       aiLogger.error({ error }, 'Failed to sync self-core facts');
       return reply.code(500).send({ success: false, error: 'Failed to sync self-core facts' });

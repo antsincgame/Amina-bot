@@ -359,15 +359,17 @@ export const promptsRepo = {
 
   async setActive(id: string): Promise<void> {
     try {
-      // Find current active
+      const targetPrompt = await getAppwrite().getDocument(DB_ID(), COLL.prompts, id);
+      const targetChannel = String(targetPrompt.channel ?? 'all') as Prompt['channel'];
+
       const currentResult = await getAppwrite().listDocuments(DB_ID(), COLL.prompts, [
         Query.equal('is_active', true),
+        Query.equal('channel', targetChannel),
         Query.limit(100),
       ]);
 
       const previousActiveId = currentResult.documents[0]?.$id;
 
-      // Deactivate all active prompts
       for (const doc of currentResult.documents) {
         await getAppwrite().updateDocument(DB_ID(), COLL.prompts, doc.$id, {
           is_active: false,

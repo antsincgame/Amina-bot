@@ -25,7 +25,7 @@ export type {
   ReconciliationSummary,
   SettingRegistryEntry,
   SelfFact,
-  SelfCoreEffectiveState,
+  SelfCoreKernel,
   SelfCorePromptPreview,
   TelephonyReconciliationDetail,
   TelephonyReconciliationItem,
@@ -43,7 +43,7 @@ import type {
   ReconciliationSummary,
   SettingRegistryEntry,
   SelfFact,
-  SelfCoreEffectiveState,
+  SelfCoreKernel,
   SelfCorePromptPreview,
   TelephonyReconciliationDetail,
   TelephonyReconciliationItem,
@@ -405,8 +405,8 @@ export const voiceMessagesApi = {
 };
 
 export const selfCoreApi = {
-  async getEffective(): Promise<SelfCoreEffectiveState> {
-    const result = await fetchBotApiJson<{ data: SelfCoreEffectiveState }>(
+  async getEffective(): Promise<SelfCoreKernel> {
+    const result = await fetchBotApiJson<{ data: SelfCoreKernel }>(
       '/api/self-core/effective',
       {},
       'Failed to fetch effective self-core state',
@@ -466,8 +466,8 @@ export const selfCoreApi = {
     );
   },
 
-  async sync(): Promise<SelfCoreEffectiveState> {
-    const result = await fetchBotApiJson<{ data: SelfCoreEffectiveState }>(
+  async sync(): Promise<SelfCoreKernel> {
+    const result = await fetchBotApiJson<{ data: SelfCoreKernel }>(
       '/api/self-core/sync',
       { method: 'POST' },
       'Failed to sync self-core',

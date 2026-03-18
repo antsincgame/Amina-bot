@@ -22,6 +22,7 @@ import {
   clearEffectiveSelfCoreStateCache,
   getEffectiveSelfCoreState,
 } from './effective-capabilities.js';
+import { clearSelfCoreKernelCache } from './self-core-kernel.js';
 import { detectSelfDisclosureIntent } from './persona.js';
 
 type AppwriteDoc = Models.Document & Record<string, unknown>;
@@ -795,6 +796,7 @@ export async function buildSelfCoreContext(): Promise<string> {
 
 export function clearSelfCoreCache(): void {
   clearEffectiveSelfCoreStateCache();
+  clearSelfCoreKernelCache();
   capabilitiesCache.clear();
   selfCoreContextCache.clear();
 }

@@ -16,6 +16,9 @@ import {
 } from 'lucide-react';
 import type { SelfCorePromptPreview, SelfFact, SettingRegistryEntry } from '../../../shared/types/index.js';
 import { selfCoreApi, settingsApi } from '../api/appwrite';
+import { AppwriteAuditPanel } from '../components/self-core/AppwriteAuditPanel';
+import { PersonaEditorSection } from '../components/self-core/PersonaEditorSection';
+import { PromptLayersSection } from '../components/self-core/PromptLayersSection';
 
 const FACT_CATEGORIES: Array<{ id: SelfFact['category']; label: string }> = [
   { id: 'identity', label: 'Identity' },
@@ -79,6 +82,7 @@ function formatFactDate(value: string): string {
 
 export default function SelfCorePage(): JSX.Element {
   const queryClient = useQueryClient();
+  const personaFormId = 'self-core-persona-form';
   const [factCategory, setFactCategory] = useState<SelfFact['category']>('observation');
   const [factContent, setFactContent] = useState('');
   const [filterCategory, setFilterCategory] = useState<SelfFact['category'] | 'all'>('all');
@@ -86,8 +90,14 @@ export default function SelfCorePage(): JSX.Element {
   const [showInactive, setShowInactive] = useState(false);
   const [selectedPreviewChannel, setSelectedPreviewChannel] = useState<SelfCorePromptPreview['channel']>('telegram');
   const [statusMessage, setStatusMessage] = useState('');
+  const [personaEditorState, setPersonaEditorState] = useState({ isDirty: false, isSaving: false });
 
-  const { data: effective, isLoading: isLoadingEffective } = useQuery({
+  const showStatus = (message: string): void => {
+    setStatusMessage(message);
+    setTimeout(() => setStatusMessage(''), 3000);
+  };
+
+  const { data: kernel, isLoading: isLoadingKernel } = useQuery({
     queryKey: ['self-core', 'effective'],
     queryFn: selfCoreApi.getEffective,
   });
@@ -116,8 +126,7 @@ export default function SelfCorePage(): JSX.Element {
     mutationFn: selfCoreApi.sync,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['self-core'] });
-      setStatusMessage('Self-core синхронизирован');
-      setTimeout(() => setStatusMessage(''), 3000);
+      showStatus('Self-core синхронизирован');
     },
   });
 
@@ -130,8 +139,7 @@ export default function SelfCorePage(): JSX.Element {
     onSuccess: () => {
       setFactContent('');
       queryClient.invalidateQueries({ queryKey: ['self-core'] });
-      setStatusMessage('Факт добавлен в ядро');
-      setTimeout(() => setStatusMessage(''), 3000);
+      showStatus('Факт добавлен в ядро');
     },
     onError: (error) => {
       setStatusMessage(error instanceof Error ? error.message : 'Не удалось добавить факт');
@@ -162,7 +170,7 @@ export default function SelfCorePage(): JSX.Element {
     return [...grouped.entries()].sort((left, right) => left[0].localeCompare(right[0], 'ru'));
   }, [settingsRegistry]);
 
-  if (isLoadingEffective && isLoadingFacts) {
+  if (isLoadingKernel && isLoadingFacts) {
     return (
       <div className="p-6 lg:p-8 max-w-7xl mx-auto">
         <div className="card flex items-center gap-3">
@@ -181,9 +189,9 @@ export default function SelfCorePage(): JSX.Element {
           <p className="text-gray-600 mt-1">
             Effective capabilities, prompt preview и ручное управление ядром самосознания Амины.
           </p>
-          {effective?.generated_at && (
+          {kernel?.generated_at && (
             <p className="text-xs text-gray-500 mt-2">
-              Последняя генерация: {formatFactDate(effective.generated_at)}
+              Последняя генерация: {formatFactDate(kernel.generated_at)}
             </p>
           )}
         </div>
@@ -191,6 +199,34 @@ export default function SelfCorePage(): JSX.Element {
           {statusMessage && (
             <span className="text-sm text-emerald-600">{statusMessage}</span>
           )}
+          <span
+            className={`rounded-full border px-3 py-1 text-xs font-medium ${
+              personaEditorState.isSaving
+                ? 'border-blue-500/20 bg-blue-500/10 text-blue-300'
+                : personaEditorState.isDirty
+                  ? 'border-amber-500/20 bg-amber-500/10 text-amber-300'
+                  : 'border-emerald-500/20 bg-emerald-500/10 text-emerald-300'
+            }`}
+          >
+            {personaEditorState.isSaving
+              ? 'Сохранение persona...'
+              : personaEditorState.isDirty
+                ? 'Есть несохранённые изменения'
+                : 'Persona сохранена'}
+          </span>
+          <button
+            type="submit"
+            form={personaFormId}
+            className="btn-primary"
+            disabled={!kernel || personaEditorState.isSaving || !personaEditorState.isDirty}
+          >
+            {personaEditorState.isSaving ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Save className="w-4 h-4 mr-2" />
+            )}
+            Сохранить persona
+          </button>
           <button
             type="button"
             className="btn-secondary"
@@ -207,7 +243,20 @@ export default function SelfCorePage(): JSX.Element {
         </div>
       </div>
 
-      {effective && (
+      <AppwriteAuditPanel />
+
+      {kernel && (
+        <PersonaEditorSection
+          formId={personaFormId}
+          kernel={kernel}
+          onStatus={showStatus}
+          onStateChange={setPersonaEditorState}
+        />
+      )}
+
+      <PromptLayersSection onStatus={showStatus} />
+
+      {kernel && (
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
           <div className="card xl:col-span-1 space-y-4">
             <div className="flex items-center gap-3">
@@ -222,23 +271,23 @@ export default function SelfCorePage(): JSX.Element {
             <div className="space-y-3 text-sm">
               <div>
                 <p className="text-gray-500">Имя</p>
-                <p className="font-medium">{effective.persona.name}</p>
+                <p className="font-medium">{kernel.personaCore.name}</p>
               </div>
               <div>
                 <p className="text-gray-500">Титул владельца</p>
-                <p className="font-medium">{effective.persona.ownerTitle}</p>
+                <p className="font-medium">{kernel.personaCore.ownerTitle}</p>
               </div>
               <div>
                 <p className="text-gray-500">Identity</p>
-                <p>{effective.persona.identity}</p>
+                <p>{kernel.personaCore.identity}</p>
               </div>
               <div>
                 <p className="text-gray-500">Relationship</p>
-                <p>{effective.persona.relationshipToOwner}</p>
+                <p>{kernel.personaCore.relationshipToOwner}</p>
               </div>
             </div>
             <div className="rounded-2xl border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-100">
-              Каноническая личность теперь редактируется только в `Persona Core`. Self Core показывает её как derived identity kernel и не конкурирует с ней ручными фактами.
+              Persona canon, runtime truth и active prompts теперь сходятся здесь в одном read-model. Личность и операторские prompt layers редактируются прямо в Self Core, но остаются разными каноничными слоями в Appwrite.
             </div>
           </div>
 
@@ -254,7 +303,7 @@ export default function SelfCorePage(): JSX.Element {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {effective.capabilities.map((capability) => (
+              {kernel.effective.capabilities.map((capability) => (
                 <div key={capability.key} className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 space-y-3">
                   <div className="flex items-start justify-between gap-3">
                     <div>
@@ -283,7 +332,7 @@ export default function SelfCorePage(): JSX.Element {
         </div>
       )}
 
-      {effective && (
+      {kernel && (
         <div className="card">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-blue-500/10 border border-blue-500/20 text-blue-300">
@@ -296,7 +345,7 @@ export default function SelfCorePage(): JSX.Element {
           </div>
 
           <div className="space-y-3">
-            {effective.configuration.map((entry) => (
+            {kernel.effective.configuration.map((entry) => (
               <div key={entry.key} className="flex items-start justify-between gap-4 rounded-2xl border border-white/10 bg-white/[0.02] p-4">
                 <div>
                   <p className="font-medium">{entry.label}</p>
@@ -306,6 +355,97 @@ export default function SelfCorePage(): JSX.Element {
                 <SourceBadge source={entry.source} />
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {kernel && (
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+          <div className="card">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-cyan-500/10 border border-cyan-500/20 text-cyan-300">
+                <Bot className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold">Runtime Truth</h2>
+                <p className="text-sm text-gray-500">Что реально выбрано и чем живёт runtime сейчас</p>
+              </div>
+            </div>
+            <div className="space-y-3 text-sm">
+              <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+                <p className="text-gray-500">Chat runtime</p>
+                <p className="font-medium">{kernel.runtimeTruth.chat.resolvedProvider} · {kernel.runtimeTruth.chat.resolvedModel}</p>
+                <p className="text-xs text-gray-500 mt-1">{kernel.runtimeTruth.chat.reason}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+                <p className="text-gray-500">TTS runtime</p>
+                <p className="font-medium">{kernel.runtimeTruth.tts.resolvedProvider} · {kernel.runtimeTruth.tts.model}</p>
+                <p className="text-xs text-gray-500 mt-1">{kernel.runtimeTruth.tts.fallbackReason || 'Скрытого fallback сейчас нет.'}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+                <p className="text-gray-500">Persona runtime</p>
+                <p className="font-medium">{kernel.runtimeTruth.persona.name} · {kernel.runtimeTruth.persona.ownerTitle}</p>
+                <p className="text-xs text-gray-500 mt-1">{kernel.runtimeTruth.persona.telegramStyle}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-fuchsia-500/10 border border-fuchsia-500/20 text-fuchsia-300">
+                <Layers3 className="w-5 h-5" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold">Active Prompt Layers</h2>
+                <p className="text-sm text-gray-500">Операторские инструкции, которые реально накладываются поверх persona</p>
+              </div>
+            </div>
+            <div className="space-y-3">
+              {kernel.activePromptLayers.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-white/10 p-4 text-sm text-gray-400">
+                  Активных prompt layers сейчас нет.
+                </div>
+              ) : (
+                kernel.activePromptLayers.map((layer) => (
+                  <div key={layer.id} className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="font-medium">{layer.name}</p>
+                        <p className="text-xs text-gray-500 mt-1">{layer.channel}</p>
+                      </div>
+                      <SourceBadge source={layer.channel === 'all' ? 'manual' : 'derived'} />
+                    </div>
+                    <p className="text-sm text-gray-300 mt-3 whitespace-pre-wrap">{layer.content}</p>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {kernel && (
+        <div className="card">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-emerald-500/10 border border-emerald-500/20 text-emerald-300">
+              <Activity className="w-5 h-5" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold">Kernel Fact Snapshot</h2>
+              <p className="text-sm text-gray-500">Срез facts, уже втянутых в unified kernel</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+              <p className="text-gray-500">System facts</p>
+              <p className="text-2xl font-semibold mt-1">{kernel.facts.system.length}</p>
+              <p className="text-xs text-gray-500 mt-2">Derived from persona, runtime truth and effective capabilities.</p>
+            </div>
+            <div className="rounded-2xl border border-white/10 bg-white/[0.02] p-4">
+              <p className="text-gray-500">Learned facts</p>
+              <p className="text-2xl font-semibold mt-1">{kernel.facts.learned.length}</p>
+              <p className="text-xs text-gray-500 mt-2">Interaction, manual и reflection-слой без смешивания с authored canon.</p>
+            </div>
           </div>
         </div>
       )}
@@ -426,7 +566,7 @@ export default function SelfCorePage(): JSX.Element {
           </div>
 
           <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4 text-sm text-blue-100">
-            Identity, relationship и configuration теперь собираются из `Persona Core` и effective runtime. Для изменения личности используй страницу `Persona Core`, а здесь добавляй только interaction-like факты.
+            Identity, relationship и configuration теперь собираются из authored persona и effective runtime. Здесь добавляй только interaction-like facts, не канонические persona-настройки.
           </div>
 
           <div>

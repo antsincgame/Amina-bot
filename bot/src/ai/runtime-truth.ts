@@ -3,46 +3,13 @@ import { settingsRepo } from '../db/index.js';
 import { getTtsRuntimeProfile } from '../features/tts.js';
 import { getLMStudioConfig } from './lmstudio.js';
 import { getPersonaProfile } from './persona.js';
+import type { ChatRuntimeState, PersonaRuntimeState, TtsRuntimeState } from '../../../shared/types/index.js';
 
 const DEFAULT_CHAT_PROVIDER = 'auto';
 const DEFAULT_CHAT_MODEL = 'openrouter/free';
 
 function trimValue(value?: string | null): string {
   return value?.trim() ?? '';
-}
-
-export interface ChatRuntimeState {
-  savedProvider: string;
-  resolvedProvider: string;
-  providerSource: 'db' | 'default' | 'derived';
-  savedModel: string;
-  resolvedModel: string;
-  modelSource: 'db' | 'env' | 'default' | 'custom_override' | 'derived';
-  customModelOverride: string;
-  isLmStudioReady: boolean;
-  reason: string;
-}
-
-export interface TtsRuntimeState {
-  enabled: boolean;
-  enabledSource: 'db' | 'default';
-  savedProvider: 'elevenlabs' | 'openai' | 'edge';
-  resolvedProvider: 'elevenlabs' | 'openai' | 'edge';
-  providerSource: 'db' | 'default' | 'derived';
-  fallbackReason: string | null;
-  voice: string;
-  model: string;
-}
-
-export interface PersonaRuntimeState {
-  name: string;
-  ownerTitle: string;
-  identity: string;
-  relationshipToOwner: string;
-  telegramStyle: string;
-  voiceStyle: string;
-  digestStyle: string;
-  systemStyle: string;
 }
 
 export async function getChatRuntimeState(): Promise<ChatRuntimeState> {

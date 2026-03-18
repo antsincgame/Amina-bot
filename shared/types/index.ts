@@ -310,6 +310,64 @@ export interface EffectivePersonaSummary {
   relationshipToOwner: string;
 }
 
+export interface PersonaChannelVariants {
+  telegram: string;
+  voice: string;
+  digest: string;
+  system: string;
+}
+
+export interface SelfDisclosureProfile {
+  whatSheLivesBy: string;
+  whatSheLoves: string;
+  howSheRelatesToOwner: string;
+  howSheHandlesFlirting: string;
+  introShort: string;
+  introWarm: string;
+}
+
+export interface PersonaCoreState extends EffectivePersonaSummary {
+  styleIntensity: number;
+  ritualLexicon: string[];
+  forbiddenPhrases: string[];
+  channelVariants: PersonaChannelVariants;
+  selfDescription: SelfDisclosureProfile;
+}
+
+export interface ChatRuntimeState {
+  savedProvider: string;
+  resolvedProvider: string;
+  providerSource: 'db' | 'default' | 'derived';
+  savedModel: string;
+  resolvedModel: string;
+  modelSource: 'db' | 'env' | 'default' | 'custom_override' | 'derived';
+  customModelOverride: string;
+  isLmStudioReady: boolean;
+  reason: string;
+}
+
+export interface TtsRuntimeState {
+  enabled: boolean;
+  enabledSource: 'db' | 'default';
+  savedProvider: 'elevenlabs' | 'openai' | 'edge';
+  resolvedProvider: 'elevenlabs' | 'openai' | 'edge';
+  providerSource: 'db' | 'default' | 'derived';
+  fallbackReason: string | null;
+  voice: string;
+  model: string;
+}
+
+export interface PersonaRuntimeState {
+  name: string;
+  ownerTitle: string;
+  identity: string;
+  relationshipToOwner: string;
+  telegramStyle: string;
+  voiceStyle: string;
+  digestStyle: string;
+  systemStyle: string;
+}
+
 export interface SelfCorePromptPreview {
   channel: 'telegram' | 'voice' | 'digest' | 'system';
   prompt: string;
@@ -320,6 +378,32 @@ export interface SelfCoreEffectiveState {
   persona: EffectivePersonaSummary;
   capabilities: EffectiveCapability[];
   configuration: EffectiveConfigurationEntry[];
+}
+
+export interface SelfCorePromptLayer {
+  id: string;
+  name: string;
+  channel: 'telegram' | 'voice' | 'all';
+  is_active: boolean;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SelfCoreKernel {
+  generated_at: string;
+  personaCore: PersonaCoreState;
+  runtimeTruth: {
+    chat: ChatRuntimeState;
+    tts: TtsRuntimeState;
+    persona: PersonaRuntimeState;
+  };
+  effective: SelfCoreEffectiveState;
+  activePromptLayers: SelfCorePromptLayer[];
+  facts: {
+    system: SelfFact[];
+    learned: SelfFact[];
+  };
 }
 
 // --------------------------------------------

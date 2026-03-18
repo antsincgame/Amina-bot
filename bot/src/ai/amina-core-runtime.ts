@@ -20,6 +20,11 @@ import {
   buildSelfCoreContext,
   captureSelfCoreFromInteraction,
 } from './self-core.js';
+import {
+  buildSelfCorePromptPreviews,
+  composeEffectivePrompt,
+  getActivePromptContent,
+} from './self-core-kernel.js';
 
 export type AminaRuntimeChannel = PersonaChannel;
 
@@ -183,19 +188,21 @@ export async function buildAminaPassthroughSystemPrompt(input: {
   systemInstruction?: string;
   modelId?: string;
 }): Promise<string> {
-  const personaPrompt = await buildPersonaSystemPrompt({
-    channel: input.channel,
-    modelId: input.modelId,
-    extraRules: input.extraRules,
-  });
+  const [personaPrompt, activePromptContent] = await Promise.all([
+    buildPersonaSystemPrompt({
+      channel: input.channel,
+      modelId: input.modelId,
+      extraRules: input.extraRules,
+    }),
+    getActivePromptContent(input.channel),
+  ]);
 
-  return [
-    input.context?.combinedContext ?? '',
+  return composeEffectivePrompt({
+    contextBlock: input.context?.combinedContext ?? '',
     personaPrompt,
-    input.systemInstruction ?? '',
-  ]
-    .filter(Boolean)
-    .join('\n\n');
+    activePromptContent,
+    systemInstruction: input.systemInstruction ?? '',
+  });
 }
 
 async function applyPolicyLayer(
@@ -368,27 +375,5 @@ export async function planWithAminaCore(input: {
 }
 
 export async function buildAminaPromptPreviews(): Promise<SelfCorePromptPreview[]> {
-  const channels: AminaRuntimeChannel[] = ['telegram', 'voice', 'digest', 'system'];
-  const previews = await Promise.all(channels.map(async (channel) => {
-    const context = await buildAminaRuntimeContext({
-      channel,
-      includeTime: true,
-      includeMemory: false,
-      includeSearch: false,
-      firstName: 'Дмитрий',
-      taskContext: channel === 'voice'
-        ? 'Пример: исходящий звонок владельца по внешнему SIP каналу.'
-        : channel === 'digest'
-          ? 'Пример: narrative-часть утреннего дайджеста.'
-          : 'Пример: основной пользовательский диалог.',
-    });
-    const prompt = await buildAminaPassthroughSystemPrompt({
-      channel,
-      context,
-      systemInstruction: 'Это preview effective prompt. Не выполняй задачу, только показывай активный контекст.',
-    });
-    return { channel, prompt };
-  }));
-
-  return previews;
+  return buildSelfCorePromptPreviews();
 }

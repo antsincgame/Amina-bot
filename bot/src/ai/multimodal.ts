@@ -712,6 +712,43 @@ function detectOcrIntent(caption: string): boolean {
 
 const OCR_VISION_PROMPT = 'Прочитай весь текст на изображении дословно и точно, ничего не пропуская. Если текст на иностранном языке — сначала процитируй оригинал, затем переведи на русский. Если текста нет — опиши что изображено.';
 
+const OCR_RESPONSE_SYSTEM_PROMPT = [
+  'Ты обрабатываешь изображение в строгом OCR/analysis режиме.',
+  'Отвечай только по содержимому изображения и по прямому запросу пользователя.',
+  'Запрещено рассказывать о себе, своей роли, возможностях, памяти, настройках, личности или отношениях с пользователем.',
+  'Запрещено добавлять приветствия, флирт, самопрезентацию, рекламу команд и любые посторонние отступления.',
+  'Если на изображении есть текст, сначала приведи распознанный текст аккуратно и без выдумок.',
+  'Если пользователь просит проверить решение, разберись по шагам и прямо скажи, где верно, а где ошибка.',
+  'Если часть текста не читается, честно отметь неразборчивые места.',
+  'Ответ должен быть утилитарным, точным и сфокусированным только на изображении.',
+].join('\n');
+
+function buildImageTaskInstruction(userCaption: string | undefined, isOcrRequest: boolean): string {
+  if (isOcrRequest) {
+    if (userCaption?.trim()) {
+      return [
+        'Задача пользователя:',
+        userCaption.trim(),
+        '',
+        'Сначала извлеки текст с изображения. Затем выполни только этот запрос пользователя по извлечённому содержимому.',
+      ].join('\n');
+    }
+
+    return 'Сначала извлеки текст с изображения. Затем кратко поясни содержимое без посторонних отступлений.';
+  }
+
+  if (userCaption?.trim()) {
+    return [
+      'Задача пользователя:',
+      userCaption.trim(),
+      '',
+      'Ответь только по изображению и по запросу пользователя. Не уходи в посторонние темы.',
+    ].join('\n');
+  }
+
+  return 'Опиши только то, что действительно видно на изображении. Не добавляй посторонние темы.';
+}
+
 /**
  * Обработать изображение: анализ + отправка в основную LLM
  */
@@ -732,34 +769,51 @@ export async function processImageWithLLM(
   // 1. Анализируем изображение
   const analysis = await analyzeImage(imageBase64, mimeType, visionPrompt);
 
-  // 2. Формируем контекст для основной LLM
-  const descriptionBlock = `Результат анализа изображения:\n${analysis.description}`;
-  const userBlock = userCaption
-    ? `Вопрос или комментарий пользователя: ${userCaption}`
-    : 'Пользователь прислал изображение без текста — расскажи что на нём.';
-  const instruction = isOcrRequest
-    ? 'Передай пользователю распознанный текст и/или перевод. Пиши чисто, без лишних слов про «vision» или «анализ».'
-    : 'Дай ответ пользователю: опиши изображение или ответь на его вопрос. Пиши от себя, не упоминай «описание», «vision», «анализ».';
+  const imageTask = buildImageTaskInstruction(userCaption, isOcrRequest);
+  const imageContext = [
+    'Результат анализа изображения:',
+    analysis.description,
+    '',
+    imageTask,
+  ].join('\n');
 
-  const imageContext = `${descriptionBlock}\n\n${userBlock}\n\n${instruction}`;
+  // OCR и проверка решения должны идти без self-core drift и без диалоговой персонализации.
+  const useStrictImageMode = isOcrRequest;
 
-  // 3. Отправляем в основной Amina Core Runtime
-  const messages = [
-    ...(chatHistory || []),
-    { role: 'user' as const, content: imageContext },
-  ];
-
-  const { response } = await respondWithAminaCore({
-    channel: 'telegram',
-    userText: userCaption || 'Пользователь прислал изображение.',
-    messages,
-    includeMemory: false,
-    includeSearch: false,
-    options: {
-      fallbackStrategy: 'sequential',
-      fallbackModelLimit: 3,
-    },
-  });
+  const { response } = useStrictImageMode
+    ? await respondWithAminaCore({
+        channel: 'system',
+        userText: userCaption || 'Пользователь прислал изображение.',
+        messages: [{ role: 'user', content: imageContext }],
+        includeTime: false,
+        includeMemory: false,
+        includeSearch: false,
+        extraRules: [
+          'Режим OCR/изображения: не говори о себе и не выходи за пределы содержимого изображения.',
+          'Никакой самопрезентации, только текст, разбор или описание по делу.',
+        ],
+        systemInstruction: OCR_RESPONSE_SYSTEM_PROMPT,
+        options: {
+          promptMode: 'passthrough',
+          fallbackStrategy: 'sequential',
+          fallbackModelLimit: 3,
+          temperature: 0.2,
+        },
+      })
+    : await respondWithAminaCore({
+        channel: 'telegram',
+        userText: userCaption || 'Пользователь прислал изображение.',
+        messages: [
+          ...(chatHistory || []),
+          { role: 'user', content: imageContext },
+        ],
+        includeMemory: false,
+        includeSearch: false,
+        options: {
+          fallbackStrategy: 'sequential',
+          fallbackModelLimit: 3,
+        },
+      });
 
   return response;
 }

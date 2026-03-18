@@ -2,7 +2,7 @@ import OpenAI from 'openai';
 import { config, getApiKeys } from '../config/index.js';
 import { aiLogger } from '../config/logger.js';
 import { getProxyHeaders } from '../config/ai-proxy.js';
-import { settingsRepo, promptsRepo } from '../db/index.js';
+import { settingsRepo } from '../db/index.js';
 import type { AIResponse, AIMessage } from '../../../shared/types/index.js';
 import { AppError } from '../utils/error-handler.js';
 import { SingleCache } from '../utils/cache.js';
@@ -18,6 +18,7 @@ import {
 } from './lmstudio.js';
 import { HEALTH_AI_TIMEOUT_MS } from '../config/constants.js';
 import { buildPersonaSystemPrompt } from './persona.js';
+import { getActivePromptContent } from './self-core-kernel.js';
 import { getTelephonyRuntimeConfig } from '../features/telephony/service/telephony-runtime-config.js';
 
 // --------------------------------------------
@@ -208,23 +209,13 @@ export interface AIChatOptions {
   fallbackModelLimit?: number;
 }
 
-/** Кеш промпта (меняется редко — TTL 5 минут) */
-let cachedPrompt: { content: string; channel: string; ts: number } | null = null;
-const PROMPT_CACHE_TTL = 5 * 60 * 1000;
-
 const getAIConfig = async (
   channel: 'telegram' | 'voice',
   options?: { includePrompt?: boolean; modelOverride?: string },
 ): Promise<AIConfig> => {
   const includePrompt = options?.includePrompt ?? true;
-  const now = Date.now();
-  const promptCached =
-    includePrompt
-    && cachedPrompt
-    && cachedPrompt.channel === channel
-    && now - cachedPrompt.ts < PROMPT_CACHE_TTL;
 
-  const [settings, prompt] = await Promise.all([
+  const [settings, additionalPrompt] = await Promise.all([
     settingsRepo.getMany([
       'openrouter_model',
       'custom_model_override',
@@ -232,15 +223,8 @@ const getAIConfig = async (
       'temperature',
     ]),
     includePrompt
-      ? (promptCached
-      ? Promise.resolve({ content: cachedPrompt!.content } as { content: string })
-      : promptsRepo.getActive(channel).then(p => {
-          if (p) {
-            cachedPrompt = { content: p.content, channel, ts: now };
-          }
-          return p;
-        }))
-      : Promise.resolve(null),
+      ? getActivePromptContent(channel)
+      : Promise.resolve(''),
   ]);
 
   let model =
@@ -269,8 +253,6 @@ const getAIConfig = async (
   const promptContent = includePrompt
     ? await buildPersonaSystemPrompt({ channel, modelId: model })
     : '';
-  const additionalPrompt = prompt?.content?.trim();
-
   aiLogger.debug({
     model,
     source: modelSource,
@@ -283,7 +265,7 @@ const getAIConfig = async (
     systemPrompt: includePrompt
       ? [
           promptContent,
-          additionalPrompt
+          additionalPrompt.trim()
             ? `=== ДОПОЛНИТЕЛЬНАЯ КАНАЛЬНАЯ ИНСТРУКЦИЯ ===\n${additionalPrompt}`
             : '',
         ]

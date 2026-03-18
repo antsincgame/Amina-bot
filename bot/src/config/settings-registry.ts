@@ -379,7 +379,7 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     visibility: 'visible',
     valueType: 'string',
     description: 'Имя сущности Amina.',
-    uiPages: ['PersonaPage'],
+    uiPages: ['SelfCorePage'],
     runtimeConsumers: ['bot/src/ai/persona.ts', 'bot/src/ai/self-core.ts'],
   }),
   defineSetting({
@@ -389,7 +389,7 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     visibility: 'visible',
     valueType: 'string',
     description: 'Основная идентичность Amina.',
-    uiPages: ['PersonaPage'],
+    uiPages: ['SelfCorePage'],
     runtimeConsumers: ['bot/src/ai/persona.ts', 'bot/src/ai/self-core.ts'],
   }),
   defineSetting({
@@ -399,7 +399,7 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     visibility: 'visible',
     valueType: 'string',
     description: 'Каноническая связь Amina с владельцем.',
-    uiPages: ['PersonaPage'],
+    uiPages: ['SelfCorePage'],
     runtimeConsumers: ['bot/src/ai/persona.ts', 'bot/src/ai/self-core.ts'],
   }),
   defineSetting({
@@ -409,7 +409,7 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     visibility: 'visible',
     valueType: 'string',
     description: 'Имя или титул владельца.',
-    uiPages: ['PersonaPage'],
+    uiPages: ['SelfCorePage'],
     runtimeConsumers: ['bot/src/ai/persona.ts', 'bot/src/ai/self-core.ts'],
   }),
   defineSetting({
@@ -419,7 +419,7 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     visibility: 'visible',
     valueType: 'number',
     description: 'Интенсивность ритуального стиля.',
-    uiPages: ['PersonaPage'],
+    uiPages: ['SelfCorePage'],
     runtimeConsumers: ['bot/src/ai/persona.ts'],
   }),
   defineSetting({
@@ -429,7 +429,7 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     visibility: 'visible',
     valueType: 'string',
     description: 'Ритуальный лексикон образа.',
-    uiPages: ['PersonaPage'],
+    uiPages: ['SelfCorePage'],
     runtimeConsumers: ['bot/src/ai/persona.ts'],
   }),
   defineSetting({
@@ -439,7 +439,7 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     visibility: 'visible',
     valueType: 'string',
     description: 'Запретные фразы образа.',
-    uiPages: ['PersonaPage'],
+    uiPages: ['SelfCorePage'],
     runtimeConsumers: ['bot/src/ai/persona.ts'],
   }),
   defineSetting({
@@ -449,7 +449,7 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     visibility: 'visible',
     valueType: 'string',
     description: 'Persona-вариант для Telegram.',
-    uiPages: ['PersonaPage'],
+    uiPages: ['SelfCorePage'],
     runtimeConsumers: ['bot/src/ai/persona.ts'],
   }),
   defineSetting({
@@ -459,7 +459,7 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     visibility: 'visible',
     valueType: 'string',
     description: 'Persona-вариант для voice.',
-    uiPages: ['PersonaPage'],
+    uiPages: ['SelfCorePage'],
     runtimeConsumers: ['bot/src/ai/persona.ts'],
   }),
   defineSetting({
@@ -469,7 +469,7 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     visibility: 'visible',
     valueType: 'string',
     description: 'Persona-вариант для digest.',
-    uiPages: ['PersonaPage'],
+    uiPages: ['SelfCorePage'],
     runtimeConsumers: ['bot/src/ai/persona.ts'],
   }),
   defineSetting({
@@ -479,7 +479,7 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     visibility: 'visible',
     valueType: 'string',
     description: 'Persona-вариант для system tasks.',
-    uiPages: ['PersonaPage'],
+    uiPages: ['SelfCorePage'],
     runtimeConsumers: ['bot/src/ai/persona.ts'],
   }),
   defineSetting({
@@ -489,7 +489,7 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     visibility: 'visible',
     valueType: 'string',
     description: 'Self-disclosure: чем живёт Amina.',
-    uiPages: ['PersonaPage'],
+    uiPages: ['SelfCorePage'],
     runtimeConsumers: ['bot/src/ai/persona.ts'],
   }),
   defineSetting({
@@ -499,7 +499,7 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     visibility: 'visible',
     valueType: 'string',
     description: 'Self-disclosure: что любит Amina.',
-    uiPages: ['PersonaPage'],
+    uiPages: ['SelfCorePage'],
     runtimeConsumers: ['bot/src/ai/persona.ts'],
   }),
   defineSetting({
@@ -509,7 +509,7 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     visibility: 'visible',
     valueType: 'string',
     description: 'Self-disclosure: как Amina относится к владельцу.',
-    uiPages: ['PersonaPage'],
+    uiPages: ['SelfCorePage'],
     runtimeConsumers: ['bot/src/ai/persona.ts'],
   }),
   defineSetting({
@@ -519,7 +519,7 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     visibility: 'visible',
     valueType: 'string',
     description: 'Self-disclosure: реакция на флирт.',
-    uiPages: ['PersonaPage'],
+    uiPages: ['SelfCorePage'],
     runtimeConsumers: ['bot/src/ai/persona.ts'],
   }),
   defineSetting({
@@ -529,7 +529,7 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     visibility: 'visible',
     valueType: 'string',
     description: 'Короткое self-intro Amina.',
-    uiPages: ['PersonaPage'],
+    uiPages: ['SelfCorePage'],
     runtimeConsumers: ['bot/src/ai/persona.ts'],
   }),
   defineSetting({
@@ -539,7 +539,7 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     visibility: 'visible',
     valueType: 'string',
     description: 'Тёплое self-intro Amina.',
-    uiPages: ['PersonaPage'],
+    uiPages: ['SelfCorePage'],
     runtimeConsumers: ['bot/src/ai/persona.ts'],
   }),
   defineSetting({

@@ -3,7 +3,6 @@ import { useAuthStore } from '../hooks/useAuth';
 import {
   LayoutDashboard,
   Settings,
-  MessageSquare,
   BarChart3,
   LogOut,
   Bot,
@@ -16,7 +15,6 @@ import {
   Newspaper,
   Phone,
   Monitor,
-  BrainCircuit,
   ShieldCheck,
   GitCompareArrows,
 } from 'lucide-react';
@@ -35,12 +33,10 @@ const Layout = () => {
     { to: '/users', icon: Users, label: 'Пользователи' },
     { to: '/api-keys', icon: Key, label: 'API Ключи' },
     { to: '/settings', icon: Settings, label: 'Настройки AI' },
-    { to: '/persona', icon: BrainCircuit, label: 'Persona Core' },
     { to: '/self-core', icon: ShieldCheck, label: 'Self Core' },
     { to: '/reconciliation', icon: GitCompareArrows, label: 'Reconciliation' },
     { to: '/lmstudio', icon: Monitor, label: 'LM Studio' },
     { to: '/multimodal', icon: Mic, label: 'Голос и Фото' },
-    { to: '/prompts', icon: MessageSquare, label: 'Промпты' },
     { to: '/news-sources', icon: Newspaper, label: 'Источники' },
     { to: '/voice-messages', icon: AudioLines, label: 'Голосовые' },
     { to: '/telephony', icon: Phone, label: 'Телефония' },
