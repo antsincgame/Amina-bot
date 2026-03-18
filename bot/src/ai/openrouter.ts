@@ -443,7 +443,6 @@ export const aiService = {
           throw new AppError('LMSTUDIO_NOT_CONFIGURED', 'LM Studio не настроена. Укажите URL и модель в админке.');
         }
       }
-      }
     }
 
     // === ШАГ 1: OpenRouter — основная модель ===
