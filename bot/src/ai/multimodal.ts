@@ -175,6 +175,7 @@ const getGroqClient = async (): Promise<OpenAI | null> => {
   const apiKey = keys.groq;
 
   if (!apiKey) {
+    aiLogger.warn('Groq API key not found in env or database — voice transcription unavailable');
     return null;
   }
   
