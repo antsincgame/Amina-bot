@@ -92,21 +92,29 @@ export function PersonaEditorSection(props: {
     defaultValues: defaults,
   });
 
-  useEffect(() => {
-    reset(buildPersonaFormDefaults(props.kernel));
-  }, [props.kernel, reset]);
-
   const saveMutation = useMutation({
     mutationFn: (data: PersonaForm) => settingsApi.updateMany(
       Object.fromEntries(Object.entries(data).map(([key, value]) => [key, String(value)])),
     ),
-    onSuccess: () => {
+    onSuccess: (_result, data) => {
+      reset(data);
       props.onStatus('Persona-ядро сохранено в amina_settings');
       queryClient.invalidateQueries({ queryKey: ['settings'] });
       queryClient.invalidateQueries({ queryKey: ['self-core'] });
       queryClient.invalidateQueries({ queryKey: ['settings-runtime-truth'] });
     },
+    onError: (error) => {
+      props.onStatus(error instanceof Error ? error.message : 'Не удалось сохранить persona-ядро');
+    },
   });
+
+  useEffect(() => {
+    if (isDirty || saveMutation.isPending) {
+      return;
+    }
+
+    reset(buildPersonaFormDefaults(props.kernel));
+  }, [isDirty, props.kernel, reset, saveMutation.isPending]);
 
   useEffect(() => {
     props.onStateChange?.({
