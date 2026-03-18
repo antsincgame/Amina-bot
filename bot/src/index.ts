@@ -31,6 +31,7 @@ import { ensureTelephonyInfra } from './features/telephony/repository/telephony-
 import { startTelephonyJobWorker, stopTelephonyJobWorker } from './features/telephony/service/postcall-job-worker.js';
 import { ensureTelephonyRecordingsInfra } from './features/telephony/telephony-recordings-repo.js';
 import { syncSelfCoreSystemFacts } from './ai/self-core.js';
+import { getChatRuntimeState } from './ai/runtime-truth.js';
 
 // --------------------------------------------
 // Application Entry Point (v1.0.1)
@@ -139,15 +140,26 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
     if (!healthCache || now - healthCache.ts >= HEALTH_CACHE_TTL_MS) {
       healthCache = { checks: await runReadinessChecks(), ts: now };
     }
+    const chatRuntime = await getChatRuntimeState().catch(() => null);
+    const telegramReady = Boolean(bot && config.telegram.token);
+    const telegramEngine = telegramReady
+      ? (config.telegram.webhook.url ? 'grammy (runtime active)' : 'grammy (polling/runtime active)')
+      : config.telegram.token
+        ? 'grammy (token present, runtime not initialized yet)'
+        : 'grammy (token missing)';
+    const aiEngine = chatRuntime
+      ? `${chatRuntime.resolvedProvider} · ${chatRuntime.resolvedModel}`
+      : 'AI runtime state unavailable';
+
     return {
       checks: {
-        telegram: { ready: true, engine: 'grammy' },
+        telegram: { ready: telegramReady, engine: telegramEngine },
         ai: {
           ready: healthCache.checks['ai'] ?? false,
-          engine: config.ai.apiKey ? 'OpenRouter' : 'Не настроен',
+          engine: aiEngine,
         },
         database: { ready: healthCache.checks['database'] ?? false, engine: config.dbBackend === 'appwrite' ? 'Appwrite' : 'Legacy' },
-        admin: { ready: true, engine: 'React' },
+        admin: { ready: hasAdminDist, engine: hasAdminDist ? 'React static bundle detected' : 'Admin bundle missing on server' },
       },
       timestamp: new Date().toISOString(),
     };

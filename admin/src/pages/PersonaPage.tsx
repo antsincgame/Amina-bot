@@ -105,6 +105,11 @@ export const PersonaPage = () => {
     queryFn: settingsApi.getAll,
   });
 
+  const { data: runtimeTruth } = useQuery({
+    queryKey: ['settings-runtime-truth'],
+    queryFn: settingsApi.getRuntimeTruth,
+  });
+
   const {
     register,
     handleSubmit,
@@ -120,6 +125,7 @@ export const PersonaPage = () => {
     mutationFn: (data: Record<string, string>) => settingsApi.updateMany(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] });
+      queryClient.invalidateQueries({ queryKey: ['settings-runtime-truth'] });
     },
   });
 
@@ -195,6 +201,28 @@ export const PersonaPage = () => {
           <p className="text-sm text-gray-500 mt-1">Интенсивность ритуала: {styleIntensity}/100</p>
         </div>
       </div>
+
+      {runtimeTruth && (
+        <div className="card">
+          <h3 className="font-semibold text-lg mb-4">Resolved Persona Runtime</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+              <p className="text-xs uppercase tracking-wide text-white/40 mb-2">Saved to DB</p>
+              <p className="font-medium text-white">{personaName}</p>
+              <p className="text-white/50 mt-2">{ownerTitle}</p>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+              <p className="text-xs uppercase tracking-wide text-white/40 mb-2">Resolved by runtime</p>
+              <p className="font-medium text-white">{runtimeTruth.persona.name}</p>
+              <p className="text-white/50 mt-2">{runtimeTruth.persona.ownerTitle}</p>
+            </div>
+            <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+              <p className="text-xs uppercase tracking-wide text-white/40 mb-2">Observed live</p>
+              <p className="text-white">{runtimeTruth.persona.telegramStyle}</p>
+            </div>
+          </div>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
         <FieldBlock

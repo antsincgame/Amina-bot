@@ -115,9 +115,16 @@ export const callTurnRepo = {
   },
 
   async getNextTurnIndex(sessionId: string): Promise<number> {
-    const turns = await this.listBySession(sessionId);
-    const lastTurn = turns.at(-1);
-    return lastTurn ? lastTurn.turnIndex + 1 : 1;
+    await ensureTelephonyInfra();
+
+    const aw = await getAW();
+    const result = await aw.listDocuments(DB_ID(), COLL, [
+      Query.equal('session_id', sessionId),
+      Query.orderDesc('turn_index'),
+      Query.limit(1),
+    ]);
+    const lastTurn = result.documents[0];
+    return lastTurn ? Number(lastTurn.turn_index ?? 0) + 1 : 1;
   },
 
   async appendForSession(

@@ -8,6 +8,11 @@ import { clearLMStudioCache } from '../../ai/lmstudio.js';
 import { invalidateTTSConfig } from '../../features/tts.js';
 import { clearPersonaCache } from '../../ai/persona.js';
 import { clearSelfCoreCache, syncSelfCoreSystemFacts } from '../../ai/self-core.js';
+import {
+  getChatRuntimeState,
+  getPersonaRuntimeState,
+  getTtsRuntimeState,
+} from '../../ai/runtime-truth.js';
 import { clearTelephonyRuntimeConfigCache } from '../../features/telephony/service/telephony-runtime-config.js';
 import { SETTINGS_REGISTRY, getSettingRegistryEntry, isKnownSettingKey } from '../../config/settings-registry.js';
 
@@ -78,6 +83,30 @@ export async function registerSettingsRoutes(server: FastifyInstance): Promise<v
       success: true,
       data: SETTINGS_REGISTRY,
     });
+  });
+
+  server.get('/settings/runtime-truth', async (_request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const [chat, tts, persona] = await Promise.all([
+        getChatRuntimeState(),
+        getTtsRuntimeState(),
+        getPersonaRuntimeState(),
+      ]);
+      return reply.code(200).send({
+        success: true,
+        data: {
+          chat,
+          tts,
+          persona,
+        },
+      });
+    } catch (error) {
+      aiLogger.error({ error }, 'Get runtime truth error');
+      return reply.code(500).send({
+        success: false,
+        error: 'Failed to fetch runtime truth',
+      });
+    }
   });
 
   /**

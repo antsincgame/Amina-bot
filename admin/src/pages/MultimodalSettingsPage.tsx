@@ -74,7 +74,7 @@ const EDGE_VOICES = [
 const DEFAULT_VISION_PROMPT = 'Опиши подробно что изображено на этой картинке. Обрати внимание на детали, цвета, объекты и их расположение.';
 const DEFAULT_VISION_MAX_TOKENS = 1024;
 const DEFAULT_AUDIO_MODEL = 'groq/whisper-large-v3';
-const DEFAULT_VISION_MODEL = 'allenai/molmo-2-8b:free';
+const DEFAULT_VISION_MODEL = 'google/gemma-3-27b-it:free';
 
 // Groq audio models (бесплатные)
 const AUDIO_MODELS = [
@@ -135,6 +135,11 @@ const MultimodalSettingsPage = () => {
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings'],
     queryFn: settingsApi.getAll,
+  });
+
+  const { data: runtimeTruth } = useQuery({
+    queryKey: ['settings-runtime-truth'],
+    queryFn: settingsApi.getRuntimeTruth,
   });
 
   // Fetch vision models from bot API
@@ -259,6 +264,7 @@ const MultimodalSettingsPage = () => {
     mutationFn: (data: Record<string, string>) => settingsApi.updateMany(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] });
+      queryClient.invalidateQueries({ queryKey: ['settings-runtime-truth'] });
       void fetchVisionModels(false);
       void fetchAudioState();
       setSaveMessage('Настройки сохранены!');
@@ -515,6 +521,32 @@ const MultimodalSettingsPage = () => {
               <p className="text-sm text-white/50">Текст в речь — голосовые ответы бота</p>
             </div>
           </div>
+
+          {runtimeTruth && (
+            <div className="mb-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <p className="text-xs uppercase tracking-wide text-white/40 mb-2">Saved to DB</p>
+                <p className="text-sm text-white">{runtimeTruth.tts.savedProvider}</p>
+                <p className="text-xs text-white/50 mt-2">
+                  TTS {runtimeTruth.tts.enabled ? 'включён' : 'выключен'} ({runtimeTruth.tts.enabledSource})
+                </p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <p className="text-xs uppercase tracking-wide text-white/40 mb-2">Resolved by runtime</p>
+                <p className="text-sm text-white">{runtimeTruth.tts.resolvedProvider}</p>
+                <p className="text-xs text-white/50 mt-2 break-all">
+                  {runtimeTruth.tts.model}
+                </p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <p className="text-xs uppercase tracking-wide text-white/40 mb-2">Observed live</p>
+                <p className="text-sm text-white break-all">{runtimeTruth.tts.voice}</p>
+                <p className="text-xs text-white/50 mt-2">
+                  {runtimeTruth.tts.fallbackReason || 'Fallback сейчас не активен.'}
+                </p>
+              </div>
+            </div>
+          )}
 
           <div className="mb-6 rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-4">
             <div className="flex items-center justify-between gap-4">

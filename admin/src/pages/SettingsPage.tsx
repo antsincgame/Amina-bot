@@ -66,10 +66,16 @@ const SettingsPage = () => {
     queryFn: settingsApi.getAll,
   });
 
+  const { data: runtimeTruth } = useQuery({
+    queryKey: ['settings-runtime-truth'],
+    queryFn: settingsApi.getRuntimeTruth,
+  });
+
   const { mutate: saveSettings, isPending: isSaving } = useMutation({
     mutationFn: (data: Record<string, string>) => settingsApi.updateMany(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] });
+      queryClient.invalidateQueries({ queryKey: ['settings-runtime-truth'] });
     },
   });
 
@@ -196,6 +202,34 @@ const SettingsPage = () => {
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+        {runtimeTruth && (
+          <div className="card">
+            <h3 className="font-semibold text-lg mb-4">Chat Runtime Truth</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <p className="text-xs uppercase tracking-wide text-white/40 mb-2">Saved to DB</p>
+                <p className="text-sm text-white">{runtimeTruth.chat.savedProvider}</p>
+                <p className="text-xs text-white/50 mt-1 break-all">{runtimeTruth.chat.savedModel}</p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <p className="text-xs uppercase tracking-wide text-white/40 mb-2">Resolved by runtime</p>
+                <p className="text-sm text-white">{runtimeTruth.chat.resolvedProvider}</p>
+                <p className="text-xs text-white/50 mt-1 break-all">{runtimeTruth.chat.resolvedModel}</p>
+              </div>
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <p className="text-xs uppercase tracking-wide text-white/40 mb-2">Observed rules</p>
+                <p className="text-sm text-white">{runtimeTruth.chat.modelSource}</p>
+                <p className="text-xs text-white/50 mt-1">{runtimeTruth.chat.reason}</p>
+              </div>
+            </div>
+            {runtimeTruth.chat.customModelOverride && (
+              <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-200">
+                Активен `custom_model_override`: runtime сейчас использует `{runtimeTruth.chat.customModelOverride}` поверх селектора модели.
+              </div>
+            )}
+          </div>
+        )}
+
         {/* OpenRouter Settings */}
         <div className="card">
           <h3 className="font-semibold text-lg mb-4">Параметры OpenRouter</h3>

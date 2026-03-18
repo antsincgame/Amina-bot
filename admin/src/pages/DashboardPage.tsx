@@ -80,7 +80,7 @@ const DashboardPage = () => {
     
     return {
       status: check.ready ? 'online' : 'warning',
-      description: check.ready ? `${check.engine} подключен` : `${check.engine} требует настройки`,
+      description: check.engine,
     };
   };
 

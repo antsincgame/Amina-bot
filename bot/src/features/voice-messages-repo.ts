@@ -27,6 +27,9 @@ export interface VoiceMessageWithUser extends VoiceMessage { username?: string; 
 export interface VoiceMessagesFilter { userId?: string; dateFrom?: string; dateTo?: string; limit?: number; offset?: number; }
 export interface VoiceMessagesStats { totalCount: number; totalSize: number; totalDuration: number; byUser: { user_id: string; count: number; totalDuration: number }[]; }
 
+let statsCache: { value: VoiceMessagesStats; ts: number } | null = null;
+const STATS_CACHE_TTL_MS = 60_000;
+
 function docToVoice(d: AppwriteDoc): VoiceMessage {
   return { id: d.$id ?? d.id, user_id: d.user_id, file_path: d.file_path, duration: d.duration ?? 0,
     file_size: d.file_size ?? 0, transcription: d.transcription || null,
@@ -72,6 +75,7 @@ export const voiceMessagesRepo = {
       user_id: userId, file_path: fileId, duration, file_size: audioBuffer.length,
       transcription: null, telegram_file_id: telegramFileId || null, created_at: now,
     });
+    statsCache = null;
     dbLogger.info({ id: doc.$id, userId, duration }, 'Voice message saved');
     return docToVoice(doc);
   },
@@ -105,6 +109,10 @@ export const voiceMessagesRepo = {
 
   async stats(): Promise<VoiceMessagesStats> {
     try {
+      if (statsCache && Date.now() - statsCache.ts < STATS_CACHE_TTL_MS) {
+        return statsCache.value;
+      }
+
       const all: AppwriteDoc[] = []; let offset = 0;
       while (offset < 5000) {
         const r = await (await getAW()).listDocuments(DB_ID(), COLL, [Query.limit(100), Query.offset(offset)]);
@@ -115,8 +123,10 @@ export const voiceMessagesRepo = {
       const totalDuration = rows.reduce((s, r) => s + r.duration, 0);
       const byUserMap = new Map<string, { count: number; totalDuration: number }>();
       for (const r of rows) { const e = byUserMap.get(r.user_id) ?? { count: 0, totalDuration: 0 }; e.count++; e.totalDuration += r.duration; byUserMap.set(r.user_id, e); }
-      return { totalCount: rows.length, totalSize, totalDuration,
+      const stats = { totalCount: rows.length, totalSize, totalDuration,
         byUser: Array.from(byUserMap.entries()).map(([user_id, v]) => ({ user_id, ...v })).sort((a, b) => b.count - a.count) };
+      statsCache = { value: stats, ts: Date.now() };
+      return stats;
     } catch { return { totalCount: 0, totalSize: 0, totalDuration: 0, byUser: [] }; }
   },
 

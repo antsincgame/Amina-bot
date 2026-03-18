@@ -11,7 +11,7 @@ import { SingleCache } from '../utils/cache.js';
 import { getLMStudioConfig } from './lmstudio.js';
 import { getPersonaProfile } from './persona.js';
 
-const DEFAULT_VISION_MODEL = 'allenai/molmo-2-8b:free';
+const DEFAULT_VISION_MODEL = 'google/gemma-3-27b-it:free';
 const DEFAULT_AUDIO_MODEL = 'groq/whisper-large-v3';
 const DEFAULT_IMAGE_MODEL = 'google/gemini-2.5-flash-image';
 const DEFAULT_TTS_PROVIDER = 'edge';
