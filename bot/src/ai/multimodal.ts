@@ -9,6 +9,7 @@ import { config } from '../config/index.js';
 import { aiLogger } from '../config/logger.js';
 import { settingsRepo } from '../db/index.js';
 import { getProxyHeaders } from '../config/ai-proxy.js';
+
 import { AppError } from '../utils/error-handler.js';
 import type { AIResponse } from '../../../shared/types/index.js';
 import { SingleCache } from '../utils/cache.js';
@@ -149,10 +150,10 @@ const getClient = async (): Promise<OpenAI> => {
       apiKey: apiKey,
       baseURL: config.ai.baseUrl,
       timeout: 60000,
-      defaultHeaders: {
+      defaultHeaders: getProxyHeaders({
         'HTTP-Referer': config.botUrl,
         'X-Title': 'Amina AI Bot',
-      },
+      }),
     });
     currentOpenRouterKey = apiKey;
   }
@@ -179,6 +180,7 @@ const getGroqClient = async (): Promise<OpenAI | null> => {
       apiKey: apiKey,
       baseURL: config.groq.baseUrl,
       timeout: 60000,
+      defaultHeaders: getProxyHeaders(),
     });
     currentGroqKey = apiKey;
   }
