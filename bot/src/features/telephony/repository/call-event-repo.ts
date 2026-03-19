@@ -9,6 +9,7 @@ import { ID, Query, type Models } from 'node-appwrite';
 type AppwriteDoc = Models.Document & Record<string, unknown>;
 import type { TelephonyCallEvent } from '../../../../../shared/types/telephony.js';
 import { ensureTelephonyInfra } from './telephony-infra.js';
+import { safeJsonParse } from '../shared.js';
 
 let _aw: import('node-appwrite').Databases | null = null;
 async function getAW() { if (!_aw) { const { getAppwrite } = await import('../../../db/appwrite.js'); _aw = getAppwrite(); } return _aw; }
@@ -36,7 +37,7 @@ function mapRowToEvent(row: TelephonyCallEventRow): TelephonyCallEvent {
 }
 
 function docToEvent(d: AppwriteDoc): TelephonyCallEvent {
-  const payload = typeof d.payload === 'string' ? (JSON.parse(d.payload || '{}')) : (d.payload ?? {});
+  const payload = typeof d.payload === 'string' ? (safeJsonParse<Record<string, unknown>>(d.payload) ?? {}) : (d.payload ?? {});
   return {
     id: d.$id,
     sessionId: d.session_id,

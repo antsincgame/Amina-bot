@@ -8,7 +8,7 @@ import { ID, Query, type Models } from 'node-appwrite';
 
 type AppwriteDoc = Models.Document & Record<string, unknown>;
 import type { TelephonyCallJob } from '../../../../../shared/types/telephony.js';
-import { cleanText } from '../shared.js';
+import { cleanText, safeJsonParse } from '../shared.js';
 import { ensureTelephonyInfra } from './telephony-infra.js';
 
 let _aw: import('node-appwrite').Databases | null = null;
@@ -53,7 +53,7 @@ function mapRowToJob(row: TelephonyCallJobRow): TelephonyCallJob {
 }
 
 function docToJob(d: AppwriteDoc): TelephonyCallJob {
-  const payload = typeof d.payload === 'string' ? (JSON.parse(d.payload || '{}')) : (d.payload ?? {});
+  const payload = typeof d.payload === 'string' ? (safeJsonParse<Record<string, unknown>>(d.payload) ?? {}) : (d.payload ?? {});
   return {
     id: d.$id,
     sessionId: d.session_id,

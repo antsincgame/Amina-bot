@@ -7,6 +7,10 @@ import { dbLogger } from '../config/logger.js';
 import { ID, Query, type Models } from 'node-appwrite';
 
 type AppwriteDoc = Models.Document & Record<string, unknown>;
+
+function safeJsonParse(raw: string): unknown {
+  try { return JSON.parse(raw); } catch { return null; }
+}
 import type { ParsedHeadline, ParsedHeadlineCategory, DigestPipelineMode } from '../../../shared/types/index.js';
 import type { DigestSearchResult } from './digest-core.js';
 
@@ -57,7 +61,7 @@ function docToCache(d: AppwriteDoc): DigestCacheRecord {
   return {
     id: d.$id ?? d.id, cache_key: d.cache_key, pipeline: d.pipeline, digest_date: d.digest_date,
     city: d.city, source_hash: d.source_hash,
-    payload: typeof d.payload === 'string' ? JSON.parse(d.payload) : d.payload,
+    payload: typeof d.payload === 'string' ? safeJsonParse(d.payload) ?? d.payload : d.payload,
     last_error: d.last_error, expires_at: d.expires_at,
     created_at: d.created_at || d.$createdAt, updated_at: d.updated_at || d.$updatedAt,
   };

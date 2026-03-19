@@ -104,7 +104,7 @@ async function classifyAmbiguousBatch(
 
     const jsonMatch = response.content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-      appLogger.warn('Vibecoding filter: LLM response contains no JSON, keeping all ambiguous headlines');
+      appLogger.info('Vibecoding filter: LLM response contains no JSON, keeping all ambiguous headlines');
       for (const h of headlines) keepIndices.add(h.index);
       return keepIndices;
     }

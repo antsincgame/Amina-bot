@@ -125,7 +125,7 @@ export async function getLogs(params: { level?: LogLevel; module?: string; from?
     const r = await (await getAW()).listDocuments(DB_ID(), COLL, queries);
     return r.documents.map((d: AppwriteDoc) => ({
       id: d.$id, level: d.level, module: d.module, message: d.message,
-      data: d.data ? JSON.parse(d.data) : undefined, error_stack: d.error_stack,
+      data: d.data ? (() => { try { return JSON.parse(d.data); } catch { return d.data; } })() : undefined, error_stack: d.error_stack,
       user_id: d.user_id, request_id: d.request_id, timestamp: d.timestamp,
     }));
 

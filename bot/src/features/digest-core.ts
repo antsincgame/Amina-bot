@@ -316,7 +316,7 @@ export async function buildHeadlineSections(
       maxItems: DIGEST_FALLBACK_BATCH_MAX_ITEMS,
       maxChars: DIGEST_FALLBACK_BATCH_MAX_CHARS,
     });
-    appLogger.warn(
+    appLogger.info(
       { sectionTitle, mode, llmBatches: batches.length, fallbackBatches: fallbackBatches.length, headlines: headlines.length },
       'Digest: too many headline batches, switching section to deterministic fallback',
     );

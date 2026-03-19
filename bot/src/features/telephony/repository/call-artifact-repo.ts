@@ -9,6 +9,7 @@ import { ID, Query, type Models } from 'node-appwrite';
 type AppwriteDoc = Models.Document & Record<string, unknown>;
 import type { TelephonyCallArtifact } from '../../../../../shared/types/telephony.js';
 import { ensureTelephonyInfra } from './telephony-infra.js';
+import { safeJsonParse } from '../shared.js';
 
 let _aw: import('node-appwrite').Databases | null = null;
 async function getAW() { if (!_aw) { const { getAppwrite } = await import('../../../db/appwrite.js'); _aw = getAppwrite(); } return _aw; }
@@ -58,7 +59,7 @@ function mapRowToArtifact(row: TelephonyCallArtifactRow): TelephonyCallArtifact 
 }
 
 function docToArtifact(d: AppwriteDoc): TelephonyCallArtifact {
-  const metadata = typeof d.metadata === 'string' ? (JSON.parse(d.metadata || '{}')) : (d.metadata ?? {});
+  const metadata = typeof d.metadata === 'string' ? (safeJsonParse<Record<string, unknown>>(d.metadata) ?? {}) : (d.metadata ?? {});
   return {
     id: d.$id,
     sessionId: d.session_id,
