@@ -76,7 +76,7 @@ Repo: `bot/src/db/appwrite.ts` → `conversationsRepo`
 Repo: `bot/src/db/appwrite.ts` → `analyticsRepo`
 
 ### amina_user_profiles — профили пользователей
-Атрибуты: `user_id` (string, indexed), `username` (string, nullable), `first_name` (string, nullable), `last_name` (string, nullable), `language_code` (string, default 'ru'), `total_messages` (integer), `total_voice_messages` (integer), `total_images` (integer), `total_tokens_used` (integer), `first_seen_at` (string), `last_seen_at` (string), `preferences` (string — **JSON**), `created_at` (string), `updated_at` (string)
+Атрибуты: `user_id` (string, indexed), `username` (string, nullable), `first_name` (string, nullable), `last_name` (string, nullable), `language_code` (string, default 'ru'), `total_messages` (integer), `total_voice_messages` (integer), `total_images` (integer), `total_tokens_used` (integer), `interaction_count` (integer), `first_seen_at` (string), `last_seen_at` (string), `last_message_at` (string, nullable), `preferences` (string — **JSON**), `created_at` (string), `updated_at` (string)
 Repo: `bot/src/memory/user-memory.ts` → `userProfileRepo`
 
 ### amina_user_memory — память о пользователях
@@ -124,7 +124,7 @@ Repo: `bot/src/features/digest-hybrid-repo.ts` → `digestCacheRepo`
 Repo: `bot/src/features/digest-hybrid-repo.ts` → `digestDeliveryRepo`
 
 ### amina_tel_scenarios — сценарии звонков
-Атрибуты: `scenario_id` (string, unique), `name` (string), `enabled` (boolean), `call_mode` (string: speech/ask_question), `runtime_mode` (string: scripted/autonomous), `policy_version` (integer), `policy` (string — **JSON**), `goal` (string), `system_prompt` (string), `opening_line` (string), `question_hint` (string), `success_criteria` (string), `result_prompt` (string), `max_speech_chars` (integer, default 420)
+Атрибуты: `scenario_id` (string, unique), `name` (string), `enabled` (boolean), `call_mode` (string: speech/ask_question), `runtime_mode` (string: scripted/autonomous), `policy_version` (integer), `policy` (string — **JSON**), `goal` (string), `system_prompt` (string), `opening_line` (string), `question_hint` (string), `success_criteria` (string), `result_prompt` (string), `max_speech_chars` (integer, default 420), `created_at` (string), `updated_at` (string)
 Repo: `bot/src/features/telephony/repository/scenario-repo.ts`
 
 ### amina_tel_sessions — сессии звонков
