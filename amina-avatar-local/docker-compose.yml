@@ -1,0 +1,15 @@
+# Локальный «говорящий» ролик: статичное лицо + TTS-аудио → MP4 (ffmpeg).
+# Полноценный липсинк (SadTalker / Wav2Lip) подключается отдельно — см. README.
+
+services:
+  avatar-local:
+    build: .
+    image: amina-avatar-local:latest
+    env_file:
+      - .env
+    ports:
+      - "${AVATAR_PORT:-8765}:8765"
+    environment:
+      AMINA_AVATAR_SECRET: ${AMINA_AVATAR_SECRET:-}
+    volumes:
+      - ./assets:/app/assets

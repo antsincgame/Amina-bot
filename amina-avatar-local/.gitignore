@@ -1,0 +1,7 @@
+.env
+SECRET_FOR_TELEGRAM.txt
+__pycache__/
+*.pyc
+.venv/
+# Локальный портрет (может быть персональным); см. scripts/create-minimal-face-placeholder.ps1
+assets/face.png

@@ -73,6 +73,10 @@ export LMSTUDIO_TUNNEL_TOKEN=<token>
 
 **Нужно в проде:** переменная **`BOT_URL`** (или **`WEBHOOK_URL`**) = тот же **https**-хост, куда ходит вебхук (например `https://amina.vibecoding.by`). В **[@BotFather](https://t.me/BotFather)** для бота выполните **`/setdomain`** и укажите **только домен без пути** (например `amina.vibecoding.by`). Страница отдаётся с `/mini-app/index.html` (шаблон в репозитории: `bot/src/telegram/mini-app-web.html`).
 
+**Диалог и озвучка из мини-аппа:** `POST /api/mini-app/message` с телом `{ "initData", "message", "withAudio": true }` — на сервере проверяется подпись Telegram Web App (`initData`), ответ включает текст и при необходимости MP3 (base64). Нужен настроенный **токен бота** (как для grammy).
+
+**Видео с вашего ПК:** каталог **[amina-avatar-local/](amina-avatar-local/README.md)** — **двойной клик `amina-avatar-local/START_AMINA.bat`** или корневой **`START_AMINA.bat`**. Дальше: [BUILD-PC.md](amina-avatar-local/BUILD-PC.md). URL туннеля и секрет — в мини-аппе (localStorage), не коммитятся.
+
 ## InvokeAI (локальная генерация на вашем GPU)
 
 Docker Compose и инструкции — каталог **[invoke-ai/](invoke-ai/README.md)**:

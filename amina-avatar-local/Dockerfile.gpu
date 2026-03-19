@@ -1,0 +1,55 @@
+# Wav2Lip + FastAPI. Нужны NVIDIA Container Toolkit и драйвер на хосте.
+# Сборка: docker compose -f docker-compose.yml -f docker-compose.gpu.yml build
+
+FROM pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    git \
+    wget \
+    ca-certificates \
+    libglib2.0-0 \
+    libsm6 \
+    libxrender1 \
+    libxext1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/Wav2Lip
+RUN git clone --depth 1 https://github.com/Rudrabha/Wav2Lip.git .
+
+RUN mkdir -p checkpoints face_detection/detection/sfd temp results \
+    && wget -q -O checkpoints/wav2lip_gan.pth \
+        "https://huggingface.co/lithiumice/wav2lip/resolve/main/wav2lip_gan.pth" \
+    && wget -q -O face_detection/detection/sfd/s3fd.pth \
+        "https://www.adrianbulat.com/downloads/python-fan/s3fd-619a316812.pth"
+
+COPY scripts/apply_wav2lip_patches.py /tmp/apply_wav2lip_patches.py
+RUN python /tmp/apply_wav2lip_patches.py /opt/Wav2Lip
+
+# Зависимости Wav2Lip; без старых pin torch/torchvision — уже в базовом образе
+RUN pip install --no-cache-dir \
+    "numpy>=1.22,<2" \
+    "librosa>=0.9.0,<0.11" \
+    opencv-python-headless \
+    scipy \
+    tqdm \
+    audioread \
+    soundfile \
+    numba
+
+WORKDIR /app
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app ./app
+COPY assets ./assets
+
+ENV AMINA_AVATAR_SECRET=""
+ENV AVATAR_ENGINE=wav2lip
+ENV WAV2LIP_ROOT=/opt/Wav2Lip
+
+EXPOSE 8765
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8765"]

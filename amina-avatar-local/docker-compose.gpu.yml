@@ -1,0 +1,24 @@
+# Подключать вместе с docker-compose.yml:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+#
+# Требования: Docker Desktop → Settings → Resources → включить GPU,
+# установлен NVIDIA Container Toolkit (Linux) или WSL2 + nvidia-docker.
+
+services:
+  avatar-local:
+    build:
+      context: .
+      dockerfile: Dockerfile.gpu
+    image: amina-avatar-local:gpu
+    env_file:
+      - .env
+    environment:
+      AMINA_AVATAR_SECRET: ${AMINA_AVATAR_SECRET:-}
+      AVATAR_ENGINE: ${AVATAR_ENGINE:-wav2lip}
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility
+    ports:
+      - "${AVATAR_PORT:-8765}:8765"
+    volumes:
+      - ./assets:/app/assets
+    gpus: all

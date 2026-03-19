@@ -14,6 +14,7 @@ import { registerLmstudioRoutes } from './lmstudio.js';
 import { registerTelephonyRoutes } from './telephony.js';
 import { registerSelfCoreRoutes } from './self-core.js';
 import { registerReconciliationRoutes } from './reconciliation.js';
+import { registerMiniAppRoutes } from './mini-app.js';
 
 export async function registerApiRoutes(server: FastifyInstance): Promise<void> {
   // Register application/x-www-form-urlencoded parser at root level
@@ -52,6 +53,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
       await registerTelephonyRoutes(apiServer);
       await registerSelfCoreRoutes(apiServer);
       await registerReconciliationRoutes(apiServer);
+      await registerMiniAppRoutes(apiServer);
     },
     { prefix: '/api' }
   );

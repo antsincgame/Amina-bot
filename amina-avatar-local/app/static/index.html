@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Амина — панель на вашем ПК</title>
+  <style>
+    :root {
+      --bg: #0e0e12;
+      --card: #1a1a22;
+      --text: #f0f0f5;
+      --muted: #9898a8;
+      --ok: #3d9e5c;
+      --warn: #c9a227;
+      --bad: #c94a4a;
+      --accent: #5b8cff;
+      --radius: 14px;
+      --space: 1rem;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+      padding: var(--space) max(var(--space), 4vw) 2.5rem;
+      max-width: 42rem;
+      margin-inline: auto;
+    }
+    h1 { font-size: 1.45rem; font-weight: 700; margin: 0 0 0.35rem; }
+    .lead { color: var(--muted); font-size: 0.95rem; margin: 0 0 1.25rem; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.25rem 0.65rem;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .pill.ok { background: color-mix(in srgb, var(--ok) 22%, transparent); color: #b8e8c8; }
+    .pill.warn { background: color-mix(in srgb, var(--warn) 22%, transparent); color: #f0e0a8; }
+    .pill.bad { background: color-mix(in srgb, var(--bad) 22%, transparent); color: #f0b0b0; }
+    .row-status { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.25rem; }
+    .card {
+      background: var(--card);
+      border-radius: var(--radius);
+      padding: 1rem 1.1rem;
+      margin-bottom: 1rem;
+      border: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+    }
+    .card h2 {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+      margin: 0 0 0.65rem;
+      font-weight: 600;
+    }
+    ol.steps { margin: 0; padding-left: 1.2rem; }
+    ol.steps li { margin-bottom:0.65rem; }
+    ol.steps li:last-child { margin-bottom: 0; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .btn {
+      display: inline-block;
+      background: var(--accent);
+      color: #fff !important;
+      padding: 0.6rem 1rem;
+      border-radius: 10px;
+      font-weight: 600;
+      font-size: 0.92rem;
+      margin-top: 0.35rem;
+      border: none;
+      cursor: pointer;
+      text-decoration: none !important;
+    }
+    .btn:hover { filter: brightness(1.08); }
+    .btn-secondary {
+      background: color-mix(in srgb, var(--text) 12%, transparent);
+      color: var(--text) !important;
+    }
+    code {
+      font-size: 0.85em;
+      background: color-mix(in srgb, var(--text) 8%, transparent);
+      padding: 0.12em 0.35em;
+      border-radius: 6px;
+    }
+    .err { color: var(--bad); font-size: 0.9rem; margin-top: 0.5rem; }
+    footer { margin-top: 1.5rem; font-size: 0.78rem; color: var(--muted); text-align: center; }
+  </style>
+</head>
+<body>
+  <h1>Амина на вашем компьютере</h1>
+  <p class="lead">Эта страница — простая панель. Большинство настроек делается <strong>один раз</strong>; дальше открывайте её из скрипта запуска.</p>
+
+  <div class="row-status" id="statusRow" aria-live="polite">
+    <span class="pill bad" id="svcPill">Сервис: проверка…</span>
+    <span class="pill warn" id="secretPill">Секрет: …</span>
+    <span class="pill warn" id="facePill">Фото лица: …</span>
+    <span class="pill warn" id="gpuPill">GPU: …</span>
+  </div>
+
+  <div class="card">
+    <h2>Что уже готово</h2>
+    <ul id="readyList" style="margin:0;padding-left:1.1rem;"></ul>
+    <p id="fetchErr" class="err" style="display:none;"></p>
+  </div>
+
+  <div class="card">
+    <h2>Что сделать вам (по шагам)</h2>
+    <ol class="steps">
+      <li><strong>Оставьте этот сервис включённым</strong> — окно с Docker не закрывайте, пока пользуетесь «живой» Аминой в Telegram.</li>
+      <li><strong>Интернет в телефон</strong> — запустите на ПК программу туннеля (<code>cloudflared</code>) или скрипт <code>start-windows.ps1 -Gpu -Tunnel</code>. Появится адрес вида <code>https://…trycloudflare.com</code>.</li>
+      <li><strong>Телеграм</strong> — откройте мини-приложение Амины → раздел <strong>«Локальный PC»</strong> → вставьте этот <code>https</code>-адрес и <strong>тот же секрет</strong>, что в файле <code>.env</code> (параметр <code>AMINA_AVATAR_SECRET</code>).</li>
+      <li><strong>Лицо как на Civitai</strong> — это не сайт, а картинка: положите свой портрет в папку <code>amina-avatar-local/assets/face.png</code> и перезапустите Docker.</li>
+    </ol>
+    <p style="margin:0.75rem 0 0;">
+      <a class="btn" id="miniBtn" href="https://amina.vibecoding.by/mini-app/index.html" target="_blank" rel="noopener">Открыть мини-приложение в браузере</a>
+      <button type="button" class="btn btn-secondary" id="copyLocalBtn" style="margin-left:0.5rem;">Копировать адрес этой панели</button>
+    </p>
+  </div>
+
+  <div class="card" style="border-color: color-mix(in srgb, var(--warn) 35%, transparent);">
+    <h2>Страница не открывается?</h2>
+    <p style="margin:0;font-size:0.92rem;color:var(--muted);">
+      Сервис на этом адресе появляется только когда он <strong>запущен на ПК</strong>. В PowerShell из папки проекта:
+      <code style="display:block;margin:0.5rem 0;padding:0.5rem;">.\scripts\diagnose-panel.ps1</code>
+      Затем либо Docker: <code>docker compose up -d --build</code> в <code>amina-avatar-local</code> (Docker Desktop должен быть включён),
+      либо без Docker (только панель и простой режим без Wav2Lip-GPU):
+      <code style="display:block;margin:0.5rem 0;padding:0.5rem;">.\scripts\start-panel-local.ps1</code>
+      Открывайте <strong>http://127.0.0.1:8765/</strong> — не https. Если меняли порт в <code>.env</code>, подставьте свой.
+    </p>
+  </div>
+
+  <div class="card">
+    <h2>Подсказка</h2>
+    <p style="margin:0;font-size:0.92rem;color:var(--muted);">
+      Если что-то «не живое» — чаще всего не запущен туннель или в Telegram указан другой секрет. Эта панель работает только на вашем ПК (<code id="localHint"></code>).
+    </p>
+  </div>
+
+  <footer>Amina · локальная панель · не для публикации в интернет без туннеля и секрета</footer>
+
+  <script>
+    (function () {
+      var base = window.location.origin.replace(/\/$/, '');
+      document.getElementById('localHint').textContent = base + '/';
+
+      document.getElementById('copyLocalBtn').addEventListener('click', function () {
+        var url = base + '/';
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(url).then(function () { alert('Скопировано: ' + url); });
+        } else {
+          prompt('Скопируте вручную:', url);
+        }
+      });
+
+      function setPill(el, kind, text) {
+        el.className = 'pill ' + kind;
+        el.textContent = text;
+      }
+
+      fetch(base + '/api/ui-status').then(function (r) { return r.json(); }).then(function (s) {
+        if (s.mini_app_url) {
+          var b = document.getElementById('miniBtn');
+          b.href = s.mini_app_url;
+        }
+        setPill(document.getElementById('secretPill'), s.secret_configured ? 'ok' : 'bad', s.secret_configured ? 'Секрет в .env: да' : 'Секрет в .env: нет');
+        setPill(document.getElementById('facePill'), s.face_ready ? 'ok' : 'warn', s.face_ready ? 'Фото face.png: есть' : 'Фото face.png: нет или слабое');
+        var list = document.getElementById('readyList');
+        list.innerHTML = '';
+        if (s.secret_configured) list.innerHTML += '<li>Безопасный секрет задан</li>';
+        if (s.face_ready) list.innerHTML += '<li>Файл лица найден</li>';
+        if (!s.secret_configured || !s.face_ready) {
+          list.innerHTML += '<li style="color:#c9a227">Доделайте пункты без галочек выше (см. BUILD-PC.md в папке проекта)</li>';
+        }
+      }).catch(function () {
+        document.getElementById('fetchErr').style.display = 'block';
+        document.getElementById('fetchErr').textContent = 'Не удалось связаться с API. Сервис не запущен?';
+      });
+
+      fetch(base + '/health').then(function (r) { return r.json(); }).then(function (h) {
+        setPill(document.getElementById('svcPill'), 'ok', 'Сервис: работает');
+        var eng = (h.engine || '?');
+        var gpuOk = h.cuda === 'yes';
+        if (eng !== 'wav2lip') {
+          setPill(document.getElementById('gpuPill'), 'ok', 'Режим: CPU (ffmpeg)');
+        } else {
+          setPill(document.getElementById('gpuPill'), gpuOk ? 'ok' : 'bad', gpuOk ? 'GPU: CUDA да' : 'GPU: CUDA нет');
+        }
+      }).catch(function () {
+        setPill(document.getElementById('svcPill'), 'bad', 'Сервис: нет ответа');
+        setPill(document.getElementById('gpuPill'), 'bad', 'GPU: —');
+      });
+    })();
+  </script>
+</body>
+</html>

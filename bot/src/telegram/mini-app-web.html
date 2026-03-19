@@ -10,9 +10,9 @@
       --bg: var(--tg-theme-bg-color, #0f0f12);
       --text: var(--tg-theme-text-color, #f2f2f5);
       --hint: var(--tg-theme-hint-color, #8b8b9a);
-      --link: var(--tg-theme-link-color, #6ab7ff);
       --btn: var(--tg-theme-button-color, #3390ec);
       --btn-text: var(--tg-theme-button-text-color, #fff);
+      --card: color-mix(in srgb, var(--tg-theme-text-color, #fff) 7%, transparent);
     }
     * { box-sizing: border-box; }
     body {
@@ -21,80 +21,148 @@
       background: var(--bg);
       color: var(--text);
       min-height: 100vh;
-      padding: 1rem 1.25rem 2rem;
-      line-height: 1.5;
+      padding: 0.75rem 1rem 1.5rem;
+      line-height: 1.45;
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
     }
-    h1 {
-      font-size: 1.5rem;
-      font-weight: 700;
-      margin: 0 0 0.35rem;
+    h1 { font-size: 1.25rem; margin: 0; font-weight: 700; }
+    .hero {
+      display: flex;
+      gap: 1rem;
+      align-items: flex-start;
     }
-    .sub {
-      color: var(--hint);
-      font-size: 0.92rem;
-      margin-bottom: 1.25rem;
+    .portrait-wrap {
+      flex-shrink: 0;
+      width: 112px;
+      height: 112px;
+      border-radius: 20px;
+      overflow: hidden;
+      background: var(--card);
+      border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
     }
-    .card {
-      background: color-mix(in srgb, var(--text) 6%, transparent);
+    .portrait-wrap svg { width: 100%; height: 100%; display: block; }
+    .intro { flex: 1; min-width: 0; }
+    .sub { color: var(--hint); font-size: 0.85rem; margin: 0.25rem 0 0; }
+    .chat-log {
+      flex: 1;
+      min-height: 120px;
+      max-height: 36vh;
+      overflow-y: auto;
+      background: var(--card);
       border-radius: 14px;
-      padding: 1rem 1.1rem;
-      margin-bottom: 1rem;
+      padding: 0.65rem 0.75rem;
+      font-size: 0.88rem;
     }
-    .card h2 {
-      font-size: 0.85rem;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: var(--hint);
-      margin: 0 0 0.5rem;
-    }
-    ul { margin: 0; padding-left: 1.2rem; }
-    li { margin: 0.35rem 0; }
-    .cta {
-      display: block;
+    .bubble { margin: 0.35rem 0; padding: 0.45rem 0.55rem; border-radius: 10px; }
+    .bubble.user { background: color-mix(in srgb, var(--btn) 25%, transparent); text-align: right; }
+    .bubble.amina { background: color-mix(in srgb, var(--text) 10%, transparent); }
+    .bubble.err { color: #f66; font-size: 0.82rem; }
+    label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--hint); display: block; margin-bottom: 0.2rem; }
+    textarea {
       width: 100%;
-      margin-top: 1rem;
-      padding: 0.85rem 1rem;
+      min-height: 64px;
+      resize: vertical;
+      border-radius: 12px;
+      border: 1px solid color-mix(in srgb, var(--text) 15%, transparent);
+      background: color-mix(in srgb, var(--bg) 80%, var(--text));
+      color: var(--text);
+      padding: 0.55rem 0.65rem;
+      font-size: 0.95rem;
+      font-family: inherit;
+    }
+    .row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+    button.primary {
+      flex: 1;
+      min-width: 120px;
+      padding: 0.75rem 1rem;
       border: none;
       border-radius: 12px;
       background: var(--btn);
       color: var(--btn-text);
-      font-size: 1rem;
       font-weight: 600;
+      font-size: 0.95rem;
       cursor: pointer;
     }
-    .cta:active { opacity: 0.9; }
-    footer {
-      margin-top: 1.5rem;
-      font-size: 0.8rem;
-      color: var(--hint);
-      text-align: center;
+    button.secondary {
+      padding: 0.65rem 0.85rem;
+      border-radius: 12px;
+      border: 1px solid color-mix(in srgb, var(--text) 20%, transparent);
+      background: transparent;
+      color: var(--text);
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    .status { font-size: 0.8rem; color: var(--hint); min-height: 1.2em; }
+    video { width: 100%; max-height: 220px; border-radius: 12px; background: #000; display: none; }
+    video.show { display: block; }
+    .help-local { font-size: 0.82rem; color: var(--hint); margin: 0.5rem 0 0; line-height: 1.4; }
+    .help-local ol { margin: 0.35rem 0 0 1.1rem; padding: 0; }
+    .help-local a { color: var(--btn); }
+    details.settings { font-size: 0.82rem; color: var(--hint); }
+    details.settings input {
+      width: 100%;
+      margin: 0.2rem 0 0.5rem;
+      padding: 0.45rem;
+      border-radius: 8px;
+      border: 1px solid color-mix(in srgb, var(--text) 15%, transparent);
+      background: var(--bg);
+      color: var(--text);
     }
   </style>
 </head>
 <body>
-  <h1 id="title">✨ Амина</h1>
-  <p class="sub" id="greeting">Загрузка…</p>
-
-  <div class="card">
-    <h2>В чате с ботом</h2>
-    <ul>
-      <li>Пиши сообщения как обычно — отвечу текстом или картинкой.</li>
-      <li><strong>«Нарисуй…»</strong> — генерация изображения.</li>
-      <li><strong>Голосовые</strong> и <strong>фото</strong> — слушаю и смотрю.</li>
-    </ul>
+  <div class="hero">
+    <div class="portrait-wrap" aria-hidden="true">
+      <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+        <defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#3d2a52"/><stop offset="100%" style="stop-color:#1e3a5f"/></linearGradient></defs>
+        <rect width="100" height="100" fill="url(#g)"/>
+        <circle cx="50" cy="42" r="18" fill="color-mix(in srgb, #fff 35%, transparent)"/>
+        <ellipse cx="50" cy="88" rx="28" ry="22" fill="color-mix(in srgb, #fff 22%, transparent)"/>
+        <text x="50" y="24" text-anchor="middle" fill="color-mix(in srgb, #fff 55%, transparent)" font-size="10" font-family="system-ui,sans-serif">✨</text>
+      </svg>
+    </div>
+    <div class="intro">
+      <h1>Амина</h1>
+      <p class="sub" id="greeting">Загрузка…</p>
+    </div>
   </div>
 
-  <div class="card">
-    <h2>Быстрые темы</h2>
-    <ul>
-      <li>Напоминания: «напомни через 20 минут…»</li>
-      <li>Заметки: «запомни, что…»</li>
-      <li>Поиск: кнопка «Поиск» или так и напиши запрос.</li>
-    </ul>
-  </div>
+  <div class="chat-log" id="chatLog" aria-live="polite"></div>
+  <video id="aminaVideo" playsinline controls></video>
 
-  <button type="button" class="cta" id="closeBtn">Закрыть</button>
-  <footer>Amina · мини-приложение</footer>
+  <div>
+    <label for="msg">Сообщение</label>
+    <textarea id="msg" placeholder="Напиши что-нибудь…"></textarea>
+  </div>
+  <div class="row">
+    <button type="button" class="primary" id="sendBtn">Отправить</button>
+    <button type="button" class="secondary" id="closeBtn">Закрыть</button>
+  </div>
+  <p class="status" id="status"></p>
+
+  <details class="settings">
+    <summary>Локальный PC (видео «говорящая голова»)</summary>
+    <p>Ниже — кратко; полная инструкция в репозитории: <a id="docLink" href="#avatar-local-help">как подключить ПК</a>. Укажите URL туннеля и общий секрет (ничего из коммитимого кода).</p>
+    <label for="localUrl">Базовый URL (https://…)</label>
+    <input id="localUrl" type="url" placeholder="https://xxxx.trycloudflare.com" autocomplete="off" />
+    <label for="localSecret">Секрет (как AMINA_AVATAR_SECRET)</label>
+    <input id="localSecret" type="password" placeholder="Секрет из .env" autocomplete="off" />
+    <button type="button" class="secondary" id="saveLocalBtn">Сохранить локально</button>
+  </details>
+
+  <div class="help-local" id="avatar-local-help">
+    <strong>Локальный сервис (MVP):</strong>
+    <ol>
+      <li>На ПК: каталог <code style="font-size:0.9em">amina-avatar-local</code> — скопируйте <code>env.example</code> в <code>.env</code>, задайте <code>AMINA_AVATAR_SECRET</code>.</li>
+      <li>Положите портрет в <code>assets/face.png</code> (или будет заглушка).</li>
+      <li><code>docker compose up</code> или <code>start-windows.ps1</code>; проверка <code>/health</code>.</li>
+      <li>Туннель (cloudflared / ngrok) на порт сервиса → скопируйте <strong>https</strong>-URL в поле выше; секрет — тот же, что в <code>.env</code>.</li>
+      <li>MVP: статичное лицо + звук в MP4; липсинк на GPU — отдельный этап.</li>
+    </ol>
+  </div>
 
   <script>
     (function () {
@@ -103,15 +171,167 @@
         tg.ready();
         tg.expand();
       }
+
+      var initData = tg && tg.initData ? String(tg.initData) : '';
       var name = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.first_name) || 'друг';
-      var el = document.getElementById('greeting');
-      if (el) el.textContent = 'Привет, ' + name + ' — рада видеть тебя здесь.';
-      var closeBtn = document.getElementById('closeBtn');
-      if (closeBtn && tg) {
-        closeBtn.addEventListener('click', function () { tg.close(); });
-      } else if (closeBtn) {
-        closeBtn.style.display = 'none';
+      var g = document.getElementById('greeting');
+      if (g) g.textContent = 'Привет, ' + name + ' — пиши ниже, отвечу текстом и озвучу.';
+
+      var chatLog = document.getElementById('chatLog');
+      var msgEl = document.getElementById('msg');
+      var sendBtn = document.getElementById('sendBtn');
+      var statusEl = document.getElementById('status');
+      var videoEl = document.getElementById('aminaVideo');
+      var docLink = document.getElementById('docLink');
+      var LS_URL = 'amina_avatar_base_url';
+      var LS_SECRET = 'amina_avatar_secret';
+
+      function loadLocalCfg() {
+        try {
+          var u = localStorage.getItem(LS_URL) || '';
+          var s = localStorage.getItem(LS_SECRET) || '';
+          var urlInput = document.getElementById('localUrl');
+          var secInput = document.getElementById('localSecret');
+          if (urlInput) urlInput.value = u;
+          if (secInput) secInput.value = s;
+        } catch (e) {}
       }
+      loadLocalCfg();
+
+      var saveBtn = document.getElementById('saveLocalBtn');
+      if (saveBtn) {
+        saveBtn.addEventListener('click', function () {
+          var urlInput = document.getElementById('localUrl');
+          var secInput = document.getElementById('localSecret');
+          try {
+            localStorage.setItem(LS_URL, (urlInput && urlInput.value) ? urlInput.value.trim().replace(/\/+$/, '') : '');
+            localStorage.setItem(LS_SECRET, (secInput && secInput.value) ? secInput.value.trim() : '');
+            setStatus('Настройки сохранены в этом устройстве.');
+          } catch (e) {
+            setStatus('Не удалось сохранить.');
+          }
+        });
+      }
+
+      function setStatus(t) {
+        if (statusEl) statusEl.textContent = t || '';
+      }
+
+      function appendBubble(text, cls) {
+        if (!chatLog) return;
+        var d = document.createElement('div');
+        d.className = 'bubble ' + (cls || '');
+        d.textContent = text;
+        chatLog.appendChild(d);
+        chatLog.scrollTop = chatLog.scrollHeight;
+      }
+
+      function playAudioBase64(b64, mime) {
+        if (!b64) return;
+        try {
+          var bin = atob(b64);
+          var bytes = new Uint8Array(bin.length);
+          for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          var blob = new Blob([bytes], { type: mime || 'audio/mpeg' });
+          var url = URL.createObjectURL(blob);
+          var a = new Audio(url);
+          a.play().finally(function () { URL.revokeObjectURL(url); });
+        } catch (e) {
+          setStatus('Не удалось воспроизвести звук.');
+        }
+      }
+
+      function showVideoBase64(b64, mime) {
+        if (!videoEl || !b64) return;
+        try {
+          var bin = atob(b64);
+          var bytes = new Uint8Array(bin.length);
+          for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          var blob = new Blob([bytes], { type: mime || 'video/mp4' });
+          var old = videoEl.src;
+          if (old && old.indexOf('blob:') === 0) URL.revokeObjectURL(old);
+          videoEl.src = URL.createObjectURL(blob);
+          videoEl.classList.add('show');
+          videoEl.play().catch(function () {});
+        } catch (e) {
+          setStatus('Не удалось показать видео.');
+        }
+      }
+
+      async function tryLocalStillVideo(audioBase64, audioMime) {
+        var base = '';
+        var secret = '';
+        try {
+          base = (localStorage.getItem(LS_URL) || '').trim().replace(/\/+$/, '');
+          secret = (localStorage.getItem(LS_SECRET) || '').trim();
+        } catch (e) {}
+        if (!base || !secret || !audioBase64) return;
+        setStatus('Локальный PC: сборка видео…');
+        try {
+          var r = await fetch(base + '/v1/still-video', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: 'Bearer ' + secret
+            },
+            body: JSON.stringify({ audio_base64: audioBase64, audio_mime: audioMime || 'audio/mpeg' })
+          });
+          var j = await r.json().catch(function () { return null; });
+          if (!r.ok || !j || !j.video_base64) {
+            setStatus('Локальный сервер: ' + (j && j.detail ? String(j.detail) : r.status));
+            return;
+          }
+          showVideoBase64(j.video_base64, j.video_mime || 'video/mp4');
+          setStatus('');
+        } catch (e) {
+          setStatus('Локальный PC недоступен (туннель выкл. или неверный URL).');
+        }
+      }
+
+      async function sendMessage() {
+        if (!initData) {
+          appendBubble('Откройте мини-приложение из Telegram (нет initData).', 'err');
+          return;
+        }
+        var text = msgEl && msgEl.value ? msgEl.value.trim() : '';
+        if (!text) return;
+        if (sendBtn) sendBtn.disabled = true;
+        setStatus('Думаю…');
+        appendBubble(text, 'user');
+        if (msgEl) msgEl.value = '';
+        try {
+          var api = window.location.origin.replace(/\/$/, '') + '/api/mini-app/message';
+          var res = await fetch(api, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ initData: initData, message: text, withAudio: true })
+          });
+          var json = await res.json().catch(function () { return null; });
+          if (!res.ok || !json || !json.success) {
+            var err = (json && json.error) ? json.error : ('HTTP ' + res.status);
+            appendBubble('Ошибка: ' + err, 'err');
+            setStatus('');
+            return;
+          }
+          var replyText = json.data && json.data.response ? String(json.data.response) : '';
+          appendBubble(replyText, 'amina');
+          setStatus('');
+          var b64 = json.data && json.data.audioBase64;
+          var mime = json.data && json.data.audioMimeType;
+          if (b64) playAudioBase64(b64, mime);
+          if (b64) tryLocalStillVideo(b64, mime);
+        } catch (e) {
+          appendBubble('Сеть недоступна.', 'err');
+          setStatus('');
+        } finally {
+          if (sendBtn) sendBtn.disabled = false;
+        }
+      }
+
+      if (sendBtn) sendBtn.addEventListener('click', sendMessage);
+      var closeBtn = document.getElementById('closeBtn');
+      if (closeBtn && tg) closeBtn.addEventListener('click', function () { tg.close(); });
+      else if (closeBtn) closeBtn.style.display = 'none';
     })();
   </script>
 </body>
