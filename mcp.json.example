@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "appwrite-admin": {
+      "command": "node",
+      "args": ["./appwrite-mcp-custom/src/index.js"],
+      "env": {
+        "APPWRITE_ENDPOINT": "https://appwrite.vibecoding.by/v1",
+        "APPWRITE_EMAIL": "YOUR_APPWRITE_EMAIL",
+        "APPWRITE_PASSWORD": "YOUR_APPWRITE_PASSWORD"
+      }
+    }
+  }
+}

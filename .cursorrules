@@ -191,3 +191,14 @@ const messages = JSON.parse(doc.messages);
 - Appwrite has no upsert — use list + create/update pattern
 - Appwrite attribute max size is 1MB
 - 502 during deploys breaks Telegram webhook
+
+## MCP Setup (Cursor)
+
+Кастомный MCP сервер `appwrite-mcp-custom` — 38 tools, Console-level доступ через email/password.
+Настройка (одноразово):
+```bash
+cd Amina-bot
+git clone https://github.com/antsincgame/appwrite-mcp-custom.git
+cd appwrite-mcp-custom && npm install
+```
+Конфиг уже в `.cursor/mcp.json`. После клонирования перезапустить Cursor.
