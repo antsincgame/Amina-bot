@@ -86,6 +86,7 @@ vi.mock('../db/index.js', () => ({
   },
   promptsRepo: {
     getActive: vi.fn().mockResolvedValue(null),
+    getAll: vi.fn().mockResolvedValue([]),
   },
 }));
 

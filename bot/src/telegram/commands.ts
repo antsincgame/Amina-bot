@@ -10,6 +10,7 @@
 import { Bot, InputFile } from 'grammy';
 import type { BotContext } from './bot.js';
 import { telegramLogger } from '../config/logger.js';
+import { config } from '../config/index.js';
 import { analyticsRepo, conversationsRepo } from '../db/index.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';
 import { generateImage } from '../ai/image-gen.js';
@@ -64,7 +65,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
     await ctx.reply(
       `✨ <b>${escapeHtml(sd.introShort)}</b>\n\n` +
-      `Рада видеть тебя, ${escapeHtml(name)}. ${escapeHtml(sd.whatSheLivesBy.split('.')[0])}.\n\n` +
+      `Рада видеть тебя, ${escapeHtml(name)}. ${escapeHtml(sd.whatSheLivesBy.split('.')[0] ?? '')}.\n\n` +
       `<b>Вот что умею:</b>\n\n` +
       `💬 <b>Чат</b> — задай любой вопрос\n` +
       `🌐 <b>Интернет</b> — ищу актуальную информацию в сети\n` +

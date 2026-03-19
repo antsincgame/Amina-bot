@@ -49,7 +49,8 @@ const pinoLogger = pino.pino({
     err: pino.stdSerializers.err,
     error: (err: unknown) => {
       if (err instanceof Error) {
-        return { message: err.message, name: err.name, stack: err.stack, ...(err as Record<string, unknown>).code ? { code: (err as Record<string, unknown>).code } : {} };
+        const code = 'code' in err ? (err as unknown as { code: unknown }).code : undefined;
+        return { message: err.message, name: err.name, stack: err.stack, ...(code ? { code } : {}) };
       }
       return err;
     },

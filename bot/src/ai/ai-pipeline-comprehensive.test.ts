@@ -67,6 +67,7 @@ vi.mock('../db/index.js', () => ({
   },
   promptsRepo: {
     getActive: vi.fn().mockResolvedValue(null),
+    getAll: vi.fn().mockResolvedValue([]),
   },
 }));
 
@@ -86,6 +87,24 @@ vi.mock('./lmstudio.js', () => ({
   getLMStudioConfig: vi.fn().mockResolvedValue(null),
   getLMStudioClient: vi.fn(),
   checkLMStudioHealth: vi.fn().mockResolvedValue(false),
+  isLMStudioCircuitOpen: vi.fn().mockReturnValue(false),
+  recordLMStudioFailure: vi.fn(),
+  recordLMStudioSuccess: vi.fn(),
+}));
+
+vi.mock('./persona.js', () => ({
+  buildPersonaSystemPrompt: vi.fn().mockResolvedValue('Ты Amina — AI ассистент.'),
+}));
+
+vi.mock('./self-core-kernel.js', () => ({
+  getActivePromptContent: vi.fn().mockResolvedValue(''),
+}));
+
+vi.mock('../features/telephony/service/telephony-runtime-config.js', () => ({
+  getTelephonyRuntimeConfig: vi.fn().mockResolvedValue({
+    aiProvider: 'inherit',
+    openrouterModel: '',
+  }),
 }));
 
 // Mock OpenAI — нужен класс (конструктор) потому что код делает `new OpenAI(...)`
