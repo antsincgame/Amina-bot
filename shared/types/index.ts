@@ -49,6 +49,7 @@ export interface MessageMetadata {
   width?: number;
   height?: number;
   fileName?: string;
+  image_intercepted?: boolean;
 }
 
 export interface ConversationMetadata {

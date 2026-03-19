@@ -60,12 +60,21 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     }
 
     const name = ctx.from?.first_name || 'друг';
-    const persona = await getPersonaProfile();
-    const sd = persona.selfDescription;
+
+    let introText: string;
+    try {
+      const persona = await getPersonaProfile();
+      const sd = persona.selfDescription;
+      introText =
+        `✨ <b>${escapeHtml(sd.introShort)}</b>\n\n` +
+        `Рада видеть тебя, ${escapeHtml(name)}. ${escapeHtml(sd.whatSheLivesBy.split('.')[0] ?? '')}.\n\n`;
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to load persona for /start');
+      introText = `✨ Привет, ${escapeHtml(name)}!\n\n`;
+    }
 
     await ctx.reply(
-      `✨ <b>${escapeHtml(sd.introShort)}</b>\n\n` +
-      `Рада видеть тебя, ${escapeHtml(name)}. ${escapeHtml(sd.whatSheLivesBy.split('.')[0] ?? '')}.\n\n` +
+      introText +
       `<b>Вот что умею:</b>\n\n` +
       `💬 <b>Чат</b> — задай любой вопрос\n` +
       `🌐 <b>Интернет</b> — ищу актуальную информацию в сети\n` +
