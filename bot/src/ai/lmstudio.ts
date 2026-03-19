@@ -172,7 +172,7 @@ export function getLMStudioClient(cfg: LMStudioConfig): OpenAI {
   });
   currentLmStudioUrl = cfg.url;
   currentLmStudioKey = cfg.apiKey;
-  aiLogger.info({ url: cfg.url }, 'LM Studio client initialized');
+  aiLogger.debug({ url: cfg.url }, 'LM Studio client initialized');
   return lmStudioClient;
 }
 
@@ -404,12 +404,12 @@ async function checkLMStudioHealthDirect(cfg: LMStudioConfig): Promise<boolean> 
     }
 
     if (result.status > 0) {
-      aiLogger.info(
+      aiLogger.debug(
         { url: cfg.url, status: result.status, endpoint: result.endpoint, attempt },
         'LM Studio health check: non-OK response',
       );
     } else if (result.error) {
-      aiLogger.info(
+      aiLogger.debug(
         { url: cfg.url, error: result.error, timeout: result.timeout, endpoint: result.endpoint, attempt },
         'LM Studio health check failed (Server may not reach Cloudflare tunnel)',
       );
@@ -535,5 +535,5 @@ export function clearLMStudioCache(): void {
   // Сбрасываем circuit breaker при ручной очистке
   circuitState = 'closed';
   recentFailures = [];
-  aiLogger.info('LM Studio caches + circuit breaker cleared');
+  aiLogger.debug('LM Studio caches + circuit breaker cleared');
 }

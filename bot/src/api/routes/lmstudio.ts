@@ -158,7 +158,7 @@ export async function registerLmstudioRoutes(server: FastifyInstance): Promise<v
 
         await persistRegisteredTunnelUrl(trimmed);
 
-        aiLogger.info(
+        aiLogger.debug(
           { url: trimmed, healthy },
           'Tunnel URL registered'
         );

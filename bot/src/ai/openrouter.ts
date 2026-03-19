@@ -418,12 +418,12 @@ export const aiService = {
               if (provider === 'lmstudio') {
                 throw new AppError('LMSTUDIO_ERROR', `LM Studio ошибка: ${msg}`, lmError);
               }
-              aiLogger.info('Falling back to OpenRouter (auto mode)');
+              aiLogger.debug('Falling back to OpenRouter (auto mode)');
             }
           } else if (provider === 'lmstudio') {
             throw new AppError('LMSTUDIO_OFFLINE', 'LM Studio недоступна. Проверьте туннель и сервер.');
           } else {
-            aiLogger.warn('LM Studio offline, falling back to OpenRouter (auto mode)');
+            aiLogger.debug('LM Studio offline, falling back to OpenRouter (auto mode)');
           }
         } else if (provider === 'lmstudio') {
           throw new AppError('LMSTUDIO_NOT_CONFIGURED', 'LM Studio не настроена. Укажите URL и модель в админке.');

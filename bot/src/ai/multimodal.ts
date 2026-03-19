@@ -40,6 +40,7 @@ const STATIC_FREE_VISION_MODELS = [
   { id: 'google/gemma-3-12b-it:free', name: 'Gemma 3 12B', description: 'Google Gemma 3 12B vision (бесплатная)' },
   { id: 'mistralai/mistral-small-3.1-24b-instruct:free', name: 'Mistral Small 3.1', description: 'Mistral vision модель (бесплатная)' },
   { id: 'nvidia/nemotron-nano-12b-v2-vl:free', name: 'Nemotron Nano VL', description: 'NVIDIA Nemotron vision (бесплатная)' },
+  { id: 'xiaomi/mimo-v2-pro', name: 'MiMo V2 Pro', description: 'Xiaomi MiMo V2 Pro vision' },
 ];
 
 // Кэш динамических бесплатных vision моделей
@@ -438,6 +439,25 @@ export async function analyzeImage(
     }
 
   aiLogger.info({ originalError: errorMessage }, '🔄 Vision: refreshing models + starting sequential fallback');
+
+    // Авто-очистка мёртвой модели из БД (404 = модель удалена с OpenRouter)
+    if (errorMessage.includes('404') || errorMessage.toLowerCase().includes('not found')) {
+      const deadModel = multiConfig.visionModel;
+      aiLogger.warn({ model: deadModel }, '🗑️ Vision model returned 404 — clearing from DB settings');
+      try {
+        const keysToCheck = ['preferred_vision_model', 'effective_vision_model', 'vision_model', 'vision_model_override'];
+        for (const key of keysToCheck) {
+          const val = await settingsRepo.get(key);
+          if (val?.trim() === deadModel) {
+            await settingsRepo.set(key, '');
+            aiLogger.info({ key, clearedModel: deadModel }, 'Cleared dead vision model from settings');
+          }
+        }
+        settingsRepo.invalidateCache?.();
+      } catch (clearErr) {
+        aiLogger.warn({ error: clearErr }, 'Failed to clear dead vision model from DB (non-critical)');
+      }
+    }
   }
 
   // === ШАГ 2: Обновляем список бесплатных vision моделей ===

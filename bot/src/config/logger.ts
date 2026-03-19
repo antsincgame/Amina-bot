@@ -45,6 +45,15 @@ const hooks = {
 const pinoLogger = pino.pino({
   level: config.server.logLevel,
   hooks,
+  serializers: {
+    err: pino.stdSerializers.err,
+    error: (err: unknown) => {
+      if (err instanceof Error) {
+        return { message: err.message, name: err.name, stack: err.stack, ...(err as Record<string, unknown>).code ? { code: (err as Record<string, unknown>).code } : {} };
+      }
+      return err;
+    },
+  },
   transport: config.isDev
     ? {
         target: 'pino-pretty',

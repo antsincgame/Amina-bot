@@ -170,7 +170,7 @@ function acceptTranslatedDescriptions(
     const translatedDescription = translationsById.get(id);
     if (!translatedDescription) return;
     if (needsRussianLocalization(translatedDescription)) {
-      appLogger.warn(
+      appLogger.debug(
         { id, source: headline.source, category: headline.category },
         'News localization: translated description still contains long English fragment',
       );
@@ -282,14 +282,25 @@ async function translateDescriptionBatchWithFallback(
   }
 
   let missingItems = items.filter(({ id }) => !translated.has(id));
+  // Retry в мини-батчах по 4
+  const failedInRetry = new Set<number>();
   if (missingItems.length > 1) {
     const retryBatches = chunkTranslationInputs(missingItems, DESCRIPTION_TRANSLATION_RETRY_BATCH_SIZE);
     for (const retryBatch of retryBatches) {
-      mergeTranslationMaps(translated, await translateDescriptionBatch(retryBatch, 'retry_batch'));
+      const retryResult = await translateDescriptionBatch(retryBatch, 'retry_batch');
+      mergeTranslationMaps(translated, retryResult);
+      // Запоминаем items, которые не перевелись и в retry — нет смысла пробовать single
+      for (const item of retryBatch) {
+        if (!retryResult.has(item.id) && !translated.has(item.id)) {
+          failedInRetry.add(item.id);
+        }
+      }
     }
   }
 
-  missingItems = items.filter(({ id }) => !translated.has(id));
+  // Single retry только для items, которые НЕ провалились в retry_batch
+  // (те что провалились — модель уже 2 раза не справилась, третья попытка — waste)
+  missingItems = items.filter(({ id }) => !translated.has(id) && !failedInRetry.has(id));
   if (missingItems.length > 0) {
     for (const missingItem of missingItems) {
       mergeTranslationMaps(translated, await translateDescriptionBatch([missingItem], 'single'));
@@ -302,6 +313,7 @@ async function translateDescriptionBatchWithFallback(
       {
         total: items.length,
         unresolved: unresolvedItems.length,
+        skippedRetry: failedInRetry.size,
         sources: unresolvedItems.map(({ headline }) => headline.source),
       },
       'News localization: some descriptions stayed untranslated after retries',
