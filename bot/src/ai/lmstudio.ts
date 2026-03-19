@@ -26,7 +26,7 @@ export interface LMStudioDirectProbeResult {
 }
 
 const HEALTH_CACHE_TTL_MS = 60_000;
-const HEALTH_CHECK_TIMEOUT_MS = 25_000;
+const HEALTH_CHECK_TIMEOUT_MS = 5_000;
 const HEARTBEAT_VALID_MS = 180_000; // 3 min — если туннель слал heartbeat недавно, считаем Online
 const CONFIG_CACHE_TTL_MS = 60_000;
 const DEFAULT_API_KEY = 'lm-studio';
@@ -34,7 +34,7 @@ const DEFAULT_API_KEY = 'lm-studio';
 const healthCache = new SingleCache<boolean>(HEALTH_CACHE_TTL_MS);
 const configCache = new SingleCache<LMStudioConfig>(CONFIG_CACHE_TTL_MS);
 
-const RETRY_BACKOFF_MS = [1500, 3000, 5000] as const;
+const RETRY_BACKOFF_MS = [500, 1000, 2000] as const;
 const MAX_CONSECUTIVE_FAILURES = 3;
 
 // --------------------------------------------

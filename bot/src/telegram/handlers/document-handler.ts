@@ -67,11 +67,10 @@ export const handleDocumentMessage = async (ctx: BotContext): Promise<void> => {
     const convId = ctx.session.conversationId;
     if (convId) {
       const nowISO = new Date().toISOString();
-      Promise.all([
-        conversationsRepo.addMessage(convId, { role: 'user', content: userContent, timestamp: nowISO, metadata: { type: 'document_image', fileName: document.file_name } }),
-        conversationsRepo.addMessage(convId, { role: 'assistant', content: aiResponse.content, timestamp: nowISO, metadata: { tokens_used: aiResponse.tokens_used.total, model: aiResponse.model } }),
-        analyticsRepo.log('ai_response', 'telegram', { userId, type: 'document_image', model: aiResponse.model, tokens: aiResponse.tokens_used.total }),
-      ]).catch((err) => { telegramLogger.warn({ error: err, userId }, 'Background document DB writes failed'); });
+      conversationsRepo.addMessage(convId, { role: 'user', content: userContent, timestamp: nowISO, metadata: { type: 'document_image', fileName: document.file_name } })
+        .then(() => conversationsRepo.addMessage(convId, { role: 'assistant', content: aiResponse.content, timestamp: nowISO, metadata: { tokens_used: aiResponse.tokens_used.total, model: aiResponse.model } }))
+        .catch((err) => { telegramLogger.warn({ error: err, userId }, 'Background document DB writes failed'); });
+      analyticsRepo.log('ai_response', 'telegram', { userId, type: 'document_image', model: aiResponse.model, tokens: aiResponse.tokens_used.total }).catch(() => {});
     }
 
     await sendLongMessage(ctx, aiResponse.content);

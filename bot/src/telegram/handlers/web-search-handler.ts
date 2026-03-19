@@ -89,8 +89,9 @@ export const handleDirectWebSearch = async (
     const convId = ctx.session.conversationId;
     if (convId) {
       const nowISO = new Date().toISOString();
-      conversationsRepo.addMessage(convId, { role: 'user', content: userMessage, timestamp: nowISO }).catch((err) => { telegramLogger.warn({ error: err }, 'Search DB write failed'); });
-      conversationsRepo.addMessage(convId, { role: 'assistant', content: finalContent, timestamp: nowISO }).catch((err) => { telegramLogger.warn({ error: err }, 'Search DB write failed'); });
+      conversationsRepo.addMessage(convId, { role: 'user', content: userMessage, timestamp: nowISO })
+        .then(() => conversationsRepo.addMessage(convId, { role: 'assistant', content: finalContent, timestamp: nowISO }))
+        .catch((err) => { telegramLogger.warn({ error: err }, 'Search DB write failed'); });
     }
     analyticsRepo.log('message_sent', 'telegram', { userId, model: response.model, tokens: response.tokens_used.total, responseTimeMs: responseTime, webSearch: true, webSearchModel: searchResult.model }).catch(() => {});
 

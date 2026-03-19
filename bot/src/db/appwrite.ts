@@ -457,13 +457,17 @@ export const conversationsRepo = {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
         const doc = await getAppwrite().getDocument(DB_ID(), COLL.conversations, conversationId);
-        const currentMessages: Message[] = parseJson(doc.messages, []);
+        let currentMessages: Message[] = parseJson(doc.messages, []);
 
-        checkArraySize(
-          currentMessages,
-          MAX_CONVERSATION_MESSAGES,
-          `Conversation has too many messages (max ${MAX_CONVERSATION_MESSAGES})`
-        );
+        // Авто-обрезка: если достигнут лимит — удаляем старые сообщения вместо throw
+        if (currentMessages.length >= MAX_CONVERSATION_MESSAGES) {
+          const trimTo = Math.floor(MAX_CONVERSATION_MESSAGES * 0.75);
+          dbLogger.info(
+            { conversationId, was: currentMessages.length, trimTo },
+            'Conversation auto-trimmed (exceeded max messages)'
+          );
+          currentMessages = currentMessages.slice(-trimTo);
+        }
 
         const messages = [...currentMessages, message];
 

@@ -53,11 +53,10 @@ export const handlePhotoMessage = async (ctx: BotContext): Promise<void> => {
     const convId = ctx.session.conversationId;
     if (convId) {
       const nowISO = new Date().toISOString();
-      Promise.all([
-        conversationsRepo.addMessage(convId, { role: 'user', content: userContent, timestamp: nowISO, metadata: { type: 'photo' } }),
-        conversationsRepo.addMessage(convId, { role: 'assistant', content: aiResponse.content, timestamp: nowISO, metadata: { tokens_used: aiResponse.tokens_used.total, model: aiResponse.model } }),
-        analyticsRepo.log('ai_response', 'telegram', { userId, type: 'photo', model: aiResponse.model, tokens: aiResponse.tokens_used.total }),
-      ]).catch((err) => { telegramLogger.warn({ error: err, userId }, 'Background photo DB writes failed'); });
+      conversationsRepo.addMessage(convId, { role: 'user', content: userContent, timestamp: nowISO, metadata: { type: 'photo' } })
+        .then(() => conversationsRepo.addMessage(convId, { role: 'assistant', content: aiResponse.content, timestamp: nowISO, metadata: { tokens_used: aiResponse.tokens_used.total, model: aiResponse.model } }))
+        .catch((err) => { telegramLogger.warn({ error: err, userId }, 'Background photo DB writes failed'); });
+      analyticsRepo.log('ai_response', 'telegram', { userId, type: 'photo', model: aiResponse.model, tokens: aiResponse.tokens_used.total }).catch(() => {});
     }
 
     await sendLongMessage(ctx, aiResponse.content);
