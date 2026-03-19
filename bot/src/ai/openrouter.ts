@@ -357,13 +357,14 @@ export const aiService = {
     const tryWithClient = async (
       client: OpenAI,
       model: string,
+      signal?: AbortSignal,
     ): Promise<AIResponse & { usedModel: string }> => {
       const response = await client.chat.completions.create({
         model,
         messages: fullMessages,
         max_tokens: maxTokens,
         temperature,
-      });
+      }, signal ? { signal } : undefined);
 
       const choice = response.choices[0];
       if (!choice?.message?.content) {
@@ -434,8 +435,8 @@ export const aiService = {
     // === ШАГ 1: OpenRouter — основная модель ===
     const client = await getClient();
 
-    const tryModel = async (model: string): Promise<AIResponse & { usedModel: string }> =>
-      tryWithClient(client, model);
+    const tryModel = async (model: string, signal?: AbortSignal): Promise<AIResponse & { usedModel: string }> =>
+      tryWithClient(client, model, signal);
 
     aiLogger.debug(
       { model: aiConfig.model, messageCount: messages.length, provider: 'openrouter' },
@@ -533,20 +534,24 @@ export const aiService = {
 
       // Таймаут-промис для ограничения гонки (с cleanup)
       let raceTimeoutId: ReturnType<typeof setTimeout> | undefined;
+      const raceAbort = new AbortController();
       const timeoutPromise = new Promise<never>((_, reject) => {
         raceTimeoutId = setTimeout(() => {
+          raceAbort.abort();
           reject(new AppError('RACE_TIMEOUT', 'Превышено время ожидания ответа от моделей'));
         }, RACE_TIMEOUT_MS);
       });
 
       const racePromises = modelsToTry.map(async (model) => {
         try {
-          const result = await tryModel(model);
+          const result = await tryModel(model, raceAbort.signal);
           aiLogger.debug({ model }, 'Model responded in race');
           return result;
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
-          aiLogger.debug({ model, error: msg }, 'Model failed in race');
+          if (!raceAbort.signal.aborted) {
+            aiLogger.debug({ model, error: msg }, 'Model failed in race');
+          }
           throw error;
         }
       });
@@ -557,6 +562,8 @@ export const aiService = {
       ]);
 
       if (raceTimeoutId) clearTimeout(raceTimeoutId);
+      // Отменяем проигравшие запросы — экономим токены/лимиты OpenRouter
+      raceAbort.abort();
 
       aiLogger.info(
         { winner: winner.usedModel, tokens: winner.tokens_used.total },

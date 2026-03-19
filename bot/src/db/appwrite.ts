@@ -461,7 +461,7 @@ export const conversationsRepo = {
 
         // Авто-обрезка: если достигнут лимит — удаляем старые сообщения вместо throw
         if (currentMessages.length >= MAX_CONVERSATION_MESSAGES) {
-          const trimTo = Math.floor(MAX_CONVERSATION_MESSAGES * 0.75);
+          const trimTo = Math.floor(MAX_CONVERSATION_MESSAGES * 0.5);
           dbLogger.info(
             { conversationId, was: currentMessages.length, trimTo },
             'Conversation auto-trimmed (exceeded max messages)'

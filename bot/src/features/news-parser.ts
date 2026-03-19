@@ -113,6 +113,31 @@ const SKIP_LINK_PATTERNS = [
 
 const validatedNewsHostCache = new Map<string, { safe: boolean; ts: number }>();
 
+// Circuit breaker для постоянно падающих сайтов
+const siteFailureTracker = new Map<string, { failures: number; lastFailAt: number }>();
+const SITE_CB_THRESHOLD = 3;       // 3 подряд fail → skip
+const SITE_CB_COOLDOWN_MS = 30 * 60_000; // 30 мин пауза
+
+function shouldSkipSite(url: string): boolean {
+  const entry = siteFailureTracker.get(url);
+  if (!entry || entry.failures < SITE_CB_THRESHOLD) return false;
+  return Date.now() - entry.lastFailAt < SITE_CB_COOLDOWN_MS;
+}
+
+function recordSiteSuccess(url: string): void {
+  siteFailureTracker.delete(url);
+}
+
+function recordSiteFailure(url: string): void {
+  const entry = siteFailureTracker.get(url);
+  siteFailureTracker.set(url, { failures: (entry?.failures ?? 0) + 1, lastFailAt: Date.now() });
+  // Защита от утечки памяти
+  if (siteFailureTracker.size > 500) {
+    const oldest = siteFailureTracker.keys().next().value;
+    if (oldest) siteFailureTracker.delete(oldest);
+  }
+}
+
 // ===== Пресетные AI/Tech источники =====
 
 export const DEFAULT_AI_TECH_SOURCES: NewsSite[] = [
@@ -1990,18 +2015,24 @@ export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
     const batch = enabledSites.slice(i, i + NEWS_PARSE_BATCH_SIZE);
     const batchResults = await Promise.allSettled(
       batch.map(async (site) => {
+        if (shouldSkipSite(site.url)) {
+          appLogger.debug({ site: site.name }, 'Site skipped by circuit breaker');
+          return [] as ParsedHeadline[];
+        }
         try {
           const headlines = await withPromiseTimeout(
             parseNewsFromSite(site),
             NEWS_SITE_TIMEOUT_MS,
             `News site "${site.name}"`,
           );
+          recordSiteSuccess(site.url);
           appLogger.info(
             { site: site.name, count: headlines.length, type: site.type, category: site.category },
             'Site parsed successfully',
           );
           return headlines;
         } catch (err) {
+          recordSiteFailure(site.url);
           appLogger.warn(
             { site: site.name, url: site.url, error: err instanceof Error ? err.message : String(err) },
             'Site parse failed',
