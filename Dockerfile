@@ -41,7 +41,7 @@ COPY shared/ ./shared/
 COPY bot/package.json bot/package-lock.json ./bot/
 RUN cd bot && npm ci --omit=dev
 
-# Copy bot source
+# Copy bot source (мини-приложение: bot/src/telegram/mini-app-web.html)
 COPY bot/ ./bot/
 
 # Copy admin build from stage 1

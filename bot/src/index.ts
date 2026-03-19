@@ -34,6 +34,7 @@ import { ensureTelephonyRecordingsInfra } from './features/telephony/telephony-r
 import { syncSelfCoreSystemFacts } from './ai/self-core.js';
 import { getChatRuntimeState } from './ai/runtime-truth.js';
 import { getMiniAppUrl } from './telegram/mini-app.js';
+import { getMiniAppHtml } from './telegram/mini-app-html.js';
 
 // --------------------------------------------
 // Application Entry Point (v1.0.1)
@@ -217,22 +218,23 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
     }
   });
 
-  const miniAppHtmlPath = resolve(__dirname_check, '../../public/mini-app/index.html');
   const sendMiniAppHtml = (reply: FastifyReply) => {
-    if (!existsSync(miniAppHtmlPath)) {
-      appLogger.error({ miniAppHtmlPath }, 'mini-app index.html отсутствует на диске');
+    try {
+      return reply.type('text/html; charset=utf-8').send(getMiniAppHtml());
+    } catch (err) {
+      appLogger.error({ err }, 'mini-app: не удалось прочитать mini-app-web.html');
       return reply.code(503).send({ error: 'Mini-app unavailable', code: 'MINI_APP_MISSING' });
     }
-    return reply.type('text/html; charset=utf-8').send(readFileSync(miniAppHtmlPath, 'utf-8'));
   };
 
   server.get('/mini-app', async (_request, reply) => reply.redirect('/mini-app/index.html'));
   server.get('/mini-app/', async (_request, reply) => sendMiniAppHtml(reply));
   server.get('/mini-app/index.html', async (_request, reply) => sendMiniAppHtml(reply));
-  if (existsSync(miniAppHtmlPath)) {
-    appLogger.info({ path: miniAppHtmlPath }, '📱 Telegram mini-app: явные маршруты /mini-app/');
-  } else {
-    appLogger.warn({ path: miniAppHtmlPath }, 'Mini-app: файл index.html не найден — Web App не отдастся');
+  try {
+    getMiniAppHtml();
+    appLogger.info('📱 Telegram mini-app: HTML из src/telegram/mini-app-web.html');
+  } catch {
+    appLogger.warn('Mini-app: mini-app-web.html не найден рядом с mini-app-html.ts');
   }
 
   registerTelegramWebhookRoute(server, () => bot);

@@ -71,7 +71,7 @@ export LMSTUDIO_TUNNEL_TOKEN=<token>
 
 В чате с ботом доступны кнопка **✨ Амина** (клавиатура и быстрое меню) и пункт **«Амина»** в **меню чата** (квадрат с четырьмя точками / скрепкой — зависит от клиента). Открывается простая веб-страница с подсказками.
 
-**Нужно в проде:** переменная **`BOT_URL`** (или **`WEBHOOK_URL`**) = тот же **https**-хост, куда ходит вебхук (например `https://amina.vibecoding.by`). В **[@BotFather](https://t.me/BotFather)** для бота выполните **`/setdomain`** и укажите **только домен без пути** (например `amina.vibecoding.by`). Страница отдаётся с `/mini-app/index.html`.
+**Нужно в проде:** переменная **`BOT_URL`** (или **`WEBHOOK_URL`**) = тот же **https**-хост, куда ходит вебхук (например `https://amina.vibecoding.by`). В **[@BotFather](https://t.me/BotFather)** для бота выполните **`/setdomain`** и укажите **только домен без пути** (например `amina.vibecoding.by`). Страница отдаётся с `/mini-app/index.html` (шаблон в репозитории: `bot/src/telegram/mini-app-web.html`).
 
 ## InvokeAI (локальная генерация на вашем GPU)
 
