@@ -49,4 +49,3 @@ temp/
 .cursor/
 tunnel-app/.env
 tunnel-app/node_modules
-appwrite-mcp-custom/

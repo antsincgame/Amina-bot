@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VibeCoding — Console</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>">
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --neon-cyan: #00fff9;
+      --neon-pink: #ff006e;
+      --neon-green: #39ff14;
+      --dark-bg: #0a0a0f;
+      --card-bg: rgba(19, 19, 26, 0.8);
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--dark-bg);
+      font-family: 'Rajdhani', sans-serif;
+      color: #fff;
+      overflow: hidden;
+    }
+
+    /* Cyber grid background */
+    .cyber-grid {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-image:
+        linear-gradient(rgba(0, 255, 249, 0.1) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 255, 249, 0.1) 1px, transparent 1px);
+      background-size: 50px 50px;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    /* Scan line */
+    .scanline {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      height: 4px;
+      background: linear-gradient(90deg, transparent, var(--neon-cyan), transparent);
+      opacity: 0.4;
+      animation: scan 4s linear infinite;
+      z-index: 1;
+      pointer-events: none;
+    }
+    @keyframes scan {
+      0% { top: -4px; }
+      100% { top: 100vh; }
+    }
+
+    .login-wrapper {
+      position: relative;
+      z-index: 2;
+      width: 100%;
+      max-width: 420px;
+      padding: 20px;
+    }
+
+    /* Cyber card (same as vibecoding-school) */
+    .cyber-card {
+      background: var(--card-bg);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(0, 255, 249, 0.3);
+      border-radius: 8px;
+      padding: 40px 32px;
+      position: relative;
+      overflow: hidden;
+    }
+    .cyber-card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: -100%;
+      width: 100%; height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(0, 255, 249, 0.1), transparent);
+      transition: left 0.5s;
+    }
+    .cyber-card:hover::before { left: 100%; }
+    .cyber-card:hover {
+      border-color: var(--neon-cyan);
+      box-shadow: 0 0 20px rgba(0, 255, 249, 0.3), inset 0 0 20px rgba(0, 255, 249, 0.1);
+    }
+
+    /* Logo with glitch */
+    .logo {
+      text-align: center;
+      margin-bottom: 8px;
+    }
+    .logo h1 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 26px;
+      font-weight: 900;
+      color: var(--neon-cyan);
+      letter-spacing: 3px;
+      text-shadow: 0 0 10px var(--neon-cyan), 0 0 20px var(--neon-cyan), 0 0 30px var(--neon-cyan), 0 0 40px var(--neon-pink);
+      animation: glitch 2s infinite;
+    }
+    .logo .subtitle {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 12px;
+      color: rgba(255,255,255,0.4);
+      margin-top: 6px;
+      letter-spacing: 5px;
+      text-transform: uppercase;
+    }
+    @keyframes glitch {
+      0%, 90%, 100% { transform: translate(0); }
+      92% { transform: translate(-2px, 2px); }
+      94% { transform: translate(2px, -2px); }
+      96% { transform: translate(-2px, -2px); }
+      98% { transform: translate(2px, 2px); }
+    }
+
+    /* Divider */
+    .divider {
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(0, 255, 249, 0.3), transparent);
+      margin: 24px 0;
+    }
+
+    /* Form */
+    .form-group {
+      margin-bottom: 22px;
+    }
+    .form-group label {
+      display: block;
+      margin-bottom: 10px;
+      font-size: 16px;
+      font-weight: 600;
+    }
+    .form-group label.cyan { color: var(--neon-cyan); }
+    .form-group label.pink { color: var(--neon-pink); }
+
+    /* Cyber input (same as vibecoding-school) */
+    .cyber-input {
+      background: rgba(19, 19, 26, 0.8);
+      border: 2px solid rgba(0, 255, 249, 0.5);
+      border-radius: 4px;
+      padding: 15px;
+      color: white;
+      font-family: 'Rajdhani', sans-serif;
+      font-size: 16px;
+      width: 100%;
+      transition: all 0.3s;
+      outline: none;
+    }
+    .cyber-input:focus {
+      border-color: var(--neon-cyan);
+      box-shadow: 0 0 15px rgba(0, 255, 249, 0.5), inset 0 0 10px rgba(0, 255, 249, 0.1);
+      background: rgba(19, 19, 26, 0.95);
+    }
+    .cyber-input:hover:not(:focus) {
+      border-color: rgba(0, 255, 249, 0.7);
+      background: rgba(19, 19, 26, 0.9);
+    }
+    .cyber-input::placeholder {
+      color: rgba(255, 255, 255, 0.5);
+      font-style: italic;
+    }
+
+    /* Password wrapper */
+    .password-wrapper {
+      position: relative;
+    }
+    .password-wrapper input {
+      padding-right: 50px;
+    }
+    .toggle-password {
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      cursor: pointer;
+      color: var(--neon-pink);
+      opacity: 0.6;
+      transition: opacity 0.2s;
+      padding: 8px;
+      display: flex;
+      align-items: center;
+    }
+    .toggle-password:hover { opacity: 1; }
+
+    /* Cyber button (same as vibecoding-school) */
+    .cyber-button {
+      background: transparent;
+      border: 2px solid var(--neon-cyan);
+      color: var(--neon-cyan);
+      padding: 15px 40px;
+      font-size: 18px;
+      font-family: 'Orbitron', sans-serif;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s;
+      width: 100%;
+    }
+    .cyber-button::before {
+      content: '';
+      position: absolute;
+      top: 0; left: -100%;
+      width: 100%; height: 100%;
+      background: var(--neon-cyan);
+      transition: left 0.3s;
+      z-index: -1;
+    }
+    .cyber-button:hover::before { left: 0; }
+    .cyber-button:hover {
+      color: var(--dark-bg);
+      box-shadow: 0 0 20px var(--neon-cyan);
+    }
+    .cyber-button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .cyber-button:disabled::before { left: -100%; }
+
+    /* Error message */
+    .error-msg {
+      display: none;
+      color: var(--neon-pink);
+      margin-bottom: 20px;
+      text-align: center;
+      padding: 10px;
+      background: rgba(255, 0, 110, 0.1);
+      border: 1px solid var(--neon-pink);
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    .error-msg.show { display: block; }
+
+    /* Footer */
+    .footer {
+      text-align: center;
+      margin-top: 20px;
+      font-size: 11px;
+      color: rgba(255,255,255,0.15);
+      letter-spacing: 2px;
+    }
+
+    /* Corner decorations */
+    .corner { position: absolute; width: 20px; height: 20px; }
+    .corner-tl { top: -1px; left: -1px; border-top: 2px solid var(--neon-cyan); border-left: 2px solid var(--neon-cyan); }
+    .corner-tr { top: -1px; right: -1px; border-top: 2px solid var(--neon-cyan); border-right: 2px solid var(--neon-cyan); }
+    .corner-bl { bottom: -1px; left: -1px; border-bottom: 2px solid var(--neon-pink); border-left: 2px solid var(--neon-pink); }
+    .corner-br { bottom: -1px; right: -1px; border-bottom: 2px solid var(--neon-pink); border-right: 2px solid var(--neon-pink); }
+  </style>
+</head>
+<body>
+  <div class="cyber-grid"></div>
+  <div class="scanline"></div>
+
+  <div class="login-wrapper">
+    <div class="cyber-card">
+      <div class="corner corner-tl"></div>
+      <div class="corner corner-tr"></div>
+      <div class="corner corner-bl"></div>
+      <div class="corner corner-br"></div>
+
+      <div class="logo">
+        <h1 class="glitch">⚡ VIBECODING</h1>
+        <div class="subtitle">Console</div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="error-msg" id="error"></div>
+
+      <div class="form-group">
+        <label class="cyan">Email</label>
+        <input type="email" id="email" class="cyber-input" placeholder="admin@vibecoding.by" autocomplete="email" autofocus>
+      </div>
+
+      <div class="form-group">
+        <label class="pink">Пароль</label>
+        <div class="password-wrapper">
+          <input type="password" id="password" class="cyber-input" placeholder="Введите пароль" autocomplete="current-password">
+          <button type="button" class="toggle-password" onclick="togglePass()" title="Показать пароль">
+            <svg id="eyeIcon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <button class="cyber-button" id="loginBtn" onclick="doLogin()">
+        ВОЙТИ
+      </button>
+
+      <div class="footer">VIBECODING PLATFORM v1.0</div>
+    </div>
+  </div>
+
+  <script>
+    const APPWRITE_ENDPOINT = '%%APPWRITE_ENDPOINT%%';
+
+    function togglePass() {
+      const inp = document.getElementById('password');
+      const icon = document.getElementById('eyeIcon');
+      const show = inp.type === 'password';
+      inp.type = show ? 'text' : 'password';
+      icon.innerHTML = show
+        ? '<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>'
+        : '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>';
+    }
+
+    document.getElementById('password').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') doLogin();
+    });
+    document.getElementById('email').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') document.getElementById('password').focus();
+    });
+
+    async function doLogin() {
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      const btn = document.getElementById('loginBtn');
+      const errorEl = document.getElementById('error');
+
+      if (!email || !password) {
+        errorEl.textContent = 'Введите email и пароль';
+        errorEl.classList.add('show');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.textContent = 'ПОДКЛЮЧЕНИЕ...';
+      errorEl.classList.remove('show');
+
+      try {
+        const res = await fetch(APPWRITE_ENDPOINT + '/account/sessions/email', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Appwrite-Project': 'console',
+          },
+          credentials: 'include',
+          body: JSON.stringify({ email, password }),
+        });
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.message || 'Ошибка авторизации (' + res.status + ')');
+        }
+
+        window.location.href = APPWRITE_ENDPOINT.replace('/v1', '/console');
+      } catch (e) {
+        errorEl.textContent = e.message;
+        errorEl.classList.add('show');
+        btn.disabled = false;
+        btn.textContent = 'ВОЙТИ';
+      }
+    }
+  </script>
+</body>
+</html>

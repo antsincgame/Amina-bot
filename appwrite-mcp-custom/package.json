@@ -1,0 +1,20 @@
+{
+  "name": "appwrite-mcp-admin",
+  "version": "1.0.0",
+  "description": "Custom Appwrite MCP Server with Console-level access",
+  "type": "module",
+  "bin": {
+    "appwrite-mcp-admin": "./src/index.js"
+  },
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "author": "igor1000rr",
+  "license": "MIT"
+}
