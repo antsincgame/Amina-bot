@@ -21,7 +21,7 @@ import { remindersRepo } from '../reminders/reminders-repo.js';
 import { textToSpeech, detectLanguage } from '../features/tts.js';
 import { userLogsRepo } from '../memory/user-memory.js';
 import { sendDigestNow, getDigestFullText } from '../features/digest-scheduler.js';
-import { getFullText, escapeMarkdown } from './format.js';
+import { getFullText } from './format.js';
 import {
   buildMainMenu,
   todoDoneKeyboard,

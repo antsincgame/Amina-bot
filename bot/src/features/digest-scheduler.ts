@@ -389,12 +389,17 @@ function resetSentCacheAtMidnight(): void {
 async function buildDigestWithTimeout(
   userId: string, firstName: string | null, city: string | null, timeoutMs = 180_000,
 ): Promise<string> {
-  return Promise.race([
-    buildDigest(userId, firstName, city ?? ''),
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error(`buildDigest timeout after ${timeoutMs}ms`)), timeoutMs),
-    ),
-  ]);
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      buildDigest(userId, firstName, city ?? ''),
+      new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(`buildDigest timeout after ${timeoutMs}ms`)), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 }
 
 /**
@@ -405,8 +410,10 @@ async function processDigests(bot: BotLike): Promise<void> {
   isProcessing = true;
 
   try {
-    const currentHour = new Date().getHours();
-    const todayStr = new Date().toLocaleDateString('sv-SE'); // YYYY-MM-DD
+    const serverTZ = config.server.timeZone;
+    const now = new Date();
+    const currentHour = Number(new Intl.DateTimeFormat('en', { timeZone: serverTZ, hour: 'numeric', hour12: false }).format(now));
+    const todayStr = new Intl.DateTimeFormat('sv-SE', { timeZone: serverTZ }).format(now); // YYYY-MM-DD
 
     const users = await userPrefsRepo.getDigestUsers(currentHour);
     if (users.length === 0) return;
@@ -466,7 +473,7 @@ export async function buildDigest(
   city: string
 ): Promise<string> {
   const rawData: string[] = [];
-  const todayStr = new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' });
+  const todayStr = new Date().toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: config.server.timeZone });
   const shouldLoadPersonalData = userId !== 'public';
 
   const [weatherResult, parsedHeadlinesResult, remindersResult, todosResult] =
@@ -504,9 +511,9 @@ export async function buildDigest(
   // 5. Напоминания на сегодня
   if (shouldLoadPersonalData && remindersResult.status === 'fulfilled') {
     const reminders = remindersResult.value;
-    const todayISO = new Date().toLocaleDateString('sv-SE');
+    const todayISO = new Date().toLocaleDateString('sv-SE', { timeZone: config.server.timeZone });
     const todayReminders = reminders.filter(r => {
-      const reminderDate = new Date(r.scheduled_at).toLocaleDateString('sv-SE');
+      const reminderDate = new Date(r.scheduled_at).toLocaleDateString('sv-SE', { timeZone: config.server.timeZone });
       return reminderDate === todayISO;
     });
     if (todayReminders.length > 0) {
@@ -540,7 +547,7 @@ export async function buildDigest(
   // --- LLM обработка ---
   const nameStr = firstName || 'друг';
   const todayDate = new Date().toLocaleDateString('ru-RU', {
-    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: config.server.timeZone,
   });
 
   const digestPrompt = `Сейчас ${todayDate}.
