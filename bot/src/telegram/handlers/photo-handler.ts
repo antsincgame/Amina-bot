@@ -71,8 +71,9 @@ export const handlePhotoMessage = async (ctx: BotContext): Promise<void> => {
     if (errorCode === 'VISION_MODEL_NOT_FOUND') msg = '🔧 Vision модель не найдена.\n\nВ админке выберите другую модель.';
     else if (errorCode === 'VISION_SERVICE_UNAVAILABLE') msg = '⏳ Сервис анализа фото недоступен. Попробуй через минуту.';
     else if (errorCode === 'AUTH_ERROR') msg = '🔑 Ошибка авторизации API.';
-    else if (errorCode === 'ALL_MODELS_FAILED') msg = '🔄 Все модели AI заняты. Через 30 сек.';
+    else if (errorCode === 'ALL_MODELS_FAILED' || errorCode === 'ALL_VISION_MODELS_FAILED') msg = '🔄 Все vision модели заняты. Попробуй через 30 сек.';
     else if (errorCode === 'RATE_LIMIT') msg = '⏳ Слишком много запросов!';
+    else if (errorCode === 'VISION_RACE_TIMEOUT') msg = '⏰ Vision модели отвечают слишком долго. Попробуй ещё раз.';
 
     await ctx.reply(msg);
   }

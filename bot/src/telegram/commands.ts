@@ -63,34 +63,34 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     const sd = persona.selfDescription;
 
     await ctx.reply(
-      `✨ *${sd.introShort}*\n\n` +
-      `Рада видеть тебя, ${name}. ${sd.whatSheLivesBy.split('.')[0]}.\n\n` +
-      `*Вот что умею:*\n\n` +
-      `💬 *Чат* — задай любой вопрос\n` +
-      `🌐 *Интернет* — ищу актуальную информацию в сети\n` +
-      `🎨 *Картинки* — «нарисуй...» или кнопка ниже\n` +
-      `🎤 *Голос* — отправь голосовое, я пойму\n` +
-      `📷 *Фото* — отправь картинку для анализа\n` +
-      `⏰ *Напоминания* — «напомни через час...»\n` +
-      `📌 *Заметки* — «запомни ...» или кнопка\n` +
-      `✅ *Задачи* — добавляй и выполняй\n` +
-      `☀️ *Дайджест* — утренняя сводка с погодой и новостями\n` +
-      `🧠 *Полный дайджест* — /digest\\_all для полного дайджеста\n` +
-      `🔊 *Озвучка* — «скажи голосом...»\n\n` +
-      `👇 *Используй кнопки ниже или просто напиши — я слушаю.*`,
-      { parse_mode: 'Markdown', reply_markup: buildReplyKeyboard() }
+      `✨ <b>${escapeHtml(sd.introShort)}</b>\n\n` +
+      `Рада видеть тебя, ${escapeHtml(name)}. ${escapeHtml(sd.whatSheLivesBy.split('.')[0])}.\n\n` +
+      `<b>Вот что умею:</b>\n\n` +
+      `💬 <b>Чат</b> — задай любой вопрос\n` +
+      `🌐 <b>Интернет</b> — ищу актуальную информацию в сети\n` +
+      `🎨 <b>Картинки</b> — «нарисуй...» или кнопка ниже\n` +
+      `🎤 <b>Голос</b> — отправь голосовое, я пойму\n` +
+      `📷 <b>Фото</b> — отправь картинку для анализа\n` +
+      `⏰ <b>Напоминания</b> — «напомни через час...»\n` +
+      `📌 <b>Заметки</b> — «запомни ...» или кнопка\n` +
+      `✅ <b>Задачи</b> — добавляй и выполняй\n` +
+      `☀️ <b>Дайджест</b> — утренняя сводка с погодой и новостями\n` +
+      `🧠 <b>Полный дайджест</b> — /digest_all для полного дайджеста\n` +
+      `🔊 <b>Озвучка</b> — «скажи голосом...»\n\n` +
+      `👇 <b>Используй кнопки ниже или просто напиши — я слушаю.</b>`,
+      { parse_mode: 'HTML', reply_markup: buildReplyKeyboard() }
     );
 
-    await ctx.reply(`🎛 *Быстрое меню* — нажми на нужную кнопку:`, {
-      parse_mode: 'Markdown',
+    await ctx.reply(`🎛 <b>Быстрое меню</b> — нажми на нужную кнопку:`, {
+      parse_mode: 'HTML',
       reply_markup: buildMainMenu(),
     });
   });
 
   // /menu
   bot.command('menu', async (ctx) => {
-    await ctx.reply(`🎛 *Меню Amina* — выбери действие:`, {
-      parse_mode: 'Markdown',
+    await ctx.reply(`🎛 <b>Меню Amina</b> — выбери действие:`, {
+      parse_mode: 'HTML',
       reply_markup: buildMainMenu(),
     });
   });
@@ -98,31 +98,31 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
   // /help
   bot.command('help', async (ctx) => {
     await ctx.reply(
-      `🤖 *Amina — Полная справка*\n\n` +
-      `*📋 Команды:*\n` +
+      `🤖 <b>Amina — Полная справка</b>\n\n` +
+      `<b>📋 Команды:</b>\n` +
       `/menu — главное меню с кнопками\n` +
-      `/imagine \\_описание\\_ — картинка\n` +
+      `/imagine <i>описание</i> — картинка\n` +
       `/edit — редактирование фото\n` +
-      `/search \\_запрос\\_ — поиск в сети\n` +
-      `/note \\_текст\\_ — заметка\n` +
+      `/search <i>запрос</i> — поиск в сети\n` +
+      `/note <i>текст</i> — заметка\n` +
       `/notes — список заметок\n` +
-      `/note\\_delete \\_номер\\_ — удалить заметку\n` +
-      `/todo \\_текст\\_ — задача\n` +
+      `/note_delete <i>номер</i> — удалить заметку\n` +
+      `/todo <i>текст</i> — задача\n` +
       `/todos — список задач\n` +
-      `/done \\_номер\\_ — выполнить\n` +
+      `/done <i>номер</i> — выполнить\n` +
       `/reminders — напоминания\n` +
-      `/remind\\_cancel \\_номер\\_ — отменить\n` +
+      `/remind_cancel <i>номер</i> — отменить\n` +
       `/digest — утренний дайджест\n` +
-      `/digest\\_all — полный дайджест из всех источников\n` +
-      `*💡 Быстрые действия (без команд):*\n` +
-      `• _Нарисуй кота в космосе_ — картинка\n` +
-      `• _Напомни через час позвонить_ — напоминание\n` +
-      `• _Запомни: пароль 12345_ — заметка\n` +
-      `• _Скажи голосом привет_ — озвучка\n` +
-      `• _Курс доллара_ — автопоиск\n` +
+      `/digest_all — полный дайджест из всех источников\n` +
+      `<b>💡 Быстрые действия (без команд):</b>\n` +
+      `• <i>Нарисуй кота в космосе</i> — картинка\n` +
+      `• <i>Напомни через час позвонить</i> — напоминание\n` +
+      `• <i>Запомни: пароль 12345</i> — заметка\n` +
+      `• <i>Скажи голосом привет</i> — озвучка\n` +
+      `• <i>Курс доллара</i> — автопоиск\n` +
       `• Отправь 📷 фото — опишу\n` +
       `• Отправь 🎤 голосовое — пойму`,
-      { parse_mode: 'Markdown', reply_markup: buildMainMenu() }
+      { parse_mode: 'HTML', reply_markup: buildMainMenu() }
     );
   });
 
@@ -187,7 +187,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
         const d = new Date(r.scheduled_at ?? '');
         const dateStr = Number.isNaN(d.getTime())
           ? '—'
-          : d.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+          : d.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: config.server.timeZone });
         const task = typeof r.task === 'string' ? r.task : String(r.task ?? '—');
         return `${i + 1}. ${escapeHtml(task)}\n   ⏰ ${escapeHtml(dateStr)}`;
       });
@@ -209,7 +209,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     const arg = ctx.message?.text?.replace(/^\/remind_cancel\s*/i, '').trim();
 
     if (!arg) {
-      await ctx.reply('Использование: `/remind_cancel номер`\n\nСначала посмотри список: /reminders', { parse_mode: 'Markdown' });
+      await ctx.reply('Использование: <code>/remind_cancel номер</code>\n\nСначала посмотри список: /reminders', { parse_mode: 'HTML' });
       return;
     }
 
@@ -250,10 +250,10 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     if (!prompt) {
       // Спрашиваем, что нарисовать
       await ctx.reply(
-        '🎨 *Что нарисовать?*\n\n' +
+        '🎨 <b>Что нарисовать?</b>\n\n' +
         'Опиши изображение, которое хочешь создать.\n\n' +
-        '_Например: кот-астронавт в космосе, закат над горами в стиле Ван Гога_',
-        { parse_mode: 'Markdown' }
+        '<i>Например: кот-астронавт в космосе, закат над горами в стиле Ван Гога</i>',
+        { parse_mode: 'HTML' }
       );
       // Устанавливаем флаг ожидания описания для картинки
       ctx.session.awaitingImagePrompt = true;
@@ -290,7 +290,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     const query = ctx.message?.text?.replace(/^\/search\s*/i, '').trim();
 
     if (!query) {
-      await ctx.reply('🔍 *Что найти в интернете?*', { parse_mode: 'Markdown' });
+      await ctx.reply('🔍 <b>Что найти в интернете?</b>', { parse_mode: 'HTML' });
       ctx.session.awaitingSearchQuery = true;
       return;
     }
@@ -323,7 +323,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     const content = ctx.match?.trim();
 
     if (!content) {
-      await ctx.reply('📌 *Что запомнить?*', { parse_mode: 'Markdown' });
+      await ctx.reply('📌 <b>Что запомнить?</b>', { parse_mode: 'HTML' });
       ctx.session.awaitingNoteContent = true;
       return;
     }
@@ -425,7 +425,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     const task = ctx.match?.trim();
 
     if (!task) {
-      await ctx.reply('✅ *Какую задачу добавить?*', { parse_mode: 'Markdown' });
+      await ctx.reply('✅ <b>Какую задачу добавить?</b>', { parse_mode: 'HTML' });
       ctx.session.awaitingTodoTask = true;
       return;
     }
@@ -449,14 +449,14 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     try {
       const todos = await todosRepo.getActive(userId);
       if (todos.length === 0) {
-        await ctx.reply('🎉 Все задачи выполнены!\n\nДобавь: `/todo текст`', { parse_mode: 'Markdown' });
+        await ctx.reply('🎉 Все задачи выполнены!\n\nДобавь: <code>/todo текст</code>', { parse_mode: 'HTML' });
         return;
       }
 
-      const lines = todos.map((t, i) => `${i + 1}. ☐ ${t.task}`);
+      const lines = todos.map((t, i) => `${i + 1}. ☐ ${escapeHtml(t.task)}`);
       await ctx.reply(
-        `📋 *Задачи (${todos.length}):*\n\n${lines.join('\n')}\n\n_Нажми кнопку или: /done номер_`,
-        { parse_mode: 'Markdown', reply_markup: todoDoneKeyboard(todos.length) }
+        `📋 <b>Задачи (${todos.length}):</b>\n\n${lines.join('\n')}\n\n<i>Нажми кнопку или: /done номер</i>`,
+        { parse_mode: 'HTML', reply_markup: todoDoneKeyboard(todos.length) }
       );
     } catch (err) {
       telegramLogger.warn({ error: err, userId }, 'Failed to load todos');
@@ -472,7 +472,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
     const index = parseInt(indexStr || '', 10);
 
     if (!indexStr || isNaN(index) || index < 1) {
-      await ctx.reply('❌ Укажи номер задачи: `/done 1`', { parse_mode: 'Markdown' });
+      await ctx.reply('❌ Укажи номер задачи: <code>/done 1</code>', { parse_mode: 'HTML' });
       return;
     }
 
@@ -519,12 +519,12 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
       if (arg?.startsWith('город') || arg?.startsWith('city')) {
         const city = arg.replace(/^(город|city)\s*/i, '').trim();
         if (!city) {
-          await ctx.reply('Использование: `/digest город Москва`', { parse_mode: 'Markdown' });
+          await ctx.reply('Использование: <code>/digest город Москва</code>', { parse_mode: 'HTML' });
           return;
         }
         await userPrefsRepo.getOrCreate(userId, chatId, ctx.from?.first_name);
         await userPrefsRepo.update(userId, { digest_city: city });
-        await ctx.reply(`🏙 Город дайджеста: *${city}*`, { parse_mode: 'Markdown' });
+        await ctx.reply(`🏙 Город дайджеста: <b>${escapeHtml(city)}</b>`, { parse_mode: 'HTML' });
         return;
       }
 
@@ -533,7 +533,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
       if (!isNaN(hour) && hour >= 0 && hour <= 23) {
         await userPrefsRepo.getOrCreate(userId, chatId, ctx.from?.first_name);
         await userPrefsRepo.update(userId, { digest_hour: hour });
-        await ctx.reply(`🕐 Дайджест будет приходить в *${hour}:00*`, { parse_mode: 'Markdown' });
+        await ctx.reply(`🕐 Дайджест будет приходить в <b>${hour}:00</b>`, { parse_mode: 'HTML' });
         return;
       }
 
@@ -542,12 +542,12 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
       const status = prefs.digest_enabled ? '✅ Включён' : '❌ Выключен';
 
       await ctx.reply(
-        `☀️ *Утренний дайджест*\n\n` +
+        `☀️ <b>Утренний дайджест</b>\n\n` +
         `Статус: ${status}\n` +
         `Время: ${prefs.digest_hour}:00\n` +
-        `Город: ${prefs.digest_city}\n\n` +
+        `Город: ${escapeHtml(prefs.digest_city)}\n\n` +
         `📰 Включает: погоду, новости, напоминания и задачи`,
-        { parse_mode: 'Markdown', reply_markup: digestControlsKeyboard(prefs.digest_enabled) }
+        { parse_mode: 'HTML', reply_markup: digestControlsKeyboard(prefs.digest_enabled) }
       );
     } catch (error) {
       telegramLogger.error({ error, userId }, 'Digest command failed');

@@ -12,6 +12,7 @@
 import { Bot, InputFile, InlineKeyboard } from 'grammy';
 import type { BotContext } from './bot.js';
 import { telegramLogger } from '../config/logger.js';
+import { config } from '../config/index.js';
 import { notesRepo } from '../features/notes-repo.js';
 import { todosRepo } from '../features/todos-repo.js';
 import { userPrefsRepo } from '../features/user-prefs-repo.js';
@@ -150,7 +151,7 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
 
   bot.callbackQuery('menu_note_help', async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply('📌 *Что запомнить?*', { parse_mode: 'Markdown' });
+    await ctx.reply('📌 <b>Что запомнить?</b>', { parse_mode: 'HTML' });
     ctx.session.awaitingNoteContent = true;
   });
 
@@ -190,10 +191,10 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
         if (remaining.length === 0) {
           await ctx.editMessageText('🎉 Все задачи выполнены!');
         } else {
-          const lines = remaining.map((t, i) => `${i + 1}. ☐ ${t.task}`);
+          const lines = remaining.map((t, i) => `${i + 1}. ☐ ${escapeHtml(t.task)}`);
           await ctx.editMessageText(
-            `📋 *Задачи (${remaining.length}):*\n\n${lines.join('\n')}`,
-            { parse_mode: 'Markdown', reply_markup: todoDoneKeyboard(remaining.length) }
+            `📋 <b>Задачи (${remaining.length}):</b>\n\n${lines.join('\n')}`,
+            { parse_mode: 'HTML', reply_markup: todoDoneKeyboard(remaining.length) }
           );
         }
       } else {
@@ -214,12 +215,12 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
         const kb = new InlineKeyboard().text('✅ Добавить задачу', 'menu_todo_help');
         await ctx.reply('🎉 Все задачи выполнены!', { reply_markup: kb });
       } else {
-        const lines = todos.map((t, i) => `${i + 1}. ☐ ${t.task}`);
+        const lines = todos.map((t, i) => `${i + 1}. ☐ ${escapeHtml(t.task)}`);
         const keyboard = todoDoneKeyboard(todos.length);
         keyboard.row().text('➕ Добавить', 'menu_todo_help');
         await ctx.reply(
-          `📋 *Задачи (${todos.length}):*\n\n${lines.join('\n')}`,
-          { parse_mode: 'Markdown', reply_markup: keyboard }
+          `📋 <b>Задачи (${todos.length}):</b>\n\n${lines.join('\n')}`,
+          { parse_mode: 'HTML', reply_markup: keyboard }
         );
       }
     } catch (err) {
@@ -230,7 +231,7 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
 
   bot.callbackQuery('menu_todo_help', async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply('✅ *Какую задачу добавить?*', { parse_mode: 'Markdown' });
+    await ctx.reply('✅ <b>Какую задачу добавить?</b>', { parse_mode: 'HTML' });
     ctx.session.awaitingTodoTask = true;
   });
 
@@ -245,8 +246,8 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
       await userPrefsRepo.toggleDigest(userId, chatId, newState);
       await ctx.answerCallbackQuery({ text: newState ? '✅ Дайджест включён' : '❌ Дайджест выключен' });
       await ctx.editMessageText(
-        `☀️ *Утренний дайджест*\n\nСтатус: ${newState ? '✅ Включён' : '❌ Выключен'}`,
-        { parse_mode: 'Markdown', reply_markup: digestToggleKeyboard(newState) }
+        `☀️ <b>Утренний дайджест</b>\n\nСтатус: ${newState ? '✅ Включён' : '❌ Выключен'}`,
+        { parse_mode: 'HTML', reply_markup: digestToggleKeyboard(newState) }
       );
     } catch (err) {
       telegramLogger.warn({ error: err, userId }, 'Failed to toggle digest (callback)');
@@ -274,12 +275,12 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
 
   bot.callbackQuery('digest_city_help', async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply('🏙 *Изменить город:*\n\n`/digest город Москва`\n`/digest город Берлин`', { parse_mode: 'Markdown' });
+    await ctx.reply('🏙 <b>Изменить город:</b>\n\n<code>/digest город Москва</code>\n<code>/digest город Берлин</code>', { parse_mode: 'HTML' });
   });
 
   bot.callbackQuery('digest_time_help', async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply('🕐 *Изменить время:*\n\n`/digest 7` — в 7:00\n`/digest 10` — в 10:00\n`/digest 22` — в 22:00', { parse_mode: 'Markdown' });
+    await ctx.reply('🕐 <b>Изменить время:</b>\n\n<code>/digest 7</code> — в 7:00\n<code>/digest 10</code> — в 10:00\n<code>/digest 22</code> — в 22:00', { parse_mode: 'HTML' });
   });
 
   bot.callbackQuery('menu_digest', async (ctx) => {
@@ -293,8 +294,8 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
       const city = prefs?.digest_city ?? '';
 
       await ctx.reply(
-        `☀️ *Утренний дайджест*\n\nСтатус: ${status}\nВремя: ${hour}:00\nГород: ${city || 'не задан'}\n\n📰 Включает: погоду, новости, напоминания и задачи`,
-        { parse_mode: 'Markdown', reply_markup: digestControlsKeyboard(prefs?.digest_enabled ?? false) }
+        `☀️ <b>Утренний дайджест</b>\n\nСтатус: ${status}\nВремя: ${hour}:00\nГород: ${escapeHtml(city || 'не задан')}\n\n📰 Включает: погоду, новости, напоминания и задачи`,
+        { parse_mode: 'HTML', reply_markup: digestControlsKeyboard(prefs?.digest_enabled ?? false) }
       );
     } catch (err) {
       telegramLogger.warn({ error: err, userId }, 'Failed to load digest settings (callback)');
@@ -306,13 +307,13 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
 
   bot.callbackQuery('menu_search', async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply('🔍 *Что найти в интернете?*', { parse_mode: 'Markdown' });
+    await ctx.reply('🔍 <b>Что найти в интернете?</b>', { parse_mode: 'HTML' });
     ctx.session.awaitingSearchQuery = true;
   });
 
   bot.callbackQuery('menu_imagine', async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply('🎨 *Что нарисовать?*', { parse_mode: 'Markdown' });
+    await ctx.reply('🎨 <b>Что нарисовать?</b>', { parse_mode: 'HTML' });
     ctx.session.awaitingImagePrompt = true;
   });
 
@@ -335,15 +336,15 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
       const reminders = await remindersRepo.getByUser(userId);
       if (reminders.length === 0) {
         await ctx.reply(
-          '⏰ *Напоминания*\n\nУ тебя нет активных напоминаний.\n\nПросто напиши:\n• _Напомни через 2 часа позвонить_\n• _Напомни завтра в 9:00 встреча_\n• _Через 30 минут выключи духовку_',
-          { parse_mode: 'Markdown' }
+          '⏰ <b>Напоминания</b>\n\nУ тебя нет активных напоминаний.\n\nПросто напиши:\n• <i>Напомни через 2 часа позвонить</i>\n• <i>Напомни завтра в 9:00 встреча</i>\n• <i>Через 30 минут выключи духовку</i>',
+          { parse_mode: 'HTML' }
         );
       } else {
         const lines = reminders.map((r, i) => {
           const d = new Date(r.scheduled_at ?? '');
           const dateStr = Number.isNaN(d.getTime())
             ? '—'
-            : d.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+            : d.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', timeZone: config.server.timeZone });
           const task = typeof r.task === 'string' ? r.task : String(r.task ?? '—');
           return `${i + 1}. ${escapeHtml(task)}\n   ⏰ ${escapeHtml(dateStr)}`;
         });
@@ -361,31 +362,31 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
   bot.callbackQuery('menu_voice', async (ctx) => {
     await ctx.answerCallbackQuery();
     await ctx.reply(
-      '🔊 *Голосовые функции*\n\n*Отправь мне:*\n🎤 Голосовое сообщение — я расшифрую и отвечу\n\n*Попроси:*\n• _Скажи голосом привет мир_\n• _Озвучь стихотворение_\n\nТакже можно озвучить любой мой ответ кнопкой 🔊 под сообщением!',
-      { parse_mode: 'Markdown' }
+      '🔊 <b>Голосовые функции</b>\n\n<b>Отправь мне:</b>\n🎤 Голосовое сообщение — я расшифрую и отвечу\n\n<b>Попроси:</b>\n• <i>Скажи голосом привет мир</i>\n• <i>Озвучь стихотворение</i>\n\nТакже можно озвучить любой мой ответ кнопкой 🔊 под сообщением!',
+      { parse_mode: 'HTML' }
     );
   });
 
   bot.callbackQuery('menu_help', async (ctx) => {
     await ctx.answerCallbackQuery();
     await ctx.reply(
-      `🤖 *Amina — Полная справка*\n\n` +
-      `*📋 Команды:*\n` +
+      `🤖 <b>Amina — Полная справка</b>\n\n` +
+      `<b>📋 Команды:</b>\n` +
       `/menu — меню\n` +
-      `/imagine \\_описание\\_ — картинка\n` +
-      `/search \\_запрос\\_ — поиск\n` +
-      `/note \\_текст\\_ — заметка\n/notes — список\n` +
-      `/todo \\_текст\\_ — задача\n/todos — список\n/done \\_номер\\_ — выполнить\n` +
+      `/imagine <i>описание</i> — картинка\n` +
+      `/search <i>запрос</i> — поиск\n` +
+      `/note <i>текст</i> — заметка\n/notes — список\n` +
+      `/todo <i>текст</i> — задача\n/todos — список\n/done <i>номер</i> — выполнить\n` +
       `/reminders — напоминания\n/digest — дайджест\n\n` +
-      `*💡 Без команд:*\n` +
-      `• _Нарисуй кота_ — картинка\n• _Напомни через час_ — напоминание\n• _Запомни: пароль 123_ — заметка\n• _Курс доллара_ — автопоиск`,
-      { parse_mode: 'Markdown', reply_markup: buildMainMenu() }
+      `<b>💡 Без команд:</b>\n` +
+      `• <i>Нарисуй кота</i> — картинка\n• <i>Напомни через час</i> — напоминание\n• <i>Запомни: пароль 123</i> — заметка\n• <i>Курс доллара</i> — автопоиск`,
+      { parse_mode: 'HTML', reply_markup: buildMainMenu() }
     );
   });
 
   bot.callbackQuery('show_menu', async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply(`🎛 *Меню Amina* — выбери действие:`, { parse_mode: 'Markdown', reply_markup: buildMainMenu() });
+    await ctx.reply(`🎛 <b>Меню Amina</b> — выбери действие:`, { parse_mode: 'HTML', reply_markup: buildMainMenu() });
   });
 
   // ====== ДЕЙСТВИЯ ======

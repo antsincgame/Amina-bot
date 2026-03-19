@@ -21,12 +21,12 @@ export const clearAwaitingFlags = (ctx: BotContext): void => {
 export const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Record<string, () => Promise<void>> => ({
   '🌐 Поиск': async () => {
     clearAwaitingFlags(ctx);
-    await ctx.reply('🔍 *Что найти в интернете?*', { parse_mode: 'Markdown' });
+    await ctx.reply('🔍 <b>Что найти в интернете?</b>', { parse_mode: 'HTML' });
     ctx.session.awaitingSearchQuery = true;
   },
   '🎨 Картинка': async () => {
     clearAwaitingFlags(ctx);
-    await ctx.reply('🎨 *Что нарисовать?*', { parse_mode: 'Markdown' });
+    await ctx.reply('🎨 <b>Что нарисовать?</b>', { parse_mode: 'HTML' });
     ctx.session.awaitingImagePrompt = true;
   },
   '📌 Заметки': async () => {
@@ -34,7 +34,7 @@ export const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Recor
       const notes = await notesRepo.getByUser(userId);
       if (notes.length === 0) {
         clearAwaitingFlags(ctx);
-        await ctx.reply('📋 *Что запомнить?*', { parse_mode: 'Markdown' });
+        await ctx.reply('📋 <b>Что запомнить?</b>', { parse_mode: 'HTML' });
         ctx.session.awaitingNoteContent = true;
       } else {
         const lines = notes.map((n, i) => {
@@ -57,7 +57,7 @@ export const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Recor
       const todos = await todosRepo.getActive(userId);
       if (todos.length === 0) {
         clearAwaitingFlags(ctx);
-        await ctx.reply('✅ *Какую задачу добавить?*', { parse_mode: 'Markdown' });
+        await ctx.reply('✅ <b>Какую задачу добавить?</b>', { parse_mode: 'HTML' });
         ctx.session.awaitingTodoTask = true;
       } else {
         const lines = todos.map((t, i) => `${i + 1}. ☐ ${escapeHtml(t.task)}`);
@@ -77,7 +77,7 @@ export const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Recor
     try {
       const reminders = await remindersRepo.getByUser(userId);
       if (reminders.length === 0) {
-        await ctx.reply('⏰ Нет активных напоминаний.\n\nНапиши: _напомни через 2 часа ..._', { parse_mode: 'Markdown' });
+        await ctx.reply('⏰ Нет активных напоминаний.\n\nНапиши: <i>напомни через 2 часа ...</i>', { parse_mode: 'HTML' });
       } else {
         const lines = reminders.map((r, i) => {
           const dt = new Date(r.scheduled_at ?? '');
@@ -124,6 +124,6 @@ export const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Recor
     }
   },
   '📋 Меню': async () => {
-    await ctx.reply('🎛 *Меню Amina* — выбери действие:', { parse_mode: 'Markdown', reply_markup: buildMainMenu() });
+    await ctx.reply('🎛 <b>Меню Amina</b> — выбери действие:', { parse_mode: 'HTML', reply_markup: buildMainMenu() });
   },
 });

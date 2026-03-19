@@ -6,6 +6,7 @@ import { processImageWithLLM } from '../../ai/multimodal.js';
 import { detectImageEditIntent, classifyImageEditIntentGroq } from '../../ai/image-gen.js';
 import { conversationsRepo, analyticsRepo } from '../../db/index.js';
 import { checkTelegramRateLimit } from '../../utils/rate-limiter.js';
+import { getErrorCode } from '../../utils/error-handler.js';
 import { sendLongMessage } from '../format.js';
 import { ensureConversation } from './context-builder.js';
 import { handleImageEdit } from './image-helpers.js';
@@ -77,7 +78,14 @@ export const handleDocumentMessage = async (ctx: BotContext): Promise<void> => {
     telegramLogger.info({ userId }, 'Document image response sent');
   } catch (error) {
     telegramLogger.error({ error, userId }, 'Failed to process document image');
-    analyticsRepo.log('error', 'telegram', { userId, type: 'document_image', error: error instanceof Error ? error.message : 'Unknown' }).catch(() => {});
-    await ctx.reply('😔 Не удалось обработать изображение. Попробуй ещё раз.');
+    const errorCode = getErrorCode(error);
+    analyticsRepo.log('error', 'telegram', { userId, type: 'document_image', error: error instanceof Error ? error.message : 'Unknown', errorCode }).catch(() => {});
+
+    let msg = '😔 Не удалось обработать изображение. Попробуй ещё раз.';
+    if (errorCode === 'ALL_MODELS_FAILED' || errorCode === 'ALL_VISION_MODELS_FAILED') msg = '🔄 Все vision модели заняты. Попробуй через 30 сек.';
+    else if (errorCode === 'AUTH_ERROR') msg = '🔑 Ошибка авторизации API.';
+    else if (errorCode === 'RATE_LIMIT') msg = '⏳ Слишком много запросов!';
+    else if (errorCode === 'VISION_RACE_TIMEOUT') msg = '⏰ Vision модели отвечают слишком долго. Попробуй ещё раз.';
+    await ctx.reply(msg);
   }
 };
