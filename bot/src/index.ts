@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import fastifyStatic from '@fastify/static';
@@ -217,17 +217,22 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
     }
   });
 
-  const miniAppPath = resolve(__dirname_check, '../../public/mini-app');
-  if (existsSync(miniAppPath)) {
-    await server.register(fastifyStatic, {
-      root: miniAppPath,
-      prefix: '/mini-app/',
-      decorateReply: false,
-      index: 'index.html',
-    });
-    appLogger.info({ path: miniAppPath }, '📱 Telegram mini-app served at /mini-app/');
+  const miniAppHtmlPath = resolve(__dirname_check, '../../public/mini-app/index.html');
+  const sendMiniAppHtml = (reply: FastifyReply) => {
+    if (!existsSync(miniAppHtmlPath)) {
+      appLogger.error({ miniAppHtmlPath }, 'mini-app index.html отсутствует на диске');
+      return reply.code(503).send({ error: 'Mini-app unavailable', code: 'MINI_APP_MISSING' });
+    }
+    return reply.type('text/html; charset=utf-8').send(readFileSync(miniAppHtmlPath, 'utf-8'));
+  };
+
+  server.get('/mini-app', async (_request, reply) => reply.redirect('/mini-app/index.html'));
+  server.get('/mini-app/', async (_request, reply) => sendMiniAppHtml(reply));
+  server.get('/mini-app/index.html', async (_request, reply) => sendMiniAppHtml(reply));
+  if (existsSync(miniAppHtmlPath)) {
+    appLogger.info({ path: miniAppHtmlPath }, '📱 Telegram mini-app: явные маршруты /mini-app/');
   } else {
-    appLogger.warn({ path: miniAppPath }, 'Mini-app folder missing — add bot/public/mini-app for Web App');
+    appLogger.warn({ path: miniAppHtmlPath }, 'Mini-app: файл index.html не найден — Web App не отдастся');
   }
 
   registerTelegramWebhookRoute(server, () => bot);
