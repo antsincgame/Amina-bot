@@ -247,7 +247,7 @@ const getAIConfig = async (
   if (!options?.modelOverride?.trim() && settings['custom_model_override'] && settings['custom_model_override'].trim()) {
     model = settings['custom_model_override'].trim();
     modelSource = 'custom_override';
-    aiLogger.info({ model, source: modelSource }, 'Using custom_model_override');
+    aiLogger.debug({ model, source: modelSource }, 'Using custom_model_override');
   }
 
   const promptContent = includePrompt

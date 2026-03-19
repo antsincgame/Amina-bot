@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { promptsRepo } from '../../db/index.js';
 import { aiLogger } from '../../config/logger.js';
+import { clearSelfCoreKernelCache } from '../../ai/self-core-kernel.js';
 
 export async function registerPromptsRoutes(server: FastifyInstance): Promise<void> {
   /**
@@ -64,6 +65,7 @@ export async function registerPromptsRoutes(server: FastifyInstance): Promise<vo
         });
 
         aiLogger.info({ promptId: prompt.id }, 'Prompt created via API');
+        clearSelfCoreKernelCache();
 
         return reply.code(201).send({
           success: true,
@@ -109,6 +111,7 @@ export async function registerPromptsRoutes(server: FastifyInstance): Promise<vo
         const prompt = await promptsRepo.update(id, updates);
 
         aiLogger.info({ promptId: id }, 'Prompt updated via API');
+        clearSelfCoreKernelCache();
 
         return reply.code(200).send({
           success: true,
@@ -140,6 +143,7 @@ export async function registerPromptsRoutes(server: FastifyInstance): Promise<vo
         await promptsRepo.delete(id);
 
         aiLogger.info({ promptId: id }, 'Prompt deleted via API');
+        clearSelfCoreKernelCache();
 
         return reply.code(200).send({
           success: true,
@@ -171,6 +175,7 @@ export async function registerPromptsRoutes(server: FastifyInstance): Promise<vo
         await promptsRepo.setActive(id);
 
         aiLogger.info({ promptId: id }, 'Prompt activated via API');
+        clearSelfCoreKernelCache();
 
         return reply.code(200).send({
           success: true,

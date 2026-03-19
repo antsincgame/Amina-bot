@@ -18,6 +18,7 @@ import {
 } from './runtime-truth.js';
 
 const SELF_CORE_KERNEL_CACHE = new SingleCache<SelfCoreKernel>(60_000);
+const PROMPT_LAYERS_CACHE = new SingleCache<SelfCorePromptLayer[]>(60_000);
 
 function toPromptLayer(prompt: Awaited<ReturnType<typeof promptsRepo.getAll>>[number]): SelfCorePromptLayer {
   return {
@@ -50,11 +51,17 @@ export function composeEffectivePrompt(input: {
 }
 
 export async function getActivePromptLayers(): Promise<SelfCorePromptLayer[]> {
+  const cached = PROMPT_LAYERS_CACHE.get();
+  if (cached) return cached;
+
   const prompts = await promptsRepo.getAll();
-  return prompts
+  const layers = prompts
     .filter((prompt) => prompt.is_active)
     .map(toPromptLayer)
     .sort((left, right) => left.channel.localeCompare(right.channel, 'ru'));
+
+  PROMPT_LAYERS_CACHE.set(layers);
+  return layers;
 }
 
 export async function getSelfCoreKernel(): Promise<SelfCoreKernel> {
@@ -162,4 +169,5 @@ export async function getActivePromptContent(channel: PersonaChannel): Promise<s
 
 export function clearSelfCoreKernelCache(): void {
   SELF_CORE_KERNEL_CACHE.clear();
+  PROMPT_LAYERS_CACHE.clear();
 }

@@ -587,6 +587,10 @@ export const memoryContextBuilder = {
     if (callCount % DECAY_RUN_INTERVAL === 0) {
       userMemoryRepo.decayInferredMemories(userId).catch(() => {});
     }
+    // Защита от утечки памяти: сброс счётчиков при переполнении
+    if (decayCounters.size > 500) {
+      decayCounters.clear();
+    }
 
     const [profile, memoryContext] = await Promise.all([
       userProfileRepo.getOrCreate(userId, telegramInfo),
