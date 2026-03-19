@@ -33,6 +33,7 @@ import { startTelephonyJobWorker, stopTelephonyJobWorker } from './features/tele
 import { ensureTelephonyRecordingsInfra } from './features/telephony/telephony-recordings-repo.js';
 import { syncSelfCoreSystemFacts } from './ai/self-core.js';
 import { getChatRuntimeState } from './ai/runtime-truth.js';
+import { getMiniAppUrl } from './telegram/mini-app.js';
 
 // --------------------------------------------
 // Application Entry Point (v1.0.1)
@@ -216,6 +217,19 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
     }
   });
 
+  const miniAppPath = resolve(__dirname_check, '../../public/mini-app');
+  if (existsSync(miniAppPath)) {
+    await server.register(fastifyStatic, {
+      root: miniAppPath,
+      prefix: '/mini-app/',
+      decorateReply: false,
+      index: 'index.html',
+    });
+    appLogger.info({ path: miniAppPath }, '📱 Telegram mini-app served at /mini-app/');
+  } else {
+    appLogger.warn({ path: miniAppPath }, 'Mini-app folder missing — add bot/public/mini-app for Web App');
+  }
+
   registerTelegramWebhookRoute(server, () => bot);
 
   // Register REST API routes for LLM interaction
@@ -236,7 +250,12 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
     // SPA fallback: non-API GET routes → index.html
     const indexHtml = readFileSync(resolve(adminDistPath, 'index.html'), 'utf-8');
     server.setNotFoundHandler(async (request, reply) => {
-      if (request.method === 'GET' && !request.url.startsWith('/api/') && !request.url.startsWith('/webhook/')) {
+      if (
+        request.method === 'GET' &&
+        !request.url.startsWith('/api/') &&
+        !request.url.startsWith('/webhook/') &&
+        !request.url.startsWith('/mini-app/')
+      ) {
         return reply.type('text/html').send(indexHtml);
       }
       return reply.code(404).send({ error: 'Not found' });
@@ -365,6 +384,24 @@ const initBotAndServices = async (): Promise<void> => {
     appLogger.info('📋 Bot commands registered');
   } catch (err) {
     appLogger.warn({ error: err }, '⚠️ Failed to set bot commands');
+  }
+
+  try {
+    const miniUrl = getMiniAppUrl();
+    if (miniUrl) {
+      await bot.api.setChatMenuButton({
+        menu_button: {
+          type: 'web_app',
+          text: 'Амина',
+          web_app: { url: miniUrl },
+        },
+      });
+      appLogger.info({ miniUrl }, '📱 Кнопка меню Web App (Амина) установлена');
+    } else {
+      appLogger.warn('BOT_URL не https — кнопка мини-приложения в меню чата не установлена');
+    }
+  } catch (err) {
+    appLogger.warn({ error: err }, '⚠️ Failed to set Web App menu button');
   }
 };
 

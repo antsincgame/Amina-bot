@@ -7,6 +7,7 @@
  */
 
 import { InlineKeyboard, Keyboard } from 'grammy';
+import { getMiniAppUrl } from './mini-app.js';
 
 // ============================================
 // Main Menu & Reply Keyboard
@@ -14,7 +15,12 @@ import { InlineKeyboard, Keyboard } from 'grammy';
 
 /** Главное inline-меню с кнопками для всех функций */
 export const buildMainMenu = (): InlineKeyboard => {
-  return new InlineKeyboard()
+  const mini = getMiniAppUrl();
+  const menu = new InlineKeyboard();
+  if (mini) {
+    menu.webApp('✨ Амина', mini).row();
+  }
+  return menu
     .text('🌐 Поиск в сети', 'menu_search')
     .text('🎨 Нарисовать', 'menu_imagine')
     .row()
@@ -32,7 +38,12 @@ export const buildMainMenu = (): InlineKeyboard => {
 
 /** Постоянная клавиатура (ReplyKeyboard) снизу чата */
 export const buildReplyKeyboard = (): Keyboard => {
-  return new Keyboard()
+  const mini = getMiniAppUrl();
+  const kb = new Keyboard();
+  if (mini) {
+    kb.webApp('✨ Амина', mini).row();
+  }
+  return kb
     .text('🌐 Поиск').text('🎨 Картинка').text('📌 Заметки')
     .row()
     .text('✅ Задачи').text('⏰ Напоминания').text('☀️ Дайджест')
