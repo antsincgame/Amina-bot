@@ -527,14 +527,15 @@ export const aiService = {
       );
     };
 
+    let raceTimeoutId: ReturnType<typeof setTimeout> | undefined;
+    const raceAbort = new AbortController();
+
     try {
       if (fallbackStrategy === 'sequential') {
         return await runSequentialFallback();
       }
 
       // Таймаут-промис для ограничения гонки (с cleanup)
-      let raceTimeoutId: ReturnType<typeof setTimeout> | undefined;
-      const raceAbort = new AbortController();
       const timeoutPromise = new Promise<never>((_, reject) => {
         raceTimeoutId = setTimeout(() => {
           raceAbort.abort();
@@ -572,6 +573,9 @@ export const aiService = {
 
       return finalizeWinner(winner);
     } catch (raceError) {
+      if (raceTimeoutId) clearTimeout(raceTimeoutId);
+      raceAbort.abort();
+
       // Проверяем таймаут
       if (raceError instanceof AppError && raceError.code === 'RACE_TIMEOUT') {
         aiLogger.error({ timeoutMs: RACE_TIMEOUT_MS, fallbackStrategy }, '⏰ Fallback timeout — all models too slow');
@@ -701,11 +705,20 @@ export const aiService = {
   async getModels(): Promise<{ id: string; name: string }[]> {
     try {
       const keys = await getApiKeys();
-      const response = await fetch(`${config.ai.baseUrl}/models`, {
-        headers: getProxyHeaders({
-          Authorization: `Bearer ${keys.openrouter}`,
-        }),
-      });
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10_000);
+
+      let response: Response;
+      try {
+        response = await fetch(`${config.ai.baseUrl}/models`, {
+          headers: getProxyHeaders({
+            Authorization: `Bearer ${keys.openrouter}`,
+          }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeoutId);
+      }
 
       if (!response.ok) {
         throw new Error(`Failed to fetch models: ${response.status}`);
@@ -732,10 +745,15 @@ export const aiService = {
       });
 
       const response = await Promise.race([
-        this.complete('Say "OK" if you can hear me.'),
+        this.chat(
+          [{ role: 'user', content: 'Say "OK".' }],
+          'telegram',
+          undefined,
+          { promptMode: 'passthrough', maxTokens: 10, fallbackStrategy: 'off' },
+        ),
         timeoutPromise,
       ]);
-      return response.toLowerCase().includes('ok');
+      return response.content.toLowerCase().includes('ok');
     } catch {
       return false;
     } finally {
