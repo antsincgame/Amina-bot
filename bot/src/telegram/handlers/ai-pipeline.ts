@@ -333,6 +333,17 @@ export const processMessageThroughAI = async (
       };
       ctx.session.messageHistory.push({ role: 'assistant', content: selfAnswer });
       await sendLongMessage(ctx, selfAnswer);
+
+      // DB writes (same pattern as main path)
+      const selfConvId = ctx.session.conversationId;
+      if (selfConvId) {
+        const nowISO = new Date().toISOString();
+        conversationsRepo.addMessage(selfConvId, { role: 'user', content: userText, timestamp: nowISO })
+          .then(() => conversationsRepo.addMessage(selfConvId, { role: 'assistant', content: selfAnswer, timestamp: nowISO, metadata: { model: 'persona-self-disclosure' } }))
+          .catch((err) => { telegramLogger.warn({ error: err, userId }, 'Self-disclosure DB write failed'); });
+      }
+      userProfileRepo.updateOnMessage(userId, messageType, 0, telegramInfo).catch(() => {});
+
       analyticsRepo.log('message_received', 'telegram', {
         event: 'self_disclosure_answered', messageType,
         responseLength: selfAnswer.length,
@@ -393,7 +404,18 @@ export const processMessageThroughAI = async (
   }
 
   // Post-AI image interception
-  if (await tryPostAIImageInterception(ctx, aiResponse.content, userText, userId)) return;
+  if (await tryPostAIImageInterception(ctx, aiResponse.content, userText, userId)) {
+    // Сохраняем в БД даже при image interception
+    const imgConvId = ctx.session.conversationId;
+    if (imgConvId) {
+      const nowISO = new Date().toISOString();
+      conversationsRepo.addMessage(imgConvId, { role: 'user', content: userText, timestamp: nowISO, metadata: extraMetadata })
+        .then(() => conversationsRepo.addMessage(imgConvId, { role: 'assistant', content: aiResponse.content, timestamp: nowISO, metadata: { tokens_used: aiResponse.tokens_used.total, model: aiResponse.model, image_intercepted: true } }))
+        .catch((err) => { telegramLogger.warn({ error: err, userId }, 'Image interception DB write failed'); });
+    }
+    userProfileRepo.updateOnMessage(userId, messageType, aiResponse.tokens_used.total, telegramInfo).catch(() => {});
+    return;
+  }
 
   // === ПРОГРАММНОЕ удаление повторного приветствия ===
   let finalContent = aiResponse.content;
