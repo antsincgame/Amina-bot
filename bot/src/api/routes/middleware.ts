@@ -99,6 +99,8 @@ export async function requireRealtimeBridgeAuth(
 // --------------------------------------------
 
 const ADMIN_GUARDED_API_ROUTES = [
+  /^\/chat(?:\/|$)/,
+  /^\/conversations(?:\/|$)/,
   /^\/settings(?:\/|$)/,
   /^\/prompts(?:\/|$)/,
   /^\/logs(?:\/|$)/,

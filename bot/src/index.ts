@@ -22,6 +22,7 @@ import { settingsRepo, analyticsRepo } from './db/index.js';
 import { userProfileRepo } from './memory/user-memory.js';
 import { aiService } from './ai/openrouter.js';
 import { registerApiRoutes } from './api/routes.js';
+import { requireAdminAuth } from './api/routes/middleware.js';
 import { stopCleanupInterval } from './utils/rate-limiter.js';
 import { startReminderScheduler, stopReminderScheduler } from './reminders/reminder-scheduler.js';
 import { startDigestScheduler, stopDigestScheduler } from './features/digest-scheduler.js';
@@ -134,7 +135,10 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
     return { status: allHealthy ? 'ready' : 'degraded', checks, timestamp: new Date().toISOString() };
   });
 
-  server.get('/api/status', async () => {
+  server.get('/api/status', async (request, reply) => {
+    const admin = await requireAdminAuth(request, reply);
+    if (!admin) return reply;
+
     const now = Date.now();
     // Reuse ready cache
     if (!healthCache || now - healthCache.ts >= HEALTH_CACHE_TTL_MS) {
@@ -166,7 +170,10 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
   });
 
   // API routes for admin panel - stats
-  server.get('/api/stats', async (request: FastifyRequest<{ Querystring: { from?: string; to?: string } }>) => {
+  server.get('/api/stats', async (request: FastifyRequest<{ Querystring: { from?: string; to?: string } }>, reply) => {
+    const admin = await requireAdminAuth(request, reply);
+    if (!admin) return reply;
+
     try {
       const now = new Date();
       const defaultFrom = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
