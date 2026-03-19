@@ -11,7 +11,7 @@
 
 ## Critical Rules
 
-1. **NO SUPABASE**. The project was fully migrated to Appwrite. There is no Supabase client, no Supabase env vars, no dual-backend code. Do not add any Supabase imports or references.
+1. **NO SUPABASE**. Fully migrated to Appwrite. Do not add any Supabase imports or references.
 
 2. **Database access pattern**: All repos use lazy Appwrite import:
    ```typescript
@@ -20,55 +20,174 @@
    const DB_ID = () => config.appwrite.databaseId;
    ```
 
-3. **Collection naming**: All collections are prefixed `amina_` (e.g., `amina_settings`, `amina_user_profiles`, `amina_tel_sessions`).
+3. **Collection naming**: ALL collections prefixed `amina_`.
 
-4. **Config**: `config.dbBackend` is always `'appwrite'`. There is no `config.db` (Supabase) property.
+4. **Config**: `config.dbBackend` is always `'appwrite'`.
 
-5. **db/index.ts** re-exports directly from `db/appwrite.ts`:
+5. **db/index.ts** re-exports from `db/appwrite.ts`:
    ```typescript
    export { getAppwrite, getAppwriteClient, settingsRepo, promptsRepo, conversationsRepo, analyticsRepo } from './appwrite.js';
    ```
 
-6. **Admin auth**: Appwrite JWT validation via `node-appwrite` Account API. No Supabase auth.
+6. **JSON fields**: Appwrite has no native JSON type. Complex data stored as `string`, parsed with `JSON.parse()`, serialized with `JSON.stringify()`.
 
-7. **File storage**: Appwrite Storage buckets (`amina-voice-messages`, `amina-tel-recordings`).
+7. **No upsert**: Appwrite has no native upsert. Pattern: `listDocuments(Query.equal + limit 1)` → update if found, create if not.
 
-## URLs
-
-- Bot/Admin: https://amina.vibecoding.by
-- Appwrite: https://appwrite.vibecoding.by/v1
-- Coolify: https://coolify.vibecoding.by
-- Analytics: https://analytics.vibecoding.by
-
-## Env Vars (Coolify)
-
-Required: APPWRITE_ENDPOINT, APPWRITE_PROJECT_ID, APPWRITE_API_KEY, APPWRITE_DATABASE_ID, TELEGRAM_BOT_TOKEN, OPENROUTER_API_KEY
-Optional: WEBHOOK_URL, LMSTUDIO_TUNNEL_TOKEN, LIRAX_URL, LIRAX_TOKEN, AI_PROXY_URL, AI_PROXY_SECRET
+8. **Query.equal with array**: `Query.equal('key', ['a', 'b'])` works as IN clause.
 
 ## Project Structure
 
 ```
 bot/src/
-  ai/          — AI providers (OpenRouter, LM Studio, Groq, Perplexity)
+  ai/          — OpenRouter, LM Studio, Groq, Perplexity, persona, self-core
   api/         — Fastify HTTP routes (admin API, webhooks, tunnel)
   config/      — Config, logger, db-logger
-  db/          — Database layer (appwrite.ts is the only backend)
+  db/          — Database layer (appwrite.ts is the ONLY backend)
   features/    — Digest, notes, todos, user-prefs, voice-messages, telephony/
-  memory/      — User profiles, memory, logs
-  reminders/   — Reminder scheduler
-  telegram/    — Bot commands and handlers
+  memory/      — User profiles, memory extraction, user logs
+  reminders/   — Reminder scheduler + repo
+  telegram/    — Bot commands, callbacks, message handlers
+  utils/       — Cache, validation, rate-limiter
 admin/src/     — React admin panel
 shared/types/  — Shared TypeScript types
 ```
 
-## Appwrite Collections (DB: amina)
+---
 
-Core: amina_settings, amina_prompts, amina_conversations, amina_analytics, amina_user_profiles, amina_user_memory, amina_user_logs, amina_reminders, amina_notes, amina_todos, amina_user_preferences, amina_system_logs, amina_digest_caches, amina_digest_deliveries, amina_voice_messages
+## Appwrite Database Schema (DB: `amina`, 22 коллекции)
 
-Telephony: amina_tel_scenarios, amina_tel_sessions, amina_tel_events, amina_tel_turns, amina_tel_artifacts, amina_tel_outcomes, amina_tel_jobs
+ВСЕ атрибуты ниже — РЕАЛЬНЫЕ поля в Appwrite. НЕ выдумывай другие.
+
+### amina_settings — key-value хранилище настроек
+Атрибуты: `key` (string, indexed), `value` (string, может быть JSON-строкой), `updated_at` (string)
+Repo: `bot/src/db/appwrite.ts` → `settingsRepo`. Кэш: Map, TTL 5 мин.
+
+### amina_prompts — системные промпты
+Атрибуты: `name` (string), `content` (string), `is_active` (boolean), `channel` (string: telegram/voice/all), `created_at` (string), `updated_at` (string)
+Repo: `bot/src/db/appwrite.ts` → `promptsRepo`
+
+### amina_conversations — история диалогов
+Атрибуты: `user_id` (string, indexed), `channel` (string: telegram/voice), `messages` (string — **JSON массив Message[]**), `metadata` (string — **JSON объект**), `created_at` (string), `updated_at` (string)
+Repo: `bot/src/db/appwrite.ts` → `conversationsRepo`
+**ВАЖНО**: messages — JSON-строка. `JSON.parse(doc.messages)` для чтения. Auto-trim при >1000 до 500.
+
+### amina_analytics — события аналитики
+Атрибуты: `event_type` (string), `channel` (string), `data` (string — **JSON**), `user_id` (string, nullable), `timestamp` (string)
+Repo: `bot/src/db/appwrite.ts` → `analyticsRepo`
+
+### amina_user_profiles — профили пользователей
+Атрибуты: `user_id` (string, indexed), `username` (string, nullable), `first_name` (string, nullable), `last_name` (string, nullable), `language_code` (string, default 'ru'), `total_messages` (integer), `total_voice_messages` (integer), `total_images` (integer), `total_tokens_used` (integer), `first_seen_at` (string), `last_seen_at` (string), `preferences` (string — **JSON**), `created_at` (string), `updated_at` (string)
+Repo: `bot/src/memory/user-memory.ts` → `userProfileRepo`
+
+### amina_user_memory — память о пользователях
+Атрибуты: `user_id` (string, indexed), `memory_type` (string: fact/preference/context/summary/important), `content` (string), `source` (string: message/inference/etc), `confidence` (float, 0-1), `is_pinned` (boolean), `is_active` (boolean), `expires_at` (string, nullable), `created_at` (string), `updated_at` (string)
+Repo: `bot/src/memory/user-memory.ts` → `userMemoryRepo`
+
+### amina_user_logs — логи действий пользователей
+Атрибуты: `user_id` (string, indexed), `event_type` (string: message/voice/image/command/etc), `content` (string, nullable), `metadata` (string — **JSON**), `model` (string, nullable), `tokens_prompt` (integer, nullable), `tokens_completion` (integer, nullable), `response_time_ms` (integer, nullable), `timestamp` (string)
+Repo: `bot/src/memory/user-memory.ts` → `userLogsRepo`
+
+### amina_reminders — напоминания
+Атрибуты: `user_id` (string, indexed), `chat_id` (integer), `task` (string), `scheduled_at` (string), `is_completed` (boolean), `completed_at` (string, nullable), `created_at` (string), `updated_at` (string)
+Repo: `bot/src/reminders/reminders-repo.ts` → `remindersRepo`
+
+### amina_notes — заметки
+Атрибуты: `user_id` (string, indexed), `content` (string), `created_at` (string)
+Repo: `bot/src/features/notes-repo.ts` → `notesRepo`
+
+### amina_todos — задачи
+Атрибуты: `user_id` (string, indexed), `task` (string), `is_done` (boolean), `done_at` (string, nullable), `created_at` (string)
+Repo: `bot/src/features/todos-repo.ts` → `todosRepo`
+
+### amina_user_preferences — настройки дайджеста
+Атрибуты: `user_id` (string, indexed), `chat_id` (integer), `digest_enabled` (boolean), `digest_hour` (integer, 0-23), `digest_city` (string, nullable), `first_name` (string, nullable), `timezone` (string, nullable), `created_at` (string), `updated_at` (string)
+Repo: `bot/src/features/user-prefs-repo.ts` → `userPrefsRepo`
+
+### amina_system_logs — системные логи
+Атрибуты: `level` (string), `module` (string), `message` (string, max 10K), `data` (string, nullable, **JSON**, max 100K), `error_stack` (string, nullable, max 50K), `user_id` (string, nullable), `request_id` (string, nullable), `timestamp` (string)
+Repo: `bot/src/config/db-logger.ts`
+
+### amina_voice_messages — голосовые сообщения
+Атрибуты: `user_id` (string, indexed), `file_path` (string, Appwrite file ID), `duration` (integer, сек), `file_size` (integer, байт), `transcription` (string, nullable), `telegram_file_id` (string, nullable), `created_at` (string)
+Repo: `bot/src/features/voice-messages-repo.ts`
+
+### amina_self_core — ядро личности AI
+Атрибуты: `category` (string: identity/preference/limitation/etc), `content` (string), `source` (string: system/learned), `is_active` (boolean), `created_at` (string)
+Repo: `bot/src/ai/self-core.ts` → `selfCoreRepo`
+
+### amina_digest_caches — кэш дайджестов
+Атрибуты: `pipeline` (string), `cache_key` (string, indexed), `digest_date` (string, YYYY-MM-DD), `city` (string), `source_hash` (string), `payload` (string — **JSON**), `expires_at` (string), `last_error` (string, nullable), `created_at` (string), `updated_at` (string)
+Repo: `bot/src/features/digest-hybrid-repo.ts` → `digestCacheRepo`
+
+### amina_digest_deliveries — доставка дайджестов
+Атрибуты: `pipeline` (string), `delivery_key` (string, indexed), `delivery_kind` (string: scheduled/manual), `user_id` (string), `chat_id` (integer), `city` (string), `digest_date` (string), `cache_key` (string), `status` (string: sending/sent/failed), `attempt_count` (integer), `last_error` (string, nullable), `sent_at` (string, nullable), `created_at` (string), `updated_at` (string)
+Repo: `bot/src/features/digest-hybrid-repo.ts` → `digestDeliveryRepo`
+
+### amina_tel_scenarios — сценарии звонков
+Атрибуты: `scenario_id` (string, unique), `name` (string), `enabled` (boolean), `call_mode` (string: speech/ask_question), `runtime_mode` (string: scripted/autonomous), `policy_version` (integer), `policy` (string — **JSON**), `goal` (string), `system_prompt` (string), `opening_line` (string), `question_hint` (string), `success_criteria` (string), `result_prompt` (string), `max_speech_chars` (integer, default 420)
+Repo: `bot/src/features/telephony/repository/scenario-repo.ts`
+
+### amina_tel_sessions — сессии звонков
+Атрибуты: `owner_telegram_id` (string, indexed), `initiated_by` (string), `scenario_id` (string), `scenario_name` (string), `scenario_goal` (string), `call_mode` (string), `runtime_mode` (string), `policy_version` (integer), `provider` (string), `target_phone` (string), `task` (string), `summary` (string), `success_criteria` (string), `result_prompt` (string), `request_id` (string, nullable), `request_mode` (string), `call_id` (string, nullable), `record_link` (string, nullable), `transcript` (string, nullable), `result_summary` (string, nullable), `outcome_label` (string, nullable), `status` (string: pending/active/completed/failed), `created_at` (string), `updated_at` (string)
+Repo: `bot/src/features/telephony/repository/call-session-repo.ts`
+
+### amina_tel_events — события звонков
+Атрибуты: `session_id` (string, indexed), `event_type` (string), `provider_event_id` (string, nullable), `payload` (string — **JSON**), `created_at` (string)
+Repo: `bot/src/features/telephony/repository/call-event-repo.ts`
+
+### amina_tel_turns — реплики в звонках
+Атрибуты: `session_id` (string, indexed), `turn_index` (integer), `speaker` (string: user/assistant/system), `source` (string), `content` (string), `confidence` (float, nullable), `created_at` (string)
+Repo: `bot/src/features/telephony/repository/call-turn-repo.ts`
+
+### amina_tel_outcomes — результаты звонков
+Атрибуты: `session_id` (string, unique per session), `outcome_label` (string), `result_summary` (string), `confidence` (float, nullable), `metadata` (string — **JSON**), `created_at` (string), `updated_at` (string)
+Repo: `bot/src/features/telephony/repository/call-outcome-repo.ts`
+
+### amina_tel_artifacts — артефакты звонков (записи, транскрипты)
+Атрибуты: `session_id` (string, indexed), `artifact_type` (string: recording/transcript/etc), `status` (string), `url` (string, nullable), `storage_path` (string, nullable), `content` (string, nullable), `mime_type` (string, nullable), `size_bytes` (integer, nullable), `duration_ms` (integer, nullable), `checksum_sha256` (string, nullable), `archive_status` (string, nullable), `retention_until` (string, nullable), `version` (integer, default 1), `metadata` (string — **JSON**), `created_at` (string), `updated_at` (string)
+Repo: `bot/src/features/telephony/repository/call-artifact-repo.ts`
+
+### amina_tel_jobs — фоновые задачи (postcall analysis)
+Атрибуты: `session_id` (string, indexed), `job_type` (string), `status` (string: pending/running/done/failed), `dedupe_key` (string), `attempts` (integer), `max_attempts` (integer), `next_run_at` (string), `locked_at` (string, nullable), `payload` (string — **JSON**), `last_error` (string, nullable), `created_at` (string), `updated_at` (string)
+Repo: `bot/src/features/telephony/repository/call-job-repo.ts`
+
+---
+
+## Appwrite Code Patterns
+
+### Upsert:
+```typescript
+const r = await aw.listDocuments(DB_ID(), COLL, [Query.equal('key', value), Query.limit(1)]);
+if (r.documents.length > 0) {
+  await aw.updateDocument(DB_ID(), COLL, r.documents[0]!.$id, data);
+} else {
+  await aw.createDocument(DB_ID(), COLL, ID.unique(), data);
+}
+```
+
+### Pagination:
+```typescript
+const allDocs = [];
+let offset = 0;
+while (true) {
+  const r = await aw.listDocuments(DB_ID(), COLL, [Query.limit(100), Query.offset(offset)]);
+  allDocs.push(...r.documents);
+  if (r.documents.length < 100) break;
+  offset += 100;
+}
+```
+
+### JSON fields:
+```typescript
+// Write: JSON.stringify
+await aw.createDocument(DB_ID(), COLL, ID.unique(), { messages: JSON.stringify(arr), metadata: JSON.stringify(obj) });
+// Read: JSON.parse
+const messages = JSON.parse(doc.messages);
+```
 
 ## Known Issues
 
-- 502 during deploys breaks Telegram webhook — run deleteWebhook + setWebhook after each deploy
-- Perplexity API key may be invalid — update in admin panel /api-keys
-- APPWRITE_PROJECT_ID may not pass through Coolify env — default is hardcoded in config
+- Appwrite has no native JSON type — all complex data is string
+- Appwrite has no upsert — use list + create/update pattern
+- Appwrite attribute max size is 1MB
+- 502 during deploys breaks Telegram webhook

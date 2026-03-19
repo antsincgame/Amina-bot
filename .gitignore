@@ -47,5 +47,6 @@ temp/
 .netlify/
 
 .cursor/
+!.cursor/mcp.json
 tunnel-app/.env
 tunnel-app/node_modules
