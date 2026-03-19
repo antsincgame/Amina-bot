@@ -152,7 +152,10 @@ export const handleTextMessage = async (ctx: BotContext): Promise<void> => {
           const file = await ctx.api.getFile(replyDoc!.file_id);
           if (!file.file_path) throw new Error('File path not found');
           const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
-          const resp = await fetch(fileUrl);
+          const dlAbort = new AbortController();
+          const dlTimeout = setTimeout(() => dlAbort.abort(), 30_000);
+          let resp: Response;
+          try { resp = await fetch(fileUrl, { signal: dlAbort.signal }); } finally { clearTimeout(dlTimeout); }
           if (!resp.ok) throw new Error('Failed to download document');
           imageData = {
             base64: Buffer.from(await resp.arrayBuffer()).toString('base64'),

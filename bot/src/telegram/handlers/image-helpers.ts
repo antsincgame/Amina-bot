@@ -20,7 +20,10 @@ export const downloadTelegramPhoto = async (
   if (!file.file_path) throw Object.assign(new Error('Telegram не вернул путь к файлу'), { code: 'FILE_NOT_FOUND' });
 
   const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
-  const response = await fetch(fileUrl);
+  const dlController = new AbortController();
+  const dlTimeoutId = setTimeout(() => dlController.abort(), 30_000);
+  let response: Response;
+  try { response = await fetch(fileUrl, { signal: dlController.signal }); } finally { clearTimeout(dlTimeoutId); }
   if (!response.ok) throw new Error(`Failed to download photo: ${response.status}`);
 
   const base64 = Buffer.from(await response.arrayBuffer()).toString('base64');

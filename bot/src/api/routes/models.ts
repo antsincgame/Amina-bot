@@ -130,6 +130,7 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
         headers: getProxyHeaders({
           'Authorization': `Bearer ${apiKey}`,
         }),
+        signal: AbortSignal.timeout(10_000),
       });
 
       if (!response.ok) {
@@ -193,6 +194,7 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
         headers: getProxyHeaders({
           'Authorization': `Bearer ${apiKey}`,
         }),
+        signal: AbortSignal.timeout(10_000),
       });
 
       if (!response.ok) {

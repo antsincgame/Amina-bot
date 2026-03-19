@@ -58,7 +58,14 @@ export const handleVoiceMessage = async (ctx: BotContext): Promise<void> => {
     const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
 
     telegramLogger.debug({ filePath: file.file_path }, 'Downloading voice file');
-    const response = await fetch(fileUrl);
+    const voiceController = new AbortController();
+    const voiceTimeoutId = setTimeout(() => voiceController.abort(), 30_000);
+    let response: Response;
+    try {
+      response = await fetch(fileUrl, { signal: voiceController.signal });
+    } finally {
+      clearTimeout(voiceTimeoutId);
+    }
     if (!response.ok) throw new Error(`Failed to download voice file: ${response.status}`);
 
     const audioArrayBuffer = await response.arrayBuffer();
@@ -106,7 +113,10 @@ export const handleVoiceMessage = async (ctx: BotContext): Promise<void> => {
             const docFile = await ctx.api.getFile(voiceReplyDoc!.file_id);
             if (!docFile.file_path) throw new Error('File path not found');
             const docUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${docFile.file_path}`;
-            const resp = await fetch(docUrl);
+            const docAbort = new AbortController();
+            const docTimeout = setTimeout(() => docAbort.abort(), 30_000);
+            let resp: Response;
+            try { resp = await fetch(docUrl, { signal: docAbort.signal }); } finally { clearTimeout(docTimeout); }
             if (!resp.ok) throw new Error('Failed to download document');
             imageData = {
               base64: Buffer.from(await resp.arrayBuffer()).toString('base64'),
