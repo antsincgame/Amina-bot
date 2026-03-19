@@ -345,11 +345,11 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
             ? '—'
             : d.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
           const task = typeof r.task === 'string' ? r.task : String(r.task ?? '—');
-          return `${i + 1}. ${escapeMarkdown(task)}\n   ⏰ ${escapeMarkdown(dateStr)}`;
+          return `${i + 1}. ${escapeHtml(task)}\n   ⏰ ${escapeHtml(dateStr)}`;
         });
         await ctx.reply(
-          `⏰ *Напоминания (${reminders.length}):*\n\n${lines.join('\n\n')}\n\n_Отмена: /remind\\_cancel номер_`,
-          { parse_mode: 'Markdown', reply_markup: remindersRefreshKeyboard() }
+          `⏰ <b>Напоминания (${reminders.length}):</b>\n\n${lines.join('\n\n')}\n\n<i>Отмена: /remind_cancel номер</i>`,
+          { parse_mode: 'HTML', reply_markup: remindersRefreshKeyboard() }
         );
       }
     } catch (err) {

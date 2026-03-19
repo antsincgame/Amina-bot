@@ -189,12 +189,12 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
           ? '—'
           : d.toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
         const task = typeof r.task === 'string' ? r.task : String(r.task ?? '—');
-        return `${i + 1}. ${escapeMarkdown(task)}\n   ⏰ ${escapeMarkdown(dateStr)}`;
+        return `${i + 1}. ${escapeHtml(task)}\n   ⏰ ${escapeHtml(dateStr)}`;
       });
 
       await ctx.reply(
-        `📋 *Активные напоминания (${reminders.length}):*\n\n${lines.join('\n\n')}\n\n_Для отмены: /remind\\_cancel номер_`,
-        { parse_mode: 'Markdown' }
+        `📋 <b>Активные напоминания (${reminders.length}):</b>\n\n${lines.join('\n\n')}\n\n<i>Для отмены: /remind_cancel номер</i>`,
+        { parse_mode: 'HTML' }
       );
     } catch (error) {
       telegramLogger.error({ error, userId }, 'Failed to list reminders');
