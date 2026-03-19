@@ -67,6 +67,13 @@ export LMSTUDIO_TUNNEL_TOKEN=<token>
 ./tunnel.sh
 ```
 
+## InvokeAI (локальная генерация на вашем GPU)
+
+Docker Compose и инструкции — каталог **[invoke-ai/](invoke-ai/README.md)**:
+
+- проверка хоста: `invoke-ai/scripts/check-gpu-host.sh`;
+- доступ с Windows без «открытого» порта: `invoke-ai/scripts/tunnel-invoke-from-windows.ps1`.
+
 ## Разработка
 
 ```bash

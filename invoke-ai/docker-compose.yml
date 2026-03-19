@@ -1,0 +1,29 @@
+# InvokeAI на Linux-хосте с NVIDIA + Docker.
+# Документация: https://invoke-ai.github.io/InvokeAI/installation/040_INSTALL_DOCKER/
+#
+# Запуск (на сервере):
+#   cd invoke-ai && cp env.example .env && nano .env
+#   docker compose up -d
+
+services:
+  invokeai:
+    image: ghcr.io/invoke-ai/invokeai:latest
+    container_name: amina-invokeai
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      INVOKEAI_ROOT: ${CONTAINER_INVOKEAI_ROOT:-/invokeai}
+    ports:
+      - "${INVOKEAI_PORT:-9090}:${INVOKEAI_PORT:-9090}"
+    volumes:
+      - type: bind
+        source: ${HOST_INVOKEAI_ROOT:-./invokeai-data}
+        target: ${CONTAINER_INVOKEAI_ROOT:-/invokeai}
+        bind:
+          create_host_path: true
+    tty: true
+    stdin_open: true
+    # Один GPU на хост (Compose V2 + NVIDIA Container Toolkit).
+    # https://docs.docker.com/compose/how-tos/gpu-support/
+    gpus: all
