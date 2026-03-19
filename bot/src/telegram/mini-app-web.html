@@ -96,8 +96,17 @@
     }
     button:disabled { opacity: 0.55; cursor: not-allowed; }
     .status { font-size: 0.8rem; color: var(--hint); min-height: 1.2em; }
-    video { width: 100%; max-height: 220px; border-radius: 12px; background: #000; display: none; }
+    video { width: 100%; max-height: min(52vh, 520px); border-radius: 12px; background: #000; display: none; object-fit: contain; }
     video.show { display: block; }
+    .expect-hint {
+      font-size: 0.78rem;
+      color: var(--hint);
+      margin: 0.35rem 0 0;
+      line-height: 1.35;
+      padding: 0.45rem 0.55rem;
+      border-radius: 10px;
+      background: var(--card);
+    }
     .help-local { font-size: 0.82rem; color: var(--hint); margin: 0.5rem 0 0; line-height: 1.4; }
     .help-local ol { margin: 0.35rem 0 0 1.1rem; padding: 0; }
     .help-local a { color: var(--btn); }
@@ -127,6 +136,9 @@
     <div class="intro">
       <h1>Амина</h1>
       <p class="sub" id="greeting">Загрузка…</p>
+      <p class="expect-hint" id="expectHint">
+        Сверху — просто иконка. Ваш портрет с ПК появится <strong>в видео</strong> под ответом (если настроен туннель и секрет). Текст и озвучка идут с сервера бота, не с компьютера.
+      </p>
     </div>
   </div>
 
@@ -309,6 +321,15 @@
           var json = await res.json().catch(function () { return null; });
           if (!res.ok || !json || !json.success) {
             var err = (json && json.error) ? json.error : ('HTTP ' + res.status);
+            if (res.status === 502 || res.status === 503 || res.status === 504) {
+              err =
+                'Сервер бота временно недоступен (' +
+                res.status +
+                '). Обычно перезапуск на хостинге или долгий ответ ИИ. Подождите минуту и отправьте снова — к локальному PC это не относится.';
+            } else if (res.status === 401) {
+              err =
+                'Сессия мини-приложения устарела. Закройте окно и откройте «Амина» из меню бота заново.';
+            }
             appendBubble('Ошибка: ' + err, 'err');
             setStatus('');
             return;

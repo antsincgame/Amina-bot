@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { aiLogger } from '../../config/logger.js';
+import { MINI_APP_REQUEST_TIMEOUT_MS } from '../../config/constants.js';
 import { config } from '../../config/index.js';
 import { validateMessageContent, validateUserId } from '../../utils/validation.js';
 import { validateTelegramWebAppInitData, parseTelegramUserIdFromInitData } from '../../utils/telegram-webapp-auth.js';
@@ -44,7 +45,15 @@ export async function registerMiniAppRoutes(server: FastifyInstance): Promise<vo
    * POST /mini-app/message
    * Диалог + опционально TTS (mp3 base64) для мини-приложения.
    */
-  server.post('/mini-app/message', async (request: FastifyRequest, reply: FastifyReply) => {
+  server.post(
+    '/mini-app/message',
+    {
+      onRequest: (request, _reply, done) => {
+        request.raw.socket?.setTimeout(MINI_APP_REQUEST_TIMEOUT_MS);
+        done();
+      },
+    },
+    async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       const body = miniAppMessageSchema.parse(request.body);
       const userIdRaw = ensureTelegramInit(reply, body.initData);
@@ -117,5 +126,6 @@ export async function registerMiniAppRoutes(server: FastifyInstance): Promise<vo
       aiLogger.error({ error }, 'Mini-app message failed');
       return reply.code(500).send({ success: false, error: 'Internal error' });
     }
-  });
+  },
+  );
 }

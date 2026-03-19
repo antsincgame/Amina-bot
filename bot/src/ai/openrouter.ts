@@ -121,7 +121,7 @@ async function getFreeModels(): Promise<string[]> {
   }
 }
 
-// Таймаут для гонки моделей (чтобы не превысить 30 сек request timeout)
+// Таймаут для гонки моделей (ужать гонку; серверный REQUEST_TIMEOUT_MS задаётся отдельно)
 const RACE_TIMEOUT_MS = 15000;
 
 // Ошибки при которых нужен параллельный fallback (включая 402!)

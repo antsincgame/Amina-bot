@@ -45,7 +45,17 @@ export const LMSTUDIO_ABORT_MS = 5_000;
 export const BUILD_DIGEST_TIMEOUT_MS = 90_000;
 
 // Server (index.ts)
-export const REQUEST_TIMEOUT_MS = 28_000;
+/**
+ * Таймаут запроса на уровне Node/Fastify. Мини-апп (LLM + поиск + TTS) часто >28с;
+ * иначе обрыв соединения даёт 502 на стороне прокси. Переопределение: REQUEST_TIMEOUT_MS.
+ */
+export const REQUEST_TIMEOUT_MS = (() => {
+  const fromEnv = Number(process.env.REQUEST_TIMEOUT_MS);
+  if (Number.isFinite(fromEnv) && fromEnv >= 5_000) return fromEnv;
+  return 90_000;
+})();
+/** Доп. запас сокета для длинного хендлера мини-аппа (не ниже REQUEST_TIMEOUT_MS). */
+export const MINI_APP_REQUEST_TIMEOUT_MS = 120_000;
 export const CONNECTION_TIMEOUT_MS = 5_000;
 export const KEEP_ALIVE_TIMEOUT_MS = 30_000;
 export const INIT_DELAY_MS = Number(process.env.INIT_DELAY_MS) || 5_000;

@@ -27,7 +27,7 @@ WAV2LIP_ROOT = Path(os.environ.get("WAV2LIP_ROOT", "/opt/Wav2Lip")).resolve()
 AVATAR_ENGINE = os.environ.get("AVATAR_ENGINE", "ffmpeg").strip().lower()
 
 security = HTTPBearer(auto_error=False)
-app = FastAPI(title="Amina Avatar Local", version="1.1.0")
+app = FastAPI(title="Amina Avatar Local", version="1.2.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -99,7 +99,48 @@ def audio_path_suffix(ext: str) -> str:
     return ext if ext else ".mp3"
 
 
+def avatar_output_dimensions() -> tuple[int, int]:
+    """Вертикальное видео 9:16 по умолчанию; задайте в .env под свой экран."""
+    w = int(os.environ.get("AVATAR_VIDEO_WIDTH", "720"))
+    h = int(os.environ.get("AVATAR_VIDEO_HEIGHT", "1280"))
+    return max(320, min(w, 2160)), max(568, min(h, 3840))
+
+
+def x264_quality_args() -> list[str]:
+    crf = os.environ.get("AVATAR_CRF", "20").strip() or "20"
+    preset = os.environ.get("AVATAR_X264_PRESET", "medium").strip() or "medium"
+    return ["-crf", crf, "-preset", preset, "-profile:v", "high"]
+
+
+def still_portrait_filter(width: int, height: int) -> str:
+    """Cover + center crop: лицо заполняет кадр, без чёрных полей по бокам."""
+    return (
+        f"fps=30,scale={width}:{height}:force_original_aspect_ratio=increase,"
+        f"crop={width}:{height}:(iw-{width})/2:(ih-{height})/2,format=yuv420p"
+    )
+
+
 def build_ffmpeg_video(audio_path: Path, out_mp4: Path) -> None:
+    w, h = avatar_output_dimensions()
+    vf = still_portrait_filter(w, h)
+    quality = x264_quality_args()
+    common_tail = [
+        "-shortest",
+        "-c:v",
+        "libx264",
+        *quality,
+        "-tune",
+        "stillimage",
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-movflags",
+        "+faststart",
+        str(out_mp4),
+    ]
     if FACE.is_file():
         cmd = [
             "ffmpeg",
@@ -110,16 +151,9 @@ def build_ffmpeg_video(audio_path: Path, out_mp4: Path) -> None:
             str(FACE),
             "-i",
             str(audio_path),
-            "-shortest",
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-movflags",
-            "+faststart",
-            str(out_mp4),
+            "-vf",
+            vf,
+            *common_tail,
         ]
     else:
         cmd = [
@@ -128,19 +162,10 @@ def build_ffmpeg_video(audio_path: Path, out_mp4: Path) -> None:
             "-f",
             "lavfi",
             "-i",
-            "color=c=0x1a1520:s=512x512:r=30",
+            f"color=c=0x1a1520:s={w}x{h}:r=30",
             "-i",
             str(audio_path),
-            "-shortest",
-            "-c:v",
-            "libx264",
-            "-pix_fmt",
-            "yuv420p",
-            "-c:a",
-            "aac",
-            "-movflags",
-            "+faststart",
-            str(out_mp4),
+            *common_tail,
         ]
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
     if proc.returncode != 0 or not out_mp4.is_file():
