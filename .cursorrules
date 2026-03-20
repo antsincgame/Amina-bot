@@ -197,8 +197,8 @@ const messages = JSON.parse(doc.messages);
 Кастомный MCP сервер `appwrite-mcp-custom` — 38 tools, Console-level доступ через email/password.
 Настройка (одноразово):
 ```bash
-cd /путь/к/Amina-bot-1
+cd Amina-bot
 git clone https://github.com/antsincgame/appwrite-mcp-custom.git
 cd appwrite-mcp-custom && npm install
 ```
-В глобальном конфиге Cursor `args` указывают на `.../Amina-bot-1/appwrite-mcp-custom/src/index.js`. После клонирования перезапустить Cursor.
+Конфиг уже в `.cursor/mcp.json`. После клонирования перезапустить Cursor.
