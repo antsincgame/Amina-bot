@@ -100,7 +100,7 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
   // /menu
   bot.command('menu', async (ctx) => {
-    await ctx.reply(`🎛 <b>Меню Amina</b> — выбери действие:`, {
+    await ctx.reply('🎛 <b>Меню Амины</b> — выбирай:', {
       parse_mode: 'HTML',
       reply_markup: buildMainMenu(),
     });

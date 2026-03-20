@@ -13,49 +13,44 @@ import { getMiniAppUrl } from './mini-app.js';
 // Main Menu & Reply Keyboard
 // ============================================
 
-/** Главное inline-меню с кнопками для всех функций */
+/** Главное inline-меню — яркое и дружелюбное */
 export const buildMainMenu = (): InlineKeyboard => {
   const mini = getMiniAppUrl();
   const menu = new InlineKeyboard();
 
   if (mini) {
-    menu.webApp('✨ Открыть Амину', mini).row();
+    menu.webApp('🌟 Открыть Амину', mini).row();
   }
 
   return menu
-    .text('🌐 Поиск', 'menu_search')
-    .text('🎨 Картинка', 'menu_imagine')
-    .text('🔊 Голос', 'menu_voice')
+    .text('🔍 Поиск', 'menu_search')
+    .text('🖼 Картинка', 'menu_imagine')
     .row()
-    .text('📌 Заметки', 'menu_notes')
-    .text('✅ Задачи', 'menu_todos')
+    .text('🎙 Голос', 'menu_voice')
+    .text('🎨 Фото-магия', 'edit_image_help')
+    .row()
+    .text('📝 Заметки', 'menu_notes')
+    .text('✏️ Задачи', 'menu_todos')
+    .row()
     .text('⏰ Напоминания', 'menu_reminders')
+    .text('🌅 Дайджест', 'menu_digest')
     .row()
-    .text('☀️ Дайджест', 'menu_digest')
-    .text('📰 Дайджест сейчас', 'digest_now')
-    .row()
-    .text('✏️ Редактор фото', 'edit_image_help')
+    .text('⚡ Дайджест сейчас', 'digest_now')
     .text('📞 Телефония', 'menu_telephony')
     .row()
-    .text('📋 Все команды', 'menu_help');
+    .text('💡 Все команды', 'menu_help');
 };
 
 /** Постоянная клавиатура (ReplyKeyboard) снизу чата */
-export const buildReplyKeyboard = (): Keyboard => {
-  const mini = getMiniAppUrl();
-  const kb = new Keyboard();
-  if (mini) {
-    kb.webApp('✨ Амина', mini).row();
-  }
-  return kb
-    .text('🌐 Поиск').text('🎨 Картинка').text('📌 Заметки')
+export const buildReplyKeyboard = (): Keyboard =>
+  new Keyboard()
+    .text('🔍 Поиск').text('🖼 Картинка').text('📝 Заметки')
     .row()
-    .text('✅ Задачи').text('⏰ Напоминания').text('☀️ Дайджест')
+    .text('✏️ Задачи').text('⏰ Напоминания').text('🌅 Дайджест')
     .row()
-    .text('📰 Дайджест сейчас').text('📋 Меню')
+    .text('⚡ Дайджест сейчас').text('🎛 Меню')
     .resized()
     .persistent();
-};
 
 // ============================================
 // Feature-specific Keyboards (deduplicated)

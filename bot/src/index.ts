@@ -33,7 +33,7 @@ import { startTelephonyJobWorker, stopTelephonyJobWorker } from './features/tele
 import { ensureTelephonyRecordingsInfra } from './features/telephony/telephony-recordings-repo.js';
 import { syncSelfCoreSystemFacts } from './ai/self-core.js';
 import { getChatRuntimeState } from './ai/runtime-truth.js';
-import { getMiniAppUrl } from './telegram/mini-app.js';
+
 import { getMiniAppHtml } from './telegram/mini-app-html.js';
 
 // --------------------------------------------
@@ -398,21 +398,12 @@ const initBotAndServices = async (): Promise<void> => {
   }
 
   try {
-    const miniUrl = getMiniAppUrl();
-    if (miniUrl) {
-      await bot.api.setChatMenuButton({
-        menu_button: {
-          type: 'web_app',
-          text: 'Амина',
-          web_app: { url: miniUrl },
-        },
-      });
-      appLogger.info({ miniUrl }, '📱 Кнопка меню Web App (Амина) установлена');
-    } else {
-      appLogger.warn('BOT_URL не https — кнопка мини-приложения в меню чата не установлена');
-    }
+    await bot.api.setChatMenuButton({
+      menu_button: { type: 'commands' },
+    });
+    appLogger.info('📋 Кнопка меню установлена на список команд');
   } catch (err) {
-    appLogger.warn({ error: err }, '⚠️ Failed to set Web App menu button');
+    appLogger.warn({ error: err }, '⚠️ Failed to set menu button');
   }
 };
 

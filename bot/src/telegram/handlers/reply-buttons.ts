@@ -19,17 +19,17 @@ export const clearAwaitingFlags = (ctx: BotContext): void => {
 };
 
 export const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Record<string, () => Promise<void>> => ({
-  '🌐 Поиск': async () => {
+  '🔍 Поиск': async () => {
     clearAwaitingFlags(ctx);
     await ctx.reply('🔍 <b>Что найти в интернете?</b>', { parse_mode: 'HTML' });
     ctx.session.awaitingSearchQuery = true;
   },
-  '🎨 Картинка': async () => {
+  '🖼 Картинка': async () => {
     clearAwaitingFlags(ctx);
-    await ctx.reply('🎨 <b>Что нарисовать?</b>', { parse_mode: 'HTML' });
+    await ctx.reply('🖼 <b>Что нарисовать?</b>', { parse_mode: 'HTML' });
     ctx.session.awaitingImagePrompt = true;
   },
-  '📌 Заметки': async () => {
+  '📝 Заметки': async () => {
     try {
       const notes = await notesRepo.getByUser(userId);
       if (notes.length === 0) {
@@ -52,7 +52,7 @@ export const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Recor
       await ctx.reply('😔 Не удалось загрузить заметки.');
     }
   },
-  '✅ Задачи': async () => {
+  '✏️ Задачи': async () => {
     try {
       const todos = await todosRepo.getActive(userId);
       if (todos.length === 0) {
@@ -94,7 +94,7 @@ export const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Recor
       await ctx.reply('😔 Не удалось загрузить напоминания.');
     }
   },
-  '☀️ Дайджест': async () => {
+  '🌅 Дайджест': async () => {
     try {
       const prefs = await userPrefsRepo.get(userId);
       const status = prefs?.digest_enabled ? '✅ Включён' : '❌ Выключен';
@@ -107,7 +107,7 @@ export const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Recor
       await ctx.reply('😔 Не удалось загрузить настройки дайджеста.');
     }
   },
-  '📰 Дайджест сейчас': async () => {
+  '⚡ Дайджест сейчас': async () => {
     const chatId = ctx.chat?.id ?? 0;
     const prefs = await userPrefsRepo.getOrCreate(userId, chatId, ctx.from?.first_name);
     await ctx.reply('☀️ Собираю дайджест... Это может занять 15-30 секунд.');
@@ -123,7 +123,7 @@ export const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Recor
       await ctx.reply('😔 Не удалось собрать дайджест. Попробуй позже.');
     }
   },
-  '📋 Меню': async () => {
-    await ctx.reply('🎛 <b>Меню Amina</b> — выбери действие:', { parse_mode: 'HTML', reply_markup: buildMainMenu() });
+  '🎛 Меню': async () => {
+    await ctx.reply('🎛 <b>Меню Амины</b> — выбирай:', { parse_mode: 'HTML', reply_markup: buildMainMenu() });
   },
 });

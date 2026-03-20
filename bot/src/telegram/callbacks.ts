@@ -444,7 +444,7 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
 
   bot.callbackQuery('show_menu', async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply(`🎛 <b>Меню Amina</b> — выбери действие:`, { parse_mode: 'HTML', reply_markup: buildMainMenu() });
+    await ctx.reply('🎛 <b>Меню Амины</b> — выбирай:', { parse_mode: 'HTML', reply_markup: buildMainMenu() });
   });
 
   // ====== ДЕЙСТВИЯ ======
