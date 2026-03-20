@@ -63,6 +63,7 @@ function pruneOldFailures(): void {
 /** Зафиксировать ошибку запроса к LM Studio */
 export function recordLMStudioFailure(): void {
   recentFailures.push(Date.now());
+  if (recentFailures.length > 100) recentFailures.splice(0, recentFailures.length - 100);
   pruneOldFailures();
 
   if (circuitState === 'half-open') {
@@ -452,7 +453,8 @@ export async function fetchLMStudioModels(cfg: LMStudioConfig): Promise<LMStudio
   try {
     try {
       return await tryFetch(getModelsUrl(cfg, true));
-    } catch {
+    } catch (error) {
+      aiLogger.debug({ error: error instanceof Error ? error.message : String(error) }, 'LM Studio native API failed, falling back to OpenAI API');
       return await tryFetch(getModelsUrl(cfg, false));
     }
   } catch (error) {

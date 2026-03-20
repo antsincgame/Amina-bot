@@ -21,6 +21,33 @@ import { looksLikeSearchSimulation, looksLikeSearchRefusal } from '../telegram/f
 // Constants
 // ============================================
 
+// TTL-кеш для Perplexity-результатов (5 минут, макс. 50 записей)
+const VERIFY_CACHE_TTL = 5 * 60 * 1000;
+const VERIFY_CACHE_MAX_SIZE = 50;
+const verifyCache = new Map<string, { result: string | null; ts: number }>();
+
+function getFromVerifyCache(query: string): string | null | undefined {
+  const entry = verifyCache.get(query);
+  if (!entry) return undefined;
+  if (Date.now() - entry.ts > VERIFY_CACHE_TTL) {
+    verifyCache.delete(query);
+    return undefined;
+  }
+  return entry.result;
+}
+
+function setVerifyCache(query: string, result: string | null): void {
+  if (verifyCache.size >= VERIFY_CACHE_MAX_SIZE) {
+    let oldestKey: string | undefined;
+    let oldestTs = Infinity;
+    for (const [k, v] of verifyCache) {
+      if (v.ts < oldestTs) { oldestTs = v.ts; oldestKey = k; }
+    }
+    if (oldestKey) verifyCache.delete(oldestKey);
+  }
+  verifyCache.set(query, { result, ts: Date.now() });
+}
+
 const MAX_CITATIONS_DISPLAY = 5;
 const MAX_URL_DISPLAY_LENGTH = 70;
 const MIN_SEARCH_ANSWER_LENGTH = 30;
@@ -285,6 +312,9 @@ async function callPerplexityOnce(
  * Вызывает Perplexity напрямую и возвращает форматированный результат.
  */
 async function replaceWithRealSearch(userMessage: string): Promise<string | null> {
+  const cached = getFromVerifyCache(`search:${userMessage}`);
+  if (cached !== undefined) return cached;
+
   try {
     const searchResult = await webSearch(userMessage);
 
@@ -296,12 +326,14 @@ async function replaceWithRealSearch(userMessage: string): Promise<string | null
         '✅ Verifier: replaced simulation with real Perplexity data'
       );
 
+      setVerifyCache(`search:${userMessage}`, result);
       return result;
     }
   } catch (error) {
     aiLogger.warn({ error: error instanceof Error ? error.message : String(error) }, 'Verifier: Perplexity search failed');
   }
 
+  setVerifyCache(`search:${userMessage}`, null);
   return null;
 }
 
@@ -321,10 +353,15 @@ function extractSignificantNumbers(text: string): string[] {
  * 3. Если числа расходятся — возвращаем Perplexity-ответ как замену.
  */
 async function factCheckViaPerplexity(userMessage: string, aiResponse: string): Promise<string | null> {
+  const cacheKey = `factcheck:${userMessage}`;
+  const cached = getFromVerifyCache(cacheKey);
+  if (cached !== undefined) return cached;
+
   try {
     const searchResult = await webSearch(userMessage);
 
     if (!searchResult.answer || searchResult.answer.length < MIN_FACTCHECK_ANSWER_LENGTH) {
+      setVerifyCache(cacheKey, null);
       return null;
     }
 
@@ -339,6 +376,7 @@ async function factCheckViaPerplexity(userMessage: string, aiResponse: string): 
           { perplexityNumbers: perplexityNumbers.slice(0, 5), aiNumbers: aiNumbers.slice(0, 5) },
           '✅ Verifier: LLM numbers match Perplexity — keeping original response'
         );
+        setVerifyCache(cacheKey, null);
         return null;
       }
     }
@@ -349,6 +387,7 @@ async function factCheckViaPerplexity(userMessage: string, aiResponse: string): 
       '✅ Verifier: numbers diverge — replacing with Perplexity-verified answer'
     );
 
+    setVerifyCache(cacheKey, result);
     return result;
   } catch (error) {
     aiLogger.warn({ error: error instanceof Error ? error.message : String(error) }, 'Verifier: fact-check Perplexity search failed');

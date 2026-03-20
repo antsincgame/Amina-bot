@@ -38,11 +38,15 @@ export function startReminderScheduler(bot: BotLike): void {
 
   appLogger.info({ intervalMs: CHECK_INTERVAL_MS }, 'Starting reminder scheduler');
 
-  schedulerInterval = setInterval(() => {
-    processReminders(bot as BotLike).catch(err => {
-      appLogger.error({ error: err }, 'Reminder scheduler error');
-    });
-  }, CHECK_INTERVAL_MS);
+  function scheduleNext() {
+    schedulerInterval = setTimeout(async () => {
+      await processReminders(bot as BotLike).catch(err => {
+        appLogger.error({ error: err }, 'Reminder scheduler error');
+      });
+      scheduleNext();
+    }, CHECK_INTERVAL_MS) as unknown as ReturnType<typeof setInterval>;
+  }
+  scheduleNext();
 }
 
 /**
@@ -50,7 +54,7 @@ export function startReminderScheduler(bot: BotLike): void {
  */
 export function stopReminderScheduler(): void {
   if (schedulerInterval) {
-    clearInterval(schedulerInterval);
+    clearTimeout(schedulerInterval);
     schedulerInterval = null;
     appLogger.info('Reminder scheduler stopped');
   }

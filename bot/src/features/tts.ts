@@ -99,9 +99,14 @@ async function getTTSConfig(): Promise<TTSConfig> {
     'voice_speaker',
   ]);
 
+  const VALID_TTS_PROVIDERS = new Set<TTSProvider>(['edge', 'elevenlabs', 'openai']);
+  const resolvedProvider: TTSProvider = VALID_TTS_PROVIDERS.has(settings.tts_provider as TTSProvider)
+    ? settings.tts_provider as TTSProvider
+    : 'edge';
+
   const config: TTSConfig = {
     enabled: settings.tts_enabled !== 'false',
-    provider: (settings.tts_provider as TTSProvider) || 'edge',
+    provider: resolvedProvider,
     // ElevenLabs
     elevenlabsApiKey: settings.elevenlabs_api_key || null,
     elevenlabsVoiceId: settings.elevenlabs_voice_id || ELEVENLABS_DEFAULT_VOICE,
@@ -322,11 +327,11 @@ async function generateElevenLabsChunk(
 
     return buffer;
   } catch (error) {
-    const err = error as { name?: string; message?: string };
-    if (err.name === 'AbortError') {
+    if (error instanceof Error && error.name === 'AbortError') {
       appLogger.warn({ textLen: text.length }, 'TTS: ElevenLabs chunk timeout');
     } else {
-      appLogger.error({ error: err.message, textLen: text.length }, 'TTS: ElevenLabs chunk failed');
+      const errMsg = error instanceof Error ? error.message : String(error);
+      appLogger.error({ error: errMsg, textLen: text.length }, 'TTS: ElevenLabs chunk failed');
     }
     throw error;
   } finally {
@@ -392,8 +397,9 @@ async function generateOpenAIChunk(
 
     return buffer;
   } catch (error) {
-    const err = error as { status?: number; message?: string };
-    appLogger.error({ error: err.message, status: err.status, textLen: text.length }, 'TTS: OpenAI chunk failed');
+    const errMsg = error instanceof Error ? error.message : String(error);
+    const errStatus = error instanceof Error && 'status' in error ? (error as { status?: number }).status : undefined;
+    appLogger.error({ error: errMsg, status: errStatus, textLen: text.length }, 'TTS: OpenAI chunk failed');
     throw error;
   }
 }

@@ -116,13 +116,16 @@ export async function registerUsersRoutes(server: FastifyInstance): Promise<void
         const { userId } = request.params;
         const { type, limit, pinned } = request.query;
 
+        const VALID_MEMORY_TYPES = new Set(['fact', 'preference', 'context', 'summary', 'important'] as const);
+        type MemoryType = 'fact' | 'preference' | 'context' | 'summary' | 'important';
+
         let memories;
         if (pinned === 'true') {
           memories = await userMemoryRepo.getPinned(userId);
-        } else if (type) {
+        } else if (type && VALID_MEMORY_TYPES.has(type as MemoryType)) {
           memories = await userMemoryRepo.getByType(
             userId,
-            type as 'fact' | 'preference' | 'context' | 'summary' | 'important'
+            type as MemoryType
           );
         } else {
           memories = await userMemoryRepo.getAll(
@@ -242,8 +245,16 @@ export async function registerUsersRoutes(server: FastifyInstance): Promise<void
         const { userId } = request.params;
         const { event_type, from, to, limit } = request.query;
 
+        const VALID_EVENT_TYPES = new Set([
+          'message', 'voice', 'image', 'command', 'ai_response',
+          'error', 'memory_created', 'memory_updated', 'session_start', 'session_end',
+        ] as const);
+        const validatedEventType = event_type && VALID_EVENT_TYPES.has(event_type as UserLog['event_type'])
+          ? event_type as UserLog['event_type']
+          : undefined;
+
         const logs = await userLogsRepo.getByUser(userId, {
-          eventType: event_type as UserLog['event_type'],
+          eventType: validatedEventType,
           from: from ? new Date(from) : undefined,
           to: to ? new Date(to) : undefined,
           limit: limit ? parseInt(limit, 10) : 100,

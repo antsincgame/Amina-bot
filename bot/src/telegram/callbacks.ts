@@ -36,8 +36,12 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
   // ====== ЗАМЕТКИ ======
 
   bot.callbackQuery('notes_list', async (ctx) => {
+    if (!ctx.from?.id) {
+      await ctx.answerCallbackQuery({ text: 'Не удалось определить пользователя' });
+      return;
+    }
     await ctx.answerCallbackQuery();
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const userId = ctx.from.id.toString();
     try {
       const notes = await notesRepo.getByUser(userId);
 
@@ -62,7 +66,11 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
   });
 
   bot.callbackQuery('save_to_notes', async (ctx) => {
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    if (!ctx.from?.id) {
+      await ctx.answerCallbackQuery({ text: 'Не удалось определить пользователя' });
+      return;
+    }
+    const userId = ctx.from.id.toString();
     const messageText = ctx.callbackQuery.message?.text;
 
     if (!messageText) {
@@ -93,7 +101,11 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
   });
 
   bot.callbackQuery(/^save_to_notes_full:(.+)$/, async (ctx) => {
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    if (!ctx.from?.id) {
+      await ctx.answerCallbackQuery({ text: 'Не удалось определить пользователя' });
+      return;
+    }
+    const userId = ctx.from.id.toString();
     const textId = ctx.match?.[1];
     const fullText = textId ? getFullText(textId) : null;
 
@@ -124,8 +136,12 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
   });
 
   bot.callbackQuery('menu_notes', async (ctx) => {
+    if (!ctx.from?.id) {
+      await ctx.answerCallbackQuery({ text: 'Не удалось определить пользователя' });
+      return;
+    }
     await ctx.answerCallbackQuery();
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const userId = ctx.from.id.toString();
     try {
       const notes = await notesRepo.getByUser(userId);
       if (notes.length === 0) {
@@ -158,8 +174,12 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
   // ====== ЗАДАЧИ ======
 
   bot.callbackQuery('todos_list', async (ctx) => {
+    if (!ctx.from?.id) {
+      await ctx.answerCallbackQuery({ text: 'Не удалось определить пользователя' });
+      return;
+    }
     await ctx.answerCallbackQuery();
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const userId = ctx.from.id.toString();
     try {
       const todos = await todosRepo.getActive(userId);
 
@@ -180,7 +200,11 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
   });
 
   bot.callbackQuery(/^todo_done_(\d+)$/, async (ctx) => {
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    if (!ctx.from?.id) {
+      await ctx.answerCallbackQuery({ text: 'Не удалось определить пользователя' });
+      return;
+    }
+    const userId = ctx.from.id.toString();
     const index = parseInt(ctx.match![1]!, 10);
 
     try {
@@ -207,8 +231,12 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
   });
 
   bot.callbackQuery('menu_todos', async (ctx) => {
+    if (!ctx.from?.id) {
+      await ctx.answerCallbackQuery({ text: 'Не удалось определить пользователя' });
+      return;
+    }
     await ctx.answerCallbackQuery();
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const userId = ctx.from.id.toString();
     try {
       const todos = await todosRepo.getActive(userId);
       if (todos.length === 0) {
@@ -238,7 +266,11 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
   // ====== ДАЙДЖЕСТ ======
 
   bot.callbackQuery('digest_toggle', async (ctx) => {
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    if (!ctx.from?.id) {
+      await ctx.answerCallbackQuery({ text: 'Не удалось определить пользователя' });
+      return;
+    }
+    const userId = ctx.from.id.toString();
     const chatId = ctx.chat?.id ?? 0;
     try {
       const prefs = await userPrefsRepo.get(userId);
@@ -256,8 +288,12 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
   });
 
   bot.callbackQuery('digest_now', async (ctx) => {
+    if (!ctx.from?.id) {
+      await ctx.answerCallbackQuery({ text: 'Не удалось определить пользователя' });
+      return;
+    }
     await ctx.answerCallbackQuery({ text: '☀️ Собираю дайджест...' });
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const userId = ctx.from.id.toString();
     const chatId = ctx.chat?.id ?? 0;
     try {
       const prefs = await userPrefsRepo.getOrCreate(userId, chatId, ctx.from?.first_name);
@@ -284,8 +320,12 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
   });
 
   bot.callbackQuery('menu_digest', async (ctx) => {
+    if (!ctx.from?.id) {
+      await ctx.answerCallbackQuery({ text: 'Не удалось определить пользователя' });
+      return;
+    }
     await ctx.answerCallbackQuery();
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const userId = ctx.from.id.toString();
     const chatId = ctx.chat?.id ?? 0;
     try {
       const prefs = await userPrefsRepo.get(userId);
@@ -330,8 +370,12 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
   });
 
   bot.callbackQuery('menu_reminders', async (ctx) => {
+    if (!ctx.from?.id) {
+      await ctx.answerCallbackQuery({ text: 'Не удалось определить пользователя' });
+      return;
+    }
     await ctx.answerCallbackQuery();
-    const userId = ctx.from?.id.toString() ?? 'unknown';
+    const userId = ctx.from.id.toString();
     try {
       const reminders = await remindersRepo.getByUser(userId);
       if (reminders.length === 0) {
@@ -381,6 +425,20 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
       `<b>💡 Без команд:</b>\n` +
       `• <i>Нарисуй кота</i> — картинка\n• <i>Напомни через час</i> — напоминание\n• <i>Запомни: пароль 123</i> — заметка\n• <i>Курс доллара</i> — автопоиск`,
       { parse_mode: 'HTML', reply_markup: buildMainMenu() }
+    );
+  });
+
+  bot.callbackQuery('menu_telephony', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply(
+      '📞 <b>Телефония</b>\n\n' +
+      'Амина умеет совершать и принимать звонки через IP-телефонию.\n\n' +
+      '<b>Возможности:</b>\n' +
+      '• AI-звонки по сценариям\n' +
+      '• Распознавание речи в реальном времени\n' +
+      '• Анализ записей звонков\n\n' +
+      '<i>Управление телефонией доступно в админ-панели.</i>',
+      { parse_mode: 'HTML' },
     );
   });
 

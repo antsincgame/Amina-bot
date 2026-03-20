@@ -113,21 +113,49 @@ export const voiceMessagesRepo = {
         return statsCache.value;
       }
 
-      const all: AppwriteDoc[] = []; let offset = 0;
-      while (offset < 5000) {
-        const r = await (await getAW()).listDocuments(DB_ID(), COLL, [Query.limit(100), Query.offset(offset)]);
-        all.push(...r.documents); if (r.documents.length < 100) break; offset += 100;
-      }
-      const rows = all.map(d => ({ user_id: d.user_id, file_size: d.file_size ?? 0, duration: d.duration ?? 0 }));
-      const totalSize = rows.reduce((s, r) => s + r.file_size, 0);
-      const totalDuration = rows.reduce((s, r) => s + r.duration, 0);
+      const MAX_STATS_DOCS = 2000;
+      let totalCount = 0;
+      let totalSize = 0;
+      let totalDuration = 0;
       const byUserMap = new Map<string, { count: number; totalDuration: number }>();
-      for (const r of rows) { const e = byUserMap.get(r.user_id) ?? { count: 0, totalDuration: 0 }; e.count++; e.totalDuration += r.duration; byUserMap.set(r.user_id, e); }
-      const stats = { totalCount: rows.length, totalSize, totalDuration,
-        byUser: Array.from(byUserMap.entries()).map(([user_id, v]) => ({ user_id, ...v })).sort((a, b) => b.count - a.count) };
+      let offset = 0;
+
+      while (offset < MAX_STATS_DOCS) {
+        const r = await (await getAW()).listDocuments(DB_ID(), COLL, [Query.limit(100), Query.offset(offset)]);
+        for (const d of r.documents) {
+          const fileSize = (d.file_size as number) ?? 0;
+          const duration = (d.duration as number) ?? 0;
+          const userId = d.user_id as string;
+          totalCount++;
+          totalSize += fileSize;
+          totalDuration += duration;
+          const entry = byUserMap.get(userId) ?? { count: 0, totalDuration: 0 };
+          entry.count++;
+          entry.totalDuration += duration;
+          byUserMap.set(userId, entry);
+        }
+        if (r.documents.length < 100) break;
+        offset += 100;
+      }
+
+      if (offset >= MAX_STATS_DOCS) {
+        dbLogger.warn({ offset, MAX_STATS_DOCS }, 'Voice messages stats truncated — too many documents');
+      }
+
+      const stats: VoiceMessagesStats = {
+        totalCount,
+        totalSize,
+        totalDuration,
+        byUser: Array.from(byUserMap.entries())
+          .map(([user_id, v]) => ({ user_id, ...v }))
+          .sort((a, b) => b.count - a.count),
+      };
       statsCache = { value: stats, ts: Date.now() };
       return stats;
-    } catch { return { totalCount: 0, totalSize: 0, totalDuration: 0, byUser: [] }; }
+    } catch (error) {
+      dbLogger.warn({ error }, 'Failed to compute voice messages stats');
+      return { totalCount: 0, totalSize: 0, totalDuration: 0, byUser: [] };
+    }
   },
 
   async getSignedUrl(filePath: string, _expiresIn = 3600): Promise<string | null> {

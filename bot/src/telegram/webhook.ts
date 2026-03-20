@@ -7,8 +7,27 @@ import type { BotContext } from './bot.js';
 
 type TelegramUpdateHandler = Pick<Bot<BotContext>, 'handleUpdate'>;
 const PROCESSED_UPDATE_TTL_MS = 15 * 60 * 1000;
+const CLEANUP_INTERVAL_MS = 60_000;
 const processingUpdateIds = new Set<number>();
 const completedUpdateIds = new Map<number, number>();
+
+let webhookCleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+function startWebhookCleanup(): void {
+  if (webhookCleanupTimer) return;
+  webhookCleanupTimer = setInterval(() => {
+    const now = Date.now();
+    cleanupCompletedUpdates(now);
+  }, CLEANUP_INTERVAL_MS);
+  webhookCleanupTimer.unref();
+}
+
+export function stopWebhookCleanup(): void {
+  if (webhookCleanupTimer) {
+    clearInterval(webhookCleanupTimer);
+    webhookCleanupTimer = null;
+  }
+}
 
 function readSecretHeader(value: string | string[] | undefined): string | null {
   if (typeof value === 'string') {
@@ -90,6 +109,7 @@ export function registerTelegramWebhookRoute(
   server: FastifyInstance,
   getBot: () => TelegramUpdateHandler | null,
 ): void {
+  startWebhookCleanup();
   server.post(
     '/webhook/telegram',
     async (request: FastifyRequest<{ Body?: Update }>, reply: FastifyReply) => {

@@ -158,7 +158,11 @@ export async function registerSettingsRoutes(server: FastifyInstance): Promise<v
         }
 
         if ('preferred_vision_model' in settings) {
-          await settingsRepo.set('effective_vision_model', settings.preferred_vision_model);
+          try {
+            await settingsRepo.set('effective_vision_model', settings.preferred_vision_model);
+          } catch (visionError) {
+            aiLogger.error({ error: visionError }, 'Failed to sync effective_vision_model after preferred_vision_model update');
+          }
         }
 
         clearApiKeysCache();
@@ -223,7 +227,11 @@ export async function registerSettingsRoutes(server: FastifyInstance): Promise<v
         await settingsRepo.set(key, value);
 
         if (key === 'preferred_vision_model') {
-          await settingsRepo.set('effective_vision_model', value);
+          try {
+            await settingsRepo.set('effective_vision_model', value);
+          } catch (visionError) {
+            aiLogger.error({ error: visionError, key }, 'Failed to sync effective_vision_model after preferred_vision_model update');
+          }
         }
 
         clearApiKeysCache();

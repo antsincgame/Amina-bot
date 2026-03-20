@@ -58,7 +58,11 @@ export async function registerChatRoutes(server: FastifyInstance): Promise<void>
       // Get or create conversation
       let conversation: Conversation;
       if (body.conversationId) {
-        conversation = await conversationsRepo.get(body.conversationId);
+        try {
+          conversation = await conversationsRepo.get(body.conversationId);
+        } catch {
+          return reply.code(404).send({ error: 'Conversation not found' });
+        }
       } else {
         conversation = await conversationsRepo.getOrCreate(userId, effectiveChannel, {
           source: 'api',

@@ -291,6 +291,8 @@ const initBotAndServices = async (): Promise<void> => {
 
   scheduleHybridDigestPrewarm();
 
+  if (shuttingDown) return;
+
   // Create bot if not yet created (non-webhook mode)
   if (!bot) {
     if (!config.telegram.token) {
@@ -349,6 +351,8 @@ const initBotAndServices = async (): Promise<void> => {
       appLogger.error({ error: err?.message ?? err }, '❌ Polling start failed');
     });
   }
+
+  if (shuttingDown) return;
 
   // Schedulers
   startReminderScheduler(bot);

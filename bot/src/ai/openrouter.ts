@@ -49,15 +49,13 @@ function isRussianCapable(modelId: string): boolean {
 const STATIC_FREE_MODELS = [...RUSSIAN_CAPABLE_MODELS];
 
 const freeModelsCache = new SingleCache<string[]>(5 * 60 * 1000); // 5 минут
+let inFlightFreeModels: Promise<string[]> | null = null;
 
 /**
  * Динамически получает список бесплатных моделей от OpenRouter
  * Кэширует на 5 минут для оптимизации
  */
-async function fetchFreeModels(): Promise<string[]> {
-  const cached = freeModelsCache.get();
-  if (cached) return cached;
-  
+async function fetchFreeModelsInner(): Promise<string[]> {
   try {
     const keys = await getApiKeys();
     const controller = new AbortController();
@@ -108,6 +106,18 @@ async function fetchFreeModels(): Promise<string[]> {
     aiLogger.warn({ error }, 'Failed to fetch free models, using static list');
     return STATIC_FREE_MODELS;
   }
+}
+
+async function fetchFreeModels(): Promise<string[]> {
+  const cached = freeModelsCache.get();
+  if (cached) return cached;
+
+  if (inFlightFreeModels) return inFlightFreeModels;
+
+  inFlightFreeModels = fetchFreeModelsInner().finally(() => {
+    inFlightFreeModels = null;
+  });
+  return inFlightFreeModels;
 }
 
 /**

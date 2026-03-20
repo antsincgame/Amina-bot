@@ -49,7 +49,11 @@ export async function flushLogs(): Promise<void> {
   try {
     const aw = await getAW();
     // Batch insert — create docs one by one (Appwrite has no batch insert)
-    const promises = logsToInsert.slice(0, 50).map(log =>
+    if (logsToInsert.length > 200) {
+      const dropped = logsToInsert.length - 200;
+      process.stderr.write(`[DB Logger] WARNING: ${dropped} logs dropped due to overflow (queue exceeded 200)\n`);
+    }
+    const promises = logsToInsert.slice(0, 200).map(log =>
       aw.createDocument(DB_ID(), COLL, ID.unique(), {
         level: log.level,
         module: log.module,

@@ -102,11 +102,13 @@ export async function registerVoiceMessagesRoutes(server: FastifyInstance): Prom
           userId?: string; dateFrom?: string; dateTo?: string; limit?: number;
         };
 
+        const safeLim = Math.min(limit ?? 100, 100);
+
         const records = await voiceMessagesRepo.getFiltered({
           userId,
           dateFrom,
           dateTo,
-          limit: limit ?? 500,
+          limit: safeLim,
         });
 
         if (records.length === 0) {

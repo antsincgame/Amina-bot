@@ -34,6 +34,7 @@ import { getTelephonySessionDetails } from '../../features/telephony/service/ses
 import type { TelephonyAiCallPlan, TelephonyAiScenario, TelephonyRuntimeMode } from '../../../../shared/types/telephony.js';
 import type { AIMessage } from '../../../../shared/types/index.js';
 import { buildPersonaSystemPrompt } from '../../ai/persona.js';
+import { escapeHtml } from '../../features/telephony/shared.js';
 
 export async function registerTelephonyRoutes(server: FastifyInstance): Promise<void> {
   // ============================================
@@ -100,8 +101,8 @@ export async function registerTelephonyRoutes(server: FastifyInstance): Promise<
               if (notifyEnabled !== 'false') {
                 await sendTelegramNotification(
                   `🎙 <b>Запись звонка готова</b>\n` +
-                  `ID: <code>${callId}</code>\n` +
-                  `<a href="${recordLink}">Слушать запись</a>`,
+                  `ID: <code>${escapeHtml(callId || '—')}</code>\n` +
+                  `<a href="${escapeHtml(recordLink)}">Слушать запись</a>`,
                 );
               }
 
@@ -137,7 +138,7 @@ export async function registerTelephonyRoutes(server: FastifyInstance): Promise<
               }
               await sendTelegramNotification(
                 `📵 <b>Звонок не состоялся</b>\n` +
-                `ID: <code>${idMakecall}</code>\n` +
+                `ID: <code>${escapeHtml(idMakecall || '—')}</code>\n` +
                 `Абонент не поднял трубку`,
               );
             }
@@ -622,6 +623,27 @@ export async function registerTelephonyRoutes(server: FastifyInstance): Promise<
         const { rule } = request.body as { rule: string };
         if (!rule || typeof rule !== 'string') {
           return reply.code(400).send({ success: false, error: 'rule is required' });
+        }
+
+        const MAX_RULE_LENGTH = 2000;
+        if (rule.length > MAX_RULE_LENGTH) {
+          return reply.code(400).send({ success: false, error: `rule too long (max ${MAX_RULE_LENGTH} chars)` });
+        }
+
+        const INJECTION_PATTERNS = [
+          /ignore\s+(all\s+)?instructions/i,
+          /игнорируй\s+(все\s+)?инструкции/i,
+          /system:\s+/i,
+          /\[system\]/i,
+          /<\|system\|>/i,
+          /```[\s\S]*```/,
+          /\bact\s+as\b/i,
+          /\byou\s+are\s+now\b/i,
+          /\bforget\s+(all|everything|previous)\b/i,
+          /\bзабудь\s+(все|всё|предыдущие)\b/i,
+        ];
+        if (INJECTION_PATTERNS.some((pattern) => pattern.test(rule))) {
+          return reply.code(400).send({ success: false, error: 'rule contains prohibited patterns' });
         }
 
         const systemPrompt = await buildPersonaSystemPrompt({

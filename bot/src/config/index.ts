@@ -196,7 +196,9 @@ export type Config = typeof config;
 
 import { SingleCache } from '../utils/cache.js';
 
-const apiKeysCache = new SingleCache<{ openrouter: string; groq: string }>(60_000);
+const API_KEYS_CACHE_TTL_MS = 5 * 60_000;
+const apiKeysCache = new SingleCache<{ openrouter: string; groq: string }>(API_KEYS_CACHE_TTL_MS);
+let apiKeysCacheTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * Получить API ключи (приоритет: env → БД)
@@ -226,6 +228,12 @@ export async function getApiKeys(): Promise<{ openrouter: string; groq: string }
       groq: keys['groq_api_key'] || '',
     };
     apiKeysCache.set(result);
+    if (apiKeysCacheTimer) clearTimeout(apiKeysCacheTimer);
+    apiKeysCacheTimer = setTimeout(() => {
+      apiKeysCache.clear();
+      apiKeysCacheTimer = null;
+    }, API_KEYS_CACHE_TTL_MS);
+    apiKeysCacheTimer.unref();
 
     return {
       openrouter: config.ai.apiKey || result.openrouter,

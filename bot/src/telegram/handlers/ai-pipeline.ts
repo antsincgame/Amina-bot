@@ -61,7 +61,7 @@ export const processAIResponse = async (
     }, '🚨 Verifier flagged response');
     analyticsRepo.log('message_received', 'telegram', {
       event: 'llm_verify_failed', reason: verification.reason, responseLength: response.content.length,
-    }, userId).catch(() => {});
+    }, userId).catch((e) => telegramLogger.warn({ error: e }, 'analyticsRepo.log failed'));
 
     if (verification.correctedResponse) {
       telegramLogger.info({ userId, reason: verification.reason }, '✅ Using Perplexity-verified response');
@@ -342,14 +342,14 @@ export const processMessageThroughAI = async (
           .then(() => conversationsRepo.addMessage(selfConvId, { role: 'assistant', content: selfAnswer, timestamp: nowISO, metadata: { model: 'persona-self-disclosure' } }))
           .catch((err) => { telegramLogger.warn({ error: err, userId }, 'Self-disclosure DB write failed'); });
       }
-      userProfileRepo.updateOnMessage(userId, messageType, 0, telegramInfo).catch(() => {});
+      userProfileRepo.updateOnMessage(userId, messageType, 0, telegramInfo).catch((e) => telegramLogger.warn({ error: e, userId }, 'updateOnMessage failed'));
 
       analyticsRepo.log('message_received', 'telegram', {
         event: 'self_disclosure_answered', messageType,
         responseLength: selfAnswer.length,
-      }, userId).catch(() => {});
-      memoryExtractor.extractFacts(userId, userText, selfAnswer).catch(() => {});
-      captureSelfCoreFromInteraction({ userMessage: userText, aiResponse: selfAnswer }).catch(() => {});
+      }, userId).catch((e) => telegramLogger.warn({ error: e }, 'analyticsRepo.log failed'));
+      memoryExtractor.extractFacts(userId, userText, selfAnswer).catch((e) => telegramLogger.warn({ error: e, userId }, 'extractFacts failed'));
+      captureSelfCoreFromInteraction({ userMessage: userText, aiResponse: selfAnswer }).catch((e) => telegramLogger.warn({ error: e }, 'self-core growth failed'));
       return;
     }
   }
@@ -413,7 +413,7 @@ export const processMessageThroughAI = async (
         .then(() => conversationsRepo.addMessage(imgConvId, { role: 'assistant', content: aiResponse.content, timestamp: nowISO, metadata: { tokens_used: aiResponse.tokens_used.total, model: aiResponse.model, image_intercepted: true } }))
         .catch((err) => { telegramLogger.warn({ error: err, userId }, 'Image interception DB write failed'); });
     }
-    userProfileRepo.updateOnMessage(userId, messageType, aiResponse.tokens_used.total, telegramInfo).catch(() => {});
+    userProfileRepo.updateOnMessage(userId, messageType, aiResponse.tokens_used.total, telegramInfo).catch((e) => telegramLogger.warn({ error: e, userId }, 'updateOnMessage failed'));
     return;
   }
 
@@ -423,7 +423,7 @@ export const processMessageThroughAI = async (
 
   if (!alreadyGreetedToday) {
     if (greetingRegex.test(finalContent.trim())) {
-      userProfileRepo.setLastGreetingDate(userId, todayStr).catch(() => {});
+      userProfileRepo.setLastGreetingDate(userId, todayStr).catch((e) => telegramLogger.warn({ error: e, userId }, 'setLastGreetingDate failed'));
     }
   } else {
     const stripped = finalContent.trim().replace(greetingRegex, '').replace(/^[\s\n\r]+/, '');
@@ -439,10 +439,10 @@ export const processMessageThroughAI = async (
   // Fire-and-forget DB writes
   const responseTime = Date.now() - startTime;
   const convId = ctx.session.conversationId;
-  userProfileRepo.updateOnMessage(userId, messageType, aiResponse.tokens_used.total, telegramInfo).catch(() => {});
+  userProfileRepo.updateOnMessage(userId, messageType, aiResponse.tokens_used.total, telegramInfo).catch((e) => telegramLogger.warn({ error: e, userId }, 'updateOnMessage failed'));
   userLogsRepo.add(userId, 'ai_response', aiResponse.content, { chatId, type: messageType, responseLength: aiResponse.content.length }, {
     model: aiResponse.model, tokensPrompt: aiResponse.tokens_used.prompt, tokensCompletion: aiResponse.tokens_used.completion, responseTimeMs: responseTime,
-  }).catch(() => {});
+  }).catch((e) => telegramLogger.warn({ error: e, userId }, 'userLogsRepo.add failed'));
   memoryExtractor.extractFacts(userId, userText, aiResponse.content).catch((err) => {
     telegramLogger.warn({ error: err, userId }, 'extractFacts failed');
   });
@@ -464,7 +464,7 @@ export const processMessageThroughAI = async (
     conversationsRepo.addMessage(convId, { role: 'user', content: userText, timestamp: nowISO, metadata: extraMetadata })
       .then(() => conversationsRepo.addMessage(convId, { role: 'assistant', content: aiResponse.content, timestamp: nowISO, metadata: { tokens_used: aiResponse.tokens_used.total, model: aiResponse.model } }))
       .catch((err) => { telegramLogger.warn({ error: err, userId }, `Background ${messageType} DB writes failed`); });
-    analyticsRepo.log('ai_response', 'telegram', { userId, type: messageType, model: aiResponse.model, tokens: aiResponse.tokens_used.total }).catch(() => {});
+    analyticsRepo.log('ai_response', 'telegram', { userId, type: messageType, model: aiResponse.model, tokens: aiResponse.tokens_used.total }).catch((e) => telegramLogger.warn({ error: e }, 'analyticsRepo.log failed'));
   }
 
   telegramLogger.info({ userId, tokens: aiResponse.tokens_used.total, responseTimeMs: responseTime }, `${messageType} response sent`);
