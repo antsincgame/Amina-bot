@@ -12,6 +12,42 @@ import { textToSpeech, detectLanguage } from '../../features/tts.js';
 
 const MINI_APP_MESSAGE_MAX = 4000;
 
+type AvatarEmotion =
+  | 'neutral'
+  | 'happy'
+  | 'ecstatic'
+  | 'sad'
+  | 'surprised'
+  | 'thinking'
+  | 'angry'
+  | 'smirk'
+  | 'sleepy'
+  | 'flirty'
+  | 'loving';
+
+const EMOTION_PATTERNS: ReadonlyArray<{ emotion: AvatarEmotion; patterns: readonly string[] }> = [
+  { emotion: 'ecstatic', patterns: ['🎉', '🥳', '🔥', 'ура', 'потрясающ', 'невероятн', 'восхитительн', 'обалде', 'круто', 'супер'] },
+  { emotion: 'loving', patterns: ['❤', '💕', '💗', '💖', 'люблю', 'обожаю', 'любовь', 'нежн', 'дорог'] },
+  { emotion: 'flirty', patterns: ['😏', '😘', '😉', 'хм-м', 'интересн', 'может быть', 'кто знает'] },
+  { emotion: 'angry', patterns: ['😡', '😠', 'злюсь', 'бесит', 'раздраж', 'ненавиж', 'чёрт', 'дьявол', 'проклят'] },
+  { emotion: 'sad', patterns: ['😢', '😭', '😞', 'грустн', 'печальн', 'жаль', 'к сожалени', 'увы', 'сочувств', 'плохо'] },
+  { emotion: 'surprised', patterns: ['😲', '😮', '🤯', 'ого', 'ничего себе', 'вау', 'не может быть', 'серьёзно', 'правда?!'] },
+  { emotion: 'thinking', patterns: ['🤔', 'хм', 'думаю', 'пожалуй', 'возможно', 'вероятно', 'предполагаю', 'анализир', 'рассмотр'] },
+  { emotion: 'smirk', patterns: ['😏', 'хех', 'ирони', 'сарказм', 'забавн', 'ну-ну', 'ага, конечно'] },
+  { emotion: 'sleepy', patterns: ['😴', '🥱', 'устал', 'сонн', 'спать', 'поздно', 'ночь', 'отдохн'] },
+  { emotion: 'happy', patterns: ['😊', '😄', '🙂', 'рад', 'отличн', 'хорош', 'замечательн', 'прекрасн', 'здорово', 'с удовольств'] },
+];
+
+const detectEmotion = (text: string): AvatarEmotion => {
+  const lower = text.toLowerCase();
+  for (const { emotion, patterns } of EMOTION_PATTERNS) {
+    if (patterns.some(p => lower.includes(p))) {
+      return emotion;
+    }
+  }
+  return 'neutral';
+};
+
 const miniAppMessageSchema = z.object({
   initData: z.string().min(1),
   message: z.string().min(1).max(MINI_APP_MESSAGE_MAX),
@@ -109,11 +145,14 @@ export async function registerMiniAppRoutes(server: FastifyInstance): Promise<vo
         }
       }
 
+      const emotion = detectEmotion(aiResponse.content);
+
       return reply.code(200).send({
         success: true,
         data: {
           conversationId: conversation.id,
           response: aiResponse.content,
+          emotion,
           audioBase64,
           audioMimeType,
           timestamp: new Date().toISOString(),

@@ -230,6 +230,23 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
   server.get('/mini-app', async (_request, reply) => reply.redirect('/mini-app/index.html'));
   server.get('/mini-app/', async (_request, reply) => sendMiniAppHtml(reply));
   server.get('/mini-app/index.html', async (_request, reply) => sendMiniAppHtml(reply));
+
+  // Serve avatar images for Mini App
+  const avatarsDir = resolve(dirname(fileURLToPath(import.meta.url)), 'telegram', 'avatars');
+  server.get('/mini-app/avatars/:filename', async (request: FastifyRequest<{ Params: { filename: string } }>, reply: FastifyReply) => {
+    const { filename } = request.params;
+    if (!/^[\w-]+\.png$/.test(filename)) {
+      return reply.code(400).send({ error: 'Invalid filename' });
+    }
+    const filePath = resolve(avatarsDir, filename);
+    if (!existsSync(filePath)) {
+      return reply.code(404).send({ error: 'Avatar not found' });
+    }
+    return reply
+      .header('Cache-Control', 'public, max-age=86400')
+      .type('image/png')
+      .send(readFileSync(filePath));
+  });
   try {
     getMiniAppHtml();
     appLogger.info('📱 Telegram mini-app: HTML из src/telegram/mini-app-web.html');
