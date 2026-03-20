@@ -401,9 +401,9 @@ const initBotAndServices = async (): Promise<void> => {
     await bot.api.setChatMenuButton({
       menu_button: { type: 'commands' },
     });
-    appLogger.info('📋 Кнопка меню установлена на список команд');
+    appLogger.info('📋 Дефолтная кнопка меню → список команд');
   } catch (err) {
-    appLogger.warn({ error: err }, '⚠️ Failed to set menu button');
+    appLogger.warn({ error: err }, '⚠️ Failed to set default menu button');
   }
 };
 

@@ -1,9 +1,8 @@
 /**
  * Telegram Keyboard Builders
- * 
+ *
  * Все повторяющиеся клавиатуры собраны в одном месте.
- * Раньше: 30+ дублированных InlineKeyboard() по bot.ts
- * Теперь: единый модуль с переиспользуемыми билдерами.
+ * Дизайн: дружелюбный, с крупными иконками, понятный для детей.
  */
 
 import { InlineKeyboard, Keyboard } from 'grammy';
@@ -13,24 +12,24 @@ import { getMiniAppUrl } from './mini-app.js';
 // Main Menu & Reply Keyboard
 // ============================================
 
-/** Главное inline-меню — яркое и дружелюбное */
+/** Главное inline-меню — яркое и дружелюбное для детей */
 export const buildMainMenu = (): InlineKeyboard => {
   const mini = getMiniAppUrl();
   const menu = new InlineKeyboard();
 
   if (mini) {
-    menu.webApp('🌟 Открыть Амину', mini).row();
+    menu.webApp('✨ Открыть Амину ✨', mini).row();
   }
 
   return menu
     .text('🔍 Поиск', 'menu_search')
-    .text('🖼 Картинка', 'menu_imagine')
+    .text('🖼️ Картинка', 'menu_imagine')
     .row()
-    .text('🎙 Голос', 'menu_voice')
+    .text('🎤 Озвучить', 'menu_voice')
     .text('🎨 Фото-магия', 'edit_image_help')
     .row()
     .text('📝 Заметки', 'menu_notes')
-    .text('✏️ Задачи', 'menu_todos')
+    .text('✅ Задачи', 'menu_todos')
     .row()
     .text('⏰ Напоминания', 'menu_reminders')
     .text('🌅 Дайджест', 'menu_digest')
@@ -41,14 +40,23 @@ export const buildMainMenu = (): InlineKeyboard => {
     .text('💡 Все команды', 'menu_help');
 };
 
-/** Постоянная клавиатура (ReplyKeyboard) снизу чата */
+/**
+ * Постоянная клавиатура (ReplyKeyboard) снизу чата.
+ * Кнопки крупные, с иконками — удобно на телефоне и понятно для детей.
+ */
 export const buildReplyKeyboard = (): Keyboard =>
   new Keyboard()
-    .text('🔍 Поиск').text('🖼 Картинка').text('📝 Заметки')
+    .text('🔍 Поиск').text('🖼️ Картинка')
     .row()
-    .text('✏️ Задачи').text('⏰ Напоминания').text('🌅 Дайджест')
+    .text('📝 Заметки').text('✅ Задачи')
     .row()
-    .text('⚡ Дайджест сейчас').text('🎛 Меню')
+    .text('⏰ Напоминания').text('🌅 Дайджест')
+    .row()
+    .text('⚡ Дайджест сейчас').text('🎤 Озвучить')
+    .row()
+    .text('🎨 Фото-магия').text('📞 Телефония')
+    .row()
+    .text('🎛️ Меню')
     .resized()
     .persistent();
 
@@ -80,7 +88,7 @@ export const digestControlsKeyboard = (enabled: boolean): InlineKeyboard =>
     .text(enabled ? '🔕 Выключить' : '🔔 Включить', 'digest_toggle')
     .text('🔄 Сейчас', 'digest_now')
     .row()
-    .text('🏙 Город', 'digest_city_help')
+    .text('🏙️ Город', 'digest_city_help')
     .text('🕐 Время', 'digest_time_help');
 
 /** Кнопка вкл/выкл дайджеста */
@@ -92,7 +100,7 @@ export const responseActionsKeyboard = (): InlineKeyboard =>
   new InlineKeyboard()
     .text('📌 Заметка', 'save_to_notes')
     .text('🔊 Озвучить', 'read_aloud')
-    .text('🎛 Меню', 'show_menu');
+    .text('🎛️ Меню', 'show_menu');
 
 /** Кнопки заметок (добавить + обновить) */
 export const notesActionsKeyboard = (): InlineKeyboard =>

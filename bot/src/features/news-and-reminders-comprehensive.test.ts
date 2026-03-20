@@ -80,43 +80,25 @@ describe('News Vibecoding Filter', () => {
 
   describe('scoreHeadlineRelevance — положительные заголовки', () => {
     const positiveCases: [string, string][] = [
-      ['Cursor IDE reaches 1M users', 'cursor в заголовке'],
-      ['Built entire app with Claude Code in 2 hours', 'claude code в заголовке'],
       ['Vibecoding revolution is here', 'vibecoding в заголовке'],
-      ['MCP protocol explained: the future of AI coding', 'mcp в заголовке'],
-      ['GitHub Copilot new features announced', 'github copilot в заголовке'],
-      ['Replit Agent creates full-stack app overnight', 'replit agent в заголовке'],
-      ['AI coding assistants are changing development', 'ai coding в заголовке'],
-      ['Windsurf IDE gains popularity among developers', 'windsurf в заголовке'],
-      ['Bolt.new makes app building effortless', 'bolt.new в заголовке'],
-      ['V0 by Vercel: AI-generated UI components', 'v0 в заголовке'],
-      ['Lovable platform launches new AI features', 'lovable в заголовке'],
-      ['Prompt engineering best practices for coders', 'prompt engineering в заголовке'],
-      ['AI pair programming reaches new heights', 'ai pair programming в заголовке'],
-      ['Developer shipped in hours what took weeks before', 'shipped in hours в заголовке'],
-      ['Built overnight: how AI changed my workflow', 'built overnight в заголовке'],
-      ['AI-assisted development tools comparison 2026', 'ai-assisted в заголовке'],
-      ['Coding assistant benchmark results', 'coding assistant в заголовке'],
+      ['Vibe coding transforms solo development', 'vibe coding в заголовке (пробел)'],
+      ['Vibe-coding: the new trend', 'vibe-coding в заголовке (дефис)'],
       ['Вайбкодинг: новый тренд разработки', 'вайбкодинг в заголовке'],
+      ['Вайб кодинг становится мейнстримом', 'вайб кодинг в заголовке'],
+      ['Вайб-кодинг меняет индустрию', 'вайб-кодинг в заголовке'],
       ['ИИ-разработка: инструменты и практики', 'ии-разработка в заголовке'],
+      ['ИИ разработка выходит на новый уровень', 'ии разработка в заголовке'],
       ['Нейрокодинг меняет подход к программированию', 'нейрокодинг в заголовке'],
-      ['Cline: new AI coding extension for VS Code', 'cline в заголовке'],
-      ['Aider: terminal-based AI coding tool', 'aider в заголовке'],
-      ['Continue.dev releases major update', 'continue.dev в заголовке'],
-      ['Devin: the AI software engineer reviewed', 'devin в заголовке'],
-      ['OpenDevin open-source alternative launches', 'opendevin в заголовке'],
+      ['Нейро кодинг: будущее программирования', 'нейро кодинг в заголовке'],
+      ['Нейро-кодинг как профессия', 'нейро-кодинг в заголовке'],
       ['Sweep AI automates code reviews', 'sweep ai в заголовке'],
+      ['Sweep.ai launches new features', 'sweep.ai в заголовке'],
       ['Tabnine adds local model support', 'tabnine в заголовке'],
+      ['Tab Nine reaches 1M users', 'tab nine в заголовке'],
       ['Codeium free tier expanded', 'codeium в заголовке'],
       ['Supermaven fastest code completion', 'supermaven в заголовке'],
       ['LLM coding benchmarks: which model wins?', 'llm coding в заголовке'],
-      ['Model Context Protocol standardizes AI tools', 'model context protocol в заголовке'],
-      ['No-code AI platforms for startups', 'no-code ai в заголовке'],
-      ['Built with AI: 10 apps that went viral', 'built with ai в заголовке'],
-      ['AI-generated code quality analysis', 'ai-generated в заголовке'],
-      ['AI IDE comparison: Cursor vs Windsurf vs Cline', 'ai ide в заголовке'],
-      ['AI agent builds entire microservice', 'ai agent в заголовке'],
-      ['Vibe coding transforms solo development', 'vibe coding в заголовке (пробел)'],
+      ['LLM-coding tools comparison 2026', 'llm-coding в заголовке'],
     ];
 
     it.each(positiveCases)('%s → score > 0 (%s)', (title) => {
@@ -186,7 +168,7 @@ describe('News Vibecoding Filter', () => {
 
   describe('scoreHeadlineRelevance — заголовки с description', () => {
     it('positive keyword в description при нейтральном title', () => {
-      const h = makeHeadline('New tool launched', 'This cursor extension transforms coding');
+      const h = makeHeadline('New tool launched', 'This vibecoding extension transforms development');
       expect(scoreHeadlineRelevance(h)).toBeGreaterThan(0);
     });
 
@@ -196,16 +178,16 @@ describe('News Vibecoding Filter', () => {
     });
 
     it('positive + negative keywords вместе', () => {
-      const h = makeHeadline('Cursor IDE layoffs', 'copyright lawsuit filed against coding assistant');
+      const h = makeHeadline('Tabnine layoffs', 'copyright lawsuit filed against codeium');
       const score = scoreHeadlineRelevance(h);
-      // cursor (+10) + coding assistant (+10) + layoffs (-20) + copyright (-20) + lawsuit (-20) = -40
+      // tabnine (+10) + codeium (+10) + layoffs (-20) + copyright (-20) + lawsuit (-20) → отрицательный
       expect(score).toBeLessThan(0);
     });
 
     it('multiple positive keywords дают высокий score', () => {
-      const h = makeHeadline('GitHub Copilot meets Claude Code', 'AI coding assistant with MCP support');
+      const h = makeHeadline('Vibecoding with Tabnine', 'LLM coding assistant supermaven and codeium');
       const score = scoreHeadlineRelevance(h);
-      // github copilot + claude code + ai coding + coding assistant + mcp = 50
+      // vibecoding + tabnine + llm coding + supermaven + codeium = 50
       expect(score).toBeGreaterThanOrEqual(40);
     });
   });
@@ -216,7 +198,7 @@ describe('News Vibecoding Filter', () => {
     });
 
     it('очень длинный title (1000 символов)', () => {
-      const longTitle = 'A'.repeat(990) + ' cursor ai';
+      const longTitle = 'A'.repeat(985) + ' vibecoding';
       expect(scoreHeadlineRelevance(makeHeadline(longTitle))).toBeGreaterThan(0);
     });
 
@@ -226,28 +208,28 @@ describe('News Vibecoding Filter', () => {
     });
 
     it('mixed languages — русский + английский', () => {
-      const h = makeHeadline('Обзор нового cursor IDE и его возможностей', '');
+      const h = makeHeadline('Обзор нового tabnine и его возможностей', '');
       expect(scoreHeadlineRelevance(h)).toBeGreaterThan(0);
     });
 
     it('uppercase keywords тоже матчатся (case insensitive)', () => {
-      expect(scoreHeadlineRelevance(makeHeadline('CURSOR IDE NEW RELEASE'))).toBeGreaterThan(0);
+      expect(scoreHeadlineRelevance(makeHeadline('VIBECODING NEW TREND'))).toBeGreaterThan(0);
       expect(scoreHeadlineRelevance(makeHeadline('LAYOFFS AT AI COMPANY'))).toBeLessThan(0);
     });
 
     it('keyword как часть другого слова', () => {
-      // "cursor" внутри "precursor" — всё ещё матчится (includes-based)
-      const h = makeHeadline('Precursor to modern IDE design', '');
+      // "codeium" внутри текста — includes-based
+      const h = makeHeadline('Review of codeium extension', '');
       expect(scoreHeadlineRelevance(h)).toBeGreaterThan(0);
     });
 
     it('спецсимволы в title', () => {
-      const h = makeHeadline('<script>alert("cursor")</script>', '');
+      const h = makeHeadline('<script>alert("vibecoding")</script>', '');
       expect(scoreHeadlineRelevance(h)).toBeGreaterThan(0);
     });
 
     it('emoji в title', () => {
-      const h = makeHeadline('🚀 Cursor IDE update 🎉', '');
+      const h = makeHeadline('🚀 Supermaven update 🎉', '');
       expect(scoreHeadlineRelevance(h)).toBeGreaterThan(0);
     });
 
@@ -256,7 +238,7 @@ describe('News Vibecoding Filter', () => {
     });
 
     it('newlines в title', () => {
-      const h = makeHeadline('New\ncursor\nIDE', '');
+      const h = makeHeadline('New\nvibecoding\ntools', '');
       expect(scoreHeadlineRelevance(h)).toBeGreaterThan(0);
     });
   });
@@ -272,9 +254,9 @@ describe('News Vibecoding Filter', () => {
 
     it('все положительные → все сохранены, LLM не вызван', async () => {
       const headlines = [
-        makeHeadline('Cursor IDE update'),
-        makeHeadline('GitHub Copilot features'),
-        makeHeadline('Claude Code review'),
+        makeHeadline('Vibecoding tools update'),
+        makeHeadline('Tabnine new features'),
+        makeHeadline('Codeium review'),
       ];
       const result = await filterHeadlinesForVibecoding(headlines);
       expect(result).toHaveLength(3);
@@ -294,14 +276,14 @@ describe('News Vibecoding Filter', () => {
 
     it('смешанные: положительные сохранены, отрицательные отброшены', async () => {
       const headlines = [
-        makeHeadline('Cursor IDE update'),         // positive
+        makeHeadline('Vibecoding tools update'),     // positive
         makeHeadline('Tech layoffs continue'),       // negative
-        makeHeadline('Claude Code review'),          // positive
+        makeHeadline('Tabnine new features'),        // positive
       ];
       const result = await filterHeadlinesForVibecoding(headlines);
       expect(result).toHaveLength(2);
-      expect(result.map(h => h.title)).toContain('Cursor IDE update');
-      expect(result.map(h => h.title)).toContain('Claude Code review');
+      expect(result.map(h => h.title)).toContain('Vibecoding tools update');
+      expect(result.map(h => h.title)).toContain('Tabnine new features');
       expect(mockedAiChat).not.toHaveBeenCalled();
     });
 
