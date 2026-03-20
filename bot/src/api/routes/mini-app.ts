@@ -18,8 +18,8 @@ const miniAppMessageSchema = z.object({
   withAudio: z.boolean().optional().default(true),
 });
 
-function miniAppAuthFail(reply: FastifyReply, code: number, message: string): void {
-  void reply.code(code).send({ success: false, error: message });
+function miniAppAuthFail(reply: FastifyReply, code: number, message: string): FastifyReply {
+  return reply.code(code).send({ success: false, error: message });
 }
 
 function ensureTelegramInit(reply: FastifyReply, initData: string): string | null {

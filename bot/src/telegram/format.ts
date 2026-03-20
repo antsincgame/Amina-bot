@@ -9,6 +9,7 @@
  * - Детекция симуляции поиска
  */
 
+import { randomUUID } from 'crypto';
 import { InlineKeyboard } from 'grammy';
 import type { Context } from 'grammy';
 import { config } from '../config/index.js';
@@ -272,7 +273,6 @@ export const splitIntoChunks = (text: string): string[] => {
 const fullTextCache = new Map<string, { text: string; createdAt: number }>();
 const FULL_TEXT_CACHE_TTL_MS = FULL_TEXT_CACHE_TTL;
 const MAX_CACHE_SIZE = 100; // Максимум 100 записей
-let nextFullTextId = 1;
 
 /** Сохранить полный текст сообщения и вернуть ID для озвучки */
 export function cacheFullText(text: string): string {
@@ -286,7 +286,7 @@ export function cacheFullText(text: string): string {
     const oldestKey = fullTextCache.keys().next().value;
     if (oldestKey) fullTextCache.delete(oldestKey);
   }
-  const id = String(nextFullTextId++);
+  const id = randomUUID();
   fullTextCache.set(id, { text, createdAt: now });
   return id;
 }

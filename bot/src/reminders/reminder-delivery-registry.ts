@@ -1,4 +1,5 @@
 import { settingsRepo } from '../db/appwrite.js';
+import { dbLogger } from '../config/logger.js';
 
 const REMINDER_DELIVERY_REGISTRY_KEY = 'reminder_delivery_registry';
 const MAX_REGISTRY_ENTRIES = 500;
@@ -69,7 +70,8 @@ async function readRegistry(): Promise<ReminderDeliveryRegistry> {
       version: 1,
       entries: pruneEntries(parsed.entries as ReminderDeliveryRegistryEntry[]),
     };
-  } catch {
+  } catch (error) {
+    dbLogger.warn({ error }, 'reminder-delivery-registry: readRegistry parse failed');
     return EMPTY_REGISTRY;
   }
 }

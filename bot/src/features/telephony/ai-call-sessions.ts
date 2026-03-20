@@ -8,7 +8,7 @@ import { callEventRepo } from './repository/call-event-repo.js';
 import { callSessionRepo } from './repository/call-session-repo.js';
 import { enqueueRecordingProcessing } from './service/postcall-job-worker.js';
 import { sendTelephonyOwnerMessage } from './service/notification-service.js';
-import { cleanText, normalizePhone } from './shared.js';
+import { cleanText, escapeHtml, normalizePhone } from './shared.js';
 
 interface RegisterTelephonyAiCallSessionParams {
   ownerTelegramId: string;
@@ -21,9 +21,6 @@ interface RegisterTelephonyAiCallSessionParams {
   requestMode: string;
 }
 
-function escapeHtml(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
 export async function registerTelephonyAiCallSession(
   params: RegisterTelephonyAiCallSessionParams,
 ): Promise<TelephonyAiCallSession> {

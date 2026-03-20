@@ -248,9 +248,9 @@ interface AbsoluteTimeMatch {
 
 function parseOptionalTime(text: string): { hour: number; minute: number } | null {
   const timeMatch = text.match(/в\s+(\d{1,2})[:.]\s*(\d{2})/i);
-  if (!timeMatch) return null;
-  const hour = parseInt(timeMatch[1]!, 10);
-  const minute = parseInt(timeMatch[2]!, 10);
+  if (!timeMatch?.[1] || !timeMatch[2]) return null;
+  const hour = parseInt(timeMatch[1], 10);
+  const minute = parseInt(timeMatch[2], 10);
   if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
   return { hour, minute };
 }
@@ -294,7 +294,8 @@ function parseAbsoluteTime(text: string, now: Date): AbsoluteTimeMatch | null {
   // "в понедельник/вторник/... [в HH:MM]"
   const weekdayMatch = text.match(/в\s+(понедельник|вторник|среду|четверг|пятницу|субботу|воскресенье)/i);
   if (weekdayMatch) {
-    const targetDay = WEEKDAY_MAP[weekdayMatch[1]!.toLowerCase()];
+    if (!weekdayMatch[1]) return null;
+    const targetDay = WEEKDAY_MAP[weekdayMatch[1].toLowerCase()];
     if (targetDay === undefined) return null;
 
     let daysAhead = targetDay - local.weekday;
@@ -317,10 +318,12 @@ function parseAbsoluteTime(text: string, now: Date): AbsoluteTimeMatch | null {
   // "N-го [месяца] [в HH:MM]" или "N месяца [в HH:MM]"
   const dateMatch = text.match(/(\d{1,2})-?(?:го)?\s*(января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)?/i);
   if (dateMatch) {
-    const dayNum = parseInt(dateMatch[1]!, 10);
+    if (!dateMatch[1]) return null;
+    const dayNum = parseInt(dateMatch[1], 10);
     if (dayNum < 1 || dayNum > 31) return null;
 
-    let month = dateMatch[2] ? MONTH_MAP[dateMatch[2].toLowerCase()]! : local.month;
+    const monthName = dateMatch[2]?.toLowerCase();
+    let month = monthName ? (MONTH_MAP[monthName] ?? local.month) : local.month;
     let year = local.year;
 
     // Если день уже прошёл в текущем месяце — берём следующий месяц (или следующий год)
@@ -393,8 +396,8 @@ function parseSimpleTime(text: string): RegexTimeMatch | null {
 
   // "через N минут(у/ы)"
   const minuteMatch = text.match(/через\s+(\d+)\s*(минут[а-яё]*|мин)/i);
-  if (minuteMatch) {
-    const n = parseInt(minuteMatch[1]!, 10);
+  if (minuteMatch?.[1]) {
+    const n = parseInt(minuteMatch[1], 10);
     if (n >= 1 && n <= MAX_MINUTES_RANGE) {
       return { offsetMs: n * MINUTE_MS, label: `через ${n} мин.` };
     }
@@ -402,8 +405,8 @@ function parseSimpleTime(text: string): RegexTimeMatch | null {
 
   // "через N час(ов/а)"
   const hourMatch = text.match(/через\s+(\d+)\s*(час[а-яё]*)/i);
-  if (hourMatch) {
-    const n = parseInt(hourMatch[1]!, 10);
+  if (hourMatch?.[1]) {
+    const n = parseInt(hourMatch[1], 10);
     if (n >= 1 && n <= MAX_HOURS_RANGE) {
       const hoursLabel = n === 1 ? 'час' : (n < 5 ? 'часа' : 'часов');
       return { offsetMs: n * HOUR_MS, label: `через ${n} ${hoursLabel}` };
@@ -486,6 +489,8 @@ export async function extractReminder(
   text: string,
   now: Date
 ): Promise<ExtractedReminder | null> {
+  if (text.length > 10_000) return null;
+
   // ========= ЭТАП 1: Regex (мгновенно, без AI) =========
   const regexResult = parseReminderRegex(text, now);
   if (regexResult) {

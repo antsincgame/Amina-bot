@@ -174,8 +174,8 @@ export const settingsRepo = {
 
       const now = new Date().toISOString();
 
-      if (result.documents[0]!) {
-        await getAppwrite().updateDocument(DB_ID(), COLL.settings, result.documents[0].$id, {
+      if (result.documents.length > 0) {
+        await getAppwrite().updateDocument(DB_ID(), COLL.settings, result.documents[0]!.$id, {
           value,
           updated_at: now,
         });

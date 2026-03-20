@@ -94,9 +94,16 @@ function cacheDigestText(text: string): string {
   for (const [key, val] of digestFullTextCache) {
     if (now - val.createdAt > DIGEST_CACHE_TTL_MS) digestFullTextCache.delete(key);
   }
-  // Ограничение размера: максимум 50 записей
+  // Ограничение размера: максимум 50 записей — удаляем запись с наименьшим createdAt
   if (digestFullTextCache.size >= 50) {
-    const oldestKey = digestFullTextCache.keys().next().value;
+    let oldestKey: string | null = null;
+    let oldestTime = Infinity;
+    for (const [key, val] of digestFullTextCache) {
+      if (val.createdAt < oldestTime) {
+        oldestTime = val.createdAt;
+        oldestKey = key;
+      }
+    }
     if (oldestKey) digestFullTextCache.delete(oldestKey);
   }
   const id = String(nextDigestId++);
@@ -366,21 +373,31 @@ export async function sendHybridDigestNow(
 /**
  * Сбросить кеш отправленных дайджестов в полночь (по серверному TZ)
  */
+function msUntilNextMidnight(tz: string): number {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
+  const todayStr = formatter.format(now);
+  const tomorrowDate = new Date(`${todayStr}T00:00:00`);
+  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+  const diffMs = tomorrowDate.getTime() - now.getTime();
+  return diffMs > 0 ? diffMs : 60_000;
+}
+
 function resetSentCacheAtMidnight(): void {
   const serverTZ = config.server.timeZone;
-  const currentHour = () => Number(new Intl.DateTimeFormat('en', { timeZone: serverTZ, hour: 'numeric', hour12: false }).format(new Date()));
 
-  if (currentHour() === 0) {
-    SENT_TODAY.clear();
-  }
-
-  midnightResetInterval = setInterval(() => {
-    if (currentHour() === 0) {
+  function scheduleNext(): void {
+    const delayMs = msUntilNextMidnight(serverTZ);
+    const timer = setTimeout(() => {
       SENT_TODAY.clear();
       appLogger.debug('Digest SENT_TODAY cache cleared at midnight');
-    }
-  }, 5 * 60 * 1000);
-  midnightResetInterval.unref();
+      scheduleNext();
+    }, delayMs);
+    timer.unref();
+    midnightResetInterval = timer as unknown as ReturnType<typeof setInterval>;
+  }
+
+  scheduleNext();
 }
 
 /**

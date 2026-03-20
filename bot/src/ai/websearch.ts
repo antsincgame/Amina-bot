@@ -487,7 +487,7 @@ async function webSearchViaOpenRouter(
       ? `${mainModel}:online`
       : 'google/gemini-2.0-flash-001:online';
 
-    aiLogger.info({ query: query.substring(0, 80), maxTokens, model }, 'Web search via OpenRouter :online');
+    aiLogger.info({ query: query.slice(0, 50) + (query.length > 50 ? '...' : ''), maxTokens, model }, 'Web search via OpenRouter :online');
 
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 25000);
@@ -676,7 +676,7 @@ async function webSearchInternal(
 8. Формат: структурированный, с фактами. Язык: русский.`;
 
   telegramLogger.info(
-    { originalQuery: query.substring(0, 80), enhancedQuery: enhancedQuery.substring(0, 100), model: selectedModel, maxTokens }, 
+    { originalQuery: query.slice(0, 50) + (query.length > 50 ? '...' : ''), enhancedQuery: enhancedQuery.slice(0, 50) + (enhancedQuery.length > 50 ? '...' : ''), model: selectedModel, maxTokens },
     'Performing web search via Perplexity API'
   );
 
@@ -766,7 +766,7 @@ async function webSearchInternal(
     };
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      telegramLogger.warn({ query, timeout: timeoutMs }, 'Web search timeout, trying OpenRouter fallback');
+      telegramLogger.warn({ query: query.slice(0, 50) + (query.length > 50 ? '...' : ''), timeout: timeoutMs }, 'Web search timeout, trying OpenRouter fallback');
       // Timeout — пробуем OpenRouter fallback
       const fallbackResult = await webSearchViaOpenRouter(enhancedQuery, maxTokens, systemPrompt);
       if (fallbackResult) {

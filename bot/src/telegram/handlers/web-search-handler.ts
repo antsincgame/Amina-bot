@@ -40,8 +40,18 @@ export const handleDirectWebSearch = async (
 
     const timeContext = buildTimeContext(ctx.from?.first_name);
 
-    const citationsMap = searchResult.citations.length > 0
-      ? `\n\nКАРТА ИСТОЧНИКОВ (используй номера [N] в тексте):\n${searchResult.citations.map((url, i) => `[${i + 1}] ${url}`).join('\n')}`
+    const validCitations = searchResult.citations.filter((url) => {
+      try {
+        new URL(url);
+        return true;
+      } catch {
+        telegramLogger.warn({ url: url.substring(0, 100) }, 'Invalid citation URL filtered out');
+        return false;
+      }
+    });
+
+    const citationsMap = validCitations.length > 0
+      ? `\n\nКАРТА ИСТОЧНИКОВ (используй номера [N] в тексте):\n${validCitations.map((url, i) => `[${i + 1}] ${url}`).join('\n')}`
       : '';
 
     const searchContext = `${timeContext}\n\n=== ДАННЫЕ ИЗ ИНТЕРНЕТА (${new Date().toLocaleDateString('ru-RU')}) ===\n${searchResult.answer}${citationsMap}\n=== КОНЕЦ ДАННЫХ ===\n\n` +
@@ -70,8 +80,8 @@ export const handleDirectWebSearch = async (
       finalContent = searchResult.answer;
     }
 
-    if (searchResult.citations.length > 0) {
-      finalContent = inlineCitations(finalContent, searchResult.citations);
+    if (validCitations.length > 0) {
+      finalContent = inlineCitations(finalContent, validCitations);
     }
 
     ctx.session.messageHistory.push({ role: 'assistant', content: finalContent });

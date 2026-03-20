@@ -17,21 +17,25 @@ import { getMiniAppUrl } from './mini-app.js';
 export const buildMainMenu = (): InlineKeyboard => {
   const mini = getMiniAppUrl();
   const menu = new InlineKeyboard();
+
   if (mini) {
-    menu.webApp('✨ Амина', mini).row();
+    menu.webApp('✨ Открыть Амину', mini).row();
   }
+
   return menu
-    .text('🌐 Поиск в сети', 'menu_search')
-    .text('🎨 Нарисовать', 'menu_imagine')
+    .text('🌐 Поиск', 'menu_search')
+    .text('🎨 Картинка', 'menu_imagine')
+    .text('🔊 Голос', 'menu_voice')
     .row()
     .text('📌 Заметки', 'menu_notes')
     .text('✅ Задачи', 'menu_todos')
-    .row()
     .text('⏰ Напоминания', 'menu_reminders')
-    .text('☀️ Дайджест', 'menu_digest')
     .row()
+    .text('☀️ Дайджест', 'menu_digest')
     .text('📰 Дайджест сейчас', 'digest_now')
-    .text('🔊 Голос', 'menu_voice')
+    .row()
+    .text('✏️ Редактор фото', 'edit_image_help')
+    .text('📞 Телефония', 'menu_telephony')
     .row()
     .text('📋 Все команды', 'menu_help');
 };

@@ -56,9 +56,13 @@ export const handleAutoDetections = async (
         await remindersRepo.create(userId, chatId, extracted.task, extracted.scheduled_at);
         await ensureConversation(ctx, userId, chatId);
 
+        if (!ctx.session.conversationId) {
+          return true;
+        }
+
         const nowISO = new Date().toISOString();
-        await conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'user', content: text, timestamp: nowISO });
-        await conversationsRepo.addMessage(ctx.session.conversationId!, { role: 'assistant', content: extracted.reply, timestamp: nowISO });
+        await conversationsRepo.addMessage(ctx.session.conversationId, { role: 'user', content: text, timestamp: nowISO });
+        await conversationsRepo.addMessage(ctx.session.conversationId, { role: 'assistant', content: extracted.reply, timestamp: nowISO });
         ctx.session.messageHistory.push({ role: 'user', content: text }, { role: 'assistant', content: extracted.reply });
 
         await ctx.reply(extracted.reply);
@@ -111,9 +115,9 @@ export const handleAutoDetections = async (
       analyticsRepo.log('message_received', 'telegram', { userId, event: 'image_generated', prompt: imgPrompt, model: result.model, timeMs: result.generationTimeMs }).catch(() => {});
       return true;
     } catch (error: unknown) {
-      const err = error as { message?: string };
+      const errMsg = error instanceof Error ? error.message : String(error);
       telegramLogger.error({ error, userId }, 'Auto image gen failed');
-      await ctx.reply(`😔 ${err.message || 'Не удалось создать изображение.'}`);
+      await ctx.reply(`😔 ${errMsg || 'Не удалось создать изображение.'}`);
       return true;
     }
   }
@@ -205,9 +209,9 @@ export const tryPostAIImageInterception = async (
     telegramLogger.info({ userId, prompt: imgPrompt, method: 'post-ai-interception' }, 'Image generated via post-AI interception');
     return true;
   } catch (error: unknown) {
-    const err = error as { message?: string };
+    const errMsg = error instanceof Error ? error.message : String(error);
     telegramLogger.error({ error, userId }, 'Post-AI image interception failed');
-    await ctx.reply(`😔 ${err.message || 'Не удалось создать изображение.'}`);
+    await ctx.reply(`😔 ${errMsg || 'Не удалось создать изображение.'}`);
     return true;
   }
 };

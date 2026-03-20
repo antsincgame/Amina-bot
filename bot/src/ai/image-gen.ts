@@ -44,7 +44,7 @@ const FALLBACK_MODELS = [
 /** Таймаут генерации (ms) — FLUX.1-schnell обычно укладывается в 30с */
 const GENERATION_TIMEOUT_MS = 60_000;
 /** Кеш HF-токена чтобы не дёргать БД на каждый запрос */
-const HF_TOKEN_CACHE_TTL = 5 * 60 * 1000; // 5 минут
+const HF_TOKEN_CACHE_TTL = 60_000; // 60 секунд — короткий TTL чтобы быстро подхватывать смену токена
 /**
  * ВАЖНО: provider ОБЯЗАТЕЛЬНО "hf-inference".
  * Без этого библиотека v4.x автоматически выбирает провайдера "black-forest-labs"

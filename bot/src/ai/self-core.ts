@@ -72,6 +72,17 @@ const PROMPT_INJECTION_PATTERNS: ReadonlyArray<RegExp> = [
   /\[system\]/i,
   /<\|system\|>/i,
   /```/u,
+  /\bact\s+as\b/i,
+  /\byou\s+are\s+now\b/i,
+  /\bforget\s+(all|everything|previous)\b/i,
+  /\bзабудь\s+(все|всё|предыдущие)\b/i,
+  /\bпритворись\b/i,
+  /\bпредставь\s+что\s+ты\b/i,
+  /\bdo\s+not\s+follow\b/i,
+  /\boverride\b/i,
+  /\bjailbreak\b/i,
+  /\bDAN\b/,
+  /\bdev\s*mode\b/i,
 ];
 
 function normalizeForComparison(content: string): string {
@@ -83,7 +94,8 @@ function normalizeForComparison(content: string): string {
 }
 
 function hasPromptInjection(content: string): boolean {
-  return PROMPT_INJECTION_PATTERNS.some((pattern) => pattern.test(content));
+  const normalized = content.normalize('NFKC');
+  return PROMPT_INJECTION_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
 function sanitizeFactContent(content: string): string | null {

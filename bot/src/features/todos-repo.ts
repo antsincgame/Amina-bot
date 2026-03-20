@@ -42,7 +42,7 @@ export const todosRepo = {
         Query.orderAsc('created_at'), Query.limit(100),
       ]);
       return r.documents.map(docToTodo);
-    } catch { return []; }
+    } catch (error) { dbLogger.warn({ error, userId }, 'todos-repo: getActive failed'); return []; }
   },
 
   async markDone(userId: string, index: number): Promise<Todo | null> {
@@ -52,7 +52,7 @@ export const todosRepo = {
     try {
       await (await getAW()).updateDocument(DB_ID(), COLL, todo.id, { is_done: true, done_at: new Date().toISOString() });
       return todo;
-    } catch { return null; }
+    } catch (error) { dbLogger.warn({ error, userId }, 'todos-repo: markDone failed'); return null; }
   },
 
   async delete(userId: string, index: number): Promise<Todo | null> {
@@ -62,7 +62,7 @@ export const todosRepo = {
     try {
       await (await getAW()).deleteDocument(DB_ID(), COLL, todo.id);
       return todo;
-    } catch { return null; }
+    } catch (error) { dbLogger.warn({ error, userId }, 'todos-repo: delete failed'); return null; }
   },
 
   async countActive(userId: string): Promise<number> {
@@ -71,7 +71,7 @@ export const todosRepo = {
         Query.equal('user_id', userId), Query.equal('is_done', false), Query.limit(1),
       ]);
       return r.total;
-    } catch { return 0; }
+    } catch (error) { dbLogger.warn({ error, userId }, 'todos-repo: countActive failed'); return 0; }
   },
 
   async getForDigest(userId: string): Promise<Todo[]> { return this.getActive(userId); },

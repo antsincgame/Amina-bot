@@ -201,8 +201,14 @@ function getCachedSystemPrompt(sessionId: string): string | null {
   return entry.prompt;
 }
 
+const MAX_SYSTEM_PROMPT_CACHE_SIZE = 200;
+
 function setCachedSystemPrompt(sessionId: string, prompt: string): void {
   systemPromptCache.set(sessionId, { prompt, cachedAt: Date.now() });
+  if (systemPromptCache.size > MAX_SYSTEM_PROMPT_CACHE_SIZE) {
+    const oldestKey = systemPromptCache.keys().next().value;
+    if (oldestKey) systemPromptCache.delete(oldestKey);
+  }
 }
 
 export function clearSystemPromptCache(sessionId: string): void {

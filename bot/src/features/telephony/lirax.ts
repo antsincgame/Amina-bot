@@ -12,6 +12,7 @@ import { telegramLogger } from '../../config/logger.js';
 import { settingsRepo } from '../../db/index.js';
 import { LIRAX_FETCH_TIMEOUT_MS } from '../../config/constants.js';
 import { getTelephonyRuntimeConfig, clearTelephonyRuntimeConfigCache } from './service/telephony-runtime-config.js';
+import { escapeHtml } from './shared.js';
 
 // ---------------------------------------------------------------
 // Config helpers
@@ -442,8 +443,8 @@ export async function verifyWebhookToken(token: string): Promise<boolean> {
 
 export function formatCallEvent(payload: LiraXEventPayload): string {
   const typeLabel = payload.type === 'in' ? '📲 Входящий' : '📞 Исходящий';
-  const phone = payload.phone || '—';
-  const ext = payload.ext || '—';
+  const phone = escapeHtml(payload.phone || '—');
+  const ext = escapeHtml(payload.ext || '—');
 
   switch (payload.event) {
     case 'INCOMING':
@@ -453,23 +454,25 @@ export function formatCallEvent(payload: LiraXEventPayload): string {
       return `✅ Звонок принят\n📱 Номер: <code>${phone}</code>\n👤 Оператор: ${ext}`;
 
     case 'COMPLETED': {
-      const dur = payload.duration ? `\n⏱ Длительность: ${payload.duration}с` : '';
-      const status = payload.status ? `\n📊 Статус: ${payload.status}` : '';
+      const dur = payload.duration ? `\n⏱ Длительность: ${escapeHtml(String(payload.duration))}с` : '';
+      const status = payload.status ? `\n📊 Статус: ${escapeHtml(payload.status)}` : '';
+      const safeRecordLink = payload.record_link ? escapeHtml(payload.record_link) : '';
       const rec = payload.record_link
-        ? `\n🎙 <a href="${payload.record_link}">Слушать запись</a>`
+        ? `\n🎙 <a href="${safeRecordLink}">Слушать запись</a>`
         : '';
       return `${typeLabel} звонок завершён\n📱 Номер: <code>${phone}</code>\n👤 Оператор: ${ext}${dur}${status}${rec}`;
     }
 
     case 'CALL_COMPLETED': {
-      const dur = payload.duration ? `\n⏱ Разговор: ${payload.duration}с` : '';
+      const dur = payload.duration ? `\n⏱ Разговор: ${escapeHtml(String(payload.duration))}с` : '';
+      const safeRecordLink = payload.record_link ? escapeHtml(payload.record_link) : '';
       const rec = payload.record_link
-        ? `\n🎙 <a href="${payload.record_link}">Слушать запись</a>`
+        ? `\n🎙 <a href="${safeRecordLink}">Слушать запись</a>`
         : '';
       return `📵 Звонок полностью завершён\n📱 Номер: <code>${phone}</code>${dur}${rec}`;
     }
 
     default:
-      return `📞 Событие звонка: ${payload.event}\n📱 ${phone}`;
+      return `📞 Событие звонка: ${escapeHtml(payload.event || 'unknown')}\n📱 ${phone}`;
   }
 }

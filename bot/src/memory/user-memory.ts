@@ -157,7 +157,7 @@ export const userProfileRepo = {
       const r = await aw.listDocuments(DB_ID(), COLL.profiles, [Query.equal('user_id', userId), Query.limit(1)]);
       return r.documents.length > 0 ? docToProfile(r.documents[0]!) : null;
 
-    } catch { return null; }
+    } catch (error) { dbLogger.warn({ error, userId }, 'userProfileRepo: get failed'); return null; }
   },
 
   async getAll(limit = 100, offset = 0): Promise<UserProfile[]> {
@@ -165,7 +165,7 @@ export const userProfileRepo = {
       const r = await (await getAW()).listDocuments(DB_ID(), COLL.profiles, [Query.orderDesc('last_seen_at'), Query.limit(limit), Query.offset(offset)]);
       return r.documents.map(docToProfile);
 
-    } catch { return []; }
+    } catch (error) { dbLogger.warn({ error }, 'userProfileRepo: getAll failed'); return []; }
   },
 
   async getLastGreetingDate(userId: string): Promise<string | null> {
@@ -173,9 +173,10 @@ export const userProfileRepo = {
     try {
       const r = await (await getAW()).listDocuments(DB_ID(), COLL.profiles, [Query.equal('user_id', userId), Query.limit(1)]);
       if (!r.documents.length) return null;
-      return parseJson<Record<string, unknown>>(r.documents[0]!.preferences, {}).last_greeting_date as string | null ?? null;
+      const prefs = parseJson<Record<string, unknown>>(r.documents[0]!.preferences, {});
+      return typeof prefs.last_greeting_date === 'string' ? prefs.last_greeting_date : null;
 
-    } catch { return null; }
+    } catch (error) { dbLogger.warn({ error, userId }, 'userProfileRepo: getLastGreetingDate failed'); return null; }
   },
 
   async setLastGreetingDate(userId: string, date: string): Promise<void> {
@@ -201,7 +202,7 @@ export const userProfileRepo = {
       ]);
       return { profile: p.documents[0] ? docToProfile(p.documents[0]!) : null, memory_count: m.total, conversation_count: c.total };
 
-    } catch { return {}; }
+    } catch (error) { dbLogger.warn({ error, userId }, 'userProfileRepo: getStats failed'); return {}; }
   },
 };
 
@@ -301,7 +302,7 @@ export const userMemoryRepo = {
           .filter(d => !d.is_pinned)
           .slice(MEMORY_LIMITS[memoryType] - 1);
         for (const doc of toDeactivate) {
-          await aw.updateDocument(DB_ID(), COLL.memory, doc.$id, { is_active: false }).catch(() => {});
+          await aw.updateDocument(DB_ID(), COLL.memory, doc.$id, { is_active: false }).catch((e) => dbLogger.warn({ error: e, memoryId: doc.$id }, 'Memory deactivation failed'));
         }
       }
 
@@ -328,7 +329,7 @@ export const userMemoryRepo = {
       const now = new Date().toISOString();
       return r.documents.filter(d => !d.expires_at || d.expires_at > now).map(docToMemory);
 
-    } catch { return []; }
+    } catch (error) { dbLogger.warn({ error, userId }, 'userMemoryRepo: getAll failed'); return []; }
   },
 
   async getByType(userId: string, memoryType: UserMemory['memory_type']): Promise<UserMemory[]> {
@@ -339,7 +340,7 @@ export const userMemoryRepo = {
       ]);
       return r.documents.map(docToMemory);
 
-    } catch { return []; }
+    } catch (error) { dbLogger.warn({ error, userId }, 'userMemoryRepo: getByType failed'); return []; }
   },
 
   async getPinned(userId: string): Promise<UserMemory[]> {
@@ -349,7 +350,7 @@ export const userMemoryRepo = {
       ]);
       return r.documents.map(docToMemory);
 
-    } catch { return []; }
+    } catch (error) { dbLogger.warn({ error, userId }, 'userMemoryRepo: getPinned failed'); return []; }
   },
 
   async update(memoryId: string, updates: Partial<Pick<UserMemory, 'content' | 'confidence' | 'is_pinned' | 'is_active'>>): Promise<void> {
@@ -449,7 +450,7 @@ export const userMemoryRepo = {
         await aw.updateDocument(DB_ID(), COLL.memory, doc.$id, {
           is_active: false,
           updated_at: new Date().toISOString(),
-        }).catch(() => {});
+        }).catch((e) => dbLogger.warn({ error: e, memoryId: doc.$id }, 'Inferred memory deactivation failed'));
       }
 
       if (toDeactivate.length > 0) {
@@ -476,7 +477,7 @@ export const userLogsRepo = {
         timestamp: new Date().toISOString(),
       });
 
-    } catch { /* logging should not break the bot */ }
+    } catch (error) { dbLogger.warn({ error, userId }, 'userLogsRepo: add failed'); }
   },
 
   async getByUser(userId: string, options: { eventType?: UserLog['event_type']; from?: Date; to?: Date; limit?: number } = {}): Promise<UserLog[]> {
@@ -490,7 +491,7 @@ export const userLogsRepo = {
       const r = await (await getAW()).listDocuments(DB_ID(), COLL.logs, q);
       return r.documents.map(docToLog);
 
-    } catch { return []; }
+    } catch (error) { dbLogger.warn({ error, userId }, 'userLogsRepo: getByUser failed'); return []; }
   },
 
   async getMessageHistory(userId: string, limit = 100): Promise<UserLog[]> {
@@ -512,7 +513,7 @@ export const userLogsRepo = {
       for (const d of all) s[d.event_type] = (s[d.event_type] || 0) + 1;
       return s;
 
-    } catch { return {}; }
+    } catch (error) { dbLogger.warn({ error, userId }, 'userLogsRepo: getEventStats failed'); return {}; }
   },
 };
 
@@ -585,7 +586,7 @@ export const memoryContextBuilder = {
     const callCount = (decayCounters.get(userId) ?? 0) + 1;
     decayCounters.set(userId, callCount);
     if (callCount % DECAY_RUN_INTERVAL === 0) {
-      userMemoryRepo.decayInferredMemories(userId).catch(() => {});
+      userMemoryRepo.decayInferredMemories(userId).catch((e) => dbLogger.warn({ error: e, userId }, 'Memory decay failed'));
     }
     // Защита от утечки памяти: сброс счётчиков при переполнении
     if (decayCounters.size > 500) {

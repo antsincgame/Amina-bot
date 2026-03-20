@@ -353,8 +353,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
       });
       telegramLogger.info({ userId, noteId: note.id }, 'Note created');
     } catch (error: unknown) {
-      const err = error as { message?: string };
-      await ctx.reply(`😔 ${err.message || 'Не удалось сохранить заметку.'}`);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      await ctx.reply(`😔 ${errMsg || 'Не удалось сохранить заметку.'}`);
     }
   });
 
@@ -448,8 +448,8 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
         reply_markup: todosListKeyboard(),
       });
     } catch (error: unknown) {
-      const err = error as { message?: string };
-      await ctx.reply(`😔 ${err.message || 'Не удалось добавить задачу.'}`);
+      const errMsg = error instanceof Error ? error.message : String(error);
+      await ctx.reply(`😔 ${errMsg || 'Не удалось добавить задачу.'}`);
     }
   });
 
