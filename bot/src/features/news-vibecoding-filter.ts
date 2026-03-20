@@ -14,17 +14,15 @@ const LLM_BATCH_SIZE = 20;
 const LLM_MAX_TOKENS = 512;
 
 const POSITIVE_KEYWORDS: readonly string[] = [
-  'vibe coding', 'vibecoding', 'вайбкодинг',
-  'cursor', 'windsurf', 'bolt.new', 'lovable', 'v0',
-  'replit agent', 'claude code', 'github copilot',
-  'ai coding', 'ai-generated', 'no-code ai', 'built with ai',
-  'ai agent', 'mcp', 'model context protocol',
-  'prompt engineering', 'ai pair programming',
-  'shipped in hours', 'built overnight', 'ai-assisted',
-  'coding assistant', 'нейрокодинг', 'ии-разработка',
-  'ai ide', 'cline', 'aider', 'continue.dev',
-  'devin', 'opendevin', 'sweep ai',
-  'tabnine', 'codeium', 'supermaven', 'llm coding',
+  'vibe coding', 'vibe-coding', 'vibecoding',
+  'вайбкодинг', 'вайб кодинг', 'вайб-кодинг',
+  'нейрокодинг', 'нейро кодинг', 'нейро-кодинг',
+  'ии-разработка', 'ии разработка',
+  'sweep ai', 'sweep.ai',
+  'tabnine', 'tab nine',
+  'codeium',
+  'supermaven',
+  'llm coding', 'llm-coding',
 ] as const;
 
 const NEGATIVE_KEYWORDS: readonly string[] = [
