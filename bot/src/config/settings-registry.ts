@@ -66,6 +66,17 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     sourceOrder: ['env', 'db'],
   }),
   defineSetting({
+    key: 'cerebras_api_key',
+    label: 'Cerebras API Key',
+    domain: 'api_keys',
+    visibility: 'visible',
+    valueType: 'secret',
+    description: 'Ключ Cerebras для крайнего fallback чата (сверхбыстрый inference).',
+    uiPages: ['ApiKeysPage'],
+    runtimeConsumers: ['bot/src/config/index.ts', 'bot/src/ai/openrouter.ts'],
+    sourceOrder: ['env', 'db'],
+  }),
+  defineSetting({
     key: 'perplexity_api_key',
     label: 'Perplexity API Key',
     domain: 'api_keys',

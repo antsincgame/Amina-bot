@@ -170,8 +170,14 @@ export const config = {
 
   // Groq — может быть переопределён из админки
   groq: {
-    apiKey: env.GROQ_API_KEY || '', // Может быть пустым, загрузится из БД
+    apiKey: env.GROQ_API_KEY || '',
     baseUrl: getGroqBaseUrl(),
+  },
+
+  // Cerebras — крайний fallback для чата
+  cerebras: {
+    apiKey: env.CEREBRAS_API_KEY || '',
+    baseUrl: 'https://api.cerebras.ai/v1',
   },
 
   // Perplexity — для веб-поиска (доступ в интернет)
@@ -208,35 +214,34 @@ export type Config = typeof config;
 import { SingleCache } from '../utils/cache.js';
 
 const API_KEYS_CACHE_TTL_MS = 5 * 60_000;
-const apiKeysCache = new SingleCache<{ openrouter: string; groq: string }>(API_KEYS_CACHE_TTL_MS);
+const apiKeysCache = new SingleCache<{ openrouter: string; groq: string; cerebras: string }>(API_KEYS_CACHE_TTL_MS);
 let apiKeysCacheTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * Получить API ключи (приоритет: env → БД)
  */
-export async function getApiKeys(): Promise<{ openrouter: string; groq: string }> {
-  // Если в env уже заданы ключи — используем их
-  if (config.ai.apiKey && config.groq.apiKey) {
-    return { openrouter: config.ai.apiKey, groq: config.groq.apiKey };
+export async function getApiKeys(): Promise<{ openrouter: string; groq: string; cerebras: string }> {
+  if (config.ai.apiKey && config.groq.apiKey && config.cerebras.apiKey) {
+    return { openrouter: config.ai.apiKey, groq: config.groq.apiKey, cerebras: config.cerebras.apiKey };
   }
 
-  // Проверяем кэш
   const cached = apiKeysCache.get();
   if (cached) {
     return {
       openrouter: cached.openrouter || config.ai.apiKey,
       groq: cached.groq || config.groq.apiKey,
+      cerebras: cached.cerebras || config.cerebras.apiKey,
     };
   }
 
-  // Загружаем из БД
   try {
     const dbModule = await import('../db/appwrite.js');
-    const keys = await dbModule.settingsRepo.getMany(['openrouter_api_key', 'groq_api_key']);
+    const keys = await dbModule.settingsRepo.getMany(['openrouter_api_key', 'groq_api_key', 'cerebras_api_key']);
 
     const result = {
       openrouter: keys['openrouter_api_key'] || '',
       groq: keys['groq_api_key'] || '',
+      cerebras: keys['cerebras_api_key'] || '',
     };
     apiKeysCache.set(result);
     if (apiKeysCacheTimer) clearTimeout(apiKeysCacheTimer);
@@ -249,9 +254,10 @@ export async function getApiKeys(): Promise<{ openrouter: string; groq: string }
     return {
       openrouter: config.ai.apiKey || result.openrouter,
       groq: config.groq.apiKey || result.groq,
+      cerebras: config.cerebras.apiKey || result.cerebras,
     };
   } catch {
-    return { openrouter: config.ai.apiKey, groq: config.groq.apiKey };
+    return { openrouter: config.ai.apiKey, groq: config.groq.apiKey, cerebras: config.cerebras.apiKey };
   }
 }
 

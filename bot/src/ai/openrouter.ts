@@ -153,6 +153,106 @@ async function getFreeModels(): Promise<string[]> {
 // Таймаут для гонки моделей (ужать гонку; серверный REQUEST_TIMEOUT_MS задаётся отдельно)
 const RACE_TIMEOUT_MS = 15000;
 
+// Groq бесплатные модели для чата (30 RPM free tier)
+const GROQ_CHAT_MODELS = [
+  'llama-3.3-70b-versatile',
+  'llama-3.1-8b-instant',
+  'gemma2-9b-it',
+  'mixtral-8x7b-32768',
+];
+
+// Cerebras модели (бесплатный tier)
+const CEREBRAS_CHAT_MODELS = [
+  'llama-3.3-70b',
+  'llama-3.1-8b-instant',
+];
+
+/**
+ * Варп-маршруты: Groq → Cerebras как крайний fallback
+ * Псайкер Амина находит путь к свободным нейронкам через Имматериум
+ */
+async function tryWarpRoutes(
+  messages: AIMessage[],
+  aiConfig: { model: string; maxTokens: number; temperature: number },
+): Promise<AIResponse | null> {
+  const keys = await getApiKeys();
+
+  // --- Groq ---
+  if (keys.groq) {
+    for (const model of GROQ_CHAT_MODELS) {
+      try {
+        aiLogger.info({ model, provider: 'groq' }, '🔮 Warp route: trying Groq');
+        const client = new OpenAI({
+          apiKey: keys.groq,
+          baseURL: config.groq.baseUrl,
+          timeout: 12000,
+        });
+        const completion = await client.chat.completions.create({
+          model,
+          messages: messages as OpenAI.ChatCompletionMessageParam[],
+          max_tokens: aiConfig.maxTokens,
+          temperature: aiConfig.temperature,
+        });
+        const content = completion.choices?.[0]?.message?.content;
+        if (content) {
+          aiLogger.info({ model, provider: 'groq', tokens: completion.usage?.total_tokens }, '🔮 Warp route: Groq success');
+          return {
+            content,
+            tokens_used: {
+              prompt: completion.usage?.prompt_tokens ?? 0,
+              completion: completion.usage?.completion_tokens ?? 0,
+              total: completion.usage?.total_tokens ?? 0,
+            },
+            usedModel: `groq/${model}`,
+          };
+        }
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        aiLogger.warn({ model, provider: 'groq', error: msg }, '🔮 Warp route: Groq model failed');
+      }
+    }
+  }
+
+  // --- Cerebras (крайний случай) ---
+  if (keys.cerebras) {
+    for (const model of CEREBRAS_CHAT_MODELS) {
+      try {
+        aiLogger.info({ model, provider: 'cerebras' }, '⚡ Warp route: trying Cerebras');
+        const client = new OpenAI({
+          apiKey: keys.cerebras,
+          baseURL: config.cerebras.baseUrl,
+          timeout: 12000,
+        });
+        const completion = await client.chat.completions.create({
+          model,
+          messages: messages as OpenAI.ChatCompletionMessageParam[],
+          max_tokens: aiConfig.maxTokens,
+          temperature: aiConfig.temperature,
+        });
+        const content = completion.choices?.[0]?.message?.content;
+        if (content) {
+          aiLogger.info({ model, provider: 'cerebras', tokens: completion.usage?.total_tokens }, '⚡ Warp route: Cerebras success');
+          return {
+            content,
+            tokens_used: {
+              prompt: completion.usage?.prompt_tokens ?? 0,
+              completion: completion.usage?.completion_tokens ?? 0,
+              total: completion.usage?.total_tokens ?? 0,
+            },
+            usedModel: `cerebras/${model}`,
+          };
+        }
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        aiLogger.warn({ model, provider: 'cerebras', error: msg }, '⚡ Warp route: Cerebras model failed');
+      }
+    }
+  }
+
+  aiLogger.error('All warp routes exhausted — the Astronomican grows dim');
+  return null;
+}
+
 // Ошибки при которых нужен параллельный fallback (включая 402!)
 const RACE_ERROR_PATTERNS = [
   'Provider returned error',
@@ -611,15 +711,18 @@ export const aiService = {
         throw raceError;
       }
 
-      // Все модели упали
-      aiLogger.error(
+      // Все OpenRouter модели упали — пробуем варп-переходы (Groq → Cerebras)
+      aiLogger.warn(
         { modelsCount: modelsToTry.length, triedModels: modelsToTry, fallbackStrategy },
-        '💀 All free models failed in fallback'
+        '💀 All OpenRouter free models failed — trying warp routes (Groq/Cerebras)'
       );
+
+      const warpResult = await tryWarpRoutes(fullMessages, aiConfig);
+      if (warpResult) return finalizeWinner(warpResult);
 
       throw new AppError(
         'ALL_MODELS_FAILED',
-        `Все ${modelsToTry.length} бесплатных моделей недоступны. Попробуйте позже.`,
+        `Все ${modelsToTry.length} моделей и варп-маршруты недоступны. Попробуйте позже.`,
         raceError,
       );
     }

@@ -27,6 +27,7 @@ const apiKeysSchema = z.object({
   telegram_bot_token: z.string().optional(),
   openrouter_api_key: z.string().optional(),
   groq_api_key: z.string().optional(),
+  cerebras_api_key: z.string().optional(),
   perplexity_api_key: z.string().optional(),
   web_search_enabled: z.string().optional(),
   perplexity_model: z.string().optional(),
@@ -98,6 +99,7 @@ const ApiKeysPage = () => {
   const [showTelegram, setShowTelegram] = useState(false);
   const [showOpenRouter, setShowOpenRouter] = useState(false);
   const [showGroq, setShowGroq] = useState(false);
+  const [showCerebras, setShowCerebras] = useState(false);
   const [showPerplexity, setShowPerplexity] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
 
@@ -132,6 +134,7 @@ const ApiKeysPage = () => {
       telegram_bot_token: '',
       openrouter_api_key: '',
       groq_api_key: '',
+      cerebras_api_key: '',
       perplexity_api_key: '',
       web_search_enabled: 'false',
       perplexity_model: 'sonar',
@@ -142,6 +145,7 @@ const ApiKeysPage = () => {
   const telegramKey = watch('telegram_bot_token');
   const openRouterKey = watch('openrouter_api_key');
   const groqKey = watch('groq_api_key');
+  const cerebrasKey = watch('cerebras_api_key');
   const perplexityKey = watch('perplexity_api_key');
   const webSearchEnabled = watch('web_search_enabled');
   const perplexityModel = watch('perplexity_model');
@@ -158,6 +162,7 @@ const ApiKeysPage = () => {
         telegram_bot_token: map['telegram_bot_token'] || '',
         openrouter_api_key: map['openrouter_api_key'] || '',
         groq_api_key: map['groq_api_key'] || '',
+        cerebras_api_key: map['cerebras_api_key'] || '',
         perplexity_api_key: map['perplexity_api_key'] || '',
         web_search_enabled: map['web_search_enabled'] || 'false',
         perplexity_model: map['perplexity_model'] || 'sonar',
@@ -171,6 +176,7 @@ const ApiKeysPage = () => {
       telegram_bot_token: data.telegram_bot_token || '',
       openrouter_api_key: data.openrouter_api_key || '',
       groq_api_key: data.groq_api_key || '',
+      cerebras_api_key: data.cerebras_api_key || '',
       perplexity_api_key: data.perplexity_api_key || '',
       web_search_enabled: data.web_search_enabled || 'false',
       perplexity_model: data.perplexity_model || 'sonar',
@@ -387,6 +393,52 @@ const ApiKeysPage = () => {
               Бесплатно
             </span>
           </div>
+        </div>
+
+        {/* Cerebras API Key */}
+        <div className="card animate-fade-in-up stagger-4" style={{ opacity: 0 }}>
+          <div className="flex items-center gap-4 mb-5">
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center"
+                 style={{
+                   background: 'linear-gradient(135deg, rgba(236, 72, 153, 0.2), rgba(168, 85, 247, 0.15))',
+                   border: '1px solid rgba(236, 72, 153, 0.3)',
+                   boxShadow: '0 0 20px rgba(236, 72, 153, 0.15)',
+                 }}>
+              <Sparkles className="w-6 h-6 text-pink-400" />
+            </div>
+            <div className="flex-1">
+              <h2 className="text-lg font-semibold text-white" style={{ fontFamily: 'var(--font-heading)' }}>
+                Cerebras API Key
+              </h2>
+              <p className="text-sm text-gray-500">Для быстрого инференса (Llama на Cerebras)</p>
+            </div>
+            {cerebrasKey && (
+              <span className="badge-success">
+                <CheckCircle className="w-3.5 h-3.5 mr-1" />
+                Задан
+              </span>
+            )}
+          </div>
+          <div className="relative">
+            <input
+              type={showCerebras ? 'text' : 'password'}
+              placeholder="csk_..."
+              className="input pr-12 font-mono text-sm"
+              {...register('cerebras_api_key')}
+            />
+            <button
+              type="button"
+              onClick={() => setShowCerebras(!showCerebras)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-gray-500 hover:text-amber-400 hover:bg-amber-400/10 transition-all duration-200"
+            >
+              {showCerebras ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
+          <a href="https://cerebras.ai" target="_blank" rel="noopener noreferrer"
+             className="inline-flex items-center gap-1.5 mt-3 text-xs text-gray-500 hover:text-amber-400 transition-colors">
+            <ExternalLink className="w-3 h-3" />
+            <span>cerebras.ai</span>
+          </a>
         </div>
 
         {/* Perplexity API Key + Web Search Settings */}
