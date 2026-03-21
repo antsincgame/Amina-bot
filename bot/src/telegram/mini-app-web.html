@@ -229,45 +229,89 @@
     }
 
     async function initHeygen(){
-      if(!initData)return;logPipeline('HeyGen config…');
+      if(!initData)return;logPipeline('[1/5] HeyGen: запрос конфига…');
       try{
-        var res=await fetch(apiBase+'/mini-app/heygen-token?initData='+encodeURIComponent(initData));
-        var json=await res.json().catch(function(){return null});
-        if(!res.ok||!json||!json.success){logPipeline('HeyGen: '+(json&&json.error||res.status));return}
+        var url=apiBase+'/mini-app/heygen-token?initData='+encodeURIComponent(initData);
+        logPipeline('[1/5] GET '+url.replace(/initData=.*$/,'initData=***'));
+        var res=await fetch(url);
+        logPipeline('[1/5] HTTP '+res.status);
+        var json=await res.json().catch(function(e){logPipeline('[1/5] JSON parse fail: '+e.message,'error');return null});
+        if(!res.ok||!json||!json.success){logPipeline('[1/5] FAIL: '+(json&&json.error||'status='+res.status),'error');return}
         heygenMode=json.mode||'hybrid';
-        logPipeline('HeyGen mode='+heygenMode+' q='+json.quality+' id='+(json.avatarId||'-'),'ok');
-        if(!json.token||!json.avatarId){logPipeline('HeyGen: no token/id');return}
+        logPipeline('[1/5] OK mode='+heygenMode+' quality='+json.quality+' avatarId='+(json.avatarId||'EMPTY')+' token='+(json.token?'YES':'NO')+' kb='+(json.knowledgeBase?json.knowledgeBase.length+'ch':'none'),'ok');
+        if(!json.token){logPipeline('[1/5] STOP: no token','error');return}
+        if(!json.avatarId){logPipeline('[1/5] WARN: no avatarId, will use default','warn')}
         await startHeygenSession(json);
-      }catch(e){logPipeline('HeyGen err: '+e.message,'error')}
+      }catch(e){logPipeline('[1/5] EXCEPTION: '+e.message+' '+e.stack,'error')}
     }
     async function startHeygenSession(cfg){
       try{
+        logPipeline('[2/5] Загрузка SDK…');
         if(typeof StreamingAvatar==='undefined'){
-          logPipeline('Loading HeyGen SDK…');
           await loadScript('https://unpkg.com/@heygen/streaming-avatar@2/dist/index.umd.js');
         }
-        if(typeof StreamingAvatar==='undefined'){logPipeline('HeyGen SDK N/A','error');return}
+        if(typeof StreamingAvatar==='undefined'){logPipeline('[2/5] SDK не загрузился!','error');return}
+        logPipeline('[2/5] SDK OK, version='+(StreamingAvatar.version||'?'),'ok');
+
+        logPipeline('[3/5] new StreamingAvatar(token='+cfg.token.slice(0,16)+'…)');
         var avatar=new StreamingAvatar({token:cfg.token});
-        var sc={avatarName:cfg.avatarId,quality:cfg.quality||'low',language:'ru'};
-        if(heygenMode==='native'&&cfg.knowledgeBase){sc.knowledgeBase=cfg.knowledgeBase;sc.voice={voiceId:'',rate:1}}
-        var session=await avatar.createStartAvatar(sc);heygenSession=avatar;
-        logPipeline('HeyGen session: '+(session.session_id||'ok'),'ok');
+        var avatarName=cfg.avatarId||'default';
+        var sc={avatarName:avatarName,quality:cfg.quality||'low',language:'ru'};
+        if(heygenMode==='native'&&cfg.knowledgeBase){
+          sc.knowledgeBase=cfg.knowledgeBase;
+          sc.voice={voiceId:'',rate:1};
+          logPipeline('[3/5] Native mode: kb='+cfg.knowledgeBase.length+'ch');
+        }
+        logPipeline('[3/5] createStartAvatar('+JSON.stringify({avatarName:avatarName,quality:sc.quality,language:sc.language})+')');
+        var session;
+        try{
+          session=await avatar.createStartAvatar(sc);
+        }catch(avatarErr){
+          logPipeline('[3/5] createStartAvatar FAIL: '+avatarErr.message,'error');
+          if(avatarName!=='default'){
+            logPipeline('[3/5] Fallback → default avatar…','warn');
+            sc.avatarName='default';
+            session=await avatar.createStartAvatar(sc);
+          }else{throw avatarErr}
+        }
+        heygenSession=avatar;
+        logPipeline('[3/5] Session OK: '+(session.session_id||JSON.stringify(session).slice(0,120)),'ok');
+
+        logPipeline('[4/5] Подключение stream events…');
         avatar.on('stream_ready',function(ev){
-          logPipeline('Stream ready','ok');
-          if(ev.detail&&ev.detail.stream&&heygenVideo){heygenVideo.srcObject=ev.detail.stream;heygenVideo.classList.add('show');
-            if(avatarImg)avatarImg.classList.add('hidden');heygenVideo.play().catch(function(){})}
+          logPipeline('[4/5] STREAM READY','ok');
+          var stream=ev&&ev.detail&&ev.detail.stream;
+          if(stream&&heygenVideo){
+            logPipeline('[4/5] Attaching stream to <video>, tracks='+stream.getTracks().length);
+            heygenVideo.srcObject=stream;
+            heygenVideo.classList.add('show');
+            if(avatarImg)avatarImg.classList.add('hidden');
+            heygenVideo.play().catch(function(e){logPipeline('[4/5] video.play() fail: '+e.message,'error')});
+          }else{logPipeline('[4/5] No stream or no video element','error')}
         });
         avatar.on('stream_disconnected',function(){
-          logPipeline('Stream off');if(heygenVideo)heygenVideo.classList.remove('show');
-          if(avatarImg)avatarImg.classList.remove('hidden');heygenSession=null;
+          logPipeline('[4/5] STREAM DISCONNECTED');
+          if(heygenVideo)heygenVideo.classList.remove('show');
+          if(avatarImg)avatarImg.classList.remove('hidden');
+          heygenSession=null;
         });
-        if(heygenMode==='native'){logPipeline('Native voice chat…');await avatar.startVoiceChat({useSilencePrompt:false});logPipeline('Voice chat OK','ok')}
-      }catch(e){logPipeline('HeyGen: '+e.message,'error')}
+        avatar.on('avatar_start_talking',function(){logPipeline('[AVATAR] start talking')});
+        avatar.on('avatar_stop_talking',function(){logPipeline('[AVATAR] stop talking')});
+
+        if(heygenMode==='native'){
+          logPipeline('[5/5] Starting voice chat…');
+          await avatar.startVoiceChat({useSilencePrompt:false});
+          logPipeline('[5/5] Voice chat OK','ok');
+        }else{logPipeline('[5/5] Hybrid mode — speak on demand','ok')}
+      }catch(e){logPipeline('[HeyGen] CRITICAL: '+e.message+' '+e.stack,'error')}
     }
     function speakWithHeygen(text){
-      if(!heygenSession)return;
-      try{heygenSession.speak({text:text,task_type:'repeat'});logPipeline('Speak: '+text.slice(0,40))}
-      catch(e){logPipeline('Speak err: '+e.message,'error')}
+      if(!heygenSession){logPipeline('[SPEAK] No session, skip');return}
+      try{
+        logPipeline('[SPEAK] '+text.slice(0,60)+'…');
+        heygenSession.speak({text:text,task_type:'repeat'});
+        logPipeline('[SPEAK] sent','ok');
+      }catch(e){logPipeline('[SPEAK] err: '+e.message,'error')}
     }
     function loadScript(src){return new Promise(function(ok,fail){var s=document.createElement('script');s.src=src;s.onload=ok;s.onerror=function(){fail(new Error('Load fail: '+src))};document.head.appendChild(s)})}
     if(initData)initHeygen();
