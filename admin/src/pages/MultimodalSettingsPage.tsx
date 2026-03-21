@@ -307,8 +307,16 @@ const MultimodalSettingsPage = () => {
         tts_provider: map['tts_provider'] || 'edge',
         // ElevenLabs
         elevenlabs_api_key: map['elevenlabs_api_key'] || '',
-        elevenlabs_voice_id: map['elevenlabs_voice_id'] || '21m00Tcm4TlvDq8ikWAM',
-        elevenlabs_custom_voice_id: map['elevenlabs_custom_voice_id'] || '',
+        elevenlabs_voice_id: (() => {
+          const vid = map['elevenlabs_voice_id'] || '21m00Tcm4TlvDq8ikWAM';
+          const knownIds = ELEVENLABS_VOICES.map(v => v.id);
+          return knownIds.includes(vid) ? vid : 'custom';
+        })(),
+        elevenlabs_custom_voice_id: (() => {
+          const vid = map['elevenlabs_voice_id'] || '';
+          const knownIds = ELEVENLABS_VOICES.map(v => v.id);
+          return knownIds.includes(vid) ? (map['elevenlabs_custom_voice_id'] || '') : vid;
+        })(),
         elevenlabs_model_id: map['elevenlabs_model_id'] || 'eleven_multilingual_v2',
         // OpenAI
         openai_tts_voice: map['openai_tts_voice'] || 'nova',
@@ -1041,8 +1049,16 @@ const MultimodalSettingsPage = () => {
                     tts_provider: map['tts_provider'] || 'edge',
                     // ElevenLabs
                     elevenlabs_api_key: map['elevenlabs_api_key'] || '',
-                    elevenlabs_voice_id: map['elevenlabs_voice_id'] || '21m00Tcm4TlvDq8ikWAM',
-                    elevenlabs_custom_voice_id: map['elevenlabs_custom_voice_id'] || '',
+                    elevenlabs_voice_id: (() => {
+                      const vid = map['elevenlabs_voice_id'] || '21m00Tcm4TlvDq8ikWAM';
+                      const knownIds = ELEVENLABS_VOICES.map(v => v.id);
+                      return knownIds.includes(vid) ? vid : 'custom';
+                    })(),
+                    elevenlabs_custom_voice_id: (() => {
+                      const vid = map['elevenlabs_voice_id'] || '';
+                      const knownIds = ELEVENLABS_VOICES.map(v => v.id);
+                      return knownIds.includes(vid) ? (map['elevenlabs_custom_voice_id'] || '') : vid;
+                    })(),
                     elevenlabs_model_id: map['elevenlabs_model_id'] || 'eleven_multilingual_v2',
                     // OpenAI
                     openai_tts_voice: map['openai_tts_voice'] || 'nova',
