@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { newsSourcesApi } from '../api/appwrite';
+import { newsSourcesApi, newsParsingApi } from '../api/appwrite';
 import type {
   NewsSite,
   NewsSourceType,
@@ -33,6 +33,8 @@ import {
   Code,
   Globe2,
   Pencil,
+  StopCircle,
+  PlayCircle,
 } from 'lucide-react';
 
 // ===== Метки =====
@@ -88,6 +90,26 @@ const NewsSourcesPage = () => {
 
   const [sites, setSites] = useState<NewsSite[]>([]);
   const [hasChanges, setHasChanges] = useState(false);
+  const [parsingKilled, setParsingKilled] = useState(false);
+  const [killLoading, setKillLoading] = useState(false);
+
+  useEffect(() => {
+    newsParsingApi.getStatus().then(setParsingKilled).catch(() => {});
+  }, []);
+
+  const toggleParsing = async () => {
+    setKillLoading(true);
+    try {
+      if (parsingKilled) {
+        await newsParsingApi.resume();
+        setParsingKilled(false);
+      } else {
+        await newsParsingApi.kill();
+        setParsingKilled(true);
+      }
+    } catch { /* ignore */ }
+    setKillLoading(false);
+  };
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [newName, setNewName] = useState('');
   const [newUrl, setNewUrl] = useState('');
@@ -304,6 +326,43 @@ const NewsSourcesPage = () => {
         <p className="text-gray-400 mt-1">
           RSS-ленты, JSON API и HTML-источники для парсинга заголовков. Поддерживаются категории: городские, AI/Tech, азиатские AI-медиа, dev-сообщества.
         </p>
+      </div>
+
+      {/* Kill Switch */}
+      <div className="card mb-6 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          {parsingKilled ? (
+            <StopCircle className="w-6 h-6 text-red-400" />
+          ) : (
+            <PlayCircle className="w-6 h-6 text-green-400" />
+          )}
+          <div>
+            <h3 className="text-white font-medium">
+              {parsingKilled ? 'Парсинг остановлен' : 'Парсинг активен'}
+            </h3>
+            <p className="text-xs text-gray-500">
+              {parsingKilled ? 'Новости не обновляются, LLM-токены не тратятся' : 'Источники парсятся по расписанию'}
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={toggleParsing}
+          disabled={killLoading}
+          className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all ${
+            parsingKilled
+              ? 'text-green-400 hover:bg-green-400/10'
+              : 'text-red-400 hover:bg-red-400/10'
+          }`}
+          style={{ border: `1px solid ${parsingKilled ? 'rgba(74,222,128,0.3)' : 'rgba(248,113,113,0.3)'}` }}
+        >
+          {killLoading ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : parsingKilled ? (
+            <><PlayCircle className="w-4 h-4" /> Возобновить</>
+          ) : (
+            <><StopCircle className="w-4 h-4" /> Остановить</>
+          )}
+        </button>
       </div>
 
       {/* Quick Actions */}

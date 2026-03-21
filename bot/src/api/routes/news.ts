@@ -16,6 +16,8 @@ import {
   getPresetSourceCounts,
   mergeNewsSites,
   normalizeNewsSite,
+  setNewsParsingKilled,
+  isNewsParsingKilled,
   type NewsPresetGroup,
 } from '../../features/news-parser.js';
 import { localizeParsedHeadlines } from '../../features/news-localization.js';
@@ -186,6 +188,22 @@ export async function registerNewsRoutes(server: FastifyInstance): Promise<void>
       aiLogger.error({ error }, 'Add preset sources error');
       return reply.code(500).send({ success: false, error: 'Failed to add preset sources' });
     }
+  });
+
+  // ====== NEWS PARSING KILL SWITCH ======
+
+  server.get('/news/parsing-status', async (_request: FastifyRequest, reply: FastifyReply) => {
+    return reply.code(200).send({ success: true, killed: isNewsParsingKilled() });
+  });
+
+  server.post('/news/parsing-kill', async (_request: FastifyRequest, reply: FastifyReply) => {
+    setNewsParsingKilled(true);
+    return reply.code(200).send({ success: true, killed: true, message: 'News parsing stopped' });
+  });
+
+  server.post('/news/parsing-resume', async (_request: FastifyRequest, reply: FastifyReply) => {
+    setNewsParsingKilled(false);
+    return reply.code(200).send({ success: true, killed: false, message: 'News parsing resumed' });
   });
 
   // ====== PUBLIC DIGEST & RAW NEWS ======

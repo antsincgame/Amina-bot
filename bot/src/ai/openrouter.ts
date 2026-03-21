@@ -591,10 +591,7 @@ export const aiService = {
         errorMessage.toLowerCase().includes(pattern.toLowerCase())
       );
 
-      if (!needsRace) {
-        if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
-          throw new AppError('RATE_LIMIT', 'Превышен лимит запросов. Подождите минуту.', primaryError);
-        }
+      if (!needsRace && !errorMessage.includes('429') && !errorMessage.toLowerCase().includes('rate limit')) {
         throw primaryError;
       }
 

@@ -378,6 +378,20 @@ export const newsSourcesApi = {
   },
 };
 
+// News Parsing Kill Switch
+export const newsParsingApi = {
+  async getStatus(): Promise<boolean> {
+    const result = await fetchBotApiJson<{ killed: boolean }>('/api/news/parsing-status', {}, 'Failed to get parsing status');
+    return result.killed;
+  },
+  async kill(): Promise<void> {
+    await fetchBotApiJson('/api/news/parsing-kill', { method: 'POST' }, 'Failed to kill parsing');
+  },
+  async resume(): Promise<void> {
+    await fetchBotApiJson('/api/news/parsing-resume', { method: 'POST' }, 'Failed to resume parsing');
+  },
+};
+
 // Voice Messages API
 export interface VoiceMessage {
   id: string; user_id: string; file_path: string; duration: number; file_size: number;

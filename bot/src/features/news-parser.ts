@@ -1709,7 +1709,20 @@ export function countMergedDuplicates(headlines: ParsedHeadline[]): number {
   return headlines.reduce((total, headline) => total + headline.alternateSources.length, 0);
 }
 
+// Глобальный kill switch для парсинга новостей (управляется из админки)
+let newsParsingKilled = false;
+export function setNewsParsingKilled(killed: boolean): void {
+  newsParsingKilled = killed;
+  appLogger.info({ killed }, killed ? '🛑 News parsing KILLED by admin' : '✅ News parsing RESUMED by admin');
+}
+export function isNewsParsingKilled(): boolean { return newsParsingKilled; }
+
 export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
+  if (newsParsingKilled) {
+    appLogger.info('News parsing is killed by admin — returning empty');
+    return [];
+  }
+
   if (parsedNewsCache && Date.now() - parsedNewsCache.ts < PARSED_NEWS_CACHE_TTL_MS) {
     appLogger.debug({ cached: parsedNewsCache.headlines.length }, 'Returning cached news headlines');
     return parsedNewsCache.headlines;
