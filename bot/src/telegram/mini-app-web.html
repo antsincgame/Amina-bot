@@ -25,27 +25,71 @@
       flex-direction: column;
       line-height: 1.45;
     }
+
+    /* -- Avatar area -- */
     .avatar-area {
       position: relative; width: 100%; aspect-ratio: 1/1; max-height: 45vh;
       overflow: hidden; background: radial-gradient(ellipse at center, #1a1025, #0f0f12);
       display: flex; align-items: center; justify-content: center;
+      border-radius: 0 0 16px 16px;
+      transition: box-shadow .4s ease;
     }
-    .avatar-area img { width: 100%; height: 100%; object-fit: contain; transition: opacity .3s; }
-    .avatar-area video { width: 100%; height: 100%; object-fit: contain; display: none; }
-    .avatar-area video.show { display: block; }
-    .avatar-area img.hidden { display: none; }
+    .avatar-img {
+      position: absolute; top: 0; left: 0;
+      width: 100%; height: 100%; object-fit: contain;
+      opacity: 0;
+      transition: opacity .45s ease-in-out;
+      animation: avatar-breathe 4s ease-in-out infinite, avatar-float 6s ease-in-out infinite, avatar-blink 5s ease-in-out infinite;
+      will-change: transform, opacity;
+    }
+    .avatar-img.active { opacity: 1; }
+
+    /* -- Speaking state -- */
+    .avatar-area.speaking {
+      box-shadow: 0 0 20px 4px rgba(212,168,83,.35), 0 0 60px 8px rgba(212,168,83,.12);
+    }
+    .avatar-area.speaking .avatar-img.active {
+      animation: avatar-breathe 4s ease-in-out infinite, avatar-speak-bounce .7s ease-in-out infinite, avatar-blink 5s ease-in-out infinite;
+    }
+
+    /* -- Keyframes -- */
+    @keyframes avatar-breathe {
+      0%, 100% { transform: scale(1) translateY(0); }
+      50% { transform: scale(1.012) translateY(0); }
+    }
+    @keyframes avatar-float {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-4px); }
+    }
+    @keyframes avatar-blink {
+      0%, 46%, 54%, 100% { opacity: 1; }
+      48%, 52% { opacity: .88; }
+    }
+    @keyframes avatar-speak-bounce {
+      0%, 100% { transform: scale(1.012) translateY(0); }
+      50% { transform: scale(1.018) translateY(-2px); }
+    }
+    @keyframes avatar-speak-glow-pulse {
+      0%, 100% { box-shadow: 0 0 20px 4px rgba(212,168,83,.35); }
+      50% { box-shadow: 0 0 30px 8px rgba(212,168,83,.55); }
+    }
+
     .avatar-name {
-      position: absolute; bottom: 0; left: 0; right: 0;
+      position: absolute; bottom: 0; left: 0; right: 0; z-index: 2;
       padding: 2rem 1rem .75rem; background: linear-gradient(transparent, rgba(15,15,18,.95)); text-align: center;
     }
     .avatar-name h1 { font-size: 1.15rem; font-weight: 700; color: var(--gold); text-shadow: 0 0 12px rgba(212,168,83,.3); }
     .avatar-name .subtitle { font-size: .75rem; color: var(--hint); margin-top: .15rem; }
+
+    /* -- Chat -- */
     .chat-area { flex: 1; overflow-y: auto; padding: .5rem .75rem; min-height: 80px; }
     .bubble { margin: .35rem 0; padding: .5rem .65rem; border-radius: 14px; font-size: .88rem; max-width: 85%; word-wrap: break-word; }
     .bubble.user { background: color-mix(in srgb, var(--btn) 30%, transparent); margin-left: auto; border-bottom-right-radius: 4px; }
     .bubble.amina { background: var(--card); border-bottom-left-radius: 4px; }
     .bubble.err { color: #f66; font-size: .82rem; }
     .bubble .transcript { font-size: .75rem; color: var(--hint); margin-bottom: .2rem; font-style: italic; }
+
+    /* -- Input -- */
     .input-area {
       padding: .5rem .75rem .75rem;
       background: color-mix(in srgb, var(--bg) 95%, var(--text));
@@ -68,6 +112,8 @@
     .btn-mic.recording { background: #e74c3c; color: #fff; border-color: #e74c3c; animation: pulse-rec 1s infinite; }
     @keyframes pulse-rec { 0%,100%{box-shadow:0 0 0 0 rgba(231,76,60,.4)} 50%{box-shadow:0 0 0 8px rgba(231,76,60,0)} }
     .status-bar { font-size: .75rem; color: var(--hint); text-align: center; padding: .2rem; min-height: 1.2em; }
+
+    /* -- Debug log -- */
     .pipeline-log { display:none; font-size:.7rem; color:var(--hint); background:rgba(0,0,0,.3); padding:.5rem; max-height:120px; overflow-y:auto; font-family:monospace; border-top:1px solid color-mix(in srgb,var(--text) 5%,transparent); }
     .pipeline-log.show { display: block; }
     .pipeline-log .entry { margin: 1px 0; }
@@ -77,8 +123,8 @@
 </head>
 <body>
   <div class="avatar-area" id="avatarArea">
-    <img id="avatarImg" src="/mini-app/avatars/base-neutral.png" alt="Амина" />
-    <video id="heygenVideo" playsinline></video>
+    <img id="avatarImgA" class="avatar-img active" src="/mini-app/avatars/base-neutral.png" alt="Амина" />
+    <img id="avatarImgB" class="avatar-img" src="" alt="" />
     <div class="avatar-name">
       <h1>Амина</h1>
       <p class="subtitle" id="greeting">Загрузка…</p>
@@ -111,14 +157,40 @@
     var chatLog=document.getElementById('chatLog'),msgEl=document.getElementById('msg'),
         sendBtn=document.getElementById('sendBtn'),micBtn=document.getElementById('micBtn'),
         statusEl=document.getElementById('status'),greetingEl=document.getElementById('greeting'),
-        avatarImg=document.getElementById('avatarImg'),heygenVideo=document.getElementById('heygenVideo'),
+        avatarArea=document.getElementById('avatarArea'),
         pipelineLogEl=document.getElementById('pipelineLog');
     var isProcessing=false,isRecording=false,mediaRecorder=null,audioChunks=[];
-    var heygenMode='hybrid',heygenSession=null;
     var apiBase=window.location.origin.replace(/\/$/,'')+'/api';
 
+    /* -- Dual-image crossfade state -- */
+    var imgA=document.getElementById('avatarImgA');
+    var imgB=document.getElementById('avatarImgB');
+    var currentImg=imgA,nextImg=imgB;
+    var currentEmotion='neutral',crossfading=false;
+    var emotionMap={
+      neutral:'base-neutral',
+      happy:'emotion-happy',
+      ecstatic:'emotion-ecstatic',
+      sad:'emotion-sad',
+      surprised:'emotion-surprised',
+      thinking:'emotion-thinking',
+      angry:'emotion-angry',
+      smirk:'emotion-smirk',
+      sleepy:'emotion-sleepy',
+      flirty:'emotion-flirty',
+      loving:'emotion-loving'
+    };
+
+    /* -- Preload all emotion images -- */
+    var emotionFiles=Object.keys(emotionMap);
+    for(var k=0;k<emotionFiles.length;k++){
+      var preImg=new Image();
+      preImg.src='/mini-app/avatars/'+emotionMap[emotionFiles[k]]+'.png';
+    }
+
+    /* -- Debug mode: triple-tap avatar -- */
     var debugMode=false,tapCount=0,tapTimer=null;
-    document.getElementById('avatarArea').addEventListener('click',function(){
+    avatarArea.addEventListener('click',function(){
       tapCount++;if(tapTimer)clearTimeout(tapTimer);
       tapTimer=setTimeout(function(){tapCount=0},500);
       if(tapCount>=3){debugMode=!debugMode;pipelineLogEl.classList.toggle('show',debugMode);tapCount=0}
@@ -136,26 +208,65 @@
       if(!chatLog)return;var d=document.createElement('div');d.className='bubble '+(cls||'');
       d.textContent=text;chatLog.appendChild(d);chatLog.scrollTop=chatLog.scrollHeight;
     }
+
+    /* -- Emotion crossfade -- */
     function setEmotion(emotion){
-      if(!avatarImg)return;
-      var m={neutral:'base-neutral',happy:'happy',ecstatic:'ecstatic',sad:'sad',surprised:'surprised',
-        thinking:'thinking',angry:'angry',smirk:'smirk',sleepy:'sleepy',flirty:'flirty',loving:'loving'};
-      avatarImg.src='/mini-app/avatars/'+(m[emotion]||'base-neutral')+'.png';
+      if(!emotion||emotion===currentEmotion)return;
+      var file=emotionMap[emotion]||'base-neutral';
+      var newSrc='/mini-app/avatars/'+file+'.png';
+      currentEmotion=emotion;
+      if(crossfading){
+        currentImg.src=newSrc;
+        return;
+      }
+      crossfading=true;
+      var preload=new Image();
+      preload.onload=function(){
+        nextImg.src=newSrc;
+        nextImg.classList.add('active');
+        currentImg.classList.remove('active');
+        setTimeout(function(){
+          var tmp=currentImg;
+          currentImg=nextImg;
+          nextImg=tmp;
+          crossfading=false;
+        },500);
+      };
+      preload.onerror=function(){crossfading=false};
+      preload.src=newSrc;
     }
+
+    /* -- Audio playback with speaking state -- */
     function playAudioBase64(b64,mime){
-      if(!b64)return;try{
+      if(!b64)return;
+      try{
         var bin=atob(b64),bytes=new Uint8Array(bin.length);
         for(var i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
         var blob=new Blob([bytes],{type:mime||'audio/mpeg'}),url=URL.createObjectURL(blob);
-        var a=new Audio(url);a.play().catch(function(){}).finally(function(){setTimeout(function(){URL.revokeObjectURL(url)},60000)});
+        var a=new Audio(url);
+        a.onplay=function(){
+          avatarArea.classList.add('speaking');
+          logPipeline('Audio playing','ok');
+        };
+        a.onended=function(){
+          avatarArea.classList.remove('speaking');
+          logPipeline('Audio ended');
+        };
+        a.onerror=function(){avatarArea.classList.remove('speaking')};
+        a.onpause=function(){avatarArea.classList.remove('speaking')};
+        a.play().catch(function(e){logPipeline('Audio play blocked: '+e.message,'error')});
+        setTimeout(function(){URL.revokeObjectURL(url)},120000);
       }catch(e){logPipeline('Audio error: '+e.message,'error')}
     }
+
+    /* -- Greeting -- */
     if(greetingEl)greetingEl.textContent='Техножрица Омниссии приветствует тебя, '+userName;
     if(msgEl){
       msgEl.addEventListener('input',function(){this.style.height='auto';this.style.height=Math.min(this.scrollHeight,100)+'px'});
       msgEl.addEventListener('keydown',function(e){if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendTextMessage()}});
     }
 
+    /* -- Text message -- */
     async function sendTextMessage(){
       if(isProcessing)return;
       if(!initData){appendBubble('Откройте из Telegram.','err');return}
@@ -174,6 +285,7 @@
     }
     if(sendBtn)sendBtn.addEventListener('click',sendTextMessage);
 
+    /* -- Voice recording (MediaRecorder) -- */
     async function startRecording(){
       if(isProcessing||isRecording)return;
       try{
@@ -217,10 +329,11 @@
     }
     if(micBtn)micBtn.addEventListener('click',function(){if(isRecording)stopRecording();else startRecording()});
 
+    /* -- Response handling -- */
     function handleAiResponse(data){
-      appendBubble(data.response||'','amina');setEmotion(data.emotion||'neutral');
-      if(data.audioBase64){playAudioBase64(data.audioBase64,data.audioMimeType);
-        if(heygenSession&&heygenMode==='hybrid')speakWithHeygen(data.response)}
+      appendBubble(data.response||'','amina');
+      setEmotion(data.emotion||'neutral');
+      if(data.audioBase64)playAudioBase64(data.audioBase64,data.audioMimeType);
     }
     function handleApiError(status,err){
       if(status===502||status===503||status===504)err='Сервер недоступен ('+status+'). Подождите.';
@@ -228,93 +341,7 @@
       appendBubble('Ошибка: '+err,'err');logPipeline('API '+status+': '+err,'error');
     }
 
-    async function initHeygen(){
-      if(!initData)return;logPipeline('[1/5] HeyGen: запрос конфига…');
-      try{
-        var url=apiBase+'/mini-app/heygen-token?initData='+encodeURIComponent(initData);
-        logPipeline('[1/5] GET '+url.replace(/initData=.*$/,'initData=***'));
-        var res=await fetch(url);
-        logPipeline('[1/5] HTTP '+res.status);
-        var json=await res.json().catch(function(e){logPipeline('[1/5] JSON parse fail: '+e.message,'error');return null});
-        if(!res.ok||!json||!json.success){logPipeline('[1/5] FAIL: '+(json&&json.error||'status='+res.status),'error');return}
-        heygenMode=json.mode||'hybrid';
-        logPipeline('[1/5] OK mode='+heygenMode+' quality='+json.quality+' avatarId='+(json.avatarId||'EMPTY')+' token='+(json.token?'YES':'NO')+' kb='+(json.knowledgeBase?json.knowledgeBase.length+'ch':'none'),'ok');
-        if(!json.token){logPipeline('[1/5] STOP: no token','error');return}
-        if(!json.avatarId){logPipeline('[1/5] WARN: no avatarId, will use default','warn')}
-        await startHeygenSession(json);
-      }catch(e){logPipeline('[1/5] EXCEPTION: '+e.message+' '+e.stack,'error')}
-    }
-    async function startHeygenSession(cfg){
-      try{
-        logPipeline('[2/5] Загрузка SDK…');
-        if(typeof StreamingAvatar==='undefined'){
-          await loadScript('https://unpkg.com/@heygen/streaming-avatar@2/dist/index.umd.js');
-        }
-        if(typeof StreamingAvatar==='undefined'){logPipeline('[2/5] SDK не загрузился!','error');return}
-        logPipeline('[2/5] SDK OK, version='+(StreamingAvatar.version||'?'),'ok');
-
-        logPipeline('[3/5] new StreamingAvatar(token='+cfg.token.slice(0,16)+'…)');
-        var avatar=new StreamingAvatar({token:cfg.token});
-        var avatarName=cfg.avatarId||'default';
-        var sc={avatarName:avatarName,quality:cfg.quality||'low',language:'ru'};
-        if(heygenMode==='native'&&cfg.knowledgeBase){
-          sc.knowledgeBase=cfg.knowledgeBase;
-          sc.voice={voiceId:'',rate:1};
-          logPipeline('[3/5] Native mode: kb='+cfg.knowledgeBase.length+'ch');
-        }
-        logPipeline('[3/5] createStartAvatar('+JSON.stringify({avatarName:avatarName,quality:sc.quality,language:sc.language})+')');
-        var session;
-        try{
-          session=await avatar.createStartAvatar(sc);
-        }catch(avatarErr){
-          logPipeline('[3/5] createStartAvatar FAIL: '+avatarErr.message,'error');
-          if(avatarName!=='default'){
-            logPipeline('[3/5] Fallback → default avatar…','warn');
-            sc.avatarName='default';
-            session=await avatar.createStartAvatar(sc);
-          }else{throw avatarErr}
-        }
-        heygenSession=avatar;
-        logPipeline('[3/5] Session OK: '+(session.session_id||JSON.stringify(session).slice(0,120)),'ok');
-
-        logPipeline('[4/5] Подключение stream events…');
-        avatar.on('stream_ready',function(ev){
-          logPipeline('[4/5] STREAM READY','ok');
-          var stream=ev&&ev.detail&&ev.detail.stream;
-          if(stream&&heygenVideo){
-            logPipeline('[4/5] Attaching stream to <video>, tracks='+stream.getTracks().length);
-            heygenVideo.srcObject=stream;
-            heygenVideo.classList.add('show');
-            if(avatarImg)avatarImg.classList.add('hidden');
-            heygenVideo.play().catch(function(e){logPipeline('[4/5] video.play() fail: '+e.message,'error')});
-          }else{logPipeline('[4/5] No stream or no video element','error')}
-        });
-        avatar.on('stream_disconnected',function(){
-          logPipeline('[4/5] STREAM DISCONNECTED');
-          if(heygenVideo)heygenVideo.classList.remove('show');
-          if(avatarImg)avatarImg.classList.remove('hidden');
-          heygenSession=null;
-        });
-        avatar.on('avatar_start_talking',function(){logPipeline('[AVATAR] start talking')});
-        avatar.on('avatar_stop_talking',function(){logPipeline('[AVATAR] stop talking')});
-
-        if(heygenMode==='native'){
-          logPipeline('[5/5] Starting voice chat…');
-          await avatar.startVoiceChat({useSilencePrompt:false});
-          logPipeline('[5/5] Voice chat OK','ok');
-        }else{logPipeline('[5/5] Hybrid mode — speak on demand','ok')}
-      }catch(e){logPipeline('[HeyGen] CRITICAL: '+e.message+' '+e.stack,'error')}
-    }
-    function speakWithHeygen(text){
-      if(!heygenSession){logPipeline('[SPEAK] No session, skip');return}
-      try{
-        logPipeline('[SPEAK] '+text.slice(0,60)+'…');
-        heygenSession.speak({text:text,task_type:'repeat'});
-        logPipeline('[SPEAK] sent','ok');
-      }catch(e){logPipeline('[SPEAK] err: '+e.message,'error')}
-    }
-    function loadScript(src){return new Promise(function(ok,fail){var s=document.createElement('script');s.src=src;s.onload=ok;s.onerror=function(){fail(new Error('Load fail: '+src))};document.head.appendChild(s)})}
-    if(initData)initHeygen();
+    logPipeline('Mini App loaded, CSS avatar mode','ok');
   })();
   </script>
 </body>

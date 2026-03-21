@@ -8,7 +8,6 @@ import { settingsRepo, conversationsRepo } from '../../db/index.js';
 import { validateMessageContent, validateUserId } from '../../utils/validation.js';
 import { validateTelegramWebAppInitData, parseTelegramUserIdFromInitData } from '../../utils/telegram-webapp-auth.js';
 import { respondWithAminaCore } from '../../ai/amina-core-runtime.js';
-import { buildPersonaSystemPrompt } from '../../ai/persona.js';
 import type { Message, AIMessage, Conversation } from '../../../../shared/types/index.js';
 import { textToSpeech, detectLanguage } from '../../features/tts.js';
 import { transcribeAudio } from '../../ai/multimodal.js';
@@ -80,28 +79,6 @@ function ensureTelegramInit(reply: FastifyReply, initData: string): string | nul
   return userId;
 }
 
-interface HeyGenTokenResponse {
-  data: { token: string };
-  error: null | string;
-}
-
-const fetchHeygenStreamingToken = async (apiKey: string): Promise<string> => {
-  const res = await fetch('https://api.heygen.com/v1/streaming.create_token', {
-    method: 'POST',
-    headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`HeyGen API ${res.status}: ${text}`);
-  }
-
-  const json = (await res.json()) as HeyGenTokenResponse;
-  if (!json.data?.token) {
-    throw new Error('HeyGen API returned empty token');
-  }
-  return json.data.token;
-};
 
 async function processAiResponse(userId: string, messageContent: string, request: FastifyRequest, withAudio: boolean) {
   const conversation: Conversation = await conversationsRepo.getOrCreate(userId, 'telegram', {
@@ -169,62 +146,6 @@ export async function registerMiniAppRoutes(server: FastifyInstance): Promise<vo
       files: 1,
     },
   });
-
-  /**
-   * GET /mini-app/heygen-token
-   * Возвращает одноразовый streaming-токен HeyGen для фронтенда.
-   */
-  server.get(
-    '/mini-app/heygen-token',
-    async (request: FastifyRequest<{ Querystring: { initData?: string } }>, reply: FastifyReply) => {
-      try {
-        const initData = String(request.query.initData ?? '');
-        if (!initData) {
-          return miniAppAuthFail(reply, 400, 'Missing initData');
-        }
-
-        const userId = ensureTelegramInit(reply, initData);
-        if (!userId) return;
-
-        const dbKeys = await settingsRepo.getMany([
-          'heygen_api_key', 'heygen_avatar_id', 'heygen_quality',
-          'heygen_mode', 'heygen_knowledge_base',
-        ]);
-        const apiKey = dbKeys['heygen_api_key'] || process.env.HEYGEN_API_KEY || '';
-        const avatarId = dbKeys['heygen_avatar_id'] || process.env.HEYGEN_AVATAR_ID || '';
-        const quality = dbKeys['heygen_quality'] || 'low';
-        const mode = dbKeys['heygen_mode'] || 'hybrid';
-        const customKB = dbKeys['heygen_knowledge_base'] || '';
-
-        if (!apiKey) {
-          return reply.code(503).send({ success: false, error: 'HeyGen is not configured' });
-        }
-
-        let knowledgeBase = '';
-        if (mode === 'native') {
-          const personaPrompt = await buildPersonaSystemPrompt({ channel: 'voice' });
-          const nativeRules = [
-            personaPrompt,
-            'ВАЖНО: Отвечай ТОЛЬКО на русском языке.',
-            'Будь краткой — не более 2-3 предложений в ответе.',
-            'Ты общаешься голосом, поэтому говори естественно, как живой человек.',
-          ];
-          if (customKB) nativeRules.push(customKB);
-          knowledgeBase = nativeRules.join('\n\n');
-          aiLogger.info({ userId, mode, quality, knowledgeBaseLength: knowledgeBase.length }, 'HeyGen native: persona loaded from Self-Core');
-        }
-
-        aiLogger.info({ userId, mode, quality }, 'HeyGen token request');
-
-        const token = await fetchHeygenStreamingToken(apiKey);
-
-        return reply.code(200).send({ success: true, token, avatarId, quality, mode, knowledgeBase });
-      } catch (error) {
-        aiLogger.error({ error }, 'HeyGen token request failed');
-        return reply.code(502).send({ success: false, error: 'Failed to obtain HeyGen token' });
-      }
-    },
-  );
 
   /**
    * POST /mini-app/message

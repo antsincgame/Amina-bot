@@ -20,7 +20,6 @@ import {
   Zap,
   Shield,
   ExternalLink,
-  Video,
 } from 'lucide-react';
 
 // Schema
@@ -32,11 +31,6 @@ const apiKeysSchema = z.object({
   web_search_enabled: z.string().optional(),
   perplexity_model: z.string().optional(),
   web_search_max_tokens: z.string().optional(),
-  heygen_api_key: z.string().optional(),
-  heygen_avatar_id: z.string().optional(),
-  heygen_quality: z.string().optional(),
-  heygen_mode: z.string().optional(),
-  heygen_knowledge_base: z.string().optional(),
 });
 
 type ApiKeysForm = z.infer<typeof apiKeysSchema>;
@@ -142,11 +136,6 @@ const ApiKeysPage = () => {
       web_search_enabled: 'false',
       perplexity_model: 'sonar',
       web_search_max_tokens: '1200',
-      heygen_api_key: '',
-      heygen_avatar_id: '',
-      heygen_quality: 'low',
-      heygen_mode: 'hybrid',
-      heygen_knowledge_base: '',
     },
   });
 
@@ -173,11 +162,6 @@ const ApiKeysPage = () => {
         web_search_enabled: map['web_search_enabled'] || 'false',
         perplexity_model: map['perplexity_model'] || 'sonar',
         web_search_max_tokens: map['web_search_max_tokens'] || '1200',
-        heygen_api_key: map['heygen_api_key'] || '',
-        heygen_avatar_id: map['heygen_avatar_id'] || '',
-        heygen_quality: map['heygen_quality'] || 'low',
-        heygen_mode: map['heygen_mode'] || 'hybrid',
-        heygen_knowledge_base: map['heygen_knowledge_base'] || '',
       });
     }
   }, [settings, reset]);
@@ -191,11 +175,6 @@ const ApiKeysPage = () => {
       web_search_enabled: data.web_search_enabled || 'false',
       perplexity_model: data.perplexity_model || 'sonar',
       web_search_max_tokens: data.web_search_max_tokens || '1200',
-      heygen_api_key: data.heygen_api_key || '',
-      heygen_avatar_id: data.heygen_avatar_id || '',
-      heygen_quality: data.heygen_quality || 'low',
-      heygen_mode: data.heygen_mode || 'hybrid',
-      heygen_knowledge_base: data.heygen_knowledge_base || '',
     });
   };
 
@@ -600,133 +579,6 @@ const ApiKeysPage = () => {
               </div>
             </div>
           </div>
-        </div>
-
-        {/* HeyGen Streaming Avatar */}
-        <div className="card animate-fade-in-up stagger-5" style={{ opacity: 0 }}>
-          <div className="flex items-center gap-4 mb-5">
-            <div className="w-12 h-12 rounded-xl flex items-center justify-center"
-                 style={{
-                   background: 'linear-gradient(135deg, rgba(236, 72, 153, 0.2), rgba(236, 72, 153, 0.1))',
-                   border: '1px solid rgba(236, 72, 153, 0.3)',
-                   boxShadow: '0 0 20px rgba(236, 72, 153, 0.15)',
-                 }}>
-              <Video className="w-6 h-6 text-pink-400" />
-            </div>
-            <div className="flex-1">
-              <h2 className="text-lg font-semibold text-white" style={{ fontFamily: 'var(--font-heading)' }}>
-                HeyGen Streaming Avatar
-              </h2>
-              <p className="text-sm text-gray-500">Живой аватар в мини-приложении Telegram</p>
-            </div>
-            {watch('heygen_api_key') && (
-              <span className="badge-success">
-                <CheckCircle className="w-3.5 h-3.5 mr-1" />
-                Задан
-              </span>
-            )}
-          </div>
-
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm text-gray-400 mb-1.5">API Key</label>
-              <input
-                type="password"
-                placeholder="sk_V2_..."
-                className="input font-mono text-sm"
-                {...register('heygen_api_key')}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm text-gray-400 mb-1.5">Avatar ID</label>
-              <input
-                type="text"
-                placeholder="309a8abed2bb4b47..."
-                className="input font-mono text-sm"
-                {...register('heygen_avatar_id')}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm text-gray-400 mb-1.5">Качество стрима</label>
-              <select
-                className="input text-sm"
-                value={watch('heygen_quality') || 'low'}
-                onChange={(e) => setValue('heygen_quality', e.target.value, { shouldDirty: true })}
-              >
-                <option value="low">Low (экономия трафика)</option>
-                <option value="medium">Medium</option>
-                <option value="high">High (макс. качество)</option>
-              </select>
-            </div>
-
-            <div className="divider my-4" />
-
-            <div className="p-4 rounded-xl"
-                 style={{ background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
-              <h3 className="font-medium text-white mb-3" style={{ fontFamily: 'var(--font-heading)' }}>
-                Режим пайплайна
-              </h3>
-              <div className="space-y-2">
-                {[
-                  { value: 'hybrid', label: 'Hybrid', desc: 'Наш STT → наш AI → HeyGen озвучивает' },
-                  { value: 'native', label: 'Native', desc: 'HeyGen слушает → думает (knowledgeBase из Self-Core) → говорит' },
-                ].map((opt) => (
-                  <label
-                    key={opt.value}
-                    className={`flex items-center p-3 rounded-xl cursor-pointer transition-all duration-300 ${
-                      watch('heygen_mode') === opt.value
-                        ? 'border-pink-500/50 bg-pink-500/5'
-                        : 'border-white/5 bg-white/[0.02] hover:border-white/20'
-                    }`}
-                    style={{ border: '1px solid' }}
-                  >
-                    <input
-                      type="radio"
-                      value={opt.value}
-                      checked={watch('heygen_mode') === opt.value}
-                      onChange={(e) => setValue('heygen_mode', e.target.value, { shouldDirty: true })}
-                      className="sr-only"
-                    />
-                    <div className={`w-4 h-4 rounded-full border-2 mr-3 flex items-center justify-center transition-all ${
-                      watch('heygen_mode') === opt.value ? 'border-pink-400 bg-pink-400' : 'border-gray-600'
-                    }`}>
-                      {watch('heygen_mode') === opt.value && <div className="w-1.5 h-1.5 rounded-full bg-gray-900" />}
-                    </div>
-                    <div>
-                      <span className="font-medium text-white text-sm">{opt.label}</span>
-                      <p className="text-xs text-gray-500">{opt.desc}</p>
-                    </div>
-                  </label>
-                ))}
-              </div>
-            </div>
-
-            {watch('heygen_mode') === 'native' && (
-              <div>
-                <label className="block text-sm text-gray-400 mb-1.5">
-                  Дополнительные инструкции (native)
-                </label>
-                <textarea
-                  rows={3}
-                  placeholder="Персона берётся из Self-Core автоматически. Здесь можно добавить дополнительные правила..."
-                  className="input text-sm w-full"
-                  style={{ minHeight: '80px', resize: 'vertical' }}
-                  {...register('heygen_knowledge_base')}
-                />
-                <p className="text-xs text-gray-600 mt-1">
-                  В native-режиме персона Амины загружается из Self-Core + русский язык + эти инструкции
-                </p>
-              </div>
-            )}
-          </div>
-
-          <a href="https://app.heygen.com/settings/api" target="_blank" rel="noopener noreferrer"
-             className="inline-flex items-center gap-1.5 mt-4 text-xs text-gray-500 hover:text-pink-400 transition-colors">
-            <ExternalLink className="w-3 h-3" />
-            <span>app.heygen.com/settings/api</span>
-          </a>
         </div>
 
         {/* LLM Verification Diagnostics */}
