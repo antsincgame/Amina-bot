@@ -940,6 +940,26 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     uiPages: ['ApiKeysPage'],
     runtimeConsumers: ['bot/src/api/routes/mini-app.ts'],
   }),
+  defineSetting({
+    key: 'heygen_mode',
+    label: 'HeyGen Pipeline Mode',
+    domain: 'api_keys',
+    visibility: 'visible',
+    valueType: 'string',
+    description: 'hybrid = наш STT → наш AI → HeyGen speak. native = HeyGen слушает → думает → говорит сам.',
+    uiPages: ['ApiKeysPage'],
+    runtimeConsumers: ['bot/src/api/routes/mini-app.ts'],
+  }),
+  defineSetting({
+    key: 'heygen_knowledge_base',
+    label: 'HeyGen Knowledge Base (системный промпт)',
+    domain: 'api_keys',
+    visibility: 'visible',
+    valueType: 'string',
+    description: 'Системный промпт для native-режима HeyGen. Описание личности Амины.',
+    uiPages: ['ApiKeysPage'],
+    runtimeConsumers: ['bot/src/api/routes/mini-app.ts'],
+  }),
 ];
 
 export const SETTINGS_REGISTRY_MAP = new Map(

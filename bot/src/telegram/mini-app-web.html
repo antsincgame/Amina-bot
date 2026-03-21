@@ -471,6 +471,19 @@
       var HEYGEN_IDLE_TIMEOUT = 60000; /* 60 сек без активности — закрыть сессию */
       var HEYGEN_MIN_TEXT_LENGTH = 20; /* короткие ответы — через TTS (дешевле) */
       var heygenInitStarted = false;
+      var heygenMode = 'hybrid'; /* hybrid | native */
+      var heygenKnowledgeBase = '';
+      var isNativeVoiceChatActive = false;
+
+      /* ---- Pipeline logging ---- */
+      var pipelineLog = [];
+      function logPipeline(step, data) {
+        var entry = { ts: new Date().toISOString(), step: step, data: data || null };
+        pipelineLog.push(entry);
+        console.log('[PIPELINE]', entry.ts, step, data || '');
+        /* Ограничим лог до 50 записей */
+        if (pipelineLog.length > 50) pipelineLog.shift();
+      }
 
       /* ---- Helpers ---- */
       function setStatus(text, cls) {
@@ -517,6 +530,8 @@
         if (typeof StreamingAvatar === 'undefined' && typeof window.StreamingAvatarSDK === 'undefined') return;
         heygenInitStarted = true;
 
+        logPipeline('heygen:init:start');
+
         var apiBase = window.location.origin.replace(/\/$/, '');
         var tokenUrl = apiBase + '/api/mini-app/heygen-token?initData=' + encodeURIComponent(initData);
 
@@ -536,6 +551,10 @@
 
             heygenAvatarId = result.data.avatarId || '';
             var heygenQuality = result.data.quality || 'low';
+            heygenMode = result.data.mode || 'hybrid';
+            heygenKnowledgeBase = result.data.knowledgeBase || '';
+
+            logPipeline('heygen:config', { mode: heygenMode, quality: heygenQuality, avatarId: heygenAvatarId, hasKB: !!heygenKnowledgeBase });
 
             var AvatarClass = (typeof StreamingAvatar !== 'undefined')
               ? StreamingAvatar
@@ -547,16 +566,26 @@
 
             heygenAvatar = new AvatarClass({ token: result.data.token });
 
-            return heygenAvatar.createStartAvatar({
+            var startParams = {
               avatarName: heygenAvatarId,
               quality: heygenQuality,
-            });
+            };
+
+            /* Native mode: добавляем knowledgeBase и язык */
+            if (heygenMode === 'native' && heygenKnowledgeBase) {
+              startParams.knowledgeBase = heygenKnowledgeBase;
+              startParams.language = 'ru';
+              logPipeline('heygen:native:knowledgeBase', heygenKnowledgeBase.substring(0, 100) + '...');
+            }
+
+            return heygenAvatar.createStartAvatar(startParams);
           })
           .then(function (session) {
             if (!session) throw new Error('Empty HeyGen session');
 
             heygenReady = true;
             resetHeygenIdleTimer();
+            logPipeline('heygen:session:ready', { sessionId: session.session_id || 'unknown', mode: heygenMode });
 
             /* Привязать video stream к элементу */
             if (session.stream && heygenVideo) {
@@ -564,26 +593,62 @@
               heygenVideo.classList.add('active');
               avatarImg.classList.add('hidden');
               heygenVideo.play().catch(function () {});
+              logPipeline('heygen:video:attached');
             }
 
             /* Подписаться на события SDK */
             if (heygenAvatar.on) {
               heygenAvatar.on('avatar_start_talking', function () {
+                logPipeline('heygen:avatar:start_talking');
                 setStatus('Говорю...', 'speaking');
                 visualizerRing.classList.add('active');
               });
               heygenAvatar.on('avatar_stop_talking', function () {
+                logPipeline('heygen:avatar:stop_talking');
                 visualizerRing.classList.remove('active');
-                setStatus('');
+                setStatus(isNativeVoiceChatActive ? 'Слушаю...' : '');
+              });
+              heygenAvatar.on('avatar_talking_message', function (ev) {
+                logPipeline('heygen:avatar:message', ev && ev.detail ? ev.detail.message : '');
+              });
+              heygenAvatar.on('user_talking_message', function (ev) {
+                logPipeline('heygen:user:message', ev && ev.detail ? ev.detail.message : '');
+                setStatus('Слышу вас...', 'listening');
+              });
+              heygenAvatar.on('user_end_message', function (ev) {
+                logPipeline('heygen:user:end', ev && ev.detail ? ev.detail.message : '');
+                setStatus('Думаю...', 'thinking');
               });
               heygenAvatar.on('stream_disconnected', function () {
+                logPipeline('heygen:stream:disconnected');
                 handleHeygenDisconnect();
               });
             }
 
-            setStatus('');
+            /* Native mode: запускаем голосовой чат сразу */
+            if (heygenMode === 'native' && heygenAvatar.startVoiceChat) {
+              logPipeline('heygen:native:startVoiceChat');
+              heygenAvatar.startVoiceChat({
+                useSilencePrompt: false,
+              }).then(function () {
+                isNativeVoiceChatActive = true;
+                logPipeline('heygen:native:voiceChatActive');
+                setStatus('Слушаю...', 'listening');
+                /* В native режиме скрываем текстовый ввод и микрофон — HeyGen всё сам */
+                if (micBtn) micBtn.style.display = 'none';
+                if (document.getElementById('inputRow')) document.getElementById('inputRow').style.display = 'none';
+              }).catch(function (err) {
+                logPipeline('heygen:native:voiceChatFailed', err.message || String(err));
+                showError('Не удалось запустить голосовой чат: ' + (err.message || err));
+                /* Fallback на hybrid */
+                heygenMode = 'hybrid';
+              });
+            }
+
+            setStatus(heygenMode === 'native' ? 'Подключаю голосовой чат...' : '');
           })
           .catch(function (err) {
+            logPipeline('heygen:init:failed', err.message || String(err));
             console.warn('HeyGen init failed, using fallback:', err);
             heygenReady = false;
             heygenAvatar = null;
@@ -608,9 +673,11 @@
       }
 
       function handleHeygenDisconnect() {
+        logPipeline('heygen:disconnect');
         heygenReady = false;
         heygenAvatar = null;
         heygenInitStarted = false;
+        isNativeVoiceChatActive = false;
         if (heygenIdleTimer) { clearTimeout(heygenIdleTimer); heygenIdleTimer = null; }
         if (heygenVideo) {
           heygenVideo.classList.remove('active');
@@ -619,18 +686,24 @@
         if (avatarImg) {
           avatarImg.classList.remove('hidden');
         }
+        /* Восстановить UI элементы при отключении */
+        if (micBtn) micBtn.style.display = '';
+        if (document.getElementById('inputRow')) document.getElementById('inputRow').style.display = '';
+        setStatus('');
       }
 
       function heygenSpeak(text) {
         if (!heygenAvatar || !heygenReady) return Promise.resolve(false);
+        logPipeline('heygen:speak:start', text.substring(0, 80) + (text.length > 80 ? '...' : ''));
 
         return heygenAvatar.speak({
           text: text,
           taskType: 'repeat',
         }).then(function () {
+          logPipeline('heygen:speak:success');
           return true;
         }).catch(function (err) {
-          console.warn('HeyGen speak failed:', err);
+          logPipeline('heygen:speak:failed', err.message || String(err));
           return false;
         });
       }
@@ -689,6 +762,7 @@
         }
         if (!text || !text.trim()) return;
 
+        logPipeline('bot:sendToBot', { text: text.substring(0, 80), mode: heygenMode });
         isBusy = true;
         micBtn.disabled = true;
         setStatus('Думаю...', 'thinking');

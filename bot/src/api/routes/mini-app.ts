@@ -120,18 +120,25 @@ export async function registerMiniAppRoutes(server: FastifyInstance): Promise<vo
         const userId = ensureTelegramInit(reply, initData);
         if (!userId) return;
 
-        const dbKeys = await settingsRepo.getMany(['heygen_api_key', 'heygen_avatar_id', 'heygen_quality']);
+        const dbKeys = await settingsRepo.getMany([
+          'heygen_api_key', 'heygen_avatar_id', 'heygen_quality',
+          'heygen_mode', 'heygen_knowledge_base',
+        ]);
         const apiKey = dbKeys['heygen_api_key'] || config.heygen.apiKey;
         const avatarId = dbKeys['heygen_avatar_id'] || config.heygen.avatarId;
         const quality = dbKeys['heygen_quality'] || config.heygen.quality || 'low';
+        const mode = dbKeys['heygen_mode'] || 'hybrid';
+        const knowledgeBase = dbKeys['heygen_knowledge_base'] || '';
 
         if (!apiKey) {
           return reply.code(503).send({ success: false, error: 'HeyGen is not configured' });
         }
 
+        aiLogger.info({ userId, mode, quality, hasKnowledgeBase: !!knowledgeBase }, 'HeyGen token request — pipeline config');
+
         const token = await fetchHeygenStreamingToken(apiKey);
 
-        return reply.code(200).send({ success: true, token, avatarId, quality });
+        return reply.code(200).send({ success: true, token, avatarId, quality, mode, knowledgeBase });
       } catch (error) {
         aiLogger.error({ error }, 'HeyGen token request failed');
         return reply.code(502).send({ success: false, error: 'Failed to obtain HeyGen token' });

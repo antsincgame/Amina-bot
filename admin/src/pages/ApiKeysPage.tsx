@@ -34,6 +34,8 @@ const apiKeysSchema = z.object({
   heygen_api_key: z.string().optional(),
   heygen_avatar_id: z.string().optional(),
   heygen_quality: z.string().optional(),
+  heygen_mode: z.string().optional(),
+  heygen_knowledge_base: z.string().optional(),
 });
 
 const HEYGEN_QUALITIES = [
@@ -762,6 +764,39 @@ const ApiKeysPage = () => {
               </select>
               <p className="text-xs text-gray-500 mt-1">
                 Low рекомендуется — на мобильном экране разницы не видно, расход API минимальный
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1.5">
+                <Zap className="w-4 h-4 inline mr-1.5 text-violet-400" />
+                Режим pipeline
+              </label>
+              <select
+                {...register('heygen_mode')}
+                className="input w-full"
+              >
+                <option value="hybrid">Hybrid — наш STT → наш AI → HeyGen speak</option>
+                <option value="native">Native — HeyGen слушает → думает → говорит</option>
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Hybrid: полный контроль, память, Self-Core. Native: всё делает HeyGen, нужен Knowledge Base.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1.5">
+                <Shield className="w-4 h-4 inline mr-1.5 text-violet-400" />
+                Knowledge Base (системный промпт для Native)
+              </label>
+              <textarea
+                {...register('heygen_knowledge_base')}
+                rows={6}
+                placeholder="Ты — Амина, техножрица Адептус Механикус..."
+                className="input w-full resize-y min-h-[100px]"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                Используется только в Native режиме. Описание личности Амины для HeyGen AI.
               </p>
             </div>
           </div>
