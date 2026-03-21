@@ -177,6 +177,8 @@ export async function textToSpeech(
 
   // === ElevenLabs (премиум) ===
   if (config.provider === 'elevenlabs' && config.elevenlabsApiKey) {
+    let authFailed = false;
+
     // 1) Основная модель
     try {
       const result = await elevenlabsTTS(cleanText, config);
@@ -185,31 +187,39 @@ export async function textToSpeech(
         return result;
       }
     } catch (error) {
-      appLogger.warn({ error, textLen: cleanText.length }, 'TTS: ElevenLabs main model failed, retrying after 2s');
+      const msg = error instanceof Error ? error.message : String(error);
+      if (msg.includes('401') || msg.includes('403') || msg.includes('missing_permissions')) {
+        appLogger.error({ textLen: cleanText.length }, 'TTS: ElevenLabs auth failed (401/403) — skip retries, fallback to Edge');
+        authFailed = true;
+      } else {
+        appLogger.warn({ error, textLen: cleanText.length }, 'TTS: ElevenLabs main model failed, retrying');
+      }
     }
 
-    // 2) Retry основной модели через 2 секунды
-    try {
-      await new Promise((r) => setTimeout(r, ELEVENLABS_RETRY_DELAY_MS));
-      const result = await elevenlabsTTS(cleanText, config);
-      if (result) {
-        appLogger.info({ provider: 'elevenlabs', textLen: cleanText.length, audioBytes: result.length }, 'TTS: ElevenLabs retry success');
-        return result;
+    if (!authFailed) {
+      // 2) Retry основной модели через 1 секунду
+      try {
+        await new Promise((r) => setTimeout(r, 1000));
+        const result = await elevenlabsTTS(cleanText, config);
+        if (result) {
+          appLogger.info({ provider: 'elevenlabs', textLen: cleanText.length, audioBytes: result.length }, 'TTS: ElevenLabs retry success');
+          return result;
+        }
+      } catch (error) {
+        appLogger.warn({ error, textLen: cleanText.length }, 'TTS: ElevenLabs retry failed, trying turbo');
       }
-    } catch (error) {
-      appLogger.warn({ error, textLen: cleanText.length }, 'TTS: ElevenLabs retry failed, trying turbo model');
-    }
 
-    // 3) Cheap fallback — ElevenLabs Turbo v2.5
-    try {
-      const turboConfig: TTSConfig = { ...config, elevenlabsModelId: ELEVENLABS_TURBO_MODEL };
-      const result = await elevenlabsTTS(cleanText, turboConfig);
-      if (result) {
-        appLogger.info({ provider: 'elevenlabs-turbo', textLen: cleanText.length, audioBytes: result.length }, 'TTS: ElevenLabs Turbo v2.5 success');
-        return result;
+      // 3) Cheap fallback — ElevenLabs Turbo v2.5
+      try {
+        const turboConfig: TTSConfig = { ...config, elevenlabsModelId: ELEVENLABS_TURBO_MODEL };
+        const result = await elevenlabsTTS(cleanText, turboConfig);
+        if (result) {
+          appLogger.info({ provider: 'elevenlabs-turbo', textLen: cleanText.length, audioBytes: result.length }, 'TTS: ElevenLabs Turbo v2.5 success');
+          return result;
+        }
+      } catch (error) {
+        appLogger.warn({ error, textLen: cleanText.length }, 'TTS: ElevenLabs Turbo v2.5 failed, falling back to Edge');
       }
-    } catch (error) {
-      appLogger.warn({ error, textLen: cleanText.length }, 'TTS: ElevenLabs Turbo v2.5 failed, falling back to OpenAI/Edge');
     }
   }
 
