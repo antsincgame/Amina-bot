@@ -141,7 +141,9 @@ const LMStudioPage = () => {
   const loadModels = useCallback(async () => {
     setIsLoadingModels(true);
     try {
-      const res = await fetchBotApi('/api/lmstudio/models');
+      const res = await fetchBotApi('/api/lmstudio/models', {
+        signal: AbortSignal.timeout(20_000),
+      });
       if (res.ok) {
         const json = await res.json();
         const modelsList = json.data?.models ?? [];
@@ -155,8 +157,12 @@ const LMStudioPage = () => {
             model: prev?.model,
           }));
         }
+      } else {
+        console.error('LM Studio models fetch failed:', res.status);
+        setModels([]);
       }
-    } catch {
+    } catch (err) {
+      console.error('LM Studio models error:', err);
       setModels([]);
     } finally {
       setIsLoadingModels(false);

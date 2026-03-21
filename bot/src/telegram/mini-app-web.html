@@ -13,229 +13,320 @@
       --btn: var(--tg-theme-button-color, #3390ec);
       --btn-text: var(--tg-theme-button-text-color, #fff);
       --card: color-mix(in srgb, var(--tg-theme-text-color, #fff) 7%, transparent);
+      --gold: #d4a853;
+      --accent-purple: #9b59b6;
     }
-    * { box-sizing: border-box; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      margin: 0;
       font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
       background: var(--bg);
       color: var(--text);
       min-height: 100vh;
-      padding: 0.75rem 1rem 1.5rem;
-      line-height: 1.45;
       display: flex;
       flex-direction: column;
-      gap: 0.75rem;
+      line-height: 1.45;
     }
-    h1 { font-size: 1.25rem; margin: 0; font-weight: 700; }
-    .hero {
-      display: flex;
-      gap: 1rem;
-      align-items: flex-start;
-    }
-    .portrait-wrap {
-      flex-shrink: 0;
-      width: 112px;
-      height: 112px;
-      border-radius: 20px;
-      overflow: hidden;
-      background: var(--card);
-      border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
-    }
-    .portrait-wrap svg { width: 100%; height: 100%; display: block; }
-    .intro { flex: 1; min-width: 0; }
-    .sub { color: var(--hint); font-size: 0.85rem; margin: 0.25rem 0 0; }
-    .chat-log {
-      flex: 1;
-      min-height: 120px;
-      max-height: 36vh;
-      overflow-y: auto;
-      background: var(--card);
-      border-radius: 14px;
-      padding: 0.65rem 0.75rem;
-      font-size: 0.88rem;
-    }
-    .bubble { margin: 0.35rem 0; padding: 0.45rem 0.55rem; border-radius: 10px; }
-    .bubble.user { background: color-mix(in srgb, var(--btn) 25%, transparent); text-align: right; }
-    .bubble.amina { background: color-mix(in srgb, var(--text) 10%, transparent); }
-    .bubble.err { color: #f66; font-size: 0.82rem; }
-    label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--hint); display: block; margin-bottom: 0.2rem; }
-    textarea {
+
+    /* Avatar Area */
+    .avatar-area {
+      position: relative;
       width: 100%;
-      min-height: 64px;
-      resize: vertical;
-      border-radius: 12px;
-      border: 1px solid color-mix(in srgb, var(--text) 15%, transparent);
-      background: color-mix(in srgb, var(--bg) 80%, var(--text));
-      color: var(--text);
-      padding: 0.55rem 0.65rem;
-      font-size: 0.95rem;
-      font-family: inherit;
+      aspect-ratio: 1 / 1;
+      max-height: 45vh;
+      overflow: hidden;
+      background: radial-gradient(ellipse at center, #1a1025 0%, #0f0f12 100%);
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
-    .row { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
-    button.primary {
+    .avatar-area img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      transition: opacity 0.3s ease;
+    }
+    .avatar-area video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: none;
+    }
+    .avatar-area video.show { display: block; }
+    .avatar-area img.hidden { display: none; }
+    .avatar-name {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      padding: 2rem 1rem 0.75rem;
+      background: linear-gradient(transparent, rgba(15,15,18,0.95));
+      text-align: center;
+    }
+    .avatar-name h1 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: var(--gold);
+      text-shadow: 0 0 12px rgba(212,168,83,0.3);
+    }
+    .avatar-name .subtitle {
+      font-size: 0.75rem;
+      color: var(--hint);
+      margin-top: 0.15rem;
+    }
+
+    /* Chat Log */
+    .chat-area {
       flex: 1;
-      min-width: 120px;
-      padding: 0.75rem 1rem;
+      overflow-y: auto;
+      padding: 0.5rem 0.75rem;
+      min-height: 80px;
+    }
+    .bubble {
+      margin: 0.35rem 0;
+      padding: 0.5rem 0.65rem;
+      border-radius: 14px;
+      font-size: 0.88rem;
+      max-width: 85%;
+      word-wrap: break-word;
+    }
+    .bubble.user {
+      background: color-mix(in srgb, var(--btn) 30%, transparent);
+      margin-left: auto;
+      border-bottom-right-radius: 4px;
+    }
+    .bubble.amina {
+      background: var(--card);
+      border-bottom-left-radius: 4px;
+    }
+    .bubble.err { color: #f66; font-size: 0.82rem; }
+    .bubble .transcript {
+      font-size: 0.75rem;
+      color: var(--hint);
+      margin-bottom: 0.2rem;
+      font-style: italic;
+    }
+
+    /* Input Area */
+    .input-area {
+      padding: 0.5rem 0.75rem 0.75rem;
+      background: color-mix(in srgb, var(--bg) 95%, var(--text));
+      border-top: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+    }
+    .input-row {
+      display: flex;
+      gap: 0.4rem;
+      align-items: flex-end;
+    }
+    .text-input {
+      flex: 1;
+      min-height: 40px;
+      max-height: 100px;
+      resize: none;
+      border-radius: 20px;
+      border: 1px solid color-mix(in srgb, var(--text) 15%, transparent);
+      background: var(--card);
+      color: var(--text);
+      padding: 0.5rem 0.75rem;
+      font-size: 0.9rem;
+      font-family: inherit;
+      outline: none;
+    }
+    .text-input:focus {
+      border-color: color-mix(in srgb, var(--btn) 50%, transparent);
+    }
+    .icon-btn {
+      width: 40px;
+      height: 40px;
+      border-radius: 50%;
       border: none;
-      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: all 0.2s;
+    }
+    .icon-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-send {
       background: var(--btn);
       color: var(--btn-text);
-      font-weight: 600;
-      font-size: 0.95rem;
-      cursor: pointer;
     }
-    button.secondary {
-      padding: 0.65rem 0.85rem;
-      border-radius: 12px;
-      border: 1px solid color-mix(in srgb, var(--text) 20%, transparent);
+    .btn-mic {
       background: transparent;
-      color: var(--text);
-      font-size: 0.85rem;
-      cursor: pointer;
-    }
-    button:disabled { opacity: 0.55; cursor: not-allowed; }
-    .status { font-size: 0.8rem; color: var(--hint); min-height: 1.2em; }
-    video { width: 100%; max-height: min(52vh, 520px); border-radius: 12px; background: #000; display: none; object-fit: contain; }
-    video.show { display: block; }
-    .expect-hint {
-      font-size: 0.78rem;
       color: var(--hint);
-      margin: 0.35rem 0 0;
-      line-height: 1.35;
-      padding: 0.45rem 0.55rem;
-      border-radius: 10px;
-      background: var(--card);
-    }
-    .help-local { font-size: 0.82rem; color: var(--hint); margin: 0.5rem 0 0; line-height: 1.4; }
-    .help-local ol { margin: 0.35rem 0 0 1.1rem; padding: 0; }
-    .help-local a { color: var(--btn); }
-    details.settings { font-size: 0.82rem; color: var(--hint); }
-    details.settings input {
-      width: 100%;
-      margin: 0.2rem 0 0.5rem;
-      padding: 0.45rem;
-      border-radius: 8px;
       border: 1px solid color-mix(in srgb, var(--text) 15%, transparent);
-      background: var(--bg);
-      color: var(--text);
     }
+    .btn-mic.recording {
+      background: #e74c3c;
+      color: #fff;
+      border-color: #e74c3c;
+      animation: pulse-rec 1s infinite;
+    }
+    @keyframes pulse-rec {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(231,76,60,0.4); }
+      50% { box-shadow: 0 0 0 8px rgba(231,76,60,0); }
+    }
+
+    /* Status bar */
+    .status-bar {
+      font-size: 0.75rem;
+      color: var(--hint);
+      text-align: center;
+      padding: 0.2rem;
+      min-height: 1.2em;
+    }
+
+    /* Pipeline log (debug) */
+    .pipeline-log {
+      display: none;
+      font-size: 0.7rem;
+      color: var(--hint);
+      background: rgba(0,0,0,0.3);
+      padding: 0.5rem;
+      max-height: 120px;
+      overflow-y: auto;
+      font-family: monospace;
+      border-top: 1px solid color-mix(in srgb, var(--text) 5%, transparent);
+    }
+    .pipeline-log.show { display: block; }
+    .pipeline-log .entry { margin: 1px 0; }
+    .pipeline-log .entry.error { color: #f66; }
+    .pipeline-log .entry.ok { color: #6f6; }
   </style>
 </head>
 <body>
-  <div class="hero">
-    <div class="portrait-wrap" aria-hidden="true">
-      <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-        <defs><linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%"><stop offset="0%" style="stop-color:#3d2a52"/><stop offset="100%" style="stop-color:#1e3a5f"/></linearGradient></defs>
-        <rect width="100" height="100" fill="url(#g)"/>
-        <circle cx="50" cy="42" r="18" fill="color-mix(in srgb, #fff 35%, transparent)"/>
-        <ellipse cx="50" cy="88" rx="28" ry="22" fill="color-mix(in srgb, #fff 22%, transparent)"/>
-        <text x="50" y="24" text-anchor="middle" fill="color-mix(in srgb, #fff 55%, transparent)" font-size="10" font-family="system-ui,sans-serif">✨</text>
-      </svg>
-    </div>
-    <div class="intro">
+
+  <!-- Avatar display -->
+  <div class="avatar-area" id="avatarArea">
+    <img id="avatarImg" src="/mini-app/avatars/base-neutral.png" alt="Амина" />
+    <video id="heygenVideo" playsinline></video>
+    <div class="avatar-name">
       <h1>Амина</h1>
-      <p class="sub" id="greeting">Загрузка…</p>
-      <p class="expect-hint" id="expectHint">
-        Сверху — просто иконка. Ваш портрет с ПК появится <strong>в видео</strong> под ответом (если настроен туннель и секрет). Текст и озвучка идут с сервера бота, не с компьютера.
-      </p>
+      <p class="subtitle" id="greeting">Загрузка…</p>
     </div>
   </div>
 
-  <div class="chat-log" id="chatLog" aria-live="polite"></div>
-  <video id="aminaVideo" playsinline controls></video>
+  <!-- Chat messages -->
+  <div class="chat-area" id="chatLog" aria-live="polite"></div>
 
-  <div>
-    <label for="msg">Сообщение</label>
-    <textarea id="msg" placeholder="Напиши что-нибудь…"></textarea>
-  </div>
-  <div class="row">
-    <button type="button" class="primary" id="sendBtn">Отправить</button>
-    <button type="button" class="secondary" id="closeBtn">Закрыть</button>
-  </div>
-  <p class="status" id="status"></p>
+  <!-- Status -->
+  <p class="status-bar" id="status"></p>
 
-  <details class="settings">
-    <summary>Локальный PC (видео «говорящая голова»)</summary>
-    <p>Ниже — кратко; полная инструкция в репозитории: <a id="docLink" href="#avatar-local-help">как подключить ПК</a>. Укажите URL туннеля и общий секрет (ничего из коммитимого кода).</p>
-    <label for="localUrl">Базовый URL (https://…)</label>
-    <input id="localUrl" type="url" placeholder="https://xxxx.trycloudflare.com" autocomplete="off" />
-    <label for="localSecret">Секрет (как AMINA_AVATAR_SECRET)</label>
-    <input id="localSecret" type="password" placeholder="Секрет из .env" autocomplete="off" />
-    <button type="button" class="secondary" id="saveLocalBtn">Сохранить локально</button>
-  </details>
-
-  <div class="help-local" id="avatar-local-help">
-    <strong>Локальный сервис (MVP):</strong>
-    <ol>
-      <li>На ПК: каталог <code style="font-size:0.9em">amina-avatar-local</code> — скопируйте <code>env.example</code> в <code>.env</code>, задайте <code>AMINA_AVATAR_SECRET</code>.</li>
-      <li>Положите портрет в <code>assets/face.png</code> (или будет заглушка).</li>
-      <li><code>docker compose up</code> или <code>start-windows.ps1</code>; проверка <code>/health</code>.</li>
-      <li>Туннель (cloudflared / ngrok) на порт сервиса → скопируйте <strong>https</strong>-URL в поле выше; секрет — тот же, что в <code>.env</code>.</li>
-      <li>MVP: статичное лицо + звук в MP4; липсинк на GPU — отдельный этап.</li>
-    </ol>
+  <!-- Input -->
+  <div class="input-area">
+    <div class="input-row">
+      <button type="button" class="icon-btn btn-mic" id="micBtn" title="Голосовое сообщение">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="23"/>
+          <line x1="8" y1="23" x2="16" y2="23"/>
+        </svg>
+      </button>
+      <textarea class="text-input" id="msg" rows="1" placeholder="Напиши что-нибудь…"></textarea>
+      <button type="button" class="icon-btn btn-send" id="sendBtn" title="Отправить">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+        </svg>
+      </button>
+    </div>
   </div>
+
+  <!-- Pipeline debug log (triple-tap avatar to show) -->
+  <div class="pipeline-log" id="pipelineLog"></div>
 
   <script>
     (function () {
+      'use strict';
+
+      /* ====== Telegram WebApp init ====== */
       var tg = window.Telegram && window.Telegram.WebApp;
-      if (tg) {
-        tg.ready();
-        tg.expand();
-      }
+      if (tg) { tg.ready(); tg.expand(); }
+      var initData = (tg && tg.initData) ? String(tg.initData) : '';
+      var userName = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.first_name) || 'друг';
 
-      var initData = tg && tg.initData ? String(tg.initData) : '';
-      var name = (tg && tg.initDataUnsafe && tg.initDataUnsafe.user && tg.initDataUnsafe.user.first_name) || 'друг';
-      var g = document.getElementById('greeting');
-      if (g) g.textContent = 'Привет, ' + name + ' — пиши ниже, отвечу текстом и озвучу.';
-
+      /* ====== DOM refs ====== */
       var chatLog = document.getElementById('chatLog');
       var msgEl = document.getElementById('msg');
       var sendBtn = document.getElementById('sendBtn');
+      var micBtn = document.getElementById('micBtn');
       var statusEl = document.getElementById('status');
-      var videoEl = document.getElementById('aminaVideo');
-      var docLink = document.getElementById('docLink');
-      var LS_URL = 'amina_avatar_base_url';
-      var LS_SECRET = 'amina_avatar_secret';
+      var greetingEl = document.getElementById('greeting');
+      var avatarImg = document.getElementById('avatarImg');
+      var heygenVideo = document.getElementById('heygenVideo');
+      var pipelineLogEl = document.getElementById('pipelineLog');
 
-      function loadLocalCfg() {
-        try {
-          var u = localStorage.getItem(LS_URL) || '';
-          var s = localStorage.getItem(LS_SECRET) || '';
-          var urlInput = document.getElementById('localUrl');
-          var secInput = document.getElementById('localSecret');
-          if (urlInput) urlInput.value = u;
-          if (secInput) secInput.value = s;
-        } catch (e) {}
+      /* ====== State ====== */
+      var isProcessing = false;
+      var isRecording = false;
+      var mediaRecorder = null;
+      var audioChunks = [];
+      var heygenMode = 'hybrid';
+      var heygenSession = null;
+      var heygenKnowledgeBase = '';
+      var apiBase = window.location.origin.replace(/\/$/, '') + '/api';
+
+      /* ====== Pipeline logging ====== */
+      var debugMode = false;
+      var tapCount = 0;
+      var tapTimer = null;
+      document.getElementById('avatarArea').addEventListener('click', function () {
+        tapCount++;
+        if (tapTimer) clearTimeout(tapTimer);
+        tapTimer = setTimeout(function () { tapCount = 0; }, 500);
+        if (tapCount >= 3) {
+          debugMode = !debugMode;
+          pipelineLogEl.classList.toggle('show', debugMode);
+          tapCount = 0;
+        }
+      });
+
+      function logPipeline(msg, type) {
+        var d = document.createElement('div');
+        d.className = 'entry' + (type === 'error' ? ' error' : type === 'ok' ? ' ok' : '');
+        d.textContent = '[' + new Date().toLocaleTimeString() + '] ' + msg;
+        pipelineLogEl.appendChild(d);
+        pipelineLogEl.scrollTop = pipelineLogEl.scrollHeight;
+        if (type === 'error') console.error('[PIPELINE]', msg);
+        else console.log('[PIPELINE]', msg);
       }
-      loadLocalCfg();
 
-      var saveBtn = document.getElementById('saveLocalBtn');
-      if (saveBtn) {
-        saveBtn.addEventListener('click', function () {
-          var urlInput = document.getElementById('localUrl');
-          var secInput = document.getElementById('localSecret');
-          try {
-            localStorage.setItem(LS_URL, (urlInput && urlInput.value) ? urlInput.value.trim().replace(/\/+$/, '') : '');
-            localStorage.setItem(LS_SECRET, (secInput && secInput.value) ? secInput.value.trim() : '');
-            setStatus('Настройки сохранены в этом устройстве.');
-          } catch (e) {
-            setStatus('Не удалось сохранить.');
-          }
-        });
+      /* ====== Helpers ====== */
+      function setStatus(t) { if (statusEl) statusEl.textContent = t || ''; }
+
+      function setLocked(locked) {
+        isProcessing = locked;
+        if (sendBtn) sendBtn.disabled = locked;
+        if (micBtn && !isRecording) micBtn.disabled = locked;
       }
 
-      function setStatus(t) {
-        if (statusEl) statusEl.textContent = t || '';
-      }
-
-      function appendBubble(text, cls) {
+      function appendBubble(text, cls, transcriptText) {
         if (!chatLog) return;
         var d = document.createElement('div');
         d.className = 'bubble ' + (cls || '');
-        d.textContent = text;
+        if (transcriptText) {
+          var tr = document.createElement('div');
+          tr.className = 'transcript';
+          tr.textContent = '🎤 ' + transcriptText;
+          d.appendChild(tr);
+        }
+        var span = document.createElement('span');
+        span.textContent = text;
+        d.appendChild(span);
         chatLog.appendChild(d);
         chatLog.scrollTop = chatLog.scrollHeight;
+      }
+
+      function setEmotion(emotion) {
+        if (!avatarImg) return;
+        var emotionMap = {
+          neutral: 'base-neutral', happy: 'happy', ecstatic: 'ecstatic',
+          sad: 'sad', surprised: 'surprised', thinking: 'thinking',
+          angry: 'angry', smirk: 'smirk', sleepy: 'sleepy',
+          flirty: 'flirty', loving: 'loving'
+        };
+        var file = emotionMap[emotion] || 'base-neutral';
+        avatarImg.src = '/mini-app/avatars/' + file + '.png';
       }
 
       function playAudioBase64(b64, mime) {
@@ -247,112 +338,357 @@
           var blob = new Blob([bytes], { type: mime || 'audio/mpeg' });
           var url = URL.createObjectURL(blob);
           var a = new Audio(url);
-          a.play().finally(function () { URL.revokeObjectURL(url); });
-        } catch (e) {
-          setStatus('Не удалось воспроизвести звук.');
-        }
-      }
-
-      function showVideoBase64(b64, mime) {
-        if (!videoEl || !b64) return;
-        try {
-          var bin = atob(b64);
-          var bytes = new Uint8Array(bin.length);
-          for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-          var blob = new Blob([bytes], { type: mime || 'video/mp4' });
-          var old = videoEl.src;
-          if (old && old.indexOf('blob:') === 0) URL.revokeObjectURL(old);
-          videoEl.src = URL.createObjectURL(blob);
-          videoEl.classList.add('show');
-          videoEl.play().catch(function () {});
-        } catch (e) {
-          setStatus('Не удалось показать видео.');
-        }
-      }
-
-      async function tryLocalStillVideo(audioBase64, audioMime) {
-        var base = '';
-        var secret = '';
-        try {
-          base = (localStorage.getItem(LS_URL) || '').trim().replace(/\/+$/, '');
-          secret = (localStorage.getItem(LS_SECRET) || '').trim();
-        } catch (e) {}
-        if (!base || !secret || !audioBase64) return;
-        setStatus('Локальный PC: сборка видео…');
-        try {
-          var r = await fetch(base + '/v1/still-video', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: 'Bearer ' + secret
-            },
-            body: JSON.stringify({ audio_base64: audioBase64, audio_mime: audioMime || 'audio/mpeg' })
+          a.play().catch(function () {}).finally(function () {
+            setTimeout(function () { URL.revokeObjectURL(url); }, 60000);
           });
-          var j = await r.json().catch(function () { return null; });
-          if (!r.ok || !j || !j.video_base64) {
-            setStatus('Локальный сервер: ' + (j && j.detail ? String(j.detail) : r.status));
-            return;
-          }
-          showVideoBase64(j.video_base64, j.video_mime || 'video/mp4');
-          setStatus('');
         } catch (e) {
-          setStatus('Локальный PC недоступен (туннель выкл. или неверный URL).');
+          logPipeline('Audio playback error: ' + e.message, 'error');
         }
       }
 
-      async function sendMessage() {
+      /* ====== Greeting ====== */
+      if (greetingEl) greetingEl.textContent = 'Техножрица Омниссии приветствует тебя, ' + userName;
+
+      /* ====== Text auto-resize ====== */
+      if (msgEl) {
+        msgEl.addEventListener('input', function () {
+          this.style.height = 'auto';
+          this.style.height = Math.min(this.scrollHeight, 100) + 'px';
+        });
+        msgEl.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendTextMessage();
+          }
+        });
+      }
+
+      /* ====== Send text message ====== */
+      async function sendTextMessage() {
+        if (isProcessing) return;
         if (!initData) {
-          appendBubble('Откройте мини-приложение из Telegram (нет initData).', 'err');
+          appendBubble('Откройте мини-приложение из Telegram.', 'err');
           return;
         }
-        var text = msgEl && msgEl.value ? msgEl.value.trim() : '';
+        var text = msgEl ? msgEl.value.trim() : '';
         if (!text) return;
-        if (sendBtn) sendBtn.disabled = true;
+
+        setLocked(true);
         setStatus('Думаю…');
         appendBubble(text, 'user');
-        if (msgEl) msgEl.value = '';
+        if (msgEl) { msgEl.value = ''; msgEl.style.height = 'auto'; }
+        setEmotion('thinking');
+
+        logPipeline('TEXT → server: ' + text.slice(0, 60));
+
         try {
-          var api = window.location.origin.replace(/\/$/, '') + '/api/mini-app/message';
-          var res = await fetch(api, {
+          var res = await fetch(apiBase + '/mini-app/message', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ initData: initData, message: text, withAudio: true })
+            body: JSON.stringify({ initData: initData, message: text, withAudio: true }),
           });
           var json = await res.json().catch(function () { return null; });
+
           if (!res.ok || !json || !json.success) {
             var err = (json && json.error) ? json.error : ('HTTP ' + res.status);
-            if (res.status === 502 || res.status === 503 || res.status === 504) {
-              err =
-                'Сервер бота временно недоступен (' +
-                res.status +
-                '). Обычно перезапуск на хостинге или долгий ответ ИИ. Подождите минуту и отправьте снова — к локальному PC это не относится.';
-            } else if (res.status === 401) {
-              err =
-                'Сессия мини-приложения устарела. Закройте окно и откройте «Амина» из меню бота заново.';
-            }
-            appendBubble('Ошибка: ' + err, 'err');
-            setStatus('');
+            handleApiError(res.status, err);
             return;
           }
-          var replyText = json.data && json.data.response ? String(json.data.response) : '';
-          appendBubble(replyText, 'amina');
-          setStatus('');
-          var b64 = json.data && json.data.audioBase64;
-          var mime = json.data && json.data.audioMimeType;
-          if (b64) playAudioBase64(b64, mime);
-          if (b64) tryLocalStillVideo(b64, mime);
+
+          logPipeline('AI response OK, emotion=' + (json.data.emotion || 'neutral'), 'ok');
+          handleAiResponse(json.data);
         } catch (e) {
           appendBubble('Сеть недоступна.', 'err');
-          setStatus('');
+          logPipeline('Network error: ' + e.message, 'error');
         } finally {
-          if (sendBtn) sendBtn.disabled = false;
+          setLocked(false);
+          setStatus('');
         }
       }
 
-      if (sendBtn) sendBtn.addEventListener('click', sendMessage);
-      var closeBtn = document.getElementById('closeBtn');
-      if (closeBtn && tg) closeBtn.addEventListener('click', function () { tg.close(); });
-      else if (closeBtn) closeBtn.style.display = 'none';
+      if (sendBtn) sendBtn.addEventListener('click', sendTextMessage);
+
+      /* ====== Voice recording (MediaRecorder — works on iOS!) ====== */
+      async function startRecording() {
+        if (isProcessing || isRecording) return;
+
+        try {
+          logPipeline('Requesting microphone access…');
+          var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+          audioChunks = [];
+
+          var mimeTypes = [
+            'audio/webm;codecs=opus',
+            'audio/webm',
+            'audio/mp4',
+            'audio/ogg;codecs=opus',
+            '',
+          ];
+
+          var selectedMime = '';
+          for (var i = 0; i < mimeTypes.length; i++) {
+            if (!mimeTypes[i] || MediaRecorder.isTypeSupported(mimeTypes[i])) {
+              selectedMime = mimeTypes[i];
+              break;
+            }
+          }
+
+          logPipeline('MediaRecorder mime: ' + (selectedMime || 'default'));
+
+          var options = selectedMime ? { mimeType: selectedMime } : {};
+          mediaRecorder = new MediaRecorder(stream, options);
+
+          mediaRecorder.ondataavailable = function (e) {
+            if (e.data && e.data.size > 0) audioChunks.push(e.data);
+          };
+
+          mediaRecorder.onstop = function () {
+            stream.getTracks().forEach(function (t) { t.stop(); });
+            var blob = new Blob(audioChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+            logPipeline('Recording stopped, size=' + blob.size + ' type=' + blob.type);
+            if (blob.size > 0) {
+              sendVoiceToServer(blob);
+            }
+            audioChunks = [];
+          };
+
+          mediaRecorder.onerror = function (e) {
+            logPipeline('MediaRecorder error: ' + (e.error ? e.error.message : 'unknown'), 'error');
+            stopRecording();
+          };
+
+          mediaRecorder.start();
+          isRecording = true;
+          micBtn.classList.add('recording');
+          setStatus('🎙 Говорите… (нажмите снова чтобы остановить)');
+          logPipeline('Recording started', 'ok');
+
+        } catch (e) {
+          logPipeline('Mic access denied: ' + e.message, 'error');
+          setStatus('Нет доступа к микрофону');
+          setTimeout(function () { setStatus(''); }, 3000);
+        }
+      }
+
+      function stopRecording() {
+        if (!mediaRecorder || !isRecording) return;
+        try {
+          if (mediaRecorder.state === 'recording') {
+            mediaRecorder.stop();
+          }
+        } catch (e) {
+          logPipeline('Stop error: ' + e.message, 'error');
+        }
+        isRecording = false;
+        micBtn.classList.remove('recording');
+      }
+
+      async function sendVoiceToServer(blob) {
+        if (!initData) {
+          appendBubble('Откройте мини-приложение из Telegram.', 'err');
+          return;
+        }
+
+        setLocked(true);
+        setStatus('Распознаю речь…');
+        setEmotion('thinking');
+        logPipeline('Sending voice to server, size=' + blob.size);
+
+        var ext = blob.type.includes('mp4') ? 'mp4' : blob.type.includes('ogg') ? 'ogg' : 'webm';
+        var formData = new FormData();
+        formData.append('audio', blob, 'voice.' + ext);
+        formData.append('initData', initData);
+
+        try {
+          var res = await fetch(apiBase + '/mini-app/voice', {
+            method: 'POST',
+            body: formData,
+          });
+          var json = await res.json().catch(function () { return null; });
+
+          if (!res.ok || !json || !json.success) {
+            var err = (json && json.error) ? json.error : ('HTTP ' + res.status);
+            handleApiError(res.status, err);
+            return;
+          }
+
+          var transcript = json.data.transcript || '';
+          logPipeline('STT: "' + transcript.slice(0, 80) + '" → emotion=' + (json.data.emotion || 'neutral'), 'ok');
+
+          if (transcript) {
+            appendBubble(transcript, 'user');
+          }
+
+          handleAiResponse(json.data);
+        } catch (e) {
+          appendBubble('Сеть недоступна.', 'err');
+          logPipeline('Voice send error: ' + e.message, 'error');
+        } finally {
+          setLocked(false);
+          setStatus('');
+        }
+      }
+
+      if (micBtn) {
+        micBtn.addEventListener('click', function () {
+          if (isRecording) {
+            stopRecording();
+          } else {
+            startRecording();
+          }
+        });
+      }
+
+      /* ====== Handle API response ====== */
+      function handleAiResponse(data) {
+        var text = data.response || '';
+        appendBubble(text, 'amina');
+        setEmotion(data.emotion || 'neutral');
+
+        if (data.audioBase64) {
+          playAudioBase64(data.audioBase64, data.audioMimeType);
+          logPipeline('TTS audio playing');
+
+          if (heygenSession && heygenMode === 'hybrid') {
+            speakWithHeygen(text);
+          }
+        }
+      }
+
+      function handleApiError(status, err) {
+        if (status === 502 || status === 503 || status === 504) {
+          err = 'Сервер временно недоступен (' + status + '). Подождите минуту.';
+        } else if (status === 401) {
+          err = 'Сессия устарела. Закройте и откройте Амину заново.';
+        }
+        appendBubble('Ошибка: ' + err, 'err');
+        logPipeline('API error ' + status + ': ' + err, 'error');
+      }
+
+      /* ====== HeyGen Integration ====== */
+      async function initHeygen() {
+        if (!initData) return;
+
+        logPipeline('Fetching HeyGen config…');
+        try {
+          var res = await fetch(apiBase + '/mini-app/heygen-token?initData=' + encodeURIComponent(initData));
+          var json = await res.json().catch(function () { return null; });
+
+          if (!res.ok || !json || !json.success) {
+            logPipeline('HeyGen not configured: ' + (json && json.error || res.status));
+            return;
+          }
+
+          heygenMode = json.mode || 'hybrid';
+          heygenKnowledgeBase = json.knowledgeBase || '';
+          logPipeline('HeyGen mode=' + heygenMode + ' quality=' + json.quality + ' avatarId=' + (json.avatarId || 'none'), 'ok');
+
+          if (!json.token || !json.avatarId) {
+            logPipeline('HeyGen: missing token or avatarId, skipping streaming');
+            return;
+          }
+
+          await startHeygenSession(json);
+        } catch (e) {
+          logPipeline('HeyGen init error: ' + e.message, 'error');
+        }
+      }
+
+      async function startHeygenSession(cfg) {
+        try {
+          if (typeof StreamingAvatar === 'undefined') {
+            logPipeline('Loading HeyGen SDK…');
+            await loadScript('https://unpkg.com/@heygen/streaming-avatar@2/dist/index.umd.js');
+          }
+
+          if (typeof StreamingAvatar === 'undefined') {
+            logPipeline('HeyGen SDK not available', 'error');
+            return;
+          }
+
+          logPipeline('Creating HeyGen streaming session…');
+          var avatar = new StreamingAvatar({ token: cfg.token });
+
+          var sessionConfig = {
+            avatarName: cfg.avatarId,
+            quality: cfg.quality || 'low',
+            language: 'ru',
+          };
+
+          if (heygenMode === 'native' && heygenKnowledgeBase) {
+            sessionConfig.knowledgeBase = heygenKnowledgeBase;
+            sessionConfig.voice = { voiceId: '', rate: 1.0 };
+            logPipeline('Native mode: knowledgeBase loaded (' + heygenKnowledgeBase.length + ' chars)');
+          }
+
+          var session = await avatar.createStartAvatar(sessionConfig);
+          heygenSession = avatar;
+
+          logPipeline('HeyGen session started: ' + (session.session_id || 'ok'), 'ok');
+
+          avatar.on('stream_ready', function (ev) {
+            logPipeline('HeyGen stream ready', 'ok');
+            if (ev.detail && ev.detail.stream && heygenVideo) {
+              heygenVideo.srcObject = ev.detail.stream;
+              heygenVideo.classList.add('show');
+              if (avatarImg) avatarImg.classList.add('hidden');
+              heygenVideo.play().catch(function () {});
+            }
+          });
+
+          avatar.on('stream_disconnected', function () {
+            logPipeline('HeyGen stream disconnected');
+            if (heygenVideo) heygenVideo.classList.remove('show');
+            if (avatarImg) avatarImg.classList.remove('hidden');
+            heygenSession = null;
+          });
+
+          if (heygenMode === 'native') {
+            avatar.on('avatar_start_talking', function () {
+              logPipeline('HeyGen avatar talking');
+              setEmotion('happy');
+            });
+            avatar.on('avatar_stop_talking', function () {
+              logPipeline('HeyGen avatar stopped');
+              setEmotion('neutral');
+            });
+
+            logPipeline('Native mode: starting voice chat…');
+            await avatar.startVoiceChat({ useSilencePrompt: false });
+            logPipeline('Native voice chat started', 'ok');
+          }
+
+        } catch (e) {
+          logPipeline('HeyGen session error: ' + e.message, 'error');
+        }
+      }
+
+      function speakWithHeygen(text) {
+        if (!heygenSession) return;
+        try {
+          heygenSession.speak({ text: text, task_type: 'repeat' });
+          logPipeline('HeyGen speak: ' + text.slice(0, 40));
+        } catch (e) {
+          logPipeline('HeyGen speak error: ' + e.message, 'error');
+        }
+      }
+
+      function loadScript(src) {
+        return new Promise(function (resolve, reject) {
+          var s = document.createElement('script');
+          s.src = src;
+          s.onload = resolve;
+          s.onerror = function () { reject(new Error('Failed to load: ' + src)); };
+          document.head.appendChild(s);
+        });
+      }
+
+      /* ====== Init ====== */
+      if (initData) {
+        initHeygen();
+      }
+
     })();
   </script>
 </body>

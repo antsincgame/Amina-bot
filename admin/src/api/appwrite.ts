@@ -81,6 +81,8 @@ function resolveBotUrl(): string {
 
 const BOT_URL = resolveBotUrl();
 
+const DEFAULT_FETCH_TIMEOUT_MS = 30_000;
+
 export async function fetchBotApi(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
 
@@ -93,7 +95,9 @@ export async function fetchBotApi(path: string, init: RequestInit = {}): Promise
     // No session — proceed without auth header
   }
 
-  return fetch(`${BOT_URL}${path}`, { ...init, headers });
+  const signal = init.signal ?? AbortSignal.timeout(DEFAULT_FETCH_TIMEOUT_MS);
+
+  return fetch(`${BOT_URL}${path}`, { ...init, headers, signal });
 }
 
 async function readApiError(response: Response, fallbackMessage: string): Promise<string> {
