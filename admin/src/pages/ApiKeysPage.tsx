@@ -719,7 +719,7 @@ const ApiKeysPage = () => {
                   {...register('heygen_api_key')}
                   type={showHeygen ? 'text' : 'password'}
                   placeholder="sk_..."
-                  className="input-glass w-full pr-10"
+                  className="input w-full pr-10"
                 />
                 <button
                   type="button"
@@ -740,7 +740,7 @@ const ApiKeysPage = () => {
                 {...register('heygen_avatar_id')}
                 type="text"
                 placeholder="309a8abed2bb4b47afdbd4e469b6ee13"
-                className="input-glass w-full"
+                className="input w-full"
               />
               <p className="text-xs text-gray-500 mt-1">
                 ID из HeyGen → My Avatars → выбранный аватар
@@ -754,7 +754,7 @@ const ApiKeysPage = () => {
               </label>
               <select
                 {...register('heygen_quality')}
-                className="input-glass w-full"
+                className="input w-full"
               >
                 {HEYGEN_QUALITIES.map(q => (
                   <option key={q.id} value={q.id}>{q.name}</option>
