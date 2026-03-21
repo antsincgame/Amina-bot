@@ -69,9 +69,6 @@ const envSchema = z.object({
   LIRAX_WEBHOOK_TOKEN: z.string().optional(),
   LIRAX_DEFAULT_EXT: z.string().optional(),
 
-  // HeyGen LiveAvatar
-  HEYGEN_API_KEY: z.string().optional(),
-  HEYGEN_AVATAR_ID: z.string().optional(),
 });
 
 // --------------------------------------------
@@ -185,13 +182,6 @@ export const config = {
   perplexity: {
     apiKey: env.PERPLEXITY_API_KEY || '', // Может быть пустым, загрузится из БД
     baseUrl: getPerplexityBaseUrl(),
-  },
-
-  // HeyGen LiveAvatar (для мини-приложения)
-  heygen: {
-    apiKey: env.HEYGEN_API_KEY || '',
-    avatarId: env.HEYGEN_AVATAR_ID || '',
-    quality: 'low' as 'low' | 'medium' | 'high',
   },
 
   // Database backend — always Appwrite
