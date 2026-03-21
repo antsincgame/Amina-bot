@@ -33,7 +33,7 @@ import { startTelephonyJobWorker, stopTelephonyJobWorker } from './features/tele
 import { ensureTelephonyRecordingsInfra } from './features/telephony/telephony-recordings-repo.js';
 import { syncSelfCoreSystemFacts } from './ai/self-core.js';
 import { getChatRuntimeState } from './ai/runtime-truth.js';
-import { getMiniAppUrl } from './telegram/mini-app.js';
+
 import { getMiniAppHtml } from './telegram/mini-app-html.js';
 
 // --------------------------------------------
@@ -230,6 +230,23 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
   server.get('/mini-app', async (_request, reply) => reply.redirect('/mini-app/index.html'));
   server.get('/mini-app/', async (_request, reply) => sendMiniAppHtml(reply));
   server.get('/mini-app/index.html', async (_request, reply) => sendMiniAppHtml(reply));
+
+  // Serve avatar images for Mini App
+  const avatarsDir = resolve(dirname(fileURLToPath(import.meta.url)), 'telegram', 'avatars');
+  server.get('/mini-app/avatars/:filename', async (request: FastifyRequest<{ Params: { filename: string } }>, reply: FastifyReply) => {
+    const { filename } = request.params;
+    if (!/^[\w-]+\.png$/.test(filename)) {
+      return reply.code(400).send({ error: 'Invalid filename' });
+    }
+    const filePath = resolve(avatarsDir, filename);
+    if (!existsSync(filePath)) {
+      return reply.code(404).send({ error: 'Avatar not found' });
+    }
+    return reply
+      .header('Cache-Control', 'public, max-age=86400')
+      .type('image/png')
+      .send(readFileSync(filePath));
+  });
   try {
     getMiniAppHtml();
     appLogger.info('📱 Telegram mini-app: HTML из src/telegram/mini-app-web.html');
@@ -398,21 +415,12 @@ const initBotAndServices = async (): Promise<void> => {
   }
 
   try {
-    const miniUrl = getMiniAppUrl();
-    if (miniUrl) {
-      await bot.api.setChatMenuButton({
-        menu_button: {
-          type: 'web_app',
-          text: 'Амина',
-          web_app: { url: miniUrl },
-        },
-      });
-      appLogger.info({ miniUrl }, '📱 Кнопка меню Web App (Амина) установлена');
-    } else {
-      appLogger.warn('BOT_URL не https — кнопка мини-приложения в меню чата не установлена');
-    }
+    await bot.api.setChatMenuButton({
+      menu_button: { type: 'commands' },
+    });
+    appLogger.info('📋 Дефолтная кнопка меню → список команд');
   } catch (err) {
-    appLogger.warn({ error: err }, '⚠️ Failed to set Web App menu button');
+    appLogger.warn({ error: err }, '⚠️ Failed to set default menu button');
   }
 };
 

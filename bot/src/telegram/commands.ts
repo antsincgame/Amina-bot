@@ -59,6 +59,15 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
       telegramLogger.warn({ error: err, userId }, 'Failed to init user prefs on /start');
     }
 
+    // Сброс per-chat menu_button → список команд (убирает кешированную "Амина" → WebApp)
+    try {
+      await ctx.setChatMenuButton({
+        menu_button: { type: 'commands' },
+      });
+    } catch (err) {
+      telegramLogger.debug({ error: err, userId }, 'setChatMenuButton failed (non-critical)');
+    }
+
     const name = ctx.from?.first_name || 'друг';
 
     let introText: string;
@@ -75,24 +84,23 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
     await ctx.reply(
       introText +
-      `<b>Вот что умею:</b>\n\n` +
+      `<b>Вот что я умею:</b>\n\n` +
       `💬 <b>Чат</b> — задай любой вопрос\n` +
-      `🌐 <b>Интернет</b> — ищу актуальную информацию в сети\n` +
-      `🎨 <b>Картинки</b> — «нарисуй...» или кнопка ниже\n` +
+      `🔍 <b>Поиск</b> — ищу в интернете\n` +
+      `🖼️ <b>Картинки</b> — «нарисуй...» или кнопка ниже\n` +
       `🎤 <b>Голос</b> — отправь голосовое, я пойму\n` +
-      `📷 <b>Фото</b> — отправь картинку для анализа\n` +
+      `📷 <b>Фото</b> — отправь картинку, расскажу что на ней\n` +
+      `🎨 <b>Фото-магия</b> — отредактирую любое фото\n` +
       `⏰ <b>Напоминания</b> — «напомни через час...»\n` +
-      `📌 <b>Заметки</b> — «запомни ...» или кнопка\n` +
+      `📝 <b>Заметки</b> — «запомни ...»\n` +
       `✅ <b>Задачи</b> — добавляй и выполняй\n` +
-      `☀️ <b>Дайджест</b> — утренняя сводка с погодой и новостями\n` +
-      `🧠 <b>Полный дайджест</b> — /digest_all для полного дайджеста\n` +
+      `🌅 <b>Дайджест</b> — утренняя сводка с погодой и новостями\n` +
       `🔊 <b>Озвучка</b> — «скажи голосом...»\n\n` +
-      `👇 <b>Используй кнопки ниже или просто напиши — я слушаю.</b>\n\n` +
-      `📱 <b>Мини-приложение:</b> кнопка «✨ Амина» или пункт «Амина» в меню чата (рядом со скрепкой).`,
+      `👇 <b>Кнопки ниже — нажимай!</b>`,
       { parse_mode: 'HTML', reply_markup: buildReplyKeyboard() }
     );
 
-    await ctx.reply(`🎛 <b>Быстрое меню</b> — нажми на нужную кнопку:`, {
+    await ctx.reply('🎛️ <b>Быстрое меню</b> — выбирай:', {
       parse_mode: 'HTML',
       reply_markup: buildMainMenu(),
     });
@@ -100,7 +108,16 @@ export const setupCommands = (bot: Bot<BotContext>): void => {
 
   // /menu
   bot.command('menu', async (ctx) => {
-    await ctx.reply(`🎛 <b>Меню Amina</b> — выбери действие:`, {
+    // Сброс per-chat menu_button → список команд
+    try {
+      await ctx.setChatMenuButton({
+        menu_button: { type: 'commands' },
+      });
+    } catch {
+      telegramLogger.debug('setChatMenuButton in /menu failed (non-critical)');
+    }
+
+    await ctx.reply('🎛️ <b>Меню Амины</b> — выбирай:', {
       parse_mode: 'HTML',
       reply_markup: buildMainMenu(),
     });

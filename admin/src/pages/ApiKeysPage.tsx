@@ -41,60 +41,59 @@ const apiKeysSchema = z.object({
 
 type ApiKeysForm = z.infer<typeof apiKeysSchema>;
 
-// Модели Perplexity с ценами (февраль 2026)
 const PERPLEXITY_MODELS = [
-  { 
-    id: 'sonar', 
-    name: 'Sonar', 
+  {
+    id: 'sonar',
+    name: 'Sonar',
     description: 'Быстрая и экономичная',
     badge: 'Бюджет',
     badgeColor: 'gold',
-    inputPrice: 1.00, 
-    outputPrice: 1.00, 
+    inputPrice: 1.00,
+    outputPrice: 1.00,
     requestFee: 5.00,
     costPerSearch: 0.0055,
   },
-  { 
-    id: 'sonar-pro', 
-    name: 'Sonar Pro', 
+  {
+    id: 'sonar-pro',
+    name: 'Sonar Pro',
     description: 'Больше цитат, сложные запросы, 200K контекст',
     badge: 'Рекомендуется',
     badgeColor: 'info',
-    inputPrice: 3.00, 
-    outputPrice: 15.00, 
+    inputPrice: 3.00,
+    outputPrice: 15.00,
     requestFee: 6.00,
     costPerSearch: 0.0105,
   },
-  { 
-    id: 'sonar-pro-search', 
-    name: 'Sonar Pro Search', 
+  {
+    id: 'sonar-pro-search',
+    name: 'Sonar Pro Search',
     description: 'Глубокий поиск с максимумом источников',
     badge: 'Премиум',
     badgeColor: 'violet',
-    inputPrice: 3.00, 
-    outputPrice: 15.00, 
+    inputPrice: 3.00,
+    outputPrice: 15.00,
     requestFee: 6.00,
     costPerSearch: 0.0105,
   },
-  { 
-    id: 'sonar-reasoning-pro', 
-    name: 'Sonar Reasoning Pro', 
+  {
+    id: 'sonar-reasoning-pro',
+    name: 'Sonar Reasoning Pro',
     description: 'Аналитика с логическим рассуждением',
     badge: 'Аналитика',
     badgeColor: 'teal',
-    inputPrice: 2.00, 
-    outputPrice: 8.00, 
+    inputPrice: 2.00,
+    outputPrice: 8.00,
     requestFee: 6.00,
     costPerSearch: 0.0085,
   },
-  { 
-    id: 'sonar-deep-research', 
-    name: 'Sonar Deep Research', 
+  {
+    id: 'sonar-deep-research',
+    name: 'Sonar Deep Research',
     description: 'Глубокое исследование с автоматическим анализом',
     badge: 'Исследование',
     badgeColor: 'rose',
-    inputPrice: 2.00, 
-    outputPrice: 8.00, 
+    inputPrice: 2.00,
+    outputPrice: 8.00,
     requestFee: 6.00,
     costPerSearch: 0.0085,
   },
@@ -108,13 +107,11 @@ const ApiKeysPage = () => {
   const [showPerplexity, setShowPerplexity] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
 
-  // Fetch settings
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings'],
     queryFn: settingsApi.getAll,
   });
 
-  // Save mutation
   const { mutate: saveSettings, isPending: isSaving } = useMutation({
     mutationFn: (data: Record<string, string>) => settingsApi.updateMany(data),
     onSuccess: () => {
@@ -161,7 +158,6 @@ const ApiKeysPage = () => {
   const perplexityModel = watch('perplexity_model');
   const searchMaxTokens = watch('web_search_max_tokens');
 
-  // Load settings
   useEffect(() => {
     if (settings) {
       const map = settings.reduce(
@@ -203,7 +199,6 @@ const ApiKeysPage = () => {
     });
   };
 
-  // Получить информацию о выбранной модели
   const selectedModelInfo = PERPLEXITY_MODELS.find(m => m.id === perplexityModel) || PERPLEXITY_MODELS[0];
 
   if (isLoading) {
@@ -211,7 +206,7 @@ const ApiKeysPage = () => {
       <div className="min-h-screen flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <div className="relative">
-            <div className="absolute inset-0 rounded-full animate-pulse-glow" 
+            <div className="absolute inset-0 rounded-full animate-pulse-glow"
                  style={{ background: 'radial-gradient(circle, rgba(255, 215, 0, 0.3) 0%, transparent 70%)', filter: 'blur(10px)' }} />
             <Loader2 className="w-12 h-12 animate-spin text-amber-400 relative" />
           </div>
@@ -229,10 +224,10 @@ const ApiKeysPage = () => {
       <div className="mb-10 animate-fade-in-up">
         <div className="flex items-center gap-4 mb-3">
           <div className="relative">
-            <div className="absolute inset-0 rounded-2xl" 
+            <div className="absolute inset-0 rounded-2xl"
                  style={{ background: 'radial-gradient(circle, rgba(255, 215, 0, 0.4) 0%, transparent 70%)', filter: 'blur(12px)' }} />
             <div className="relative w-14 h-14 rounded-2xl flex items-center justify-center"
-                 style={{ 
+                 style={{
                    background: 'linear-gradient(135deg, rgba(255, 215, 0, 0.2), rgba(139, 92, 246, 0.15))',
                    border: '1px solid rgba(255, 215, 0, 0.3)',
                  }}>
@@ -262,7 +257,7 @@ const ApiKeysPage = () => {
               Безопасное хранение
             </h3>
             <p className="text-gray-400 text-sm leading-relaxed">
-              Все API ключи хранятся в базе данных Appwrite. 
+              Все API ключи хранятся в базе данных Appwrite.
               В Coolify достаточно только <code className="px-1.5 py-0.5 rounded bg-white/5 text-amber-400 text-xs">APPWRITE_API_KEY</code> и <code className="px-1.5 py-0.5 rounded bg-white/5 text-amber-400 text-xs">APPWRITE_PROJECT_ID</code>.
             </p>
           </div>
@@ -270,12 +265,12 @@ const ApiKeysPage = () => {
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-        
+
         {/* Telegram Bot Token */}
         <div className="card animate-fade-in-up stagger-2" style={{ opacity: 0 }}>
           <div className="flex items-center gap-4 mb-5">
             <div className="w-12 h-12 rounded-xl flex items-center justify-center"
-                 style={{ 
+                 style={{
                    background: 'linear-gradient(135deg, rgba(56, 189, 248, 0.2), rgba(56, 189, 248, 0.1))',
                    border: '1px solid rgba(56, 189, 248, 0.3)',
                    boxShadow: '0 0 20px rgba(56, 189, 248, 0.15)',
@@ -295,7 +290,6 @@ const ApiKeysPage = () => {
               </span>
             )}
           </div>
-
           <div className="relative">
             <input
               type={showTelegram ? 'text' : 'password'}
@@ -306,14 +300,11 @@ const ApiKeysPage = () => {
             <button
               type="button"
               onClick={() => setShowTelegram(!showTelegram)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg
-                         text-gray-500 hover:text-amber-400 hover:bg-amber-400/10
-                         transition-all duration-200"
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-gray-500 hover:text-amber-400 hover:bg-amber-400/10 transition-all duration-200"
             >
               {showTelegram ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
-
           <a href="https://t.me/BotFather" target="_blank" rel="noopener noreferrer"
              className="inline-flex items-center gap-1.5 mt-3 text-xs text-gray-500 hover:text-amber-400 transition-colors">
             <ExternalLink className="w-3 h-3" />
@@ -325,7 +316,7 @@ const ApiKeysPage = () => {
         <div className="card animate-fade-in-up stagger-3" style={{ opacity: 0 }}>
           <div className="flex items-center gap-4 mb-5">
             <div className="w-12 h-12 rounded-xl flex items-center justify-center"
-                 style={{ 
+                 style={{
                    background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.2), rgba(34, 197, 94, 0.1))',
                    border: '1px solid rgba(34, 197, 94, 0.3)',
                    boxShadow: '0 0 20px rgba(34, 197, 94, 0.15)',
@@ -345,7 +336,6 @@ const ApiKeysPage = () => {
               </span>
             )}
           </div>
-
           <div className="relative">
             <input
               type={showOpenRouter ? 'text' : 'password'}
@@ -356,14 +346,11 @@ const ApiKeysPage = () => {
             <button
               type="button"
               onClick={() => setShowOpenRouter(!showOpenRouter)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg
-                         text-gray-500 hover:text-amber-400 hover:bg-amber-400/10
-                         transition-all duration-200"
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-gray-500 hover:text-amber-400 hover:bg-amber-400/10 transition-all duration-200"
             >
               {showOpenRouter ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
-
           <a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer"
              className="inline-flex items-center gap-1.5 mt-3 text-xs text-gray-500 hover:text-amber-400 transition-colors">
             <ExternalLink className="w-3 h-3" />
@@ -375,7 +362,7 @@ const ApiKeysPage = () => {
         <div className="card animate-fade-in-up stagger-4" style={{ opacity: 0 }}>
           <div className="flex items-center gap-4 mb-5">
             <div className="w-12 h-12 rounded-xl flex items-center justify-center"
-                 style={{ 
+                 style={{
                    background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.2), rgba(168, 85, 247, 0.1))',
                    border: '1px solid rgba(168, 85, 247, 0.3)',
                    boxShadow: '0 0 20px rgba(168, 85, 247, 0.15)',
@@ -395,7 +382,6 @@ const ApiKeysPage = () => {
               </span>
             )}
           </div>
-
           <div className="relative">
             <input
               type={showGroq ? 'text' : 'password'}
@@ -406,14 +392,11 @@ const ApiKeysPage = () => {
             <button
               type="button"
               onClick={() => setShowGroq(!showGroq)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg
-                         text-gray-500 hover:text-amber-400 hover:bg-amber-400/10
-                         transition-all duration-200"
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-gray-500 hover:text-amber-400 hover:bg-amber-400/10 transition-all duration-200"
             >
               {showGroq ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
-
           <div className="flex items-center justify-between mt-3">
             <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer"
                className="inline-flex items-center gap-1.5 text-xs text-gray-500 hover:text-amber-400 transition-colors">
@@ -434,7 +417,7 @@ const ApiKeysPage = () => {
               <div className="absolute inset-0 rounded-xl animate-pulse-glow"
                    style={{ background: 'radial-gradient(circle, rgba(99, 102, 241, 0.3) 0%, transparent 70%)', filter: 'blur(8px)' }} />
               <div className="relative w-12 h-12 rounded-xl flex items-center justify-center"
-                   style={{ 
+                   style={{
                      background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.3), rgba(139, 92, 246, 0.2))',
                      border: '1px solid rgba(99, 102, 241, 0.4)',
                    }}>
@@ -465,9 +448,7 @@ const ApiKeysPage = () => {
             <button
               type="button"
               onClick={() => setShowPerplexity(!showPerplexity)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg
-                         text-gray-500 hover:text-amber-400 hover:bg-amber-400/10
-                         transition-all duration-200"
+              className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-lg text-gray-500 hover:text-amber-400 hover:bg-amber-400/10 transition-all duration-200"
             >
               {showPerplexity ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
@@ -513,7 +494,7 @@ const ApiKeysPage = () => {
             <h3 className="font-medium text-white mb-4" style={{ fontFamily: 'var(--font-heading)' }}>
               Модель поиска
             </h3>
-            
+
             <div className="space-y-3">
               {PERPLEXITY_MODELS.map((model) => (
                 <label
@@ -532,8 +513,6 @@ const ApiKeysPage = () => {
                     onChange={(e) => setValue('perplexity_model', e.target.value, { shouldDirty: true })}
                     className="sr-only"
                   />
-                  
-                  {/* Radio indicator */}
                   <div className={`w-5 h-5 rounded-full border-2 mr-4 flex items-center justify-center transition-all ${
                     perplexityModel === model.id
                       ? 'border-amber-400 bg-amber-400'
@@ -543,19 +522,17 @@ const ApiKeysPage = () => {
                       <div className="w-2 h-2 rounded-full bg-gray-900" />
                     )}
                   </div>
-
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
                       <span className="font-medium text-white" style={{ fontFamily: 'var(--font-heading)' }}>
                         {model.name}
                       </span>
-                      <span className={`badge-${model.badgeColor === 'gold' ? 'gold' : model.badgeColor === 'violet' ? 'info' : 'info'} text-[10px] px-2 py-0.5`}>
+                      <span className={`badge-${model.badgeColor === 'gold' ? 'gold' : 'info'} text-[10px] px-2 py-0.5`}>
                         {model.badge}
                       </span>
                     </div>
                     <p className="text-xs text-gray-500">{model.description}</p>
                   </div>
-
                   <div className="text-right">
                     <div className="text-sm font-semibold text-amber-400" style={{ fontFamily: 'var(--font-heading)' }}>
                       ~${model.costPerSearch.toFixed(4)}
@@ -621,18 +598,6 @@ const ApiKeysPage = () => {
                 <span>2500 — Подробно</span>
                 <span>4000 — Макс</span>
               </div>
-
-              <div className="p-2.5 rounded-lg text-xs"
-                   style={{ background: 'rgba(251, 146, 60, 0.08)', border: '1px solid rgba(251, 146, 60, 0.15)' }}>
-                <span className="text-gray-400">
-                  💡 Больше токенов = более подробные ответы, но дороже.{' '}
-                  {Number(searchMaxTokens || 1200) >= 2000 
-                    ? 'Отличный выбор для глубоких ответов!' 
-                    : Number(searchMaxTokens || 1200) >= 1000 
-                      ? 'Хороший баланс цены и качества.' 
-                      : 'Экономный режим — ответы могут быть краткими.'}
-                </span>
-              </div>
             </div>
           </div>
         </div>
@@ -663,7 +628,6 @@ const ApiKeysPage = () => {
           </div>
 
           <div className="space-y-4">
-            {/* API Key */}
             <div>
               <label className="block text-sm text-gray-400 mb-1.5">API Key</label>
               <input
@@ -674,7 +638,6 @@ const ApiKeysPage = () => {
               />
             </div>
 
-            {/* Avatar ID */}
             <div>
               <label className="block text-sm text-gray-400 mb-1.5">Avatar ID</label>
               <input
@@ -685,7 +648,6 @@ const ApiKeysPage = () => {
               />
             </div>
 
-            {/* Quality */}
             <div>
               <label className="block text-sm text-gray-400 mb-1.5">Качество стрима</label>
               <select
@@ -701,7 +663,6 @@ const ApiKeysPage = () => {
 
             <div className="divider my-4" />
 
-            {/* Pipeline Mode */}
             <div className="p-4 rounded-xl"
                  style={{ background: 'rgba(255, 255, 255, 0.02)', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
               <h3 className="font-medium text-white mb-3" style={{ fontFamily: 'var(--font-heading)' }}>
@@ -742,7 +703,6 @@ const ApiKeysPage = () => {
               </div>
             </div>
 
-            {/* Knowledge Base (native mode) */}
             {watch('heygen_mode') === 'native' && (
               <div>
                 <label className="block text-sm text-gray-400 mb-1.5">
@@ -773,7 +733,7 @@ const ApiKeysPage = () => {
         <div className="card animate-fade-in-up stagger-5" style={{ opacity: 0 }}>
           <div className="flex items-center gap-4 mb-5">
             <div className="w-12 h-12 rounded-xl flex items-center justify-center"
-                 style={{ 
+                 style={{
                    background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.2), rgba(245, 158, 11, 0.1))',
                    border: '1px solid rgba(245, 158, 11, 0.3)',
                    boxShadow: '0 0 20px rgba(245, 158, 11, 0.15)',
@@ -810,14 +770,6 @@ const ApiKeysPage = () => {
                 Всегда под контролем runtime
               </span>
             </div>
-
-            <div className="p-3 rounded-lg text-xs"
-                 style={{ background: 'rgba(245, 158, 11, 0.08)', border: '1px solid rgba(245, 158, 11, 0.15)' }}>
-              <span className="text-gray-400">
-                Этот блок больше не сохраняет настройку. Если понадобится управляемый policy toggle, его нужно будет
-                ввести как отдельный честный runtime contract, а не как мёртвое UI-поле.
-              </span>
-            </div>
           </div>
         </div>
 
@@ -825,28 +777,24 @@ const ApiKeysPage = () => {
         <div className="flex items-center justify-between pt-6 animate-fade-in-up stagger-5" style={{ opacity: 0 }}>
           {saveMessage && (
             <div className={`flex items-center gap-2 px-4 py-2 rounded-xl ${
-              saveMessage === 'success' 
-                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+              saveMessage === 'success'
+                ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
                 : 'bg-red-500/10 text-red-400 border border-red-500/20'
             }`}>
               {saveMessage === 'success' ? (
                 <>
                   <CheckCircle className="w-4 h-4" />
-                  <span className="text-sm font-medium" style={{ fontFamily: 'var(--font-heading)' }}>
-                    Сохранено
-                  </span>
+                  <span className="text-sm font-medium" style={{ fontFamily: 'var(--font-heading)' }}>Сохранено</span>
                 </>
               ) : (
                 <>
                   <AlertCircle className="w-4 h-4" />
-                  <span className="text-sm font-medium" style={{ fontFamily: 'var(--font-heading)' }}>
-                    Ошибка сохранения
-                  </span>
+                  <span className="text-sm font-medium" style={{ fontFamily: 'var(--font-heading)' }}>Ошибка сохранения</span>
                 </>
               )}
             </div>
           )}
-          
+
           <div className="flex items-center gap-3 ml-auto">
             <button
               type="button"

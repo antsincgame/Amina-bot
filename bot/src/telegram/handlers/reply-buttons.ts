@@ -19,22 +19,28 @@ export const clearAwaitingFlags = (ctx: BotContext): void => {
 };
 
 export const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Record<string, () => Promise<void>> => ({
-  '🌐 Поиск': async () => {
+  '🔍 Поиск': async () => {
     clearAwaitingFlags(ctx);
     await ctx.reply('🔍 <b>Что найти в интернете?</b>', { parse_mode: 'HTML' });
     ctx.session.awaitingSearchQuery = true;
   },
-  '🎨 Картинка': async () => {
+  '🖼️ Картинка': async () => {
     clearAwaitingFlags(ctx);
-    await ctx.reply('🎨 <b>Что нарисовать?</b>', { parse_mode: 'HTML' });
+    await ctx.reply('🖼️ <b>Что нарисовать?</b>\n\nОпиши что хочешь увидеть, и я создам картинку!', { parse_mode: 'HTML' });
     ctx.session.awaitingImagePrompt = true;
   },
-  '📌 Заметки': async () => {
+  // Совместимость со старым emoji (без variation selector)
+  '🖼 Картинка': async () => {
+    clearAwaitingFlags(ctx);
+    await ctx.reply('🖼️ <b>Что нарисовать?</b>\n\nОпиши что хочешь увидеть, и я создам картинку!', { parse_mode: 'HTML' });
+    ctx.session.awaitingImagePrompt = true;
+  },
+  '📝 Заметки': async () => {
     try {
       const notes = await notesRepo.getByUser(userId);
       if (notes.length === 0) {
         clearAwaitingFlags(ctx);
-        await ctx.reply('📋 <b>Что запомнить?</b>', { parse_mode: 'HTML' });
+        await ctx.reply('📝 <b>Что запомнить?</b>\n\nНапиши — я сохраню!', { parse_mode: 'HTML' });
         ctx.session.awaitingNoteContent = true;
       } else {
         const lines = notes.map((n, i) => {
@@ -43,7 +49,7 @@ export const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Recor
         });
         const keyboard = new InlineKeyboard().text('📌 Добавить', 'menu_note_help');
         await ctx.reply(
-          `📋 <b>Заметки (${notes.length}):</b>\n\n${lines.join('\n')}\n\n<i>Удалить: /note_delete номер</i>`,
+          `📝 <b>Заметки (${notes.length}):</b>\n\n${lines.join('\n')}\n\n<i>Удалить: /note_delete номер</i>`,
           { parse_mode: 'HTML', reply_markup: keyboard }
         );
       }
@@ -64,7 +70,29 @@ export const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Recor
         const keyboard = todoDoneKeyboard(todos.length);
         keyboard.row().text('➕ Добавить', 'menu_todo_help');
         await ctx.reply(
-          `📋 <b>Задачи (${todos.length}):</b>\n\n${lines.join('\n')}`,
+          `✅ <b>Задачи (${todos.length}):</b>\n\n${lines.join('\n')}`,
+          { parse_mode: 'HTML', reply_markup: keyboard }
+        );
+      }
+    } catch (err) {
+      telegramLogger.warn({ error: err, userId }, 'Failed to load todos via button');
+      await ctx.reply('😔 Не удалось загрузить задачи.');
+    }
+  },
+  // Совместимость со старым emoji
+  '✏️ Задачи': async () => {
+    try {
+      const todos = await todosRepo.getActive(userId);
+      if (todos.length === 0) {
+        clearAwaitingFlags(ctx);
+        await ctx.reply('✅ <b>Какую задачу добавить?</b>', { parse_mode: 'HTML' });
+        ctx.session.awaitingTodoTask = true;
+      } else {
+        const lines = todos.map((t, i) => `${i + 1}. ☐ ${escapeHtml(t.task)}`);
+        const keyboard = todoDoneKeyboard(todos.length);
+        keyboard.row().text('➕ Добавить', 'menu_todo_help');
+        await ctx.reply(
+          `✅ <b>Задачи (${todos.length}):</b>\n\n${lines.join('\n')}`,
           { parse_mode: 'HTML', reply_markup: keyboard }
         );
       }
@@ -94,12 +122,12 @@ export const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Recor
       await ctx.reply('😔 Не удалось загрузить напоминания.');
     }
   },
-  '☀️ Дайджест': async () => {
+  '🌅 Дайджест': async () => {
     try {
       const prefs = await userPrefsRepo.get(userId);
       const status = prefs?.digest_enabled ? '✅ Включён' : '❌ Выключен';
       await ctx.reply(
-        `☀️ <b>Дайджест:</b> ${status}\n\nВремя: ${prefs?.digest_hour ?? 10}:00 | Город: ${escapeHtml(prefs?.digest_city ?? '')}`,
+        `🌅 <b>Дайджест:</b> ${status}\n\nВремя: ${prefs?.digest_hour ?? 10}:00 | Город: ${escapeHtml(prefs?.digest_city ?? '')}`,
         { parse_mode: 'HTML', reply_markup: digestToggleKeyboard(prefs?.digest_enabled ?? false) }
       );
     } catch (err) {
@@ -107,10 +135,10 @@ export const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Recor
       await ctx.reply('😔 Не удалось загрузить настройки дайджеста.');
     }
   },
-  '📰 Дайджест сейчас': async () => {
+  '⚡ Дайджест сейчас': async () => {
     const chatId = ctx.chat?.id ?? 0;
     const prefs = await userPrefsRepo.getOrCreate(userId, chatId, ctx.from?.first_name);
-    await ctx.reply('☀️ Собираю дайджест... Это может занять 15-30 секунд.');
+    await ctx.reply('🌅 Собираю дайджест... Это может занять 15-30 секунд.');
     await ctx.replyWithChatAction('typing');
     try {
       await sendDigestNow(
@@ -123,7 +151,42 @@ export const buildReplyButtonHandlers = (ctx: BotContext, userId: string): Recor
       await ctx.reply('😔 Не удалось собрать дайджест. Попробуй позже.');
     }
   },
-  '📋 Меню': async () => {
-    await ctx.reply('🎛 <b>Меню Amina</b> — выбери действие:', { parse_mode: 'HTML', reply_markup: buildMainMenu() });
+  '🎤 Озвучить': async () => {
+    await ctx.reply(
+      '🎤 <b>Озвучка</b>\n\n' +
+      'Напиши <i>«скажи голосом ...»</i> или <i>«озвучь ...»</i> — и я отправлю голосовое сообщение!',
+      { parse_mode: 'HTML' },
+    );
+  },
+  '🎨 Фото-магия': async () => {
+    await ctx.reply(
+      '🎨 <b>Фото-магия</b>\n\n' +
+      'Отправь мне любое фото, и я смогу:\n' +
+      '• Убрать фон\n' +
+      '• Изменить цвета\n' +
+      '• Добавить что-нибудь\n' +
+      '• Стилизовать под аниме, арт и т.д.\n\n' +
+      '<i>Просто пришли фото с подписью, что сделать!</i>',
+      { parse_mode: 'HTML' },
+    );
+  },
+  '📞 Телефония': async () => {
+    await ctx.reply(
+      '📞 <b>Телефония</b>\n\n' +
+      'Амина умеет совершать и принимать звонки через IP-телефонию.\n\n' +
+      '<b>Возможности:</b>\n' +
+      '• AI-звонки по сценариям\n' +
+      '• Распознавание речи в реальном времени\n' +
+      '• Анализ записей звонков\n\n' +
+      '<i>Управление телефонией доступно в админ-панели.</i>',
+      { parse_mode: 'HTML' },
+    );
+  },
+  '🎛️ Меню': async () => {
+    await ctx.reply('🎛️ <b>Меню Амины</b> — выбирай:', { parse_mode: 'HTML', reply_markup: buildMainMenu() });
+  },
+  // Совместимость со старым emoji (без variation selector)
+  '🎛 Меню': async () => {
+    await ctx.reply('🎛️ <b>Меню Амины</b> — выбирай:', { parse_mode: 'HTML', reply_markup: buildMainMenu() });
   },
 });
