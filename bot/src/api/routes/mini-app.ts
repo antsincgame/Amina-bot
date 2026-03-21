@@ -7,6 +7,7 @@ import { settingsRepo } from '../../db/index.js';
 import { validateMessageContent, validateUserId } from '../../utils/validation.js';
 import { validateTelegramWebAppInitData, parseTelegramUserIdFromInitData } from '../../utils/telegram-webapp-auth.js';
 import { respondWithAminaCore } from '../../ai/amina-core-runtime.js';
+import { buildPersonaSystemPrompt } from '../../ai/persona.js';
 import { conversationsRepo } from '../../db/index.js';
 import type { Message, AIMessage, Conversation } from '../../../../shared/types/index.js';
 import { textToSpeech, detectLanguage } from '../../features/tts.js';
@@ -128,13 +129,28 @@ export async function registerMiniAppRoutes(server: FastifyInstance): Promise<vo
         const avatarId = dbKeys['heygen_avatar_id'] || config.heygen.avatarId;
         const quality = dbKeys['heygen_quality'] || config.heygen.quality || 'low';
         const mode = dbKeys['heygen_mode'] || 'hybrid';
-        const knowledgeBase = dbKeys['heygen_knowledge_base'] || '';
+        const customKB = dbKeys['heygen_knowledge_base'] || '';
 
         if (!apiKey) {
           return reply.code(503).send({ success: false, error: 'HeyGen is not configured' });
         }
 
-        aiLogger.info({ userId, mode, quality, hasKnowledgeBase: !!knowledgeBase }, 'HeyGen token request — pipeline config');
+        /* Native mode: собираем knowledgeBase из Self-Core персоны + кастомные дополнения */
+        let knowledgeBase = '';
+        if (mode === 'native') {
+          const personaPrompt = await buildPersonaSystemPrompt({ channel: 'voice' });
+          const nativeRules = [
+            personaPrompt,
+            'ВАЖНО: Отвечай ТОЛЬКО на русском языке.',
+            'Будь краткой — не более 2-3 предложений в ответе.',
+            'Ты общаешься голосом, поэтому говори естественно, как живой человек.',
+          ];
+          if (customKB) nativeRules.push(customKB);
+          knowledgeBase = nativeRules.join('\n\n');
+          aiLogger.info({ userId, mode, quality, knowledgeBaseLength: knowledgeBase.length }, 'HeyGen native: persona loaded from Self-Core');
+        }
+
+        aiLogger.info({ userId, mode, quality }, 'HeyGen token request — pipeline config');
 
         const token = await fetchHeygenStreamingToken(apiKey);
 

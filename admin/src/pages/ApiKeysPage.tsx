@@ -787,16 +787,16 @@ const ApiKeysPage = () => {
             <div>
               <label className="block text-sm font-medium text-gray-300 mb-1.5">
                 <Shield className="w-4 h-4 inline mr-1.5 text-violet-400" />
-                Knowledge Base (системный промпт для Native)
+                Дополнительные инструкции (Native)
               </label>
               <textarea
                 {...register('heygen_knowledge_base')}
-                rows={6}
-                placeholder="Ты — Амина, техножрица Адептус Механикус..."
-                className="input w-full resize-y min-h-[100px]"
+                rows={4}
+                placeholder="Дополнительные правила поверх Self-Core персоны..."
+                className="input w-full resize-y min-h-[80px]"
               />
               <p className="text-xs text-gray-500 mt-1">
-                Используется только в Native режиме. Описание личности Амины для HeyGen AI.
+                Персона берётся автоматически из Self-Core. Здесь можно добавить дополнительные правила для Native режима.
               </p>
             </div>
           </div>
