@@ -31,7 +31,16 @@ const apiKeysSchema = z.object({
   web_search_enabled: z.string().optional(),
   perplexity_model: z.string().optional(),
   web_search_max_tokens: z.string().optional(),
+  heygen_api_key: z.string().optional(),
+  heygen_avatar_id: z.string().optional(),
+  heygen_quality: z.string().optional(),
 });
+
+const HEYGEN_QUALITIES = [
+  { id: 'low', name: 'Low (экономичный)', description: 'Минимальный расход API, на телефоне разницы не видно' },
+  { id: 'medium', name: 'Medium (стандарт)', description: 'Баланс между качеством и стоимостью' },
+  { id: 'high', name: 'High (максимум)', description: 'Максимальное качество, больше расход API' },
+];
 
 type ApiKeysForm = z.infer<typeof apiKeysSchema>;
 
@@ -100,6 +109,7 @@ const ApiKeysPage = () => {
   const [showOpenRouter, setShowOpenRouter] = useState(false);
   const [showGroq, setShowGroq] = useState(false);
   const [showPerplexity, setShowPerplexity] = useState(false);
+  const [showHeygen, setShowHeygen] = useState(false);
   const [saveMessage, setSaveMessage] = useState('');
 
   // Fetch settings
@@ -139,6 +149,9 @@ const ApiKeysPage = () => {
       web_search_enabled: 'false',
       perplexity_model: 'sonar',
       web_search_max_tokens: '1200',
+      heygen_api_key: '',
+      heygen_avatar_id: '',
+      heygen_quality: 'low',
     },
   });
 
@@ -166,6 +179,9 @@ const ApiKeysPage = () => {
         web_search_enabled: map['web_search_enabled'] || 'false',
         perplexity_model: map['perplexity_model'] || 'sonar',
         web_search_max_tokens: map['web_search_max_tokens'] || '1200',
+        heygen_api_key: map['heygen_api_key'] || '',
+        heygen_avatar_id: map['heygen_avatar_id'] || '',
+        heygen_quality: map['heygen_quality'] || 'low',
       });
     }
   }, [settings, reset]);
@@ -179,6 +195,9 @@ const ApiKeysPage = () => {
       web_search_enabled: data.web_search_enabled || 'false',
       perplexity_model: data.perplexity_model || 'sonar',
       web_search_max_tokens: data.web_search_max_tokens || '1200',
+      heygen_api_key: data.heygen_api_key || '',
+      heygen_avatar_id: data.heygen_avatar_id || '',
+      heygen_quality: data.heygen_quality || 'low',
     });
   };
 
@@ -664,6 +683,86 @@ const ApiKeysPage = () => {
                 Этот блок больше не сохраняет настройку. Если понадобится управляемый policy toggle, его нужно будет
                 ввести как отдельный честный runtime contract, а не как мёртвое UI-поле.
               </span>
+            </div>
+          </div>
+        </div>
+
+        {/* HeyGen LiveAvatar */}
+        <div className="card-glass p-6 animate-fade-in-up stagger-5" style={{ opacity: 0 }}>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center"
+                 style={{ background: 'rgba(139, 92, 246, 0.15)' }}>
+              <Sparkles className="w-5 h-5 text-violet-400" />
+            </div>
+            <div>
+              <h3 className="font-medium text-white" style={{ fontFamily: 'var(--font-heading)' }}>
+                HeyGen LiveAvatar
+              </h3>
+              <p className="text-xs text-gray-500">
+                Анимированный аватар с синхронизацией губ в мини-приложении
+              </p>
+            </div>
+            <a href="https://app.heygen.com/avatars" target="_blank" rel="noopener noreferrer"
+               className="ml-auto text-xs text-violet-400 hover:text-violet-300 flex items-center gap-1">
+              <ExternalLink className="w-3.5 h-3.5" /> HeyGen Panel
+            </a>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1.5">
+                <Key className="w-4 h-4 inline mr-1.5 text-violet-400" />
+                HeyGen API Key
+              </label>
+              <div className="relative">
+                <input
+                  {...register('heygen_api_key')}
+                  type={showHeygen ? 'text' : 'password'}
+                  placeholder="sk_..."
+                  className="input-glass w-full pr-10"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowHeygen(!showHeygen)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+                >
+                  {showHeygen ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1.5">
+                <Bot className="w-4 h-4 inline mr-1.5 text-violet-400" />
+                Avatar ID
+              </label>
+              <input
+                {...register('heygen_avatar_id')}
+                type="text"
+                placeholder="309a8abed2bb4b47afdbd4e469b6ee13"
+                className="input-glass w-full"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                ID из HeyGen → My Avatars → выбранный аватар
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-300 mb-1.5">
+                <Zap className="w-4 h-4 inline mr-1.5 text-violet-400" />
+                Качество стриминга
+              </label>
+              <select
+                {...register('heygen_quality')}
+                className="input-glass w-full"
+              >
+                {HEYGEN_QUALITIES.map(q => (
+                  <option key={q.id} value={q.id}>{q.name}</option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                Low рекомендуется — на мобильном экране разницы не видно, расход API минимальный
+              </p>
             </div>
           </div>
         </div>

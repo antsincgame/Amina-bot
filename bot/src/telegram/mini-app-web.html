@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
   <title>Амина</title>
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="https://unpkg.com/@heygen/streaming-avatar@latest/dist/index.umd.js"></script>
   <style>
     :root {
       --bg: var(--tg-theme-bg-color, #0a0a0e);
@@ -39,7 +40,7 @@
       justify-content: center;
     }
 
-    /* ── Particle canvas ── */
+    /* -- Particle canvas -- */
     #particleCanvas {
       position: absolute;
       inset: 0;
@@ -49,7 +50,7 @@
       pointer-events: none;
     }
 
-    /* ── Name display ── */
+    /* -- Name display -- */
     .name-display {
       position: absolute;
       top: max(env(safe-area-inset-top, 12px), 12px);
@@ -72,7 +73,7 @@
         0 2px 4px rgba(0, 0, 0, 0.6);
     }
 
-    /* ── Avatar container ── */
+    /* -- Avatar container -- */
     .avatar-container {
       position: absolute;
       inset: 0;
@@ -96,12 +97,29 @@
       opacity: 0.7;
     }
 
+    .avatar-img.hidden {
+      display: none;
+    }
+
+    /* -- HeyGen video -- */
+    #heygenVideo {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      object-position: center top;
+      display: none;
+    }
+
+    #heygenVideo.active {
+      display: block;
+    }
+
     @keyframes breathe {
       0%, 100% { transform: scale(1.0); }
       50% { transform: scale(1.02); }
     }
 
-    /* ── Audio visualizer ring ── */
+    /* -- Audio visualizer ring -- */
     .visualizer-ring {
       position: absolute;
       top: 50%;
@@ -132,7 +150,7 @@
       50% { box-shadow: 0 0 25px rgba(198, 40, 40, 0.5), 0 0 50px rgba(198, 40, 40, 0.25); }
     }
 
-    /* ── Thinking overlay ── */
+    /* -- Thinking overlay -- */
     .thinking-overlay {
       position: absolute;
       inset: 0;
@@ -160,7 +178,7 @@
       to { transform: rotate(360deg); }
     }
 
-    /* ── Bottom controls ── */
+    /* -- Bottom controls -- */
     .bottom-controls {
       position: absolute;
       bottom: 0;
@@ -179,7 +197,7 @@
       pointer-events: auto;
     }
 
-    /* ── Status text ── */
+    /* -- Status text -- */
     .status-text {
       font-size: 0.82rem;
       color: var(--hint);
@@ -194,7 +212,7 @@
     .status-text.thinking { color: var(--mechanicus-gold); }
     .status-text.speaking { color: #66bb6a; }
 
-    /* ── Mic button ── */
+    /* -- Mic button -- */
     .mic-btn {
       width: 72px;
       height: 72px;
@@ -246,7 +264,7 @@
       fill: currentColor;
     }
 
-    /* ── Error toast ── */
+    /* -- Error toast -- */
     .error-toast {
       position: absolute;
       top: 60px;
@@ -269,7 +287,7 @@
       opacity: 1;
     }
 
-    /* ── No speech API fallback notice ── */
+    /* -- No speech API fallback notice -- */
     .no-speech-notice {
       position: absolute;
       bottom: 110px;
@@ -303,6 +321,7 @@
         alt="Амина"
         draggable="false"
       />
+      <video id="heygenVideo" autoplay playsinline></video>
     </div>
 
     <div class="visualizer-ring" id="visualizerRing"></div>
@@ -336,7 +355,7 @@
     (function () {
       'use strict';
 
-      /* ── Telegram WebApp ── */
+      /* ---- Telegram WebApp ---- */
       var tg = window.Telegram && window.Telegram.WebApp;
       if (tg) {
         tg.ready();
@@ -344,8 +363,9 @@
       }
       var initData = (tg && tg.initData) ? String(tg.initData) : '';
 
-      /* ── DOM refs ── */
+      /* ---- DOM refs ---- */
       var avatarImg = document.getElementById('avatarImg');
+      var heygenVideo = document.getElementById('heygenVideo');
       var micBtn = document.getElementById('micBtn');
       var statusText = document.getElementById('statusText');
       var thinkingOverlay = document.getElementById('thinkingOverlay');
@@ -354,7 +374,7 @@
       var noSpeechNotice = document.getElementById('noSpeechNotice');
       var particleCanvas = document.getElementById('particleCanvas');
 
-      /* ── State ── */
+      /* ---- State ---- */
       var EMOTIONS = [
         'neutral', 'happy', 'ecstatic', 'sad', 'surprised',
         'thinking', 'angry', 'smirk', 'sleepy', 'flirty', 'loving'
@@ -365,7 +385,16 @@
       var currentAudio = null;
       var errorToastTimer = null;
 
-      /* ── Helpers ── */
+      /* HeyGen state */
+      var heygenAvatar = null;
+      var heygenReady = false;
+      var heygenAvatarId = '';
+      var heygenIdleTimer = null;
+      var HEYGEN_IDLE_TIMEOUT = 60000; /* 60 сек без активности — закрыть сессию */
+      var HEYGEN_MIN_TEXT_LENGTH = 20; /* короткие ответы — через TTS (дешевле) */
+      var heygenInitStarted = false;
+
+      /* ---- Helpers ---- */
       function setStatus(text, cls) {
         if (!statusText) return;
         statusText.textContent = text || '';
@@ -384,6 +413,7 @@
 
       function setEmotion(emotion) {
         if (!avatarImg) return;
+        if (heygenReady) return;
         if (EMOTIONS.indexOf(emotion) === -1) emotion = 'neutral';
         if (emotion === currentEmotion) return;
         currentEmotion = emotion;
@@ -402,7 +432,132 @@
         img.src = src;
       }
 
-      /* ── Audio playback ── */
+      /* ---- HeyGen Streaming Avatar ---- */
+      function initHeygenAvatar() {
+        if (heygenInitStarted || heygenReady) return;
+        if (!initData) return;
+        if (typeof StreamingAvatar === 'undefined' && typeof window.StreamingAvatarSDK === 'undefined') return;
+        heygenInitStarted = true;
+
+        var apiBase = window.location.origin.replace(/\/$/, '');
+        var tokenUrl = apiBase + '/api/mini-app/heygen-token?initData=' + encodeURIComponent(initData);
+
+        setStatus('Подключение аватара...', 'thinking');
+
+        fetch(tokenUrl)
+          .then(function (res) {
+            return res.json().then(
+              function (json) { return { ok: res.ok, data: json }; },
+              function () { return { ok: false, data: null }; }
+            );
+          })
+          .then(function (result) {
+            if (!result.ok || !result.data || !result.data.success || !result.data.token) {
+              throw new Error((result.data && result.data.error) || 'Failed to get HeyGen token');
+            }
+
+            heygenAvatarId = result.data.avatarId || '';
+            var heygenQuality = result.data.quality || 'low';
+
+            var AvatarClass = (typeof StreamingAvatar !== 'undefined')
+              ? StreamingAvatar
+              : (window.StreamingAvatarSDK && window.StreamingAvatarSDK.StreamingAvatar);
+
+            if (!AvatarClass) {
+              throw new Error('StreamingAvatar SDK not loaded');
+            }
+
+            heygenAvatar = new AvatarClass({ token: result.data.token });
+
+            return heygenAvatar.createStartAvatar({
+              avatarName: heygenAvatarId,
+              quality: heygenQuality,
+            });
+          })
+          .then(function (session) {
+            if (!session) throw new Error('Empty HeyGen session');
+
+            heygenReady = true;
+            resetHeygenIdleTimer();
+
+            /* Привязать video stream к элементу */
+            if (session.stream && heygenVideo) {
+              heygenVideo.srcObject = session.stream;
+              heygenVideo.classList.add('active');
+              avatarImg.classList.add('hidden');
+              heygenVideo.play().catch(function () {});
+            }
+
+            /* Подписаться на события SDK */
+            if (heygenAvatar.on) {
+              heygenAvatar.on('avatar_start_talking', function () {
+                setStatus('Говорю...', 'speaking');
+                visualizerRing.classList.add('active');
+              });
+              heygenAvatar.on('avatar_stop_talking', function () {
+                visualizerRing.classList.remove('active');
+                setStatus('');
+              });
+              heygenAvatar.on('stream_disconnected', function () {
+                handleHeygenDisconnect();
+              });
+            }
+
+            setStatus('');
+          })
+          .catch(function (err) {
+            console.warn('HeyGen init failed, using fallback:', err);
+            heygenReady = false;
+            heygenAvatar = null;
+            setStatus('');
+          });
+      }
+
+      function resetHeygenIdleTimer() {
+        if (heygenIdleTimer) clearTimeout(heygenIdleTimer);
+        heygenIdleTimer = setTimeout(function () {
+          if (heygenReady && !isBusy) {
+            stopHeygenSession();
+          }
+        }, HEYGEN_IDLE_TIMEOUT);
+      }
+
+      function stopHeygenSession() {
+        if (heygenAvatar) {
+          try { heygenAvatar.stopAvatar(); } catch (e) {}
+        }
+        handleHeygenDisconnect();
+      }
+
+      function handleHeygenDisconnect() {
+        heygenReady = false;
+        heygenAvatar = null;
+        heygenInitStarted = false;
+        if (heygenIdleTimer) { clearTimeout(heygenIdleTimer); heygenIdleTimer = null; }
+        if (heygenVideo) {
+          heygenVideo.classList.remove('active');
+          heygenVideo.srcObject = null;
+        }
+        if (avatarImg) {
+          avatarImg.classList.remove('hidden');
+        }
+      }
+
+      function heygenSpeak(text) {
+        if (!heygenAvatar || !heygenReady) return Promise.resolve(false);
+
+        return heygenAvatar.speak({
+          text: text,
+          taskType: 'repeat',
+        }).then(function () {
+          return true;
+        }).catch(function (err) {
+          console.warn('HeyGen speak failed:', err);
+          return false;
+        });
+      }
+
+      /* ---- Audio playback (fallback) ---- */
       function playAudioBase64(b64, mime) {
         return new Promise(function (resolve) {
           if (!b64) { resolve(); return; }
@@ -447,7 +602,7 @@
         });
       }
 
-      /* ── Bot API ── */
+      /* ---- Bot API ---- */
       function sendToBot(text) {
         if (isBusy) return;
         if (!initData) {
@@ -461,6 +616,7 @@
         setStatus('Думаю...', 'thinking');
         thinkingOverlay.classList.add('active');
 
+        var useHeygen = heygenReady && heygenAvatar;
         var api = window.location.origin.replace(/\/$/, '') + '/api/mini-app/message';
 
         fetch(api, {
@@ -469,7 +625,7 @@
           body: JSON.stringify({
             initData: initData,
             message: text.trim(),
-            withAudio: true
+            withAudio: !useHeygen
           })
         })
         .then(function (res) {
@@ -496,24 +652,27 @@
           }
 
           var d = result.data.data;
+          var responseText = (d && d.response) ? String(d.response) : '';
           var emotion = (d && d.emotion) ? String(d.emotion) : 'neutral';
-          setEmotion(emotion);
 
-          var audioB64 = d && d.audioBase64;
-          var audioMime = d && d.audioMimeType;
-
-          if (audioB64) {
-            playAudioBase64(audioB64, audioMime).then(function () {
-              setTimeout(function () { setEmotion('neutral'); }, 2000);
+          /* HeyGen: аватар произносит ответ с синхронизацией губ.
+             Короткие ответы (< HEYGEN_MIN_TEXT_LENGTH) — через TTS (дешевле). */
+          if (useHeygen && responseText && responseText.length >= HEYGEN_MIN_TEXT_LENGTH) {
+            resetHeygenIdleTimer();
+            setStatus('Говорю...', 'speaking');
+            heygenSpeak(responseText).then(function (spoken) {
+              if (!spoken) {
+                fallbackPlayAudio(d, emotion);
+                return;
+              }
               isBusy = false;
               micBtn.disabled = false;
             });
-          } else {
-            setStatus('');
-            setTimeout(function () { setEmotion('neutral'); }, 3000);
-            isBusy = false;
-            micBtn.disabled = false;
+            return;
           }
+
+          /* Fallback: статичная картинка + TTS аудио */
+          fallbackPlayAudio(d, emotion);
         })
         .catch(function () {
           thinkingOverlay.classList.remove('active');
@@ -524,7 +683,26 @@
         });
       }
 
-      /* ── Speech Recognition ── */
+      function fallbackPlayAudio(d, emotion) {
+        setEmotion(emotion);
+        var audioB64 = d && d.audioBase64;
+        var audioMime = d && d.audioMimeType;
+
+        if (audioB64) {
+          playAudioBase64(audioB64, audioMime).then(function () {
+            setTimeout(function () { setEmotion('neutral'); }, 2000);
+            isBusy = false;
+            micBtn.disabled = false;
+          });
+        } else {
+          setStatus('');
+          setTimeout(function () { setEmotion('neutral'); }, 3000);
+          isBusy = false;
+          micBtn.disabled = false;
+        }
+      }
+
+      /* ---- Speech Recognition ---- */
       var SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       var recognition = null;
 
@@ -570,6 +748,14 @@
 
       function startRecording() {
         if (!recognition || isRecording || isBusy) return;
+        /* Лениво стартуем HeyGen при первом взаимодействии (экономия API) */
+        if (!heygenReady && !heygenInitStarted) {
+          initHeygenAvatar();
+        }
+        /* Прерываем HeyGen если аватар говорит (пользователь перебил) */
+        if (heygenReady && heygenAvatar && heygenAvatar.interrupt) {
+          try { heygenAvatar.interrupt(); } catch (e) {}
+        }
         if (currentAudio) {
           currentAudio.pause();
           currentAudio = null;
@@ -593,7 +779,7 @@
         try { recognition.stop(); } catch (e) { /* already stopped */ }
       }
 
-      /* ── Mic button handler ── */
+      /* ---- Mic button handler ---- */
       if (micBtn) {
         micBtn.addEventListener('click', function () {
           if (isBusy) return;
@@ -606,7 +792,7 @@
         });
       }
 
-      /* ── Particle system (cog/gear theme) ── */
+      /* ---- Particle system (cog/gear theme) ---- */
       (function initParticles() {
         if (!particleCanvas) return;
         var ctx = particleCanvas.getContext('2d');
@@ -694,11 +880,16 @@
         document.addEventListener('visibilitychange', function () {
           if (document.hidden) {
             if (animFrameId) { cancelAnimationFrame(animFrameId); animFrameId = null; }
+            /* Закрыть HeyGen при сворачивании — экономия API */
+            if (heygenReady) stopHeygenSession();
           } else {
             if (!animFrameId) animateParticles();
           }
         });
       })();
+
+      /* HeyGen НЕ стартует автоматически — экономия API.
+         Инициализация произойдёт при первом нажатии микрофона. */
 
     })();
   </script>

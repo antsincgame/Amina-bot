@@ -909,6 +909,37 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     uiPages: [],
     runtimeConsumers: ['bot/src/reminders/reminder-scheduler.ts'],
   }),
+  // --- HeyGen LiveAvatar ---
+  defineSetting({
+    key: 'heygen_api_key',
+    label: 'HeyGen API Key',
+    domain: 'api_keys',
+    visibility: 'visible',
+    valueType: 'secret',
+    description: 'API ключ HeyGen для Streaming Avatar в мини-приложении.',
+    uiPages: ['ApiKeysPage'],
+    runtimeConsumers: ['bot/src/api/routes/mini-app.ts'],
+  }),
+  defineSetting({
+    key: 'heygen_avatar_id',
+    label: 'HeyGen Avatar ID',
+    domain: 'api_keys',
+    visibility: 'visible',
+    valueType: 'string',
+    description: 'ID аватара HeyGen (из раздела My Avatars).',
+    uiPages: ['ApiKeysPage'],
+    runtimeConsumers: ['bot/src/api/routes/mini-app.ts'],
+  }),
+  defineSetting({
+    key: 'heygen_quality',
+    label: 'HeyGen Quality',
+    domain: 'api_keys',
+    visibility: 'visible',
+    valueType: 'string',
+    description: 'Качество стриминга HeyGen: low, medium, high. Low экономичнее.',
+    uiPages: ['ApiKeysPage'],
+    runtimeConsumers: ['bot/src/api/routes/mini-app.ts'],
+  }),
 ];
 
 export const SETTINGS_REGISTRY_MAP = new Map(

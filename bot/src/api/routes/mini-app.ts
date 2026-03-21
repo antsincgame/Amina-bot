@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { aiLogger } from '../../config/logger.js';
 import { MINI_APP_REQUEST_TIMEOUT_MS } from '../../config/constants.js';
 import { config } from '../../config/index.js';
+import { settingsRepo } from '../../db/index.js';
 import { validateMessageContent, validateUserId } from '../../utils/validation.js';
 import { validateTelegramWebAppInitData, parseTelegramUserIdFromInitData } from '../../utils/telegram-webapp-auth.js';
 import { respondWithAminaCore } from '../../ai/amina-core-runtime.js';
@@ -76,7 +77,68 @@ function ensureTelegramInit(reply: FastifyReply, initData: string): string | nul
   return userId;
 }
 
+interface HeyGenTokenResponse {
+  data: { token: string };
+  error: null | string;
+}
+
+/**
+ * Запросить streaming-токен у HeyGen API.
+ */
+const fetchHeygenStreamingToken = async (apiKey: string): Promise<string> => {
+  const res = await fetch('https://api.heygen.com/v1/streaming.create_token', {
+    method: 'POST',
+    headers: { 'x-api-key': apiKey, 'Content-Type': 'application/json' },
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`HeyGen API ${res.status}: ${text}`);
+  }
+
+  const json = (await res.json()) as HeyGenTokenResponse;
+  if (!json.data?.token) {
+    throw new Error('HeyGen API returned empty token');
+  }
+  return json.data.token;
+};
+
 export async function registerMiniAppRoutes(server: FastifyInstance): Promise<void> {
+  /**
+   * GET /mini-app/heygen-token
+   * Возвращает одноразовый streaming-токен HeyGen для фронтенда.
+   */
+  server.get(
+    '/mini-app/heygen-token',
+    async (request: FastifyRequest<{ Querystring: { initData?: string } }>, reply: FastifyReply) => {
+      try {
+        const initData = String(request.query.initData ?? '');
+        if (!initData) {
+          return miniAppAuthFail(reply, 400, 'Missing initData');
+        }
+
+        const userId = ensureTelegramInit(reply, initData);
+        if (!userId) return;
+
+        const dbKeys = await settingsRepo.getMany(['heygen_api_key', 'heygen_avatar_id', 'heygen_quality']);
+        const apiKey = dbKeys['heygen_api_key'] || config.heygen.apiKey;
+        const avatarId = dbKeys['heygen_avatar_id'] || config.heygen.avatarId;
+        const quality = dbKeys['heygen_quality'] || config.heygen.quality || 'low';
+
+        if (!apiKey) {
+          return reply.code(503).send({ success: false, error: 'HeyGen is not configured' });
+        }
+
+        const token = await fetchHeygenStreamingToken(apiKey);
+
+        return reply.code(200).send({ success: true, token, avatarId, quality });
+      } catch (error) {
+        aiLogger.error({ error }, 'HeyGen token request failed');
+        return reply.code(502).send({ success: false, error: 'Failed to obtain HeyGen token' });
+      }
+    },
+  );
+
   /**
    * POST /mini-app/message
    * Диалог + опционально TTS (mp3 base64) для мини-приложения.
