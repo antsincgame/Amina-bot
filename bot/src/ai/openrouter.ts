@@ -702,16 +702,12 @@ export const aiService = {
       if (raceTimeoutId) clearTimeout(raceTimeoutId);
       raceAbort.abort();
 
-      // Проверяем таймаут
-      if (raceError instanceof AppError && raceError.code === 'RACE_TIMEOUT') {
-        aiLogger.error({ timeoutMs: RACE_TIMEOUT_MS, fallbackStrategy }, '⏰ Fallback timeout — all models too slow');
-        throw raceError;
-      }
-
-      // Все OpenRouter модели упали — пробуем варп-переходы (Groq → Cerebras)
+      // Все OpenRouter модели упали или таймаут — пробуем варп-переходы (Groq → Cerebras)
+      const reason = (raceError instanceof AppError && raceError.code === 'RACE_TIMEOUT')
+        ? 'timeout' : 'all_failed';
       aiLogger.warn(
-        { modelsCount: modelsToTry.length, triedModels: modelsToTry, fallbackStrategy },
-        '💀 All OpenRouter free models failed — trying warp routes (Groq/Cerebras)'
+        { modelsCount: modelsToTry.length, reason, fallbackStrategy },
+        `💀 OpenRouter ${reason} — trying warp routes (Groq/Cerebras)`
       );
 
       const warpResult = await tryWarpRoutes(fullMessages, aiConfig);

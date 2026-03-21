@@ -32,6 +32,7 @@ const envSchema = z.object({
   OPENROUTER_API_KEY: z.string().optional(),
   OPENROUTER_MODEL: z.string().default('anthropic/claude-3-haiku'),
   GROQ_API_KEY: z.string().optional(),
+  CEREBRAS_API_KEY: z.string().optional(),
   PERPLEXITY_API_KEY: z.string().optional(), // Для веб-поиска
 
   // Server

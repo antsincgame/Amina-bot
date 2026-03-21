@@ -226,10 +226,13 @@
     }
 
     /* -- PNGTubing: audio-reactive avatar via Web Audio API -- */
-    var audioCtx=null,pngTubeRaf=null;
+    var audioCtx=null,pngTubeRaf=null,currentSource=null,currentAnalyser=null;
 
     function stopPngTube(){
       if(pngTubeRaf){cancelAnimationFrame(pngTubeRaf);pngTubeRaf=null}
+      if(currentSource){try{currentSource.disconnect()}catch(e){}}
+      if(currentAnalyser){try{currentAnalyser.disconnect()}catch(e){}}
+      currentSource=null;currentAnalyser=null;
       avatarArea.classList.remove('speaking');
       avatarArea.style.boxShadow='';
       if(currentImg){currentImg.style.transform='';currentImg.style.filter=''}
@@ -238,9 +241,9 @@
     function startPngTube(analyser){
       var dataArray=new Uint8Array(analyser.fftSize);
       avatarArea.classList.add('speaking');
-      logPipeline('PNGTubing active','ok');
 
       function tick(){
+        if(!pngTubeRaf)return;
         analyser.getByteTimeDomainData(dataArray);
         var sum=0;
         for(var i=0;i<dataArray.length;i++){var v=(dataArray[i]-128)/128;sum+=v*v}
@@ -266,6 +269,7 @@
 
     function playAudioBase64(b64,mime){
       if(!b64)return;
+      stopPngTube();
       try{
         var bin=atob(b64),bytes=new Uint8Array(bin.length);
         for(var i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
@@ -277,27 +281,30 @@
           if(AC)audioCtx=new AC();
         }
 
-        if(audioCtx){
+        var cleanup=function(){stopPngTube();URL.revokeObjectURL(url)};
+
+        if(audioCtx&&audioCtx.state!=='closed'){
           var source=audioCtx.createMediaElementSource(a);
           var analyser=audioCtx.createAnalyser();
           analyser.fftSize=256;
           analyser.smoothingTimeConstant=0.7;
           source.connect(analyser);
           analyser.connect(audioCtx.destination);
+          currentSource=source;currentAnalyser=analyser;
 
           a.onplay=function(){
             if(audioCtx.state==='suspended')audioCtx.resume();
             startPngTube(analyser);
           };
         }else{
-          a.onplay=function(){avatarArea.classList.add('speaking');logPipeline('Audio playing (no WebAudio)','ok')};
+          a.onplay=function(){avatarArea.classList.add('speaking')};
         }
 
-        a.onended=function(){stopPngTube();URL.revokeObjectURL(url);logPipeline('Audio ended')};
-        a.onerror=function(){stopPngTube();URL.revokeObjectURL(url)};
+        a.onended=function(){cleanup()};
+        a.onerror=function(){cleanup()};
         a.onpause=function(){stopPngTube()};
-        a.play().catch(function(e){logPipeline('Audio play blocked: '+e.message,'error');URL.revokeObjectURL(url)});
-      }catch(e){logPipeline('Audio error: '+e.message,'error')}
+        a.play().catch(function(e){cleanup()});
+      }catch(e){}
     }
 
     /* -- Greeting -- */
