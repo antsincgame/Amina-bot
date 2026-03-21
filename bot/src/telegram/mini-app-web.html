@@ -287,6 +287,67 @@
       opacity: 1;
     }
 
+    /* -- Text input row -- */
+    .input-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 90%;
+      max-width: 400px;
+      margin-bottom: 12px;
+    }
+
+    .text-input {
+      flex: 1;
+      height: 44px;
+      border-radius: 22px;
+      border: 2px solid var(--mechanicus-gold-dim);
+      background: var(--mechanicus-panel);
+      color: var(--text);
+      padding: 0 18px;
+      font-size: 0.95rem;
+      outline: none;
+      transition: border-color 0.3s ease;
+    }
+
+    .text-input:focus {
+      border-color: var(--mechanicus-gold);
+    }
+
+    .text-input::placeholder {
+      color: var(--hint);
+    }
+
+    .send-btn {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      border: 2px solid var(--mechanicus-gold-dim);
+      background: rgba(184, 134, 11, 0.15);
+      color: var(--mechanicus-gold);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: all 0.3s ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .send-btn:active {
+      transform: scale(0.93);
+    }
+
+    .send-btn:not(:disabled):hover {
+      background: rgba(184, 134, 11, 0.3);
+      box-shadow: 0 0 15px rgba(184, 134, 11, 0.3);
+    }
+
+    .send-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
     /* -- No speech API fallback notice -- */
     .no-speech-notice {
       position: absolute;
@@ -337,6 +398,21 @@
 
     <div class="bottom-controls">
       <div class="status-text" id="statusText"></div>
+      <div class="input-row" id="inputRow">
+        <input
+          type="text"
+          class="text-input"
+          id="textInput"
+          placeholder="Напиши Амине..."
+          autocomplete="off"
+          enterkeyhint="send"
+        />
+        <button class="send-btn" id="sendBtn" type="button" aria-label="Отправить">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+          </svg>
+        </button>
+      </div>
       <button class="mic-btn" id="micBtn" type="button" aria-label="Голосовой ввод">
         <svg class="mic-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
           <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3z"/>
@@ -373,6 +449,8 @@
       var errorToast = document.getElementById('errorToast');
       var noSpeechNotice = document.getElementById('noSpeechNotice');
       var particleCanvas = document.getElementById('particleCanvas');
+      var textInput = document.getElementById('textInput');
+      var sendBtn = document.getElementById('sendBtn');
 
       /* ---- State ---- */
       var EMOTIONS = [
@@ -788,6 +866,33 @@
             setStatus('');
           } else {
             startRecording();
+          }
+        });
+      }
+
+      /* ---- Text input handlers ---- */
+      function sendTextInput() {
+        if (isBusy || !textInput) return;
+        var text = textInput.value.trim();
+        if (!text) return;
+        textInput.value = '';
+        textInput.blur();
+        /* Лениво стартуем HeyGen при первом взаимодействии */
+        if (!heygenReady && !heygenInitStarted) {
+          initHeygenAvatar();
+        }
+        sendToBot(text);
+      }
+
+      if (sendBtn) {
+        sendBtn.addEventListener('click', sendTextInput);
+      }
+
+      if (textInput) {
+        textInput.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendTextInput();
           }
         });
       }

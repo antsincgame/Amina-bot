@@ -174,7 +174,8 @@ export async function registerMiniAppRoutes(server: FastifyInstance): Promise<vo
       };
       await conversationsRepo.addMessage(conversation.id, userMessage);
 
-      const aiMessages: AIMessage[] = conversation.messages
+      const existingMessages = Array.isArray(conversation.messages) ? conversation.messages : [];
+      const aiMessages: AIMessage[] = existingMessages
         .concat([userMessage])
         .map(m => ({ role: m.role, content: m.content }));
 
@@ -224,8 +225,9 @@ export async function registerMiniAppRoutes(server: FastifyInstance): Promise<vo
       if (error instanceof z.ZodError) {
         return reply.code(400).send({ success: false, error: 'Invalid request', details: error.issues });
       }
-      aiLogger.error({ error }, 'Mini-app message failed');
-      return reply.code(500).send({ success: false, error: 'Internal error' });
+      const errMsg = error instanceof Error ? error.message : String(error);
+      aiLogger.error({ error, message: errMsg }, 'Mini-app message failed');
+      return reply.code(500).send({ success: false, error: 'Internal error: ' + errMsg });
     }
   },
   );
