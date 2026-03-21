@@ -206,7 +206,15 @@ export async function registerMiniAppRoutes(server: FastifyInstance): Promise<vo
         let audioMimeType = 'audio/webm';
         let initData = '';
 
-        // Парсим multipart через @fastify/multipart parts iterator
+        // Проверяем что запрос действительно multipart
+        const contentType = request.headers['content-type'] || '';
+        if (!contentType.includes('multipart/form-data')) {
+          return reply.code(400).send({
+            success: false,
+            error: 'Expected multipart/form-data, got: ' + contentType.split(';')[0],
+          });
+        }
+
         const parts = request.parts();
         for await (const part of parts) {
           if (part.type === 'file' && part.fieldname === 'audio') {
