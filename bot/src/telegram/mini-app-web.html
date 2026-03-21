@@ -166,7 +166,8 @@
 
     var isProcessing=false,isRecording=false,mediaRecorder=null,audioChunks=[];
     var apiBase=window.location.origin.replace(/\/$/,'')+'/api';
-    var responseTimer=null;
+    var responseTimer=null,recordStartTime=0;
+    var MIN_RECORD_MS=1200;
 
     /* -- Dual-image crossfade -- */
     var imgA=document.getElementById('avatarImgA'),imgB=document.getElementById('avatarImgB');
@@ -310,6 +311,7 @@
     /* -- Voice recording (MediaRecorder) -- */
     async function startRecording(){
       if(isProcessing||isRecording)return;
+      if(!window.MediaRecorder){showError('Браузер не поддерживает запись. Обновите Telegram.');return}
       try{
         logPipeline('Requesting mic…');
         var stream=await navigator.mediaDevices.getUserMedia({audio:true});audioChunks=[];
@@ -321,13 +323,15 @@
         mediaRecorder.onstop=function(){
           stream.getTracks().forEach(function(t){t.stop()});
           var blob=new Blob(audioChunks,{type:mediaRecorder.mimeType||'audio/webm'});
-          logPipeline('Rec done, size='+blob.size);
-          if(blob.size>0)sendVoiceToServer(blob);
+          logPipeline('Rec done, size='+blob.size+', duration='+(Date.now()-recordStartTime)+'ms');
+          if(blob.size>100)sendVoiceToServer(blob);
+          else{showError('Запись слишком короткая. Говорите дольше.');logPipeline('Blob too small: '+blob.size,'error')}
           audioChunks=[];
         };
         mediaRecorder.onerror=function(e){logPipeline('Rec err: '+(e.error?e.error.message:'?'),'error');stopRecording()};
-        mediaRecorder.start();isRecording=true;micBtn.classList.add('recording');
-        setStatus('Говорите… нажмите ещё раз');logPipeline('Recording','ok');
+        mediaRecorder.start(250);recordStartTime=Date.now();
+        isRecording=true;micBtn.classList.add('recording');
+        setStatus('🔴 Говорите… нажмите ещё раз');logPipeline('Recording started','ok');
       }catch(e){
         logPipeline('Mic denied: '+e.message,'error');
         showError('Нет доступа к микрофону');
@@ -337,18 +341,25 @@
 
     function stopRecording(){
       if(!mediaRecorder||!isRecording)return;
+      var elapsed=Date.now()-recordStartTime;
+      if(elapsed<MIN_RECORD_MS){
+        setStatus('Говорите дольше…');
+        setTimeout(function(){if(isRecording)stopRecording()},MIN_RECORD_MS-elapsed+100);
+        return;
+      }
       try{if(mediaRecorder.state==='recording')mediaRecorder.stop()}catch(e){}
       isRecording=false;micBtn.classList.remove('recording');setStatus('');
     }
 
     async function sendVoiceToServer(blob){
       if(!initData){showError('Откройте из Telegram');return}
-      setLocked(true);setStatus('Распознаю речь…');setEmotion('thinking');
-      logPipeline('Voice → server, size='+blob.size);
+      setLocked(true);setStatus('⏳ Распознаю речь…');setEmotion('thinking');
+      logPipeline('Voice → server, size='+blob.size+', type='+blob.type);
       var ext=blob.type.includes('mp4')?'mp4':blob.type.includes('ogg')?'ogg':'webm';
       var fd=new FormData();fd.append('audio',blob,'voice.'+ext);fd.append('initData',initData);
       try{
         var res=await fetch(apiBase+'/mini-app/voice',{method:'POST',body:fd});
+        setStatus('💭 Амина думает…');
         var json=await res.json().catch(function(){return null});
         if(!res.ok||!json||!json.success){
           var err=(json&&json.error)||'Ошибка сервера ('+res.status+')';
