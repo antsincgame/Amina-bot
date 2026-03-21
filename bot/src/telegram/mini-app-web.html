@@ -74,6 +74,13 @@
     .response-overlay.visible {
       opacity: 1; transform: translateY(0); pointer-events: auto;
     }
+    .close-overlay {
+      position: absolute; top: 8px; right: 10px;
+      background: none; border: none; color: rgba(255,255,255,.5);
+      font-size: 1.2rem; cursor: pointer; padding: 4px 8px;
+      line-height: 1;
+    }
+    .close-overlay:hover { color: #fff; }
     .user-said {
       font-size: .75rem; color: var(--hint); font-style: italic;
       margin-bottom: .3rem;
@@ -133,6 +140,7 @@
     <img id="avatarImgB" class="avatar-img" src="" alt="" />
     <div class="avatar-name"><h1>Амина</h1></div>
     <div class="response-overlay" id="responseOverlay">
+      <button class="close-overlay" id="closeOverlay" aria-label="Закрыть">&times;</button>
       <p class="user-said" id="userSaid"></p>
       <p class="amina-says" id="aminaSays"></p>
     </div>
@@ -220,21 +228,24 @@
       preload.src=newSrc;
     }
 
-    /* -- Response overlay -- */
+    /* -- Response overlay (остаётся до ручного закрытия) -- */
+    var closeBtn=document.getElementById('closeOverlay');
+    if(closeBtn)closeBtn.addEventListener('click',function(){responseOverlay.classList.remove('visible')});
+
     function showResponse(text,transcript){
       if(responseTimer)clearTimeout(responseTimer);
       if(transcript){userSaidEl.textContent='Вы: '+transcript;userSaidEl.style.display=''}
       else{userSaidEl.textContent='';userSaidEl.style.display='none'}
       aminaSaysEl.textContent=text||'';aminaSaysEl.className='amina-says';
       responseOverlay.classList.add('visible');
-      responseTimer=setTimeout(function(){responseOverlay.classList.remove('visible')},8000);
+      // Не скрываем автоматически — пользователь закроет сам кнопкой ×
     }
     function showError(text){
       if(responseTimer)clearTimeout(responseTimer);
       userSaidEl.style.display='none';
       aminaSaysEl.textContent=text;aminaSaysEl.className='amina-says error-text';
       responseOverlay.classList.add('visible');
-      responseTimer=setTimeout(function(){responseOverlay.classList.remove('visible')},5000);
+      responseTimer=setTimeout(function(){responseOverlay.classList.remove('visible')},6000);
     }
 
     /* -- PNGTubing: audio-reactive avatar -- */
@@ -312,6 +323,7 @@
     async function startRecording(){
       if(isProcessing||isRecording)return;
       if(!window.MediaRecorder){showError('Браузер не поддерживает запись. Обновите Telegram.');return}
+      responseOverlay.classList.remove('visible');
       try{
         logPipeline('Requesting mic…');
         var stream=await navigator.mediaDevices.getUserMedia({audio:true});audioChunks=[];
