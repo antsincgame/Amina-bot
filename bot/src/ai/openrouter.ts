@@ -176,81 +176,65 @@ async function tryWarpRoutes(
   aiConfig: { model: string; maxTokens: number; temperature: number },
 ): Promise<AIResponse | null> {
   const keys = await getApiKeys();
+  const chatMessages = messages as OpenAI.ChatCompletionMessageParam[];
 
-  // --- Groq ---
+  const tryModel = async (provider: string, baseURL: string, apiKey: string, model: string): Promise<AIResponse> => {
+    const client = new OpenAI({ apiKey, baseURL, timeout: 8000 });
+    const completion = await client.chat.completions.create({
+      model,
+      messages: chatMessages,
+      max_tokens: aiConfig.maxTokens,
+      temperature: aiConfig.temperature,
+    });
+    const content = completion.choices?.[0]?.message?.content;
+    if (!content) throw new Error('Empty response');
+    return {
+      content,
+      tokens_used: {
+        prompt: completion.usage?.prompt_tokens ?? 0,
+        completion: completion.usage?.completion_tokens ?? 0,
+        total: completion.usage?.total_tokens ?? 0,
+      },
+      usedModel: `${provider}/${model}`,
+    };
+  };
+
+  // Собираем все доступные варп-маршруты в один массив и гоняем параллельно
+  const candidates: Array<{ provider: string; baseURL: string; apiKey: string; model: string }> = [];
+
   if (keys.groq) {
-    for (const model of GROQ_CHAT_MODELS) {
-      try {
-        aiLogger.info({ model, provider: 'groq' }, '🔮 Warp route: trying Groq');
-        const client = new OpenAI({
-          apiKey: keys.groq,
-          baseURL: config.groq.baseUrl,
-          timeout: 12000,
-        });
-        const completion = await client.chat.completions.create({
-          model,
-          messages: messages as OpenAI.ChatCompletionMessageParam[],
-          max_tokens: aiConfig.maxTokens,
-          temperature: aiConfig.temperature,
-        });
-        const content = completion.choices?.[0]?.message?.content;
-        if (content) {
-          aiLogger.info({ model, provider: 'groq', tokens: completion.usage?.total_tokens }, '🔮 Warp route: Groq success');
-          return {
-            content,
-            tokens_used: {
-              prompt: completion.usage?.prompt_tokens ?? 0,
-              completion: completion.usage?.completion_tokens ?? 0,
-              total: completion.usage?.total_tokens ?? 0,
-            },
-            usedModel: `groq/${model}`,
-          };
-        }
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        aiLogger.warn({ model, provider: 'groq', error: msg }, '🔮 Warp route: Groq model failed');
-      }
-    }
+    for (const m of GROQ_CHAT_MODELS) candidates.push({ provider: 'groq', baseURL: config.groq.baseUrl, apiKey: keys.groq, model: m });
   }
-
-  // --- Cerebras (крайний случай) ---
   if (keys.cerebras) {
-    for (const model of CEREBRAS_CHAT_MODELS) {
-      try {
-        aiLogger.info({ model, provider: 'cerebras' }, '⚡ Warp route: trying Cerebras');
-        const client = new OpenAI({
-          apiKey: keys.cerebras,
-          baseURL: config.cerebras.baseUrl,
-          timeout: 12000,
-        });
-        const completion = await client.chat.completions.create({
-          model,
-          messages: messages as OpenAI.ChatCompletionMessageParam[],
-          max_tokens: aiConfig.maxTokens,
-          temperature: aiConfig.temperature,
-        });
-        const content = completion.choices?.[0]?.message?.content;
-        if (content) {
-          aiLogger.info({ model, provider: 'cerebras', tokens: completion.usage?.total_tokens }, '⚡ Warp route: Cerebras success');
-          return {
-            content,
-            tokens_used: {
-              prompt: completion.usage?.prompt_tokens ?? 0,
-              completion: completion.usage?.completion_tokens ?? 0,
-              total: completion.usage?.total_tokens ?? 0,
-            },
-            usedModel: `cerebras/${model}`,
-          };
-        }
-      } catch (error) {
-        const msg = error instanceof Error ? error.message : String(error);
-        aiLogger.warn({ model, provider: 'cerebras', error: msg }, '⚡ Warp route: Cerebras model failed');
-      }
-    }
+    for (const m of CEREBRAS_CHAT_MODELS) candidates.push({ provider: 'cerebras', baseURL: config.cerebras.baseUrl, apiKey: keys.cerebras, model: m });
   }
 
-  aiLogger.error('All warp routes exhausted — the Astronomican grows dim');
-  return null;
+  if (candidates.length === 0) {
+    aiLogger.error('No warp route API keys configured');
+    return null;
+  }
+
+  aiLogger.info({ count: candidates.length }, '🔮 Warp routes: racing all candidates');
+
+  try {
+    const winner = await Promise.any(
+      candidates.map(async (c) => {
+        try {
+          const result = await tryModel(c.provider, c.baseURL, c.apiKey, c.model);
+          aiLogger.info({ model: result.usedModel, tokens: result.tokens_used.total }, '🔮 Warp route winner');
+          return result;
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          aiLogger.debug({ model: `${c.provider}/${c.model}`, error: msg }, 'Warp candidate failed');
+          throw error;
+        }
+      })
+    );
+    return winner;
+  } catch {
+    aiLogger.error('All warp routes exhausted — the Astronomican grows dim');
+    return null;
+  }
 }
 
 // Ошибки при которых нужен параллельный fallback (включая 402!)
