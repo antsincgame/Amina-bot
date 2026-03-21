@@ -597,8 +597,8 @@ function stripFormatting(text: string): string {
   // Строки вида "---" (горизонтальные разделители)
   clean = clean.replace(/^-{3,}$/gm, '');
 
-  // Эмодзи в начале строк
-  clean = clean.replace(/^[\u{1F300}-\u{1F9FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}✅☀️📋🔄🤖⏰🌟📰🌤🌆🌙💡📌🏛️🥩💰🏥🎾⚽]\s*/gmu, '');
+  // Все эмодзи (включая модификаторы, ZWJ-последовательности, флаги)
+  clean = clean.replace(/(?:\p{Emoji_Presentation}|\p{Emoji}\uFE0F)[\u{1F3FB}-\u{1F3FF}]?(?:\u200D(?:\p{Emoji_Presentation}|\p{Emoji}\uFE0F)[\u{1F3FB}-\u{1F3FF}]?)*/gu, '');
 
   // Множественные пробелы и пустые строки
   clean = clean.replace(/\n{3,}/g, '\n\n');
