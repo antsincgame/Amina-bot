@@ -44,12 +44,9 @@
     }
     .avatar-img.active { opacity: 1; }
 
-    /* -- Speaking state -- */
+    /* -- Speaking state (PNGTubing) -- */
     .avatar-area.speaking {
       box-shadow: 0 0 20px 4px rgba(212,168,83,.35), 0 0 60px 8px rgba(212,168,83,.12);
-    }
-    .avatar-area.speaking .avatar-img.active {
-      animation: avatar-breathe 4s ease-in-out infinite, avatar-speak-bounce .7s ease-in-out infinite, avatar-blink 5s ease-in-out infinite;
     }
 
     /* -- Keyframes -- */
@@ -62,16 +59,8 @@
       50% { transform: translateY(-4px); }
     }
     @keyframes avatar-blink {
-      0%, 46%, 54%, 100% { opacity: 1; }
-      48%, 52% { opacity: .88; }
-    }
-    @keyframes avatar-speak-bounce {
-      0%, 100% { transform: scale(1.012) translateY(0); }
-      50% { transform: scale(1.018) translateY(-2px); }
-    }
-    @keyframes avatar-speak-glow-pulse {
-      0%, 100% { box-shadow: 0 0 20px 4px rgba(212,168,83,.35); }
-      50% { box-shadow: 0 0 30px 8px rgba(212,168,83,.55); }
+      0%, 46%, 54%, 100% { filter: brightness(1); }
+      48%, 52% { filter: brightness(.92); }
     }
 
     .avatar-name {
@@ -236,7 +225,45 @@
       preload.src=newSrc;
     }
 
-    /* -- Audio playback with speaking state -- */
+    /* -- PNGTubing: audio-reactive avatar via Web Audio API -- */
+    var audioCtx=null,pngTubeRaf=null;
+
+    function stopPngTube(){
+      if(pngTubeRaf){cancelAnimationFrame(pngTubeRaf);pngTubeRaf=null}
+      avatarArea.classList.remove('speaking');
+      avatarArea.style.boxShadow='';
+      if(currentImg){currentImg.style.transform='';currentImg.style.filter=''}
+    }
+
+    function startPngTube(analyser){
+      var dataArray=new Uint8Array(analyser.fftSize);
+      avatarArea.classList.add('speaking');
+      logPipeline('PNGTubing active','ok');
+
+      function tick(){
+        analyser.getByteTimeDomainData(dataArray);
+        var sum=0;
+        for(var i=0;i<dataArray.length;i++){var v=(dataArray[i]-128)/128;sum+=v*v}
+        var rms=Math.sqrt(sum/dataArray.length);
+        var level=Math.min(rms*3.5,1);
+
+        var scale=1.0+level*0.025;
+        var ty=-level*4;
+        var glow=Math.round(15+level*35);
+        var glowAlpha=(0.25+level*0.45).toFixed(2);
+        var bright=(1.0+level*0.08).toFixed(3);
+
+        if(currentImg){
+          currentImg.style.transform='scale('+scale.toFixed(4)+') translateY('+ty.toFixed(1)+'px)';
+          currentImg.style.filter='brightness('+bright+')';
+        }
+        avatarArea.style.boxShadow='0 0 '+glow+'px '+(4+Math.round(level*6))+'px rgba(212,168,83,'+glowAlpha+')';
+
+        pngTubeRaf=requestAnimationFrame(tick);
+      }
+      pngTubeRaf=requestAnimationFrame(tick);
+    }
+
     function playAudioBase64(b64,mime){
       if(!b64)return;
       try{
@@ -244,16 +271,31 @@
         for(var i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
         var blob=new Blob([bytes],{type:mime||'audio/mpeg'}),url=URL.createObjectURL(blob);
         var a=new Audio(url);
-        a.onplay=function(){
-          avatarArea.classList.add('speaking');
-          logPipeline('Audio playing','ok');
-        };
-        a.onended=function(){
-          avatarArea.classList.remove('speaking');
-          logPipeline('Audio ended');
-        };
-        a.onerror=function(){avatarArea.classList.remove('speaking')};
-        a.onpause=function(){avatarArea.classList.remove('speaking')};
+
+        if(!audioCtx){
+          var AC=window.AudioContext||window.webkitAudioContext;
+          if(AC)audioCtx=new AC();
+        }
+
+        if(audioCtx){
+          var source=audioCtx.createMediaElementSource(a);
+          var analyser=audioCtx.createAnalyser();
+          analyser.fftSize=256;
+          analyser.smoothingTimeConstant=0.7;
+          source.connect(analyser);
+          analyser.connect(audioCtx.destination);
+
+          a.onplay=function(){
+            if(audioCtx.state==='suspended')audioCtx.resume();
+            startPngTube(analyser);
+          };
+        }else{
+          a.onplay=function(){avatarArea.classList.add('speaking');logPipeline('Audio playing (no WebAudio)','ok')};
+        }
+
+        a.onended=function(){stopPngTube();logPipeline('Audio ended')};
+        a.onerror=function(){stopPngTube()};
+        a.onpause=function(){stopPngTube()};
         a.play().catch(function(e){logPipeline('Audio play blocked: '+e.message,'error')});
         setTimeout(function(){URL.revokeObjectURL(url)},120000);
       }catch(e){logPipeline('Audio error: '+e.message,'error')}
