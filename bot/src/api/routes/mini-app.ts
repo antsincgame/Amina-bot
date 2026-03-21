@@ -193,19 +193,38 @@ export async function registerMiniAppRoutes(server: FastifyInstance): Promise<vo
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
-        const parts = request.parts();
-
         let audioBuffer: Buffer | null = null;
         let audioMimeType = 'audio/webm';
         let initData = '';
 
-        for await (const part of parts) {
-          if (part.type === 'file' && part.fieldname === 'audio') {
-            audioMimeType = part.mimetype || 'audio/webm';
-            audioBuffer = await part.toBuffer();
-          } else if (part.type === 'field' && part.fieldname === 'initData') {
-            initData = String(part.value ?? '');
+        // Парсим multipart через @fastify/multipart (request.parts())
+        // или через file() для одного файла
+        if (typeof request.file === 'function') {
+          // @fastify/multipart зарегистрирован
+          const file = await request.file();
+          if (file) {
+            audioMimeType = file.mimetype || 'audio/webm';
+            audioBuffer = await file.toBuffer();
+            // Получаем initData из fields
+            const fields = file.fields;
+            const initField = fields['initData'];
+            if (initField && 'value' in initField) {
+              initData = String(initField.value ?? '');
+            }
           }
+        } else if (typeof request.parts === 'function') {
+          // Fallback на parts iterator
+          const parts = request.parts();
+          for await (const part of parts) {
+            if (part.type === 'file' && part.fieldname === 'audio') {
+              audioMimeType = part.mimetype || 'audio/webm';
+              audioBuffer = await part.toBuffer();
+            } else if (part.type === 'field' && part.fieldname === 'initData') {
+              initData = String(part.value ?? '');
+            }
+          }
+        } else {
+          return reply.code(500).send({ success: false, error: 'Multipart parser not available' });
         }
 
         if (!audioBuffer || audioBuffer.length === 0) {
