@@ -79,6 +79,12 @@ function ensureTelegramInit(reply: FastifyReply, initData: string): string | nul
 }
 
 
+const EMOJI_REGEX = /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{200D}\u{20E3}\u{E0020}-\u{E007F}]/gu;
+
+function stripEmojis(text: string): string {
+  return text.replace(EMOJI_REGEX, '').replace(/\s{2,}/g, ' ').trim();
+}
+
 async function processAiResponse(userId: string, messageContent: string, request: FastifyRequest, withAudio: boolean) {
   const conversation: Conversation = await conversationsRepo.getOrCreate(userId, 'telegram', {
     source: 'mini_app',
@@ -103,8 +109,8 @@ async function processAiResponse(userId: string, messageContent: string, request
     userText: messageContent,
     messages: aiMessages,
     includeMemory: true,
-    includeSearch: true,
-    enableSelfGrowth: true,
+    includeSearch: false,
+    enableSelfGrowth: false,
   });
 
   const assistantMessage: Message = {
@@ -112,21 +118,24 @@ async function processAiResponse(userId: string, messageContent: string, request
     content: aiResponse.content,
     timestamp: new Date().toISOString(),
   };
-  await conversationsRepo.addMessage(conversation.id, assistantMessage);
+  conversationsRepo.addMessage(conversation.id, assistantMessage).catch(() => {});
+
+  const emotion = detectEmotion(aiResponse.content);
 
   let audioBase64: string | undefined;
   let audioMimeType: string | undefined;
 
   if (withAudio) {
-    const lang = detectLanguage(aiResponse.content);
-    const audio = await textToSpeech(aiResponse.content, lang);
-    if (audio && audio.length > 0) {
-      audioBase64 = audio.toString('base64');
-      audioMimeType = 'audio/mpeg';
+    const cleanText = stripEmojis(aiResponse.content);
+    if (cleanText.length > 0) {
+      const lang = detectLanguage(cleanText);
+      const audio = await textToSpeech(cleanText, lang);
+      if (audio && audio.length > 0) {
+        audioBase64 = audio.toString('base64');
+        audioMimeType = 'audio/mpeg';
+      }
     }
   }
-
-  const emotion = detectEmotion(aiResponse.content);
 
   return {
     conversationId: conversation.id,
@@ -197,34 +206,15 @@ export async function registerMiniAppRoutes(server: FastifyInstance): Promise<vo
         let audioMimeType = 'audio/webm';
         let initData = '';
 
-        // Парсим multipart через @fastify/multipart (request.parts())
-        // или через file() для одного файла
-        if (typeof request.file === 'function') {
-          // @fastify/multipart зарегистрирован
-          const file = await request.file();
-          if (file) {
-            audioMimeType = file.mimetype || 'audio/webm';
-            audioBuffer = await file.toBuffer();
-            // Получаем initData из fields
-            const fields = file.fields;
-            const initField = fields['initData'];
-            if (initField && 'value' in initField) {
-              initData = String(initField.value ?? '');
-            }
+        // Парсим multipart через @fastify/multipart parts iterator
+        const parts = request.parts();
+        for await (const part of parts) {
+          if (part.type === 'file' && part.fieldname === 'audio') {
+            audioMimeType = part.mimetype || 'audio/webm';
+            audioBuffer = await part.toBuffer();
+          } else if (part.type === 'field' && part.fieldname === 'initData') {
+            initData = String(part.value ?? '');
           }
-        } else if (typeof request.parts === 'function') {
-          // Fallback на parts iterator
-          const parts = request.parts();
-          for await (const part of parts) {
-            if (part.type === 'file' && part.fieldname === 'audio') {
-              audioMimeType = part.mimetype || 'audio/webm';
-              audioBuffer = await part.toBuffer();
-            } else if (part.type === 'field' && part.fieldname === 'initData') {
-              initData = String(part.value ?? '');
-            }
-          }
-        } else {
-          return reply.code(500).send({ success: false, error: 'Multipart parser not available' });
         }
 
         if (!audioBuffer || audioBuffer.length === 0) {
