@@ -293,11 +293,10 @@
           a.onplay=function(){avatarArea.classList.add('speaking');logPipeline('Audio playing (no WebAudio)','ok')};
         }
 
-        a.onended=function(){stopPngTube();logPipeline('Audio ended')};
-        a.onerror=function(){stopPngTube()};
+        a.onended=function(){stopPngTube();URL.revokeObjectURL(url);logPipeline('Audio ended')};
+        a.onerror=function(){stopPngTube();URL.revokeObjectURL(url)};
         a.onpause=function(){stopPngTube()};
-        a.play().catch(function(e){logPipeline('Audio play blocked: '+e.message,'error')});
-        setTimeout(function(){URL.revokeObjectURL(url)},120000);
+        a.play().catch(function(e){logPipeline('Audio play blocked: '+e.message,'error');URL.revokeObjectURL(url)});
       }catch(e){logPipeline('Audio error: '+e.message,'error')}
     }
 
@@ -333,8 +332,8 @@
       try{
         logPipeline('Requesting mic…');
         var stream=await navigator.mediaDevices.getUserMedia({audio:true});audioChunks=[];
-        var mimes=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus',''],sel='';
-        for(var i=0;i<mimes.length;i++){if(!mimes[i]||MediaRecorder.isTypeSupported(mimes[i])){sel=mimes[i];break}}
+        var mimes=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus'],sel='';
+        for(var i=0;i<mimes.length;i++){if(mimes[i]&&MediaRecorder.isTypeSupported(mimes[i])){sel=mimes[i];break}}
         logPipeline('Mime: '+(sel||'default'));
         mediaRecorder=new MediaRecorder(stream,sel?{mimeType:sel}:{});
         mediaRecorder.ondataavailable=function(e){if(e.data&&e.data.size>0)audioChunks.push(e.data)};
