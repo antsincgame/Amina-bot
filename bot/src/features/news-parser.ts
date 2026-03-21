@@ -156,16 +156,26 @@ export const DEFAULT_AI_TECH_SOURCES: NewsSite[] = [
   { name: 'VentureBeat (AI)', url: 'https://venturebeat.com/category/ai/feed/', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },
   { name: 'Wired (AI)', url: 'https://www.wired.com/feed/tag/ai/latest/rss', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },
 
-  // ===== Community (4) =====
+  // ===== Community (4) — строгая фильтрация по ключевым словам =====
   {
     name: 'Hacker News (AI/VibeCoding)',
-    url: 'https://hn.algolia.com/api/v1/search_by_date?query=AI+OR+LLM+OR+vibecoding+OR+%22vibe+coding%22+OR+cursor+OR+copilot+OR+%22code+generation%22+OR+anthropic+OR+openai&tags=story&hitsPerPage=20',
+    url: 'https://hn.algolia.com/api/v1/search_by_date?query=AI+OR+LLM+OR+vibecoding+OR+%22vibe+coding%22+OR+cursor+OR+copilot+OR+anthropic+OR+openai&tags=story&hitsPerPage=10',
     enabled: true, type: 'json_api', category: 'community', language: 'en',
     jsonMapping: { itemsPath: 'hits', titleField: 'title', urlField: 'url|story_url', dateField: 'created_at' },
+    filterKeywords: ['llm', 'gpt', 'claude', 'openai', 'anthropic', 'gemini', 'vibecoding', 'vibe coding', 'cursor', 'copilot', 'ai agent', 'foundation model', 'open source ai', 'llama', 'mistral'],
   },
-  { name: 'Reddit r/LocalLLaMA', url: 'https://www.reddit.com/r/LocalLLaMA/new/.rss', enabled: true, type: 'rss', category: 'community', language: 'en' },
-  { name: 'Reddit r/MachineLearning', url: 'https://www.reddit.com/r/MachineLearning/hot/.rss', enabled: true, type: 'rss', category: 'community', language: 'en' },
-  { name: 'GitHub Trending', url: 'https://github.com/trending', enabled: true, type: 'html_scrape', category: 'ai_tech', language: 'en' },
+  {
+    name: 'Reddit r/LocalLLaMA', url: 'https://www.reddit.com/r/LocalLLaMA/new/.rss', enabled: true, type: 'rss', category: 'community', language: 'en',
+    filterKeywords: ['release', 'benchmark', 'llama', 'mistral', 'qwen', 'gemma', 'phi', 'open source', 'fine-tun', 'gguf', 'ollama', 'vllm', 'quantiz'],
+  },
+  {
+    name: 'Reddit r/MachineLearning', url: 'https://www.reddit.com/r/MachineLearning/hot/.rss', enabled: true, type: 'rss', category: 'community', language: 'en',
+    filterKeywords: ['paper', 'research', 'breakthrough', 'state-of-the-art', 'sota', 'transformer', 'diffusion', 'llm', 'gpt', 'claude', 'gemini', 'benchmark', 'open source'],
+  },
+  {
+    name: 'GitHub Trending', url: 'https://github.com/trending', enabled: true, type: 'html_scrape', category: 'ai_tech', language: 'en',
+    filterKeywords: ['llm', 'ai', 'gpt', 'agent', 'llama', 'diffusion', 'transformer', 'langchain', 'rag', 'embedding', 'fine-tun', 'inference', 'ml', 'neural'],
+  },
 
   // ===== Русские (2) =====
   { name: 'Habr (AI)', url: 'https://habr.com/ru/rss/hub/artificial_intelligence/all/?fl=ru', enabled: true, type: 'rss', category: 'ai_tech', language: 'ru' },
