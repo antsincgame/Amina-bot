@@ -28,21 +28,40 @@ import { getTelephonyRuntimeConfig } from '../features/telephony/service/telepho
 const RUSSIAN_CAPABLE_MODELS: ReadonlySet<string> = new Set([
   'meta-llama/llama-3.1-8b-instruct:free',
   'meta-llama/llama-3.2-3b-instruct:free',
+  'meta-llama/llama-3.3-70b-instruct:free',
   'google/gemma-2-9b-it:free',
+  'google/gemma-3-4b-it:free',
+  'google/gemma-3-12b-it:free',
+  'google/gemma-3-27b-it:free',
+  'google/gemma-3n-e2b-it:free',
+  'google/gemma-3n-e4b-it:free',
   'mistralai/mistral-7b-instruct:free',
+  'mistralai/mistral-small-3.1-24b-instruct:free',
   'microsoft/phi-3-mini-128k-instruct:free',
+  'microsoft/phi-4-mini-instruct:free',
+  'qwen/qwen3-8b:free',
+  'qwen/qwen3-14b:free',
+  'qwen/qwen3-30b-a3b:free',
+  'qwen/qwen3-32b:free',
+  'qwen/qwen3.5-35b-a3b:free',
+  'deepseek/deepseek-r1-0528:free',
+  'deepseek/deepseek-chat-v3-0324:free',
+  'cognitivecomputations/dolphin-mistral-24b-venice-edition:free',
+  'nvidia/llama-3.1-nemotron-70b-instruct:free',
+  'nousresearch/hermes-3-llama-3.1-405b:free',
 ]);
 
 const BLOCKED_MODEL_PATTERNS = [
-  'qwen', 'yi-', 'baichuan', 'deepseek', 'sakura', 'japanese',
-  'chinese', 'zephyr', 'openchat',
+  'yi-', 'baichuan', 'sakura', 'japanese', 'chinese',
 ];
 
 function isRussianCapable(modelId: string): boolean {
   const lower = modelId.toLowerCase();
   if (BLOCKED_MODEL_PATTERNS.some(p => lower.includes(p))) return false;
   if (RUSSIAN_CAPABLE_MODELS.has(modelId)) return true;
-  if (lower.includes('llama') || lower.includes('gemma') || lower.includes('mistral') || lower.includes('phi')) return true;
+  if (lower.includes('llama') || lower.includes('gemma') || lower.includes('mistral') || lower.includes('phi')
+    || lower.includes('qwen') || lower.includes('deepseek') || lower.includes('dolphin') || lower.includes('nemotron')
+    || lower.includes('hermes') || lower.includes('command') || lower.includes('nous')) return true;
   return false;
 }
 
@@ -93,7 +112,7 @@ async function fetchFreeModelsInner(): Promise<string[]> {
       .filter(m => (m.context_length || 0) >= 4096)
       .map(m => m.id)
       .filter(isRussianCapable)
-      .slice(0, 10);
+      .slice(0, 29);
     
     if (freeModels.length > 0) {
       freeModelsCache.set(freeModels);
