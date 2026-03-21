@@ -163,8 +163,8 @@ const GROQ_CHAT_MODELS = [
 
 // Cerebras модели (бесплатный tier)
 const CEREBRAS_CHAT_MODELS = [
-  'llama-3.3-70b',
-  'llama-3.1-8b-instant',
+  'qwen-3-235b-a22b-instruct-2507',
+  'llama3.1-8b',
 ];
 
 /**
