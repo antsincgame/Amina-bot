@@ -1,5 +1,4 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import multipart from '@fastify/multipart';
 import { z } from 'zod';
 import { aiLogger } from '../../config/logger.js';
 import { MINI_APP_REQUEST_TIMEOUT_MS } from '../../config/constants.js';
@@ -140,12 +139,6 @@ async function processAiResponse(userId: string, messageContent: string, request
 }
 
 export async function registerMiniAppRoutes(server: FastifyInstance): Promise<void> {
-  await server.register(multipart, {
-    limits: {
-      fileSize: MAX_VOICE_FILE_BYTES,
-      files: 1,
-    },
-  });
 
   /**
    * POST /mini-app/message

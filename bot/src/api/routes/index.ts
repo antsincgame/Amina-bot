@@ -1,4 +1,5 @@
 import type { FastifyInstance } from 'fastify';
+import multipart from '@fastify/multipart';
 import { registerMiddleware } from './middleware.js';
 import { registerChatRoutes } from './chat.js';
 import { registerConversationsRoutes } from './conversations.js';
@@ -17,6 +18,10 @@ import { registerReconciliationRoutes } from './reconciliation.js';
 import { registerMiniAppRoutes } from './mini-app.js';
 
 export async function registerApiRoutes(server: FastifyInstance): Promise<void> {
+  // Multipart для голосовых сообщений (mini-app voice)
+  await server.register(multipart, {
+    limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+  });
   // Register application/x-www-form-urlencoded parser at root level
   // (needed for LiraX PBX webhooks)
   server.addContentTypeParser(
