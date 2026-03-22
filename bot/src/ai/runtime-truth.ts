@@ -18,6 +18,8 @@ export async function getChatRuntimeState(): Promise<ChatRuntimeState> {
       'ai_provider',
       'openrouter_model',
       'custom_model_override',
+      'cerebras_model',
+      'groq_model',
     ]),
     getLMStudioConfig(),
   ]);
@@ -43,6 +45,36 @@ export async function getChatRuntimeState(): Promise<ChatRuntimeState> {
       reason: isLmStudioReady
         ? 'Выбран LM Studio и runtime видит готовую локальную модель.'
         : 'Выбран LM Studio, но URL или модель сейчас не готовы.',
+    };
+  }
+
+  if (savedProvider === 'cerebras') {
+    const cerebrasModel = trimValue(settings['cerebras_model']) || 'qwen-3-235b-a22b-instruct-2507';
+    return {
+      savedProvider,
+      resolvedProvider: 'cerebras',
+      providerSource: 'db',
+      savedModel,
+      resolvedModel: cerebrasModel,
+      modelSource: trimValue(settings['cerebras_model']) ? 'db' : 'default',
+      customModelOverride,
+      isLmStudioReady,
+      reason: `Cerebras выбран как основной провайдер. Модель: ${cerebrasModel}.`,
+    };
+  }
+
+  if (savedProvider === 'groq') {
+    const groqModel = trimValue(settings['groq_model']) || 'llama-3.3-70b-versatile';
+    return {
+      savedProvider,
+      resolvedProvider: 'groq',
+      providerSource: 'db',
+      savedModel,
+      resolvedModel: groqModel,
+      modelSource: trimValue(settings['groq_model']) ? 'db' : 'default',
+      customModelOverride,
+      isLmStudioReady,
+      reason: `Groq выбран как основной провайдер. Модель: ${groqModel}.`,
     };
   }
 

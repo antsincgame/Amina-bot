@@ -23,7 +23,7 @@ import {
   Bug,
 } from 'lucide-react';
 
-type AIProvider = 'auto' | 'lmstudio' | 'openrouter';
+type AIProvider = 'auto' | 'lmstudio' | 'openrouter' | 'cerebras' | 'groq';
 
 interface LMStudioModel {
   id: string;
@@ -52,6 +52,14 @@ const PROVIDER_LABELS: Record<AIProvider, { label: string; desc: string }> = {
   openrouter: {
     label: 'OpenRouter',
     desc: 'Только облачные модели (игнорировать LM Studio)',
+  },
+  cerebras: {
+    label: 'Cerebras',
+    desc: 'Сверхбыстрый inference (qwen-3-235b, llama3.1-8b)',
+  },
+  groq: {
+    label: 'Groq',
+    desc: 'Быстрый inference (llama-3.3-70b, mixtral)',
   },
 };
 
@@ -109,7 +117,7 @@ const LMStudioPage = () => {
     setApiKey(map['lmstudio_api_key'] ?? '');
     setUrlUpdatedAt(map['lmstudio_url_updated_at'] ?? '');
     const p = map['ai_provider'];
-    if (p === 'lmstudio' || p === 'openrouter') {
+    if (p === 'lmstudio' || p === 'openrouter' || p === 'cerebras' || p === 'groq') {
       setProvider(p);
     } else {
       setProvider('auto');

@@ -174,11 +174,11 @@ const CEREBRAS_CHAT_MODELS = [
 async function tryWarpRoutes(
   messages: AIMessage[],
   aiConfig: { model: string; maxTokens: number; temperature: number },
-): Promise<AIResponse | null> {
+): Promise<(AIResponse & { usedModel: string }) | null> {
   const keys = await getApiKeys();
   const chatMessages = messages as OpenAI.ChatCompletionMessageParam[];
 
-  const tryModel = async (provider: string, baseURL: string, apiKey: string, model: string): Promise<AIResponse> => {
+  const tryModel = async (provider: string, baseURL: string, apiKey: string, model: string): Promise<AIResponse & { usedModel: string }> => {
     const client = new OpenAI({ apiKey, baseURL, timeout: 8000 });
     const completion = await client.chat.completions.create({
       model,
@@ -190,23 +190,26 @@ async function tryWarpRoutes(
     if (!content) throw new Error('Empty response');
     return {
       content,
+      model: `${provider}/${model}`,
       tokens_used: {
         prompt: completion.usage?.prompt_tokens ?? 0,
         completion: completion.usage?.completion_tokens ?? 0,
         total: completion.usage?.total_tokens ?? 0,
       },
+      finish_reason: completion.choices?.[0]?.finish_reason ?? 'unknown',
       usedModel: `${provider}/${model}`,
     };
   };
 
   // Собираем все доступные варп-маршруты в один массив и гоняем параллельно
+  // Cerebras первый — быстрее и стабильнее
   const candidates: Array<{ provider: string; baseURL: string; apiKey: string; model: string }> = [];
 
-  if (keys.groq) {
-    for (const m of GROQ_CHAT_MODELS) candidates.push({ provider: 'groq', baseURL: config.groq.baseUrl, apiKey: keys.groq, model: m });
-  }
   if (keys.cerebras) {
     for (const m of CEREBRAS_CHAT_MODELS) candidates.push({ provider: 'cerebras', baseURL: config.cerebras.baseUrl, apiKey: keys.cerebras, model: m });
+  }
+  if (keys.groq) {
+    for (const m of GROQ_CHAT_MODELS) candidates.push({ provider: 'groq', baseURL: config.groq.baseUrl, apiKey: keys.groq, model: m });
   }
 
   if (candidates.length === 0) {
@@ -302,6 +305,56 @@ const getClient = async (): Promise<OpenAI> => {
 };
 
 // --------------------------------------------
+// Cerebras Client (основной провайдер, если выбран)
+// --------------------------------------------
+
+let cerebrasClient: OpenAI | null = null;
+let currentCerebrasKey: string = '';
+
+const getCerebrasClient = async (): Promise<OpenAI> => {
+  const keys = await getApiKeys();
+  const apiKey = keys.cerebras;
+  if (!apiKey) {
+    throw new Error('CEREBRAS_API_KEY не задан. Укажите в переменных окружения или в админке.');
+  }
+  if (!cerebrasClient || currentCerebrasKey !== apiKey) {
+    cerebrasClient = new OpenAI({
+      apiKey,
+      baseURL: config.cerebras.baseUrl,
+      timeout: 30000,
+    });
+    currentCerebrasKey = apiKey;
+    aiLogger.info('Cerebras client initialized/updated');
+  }
+  return cerebrasClient;
+};
+
+// --------------------------------------------
+// Groq Chat Client (основной провайдер, если выбран)
+// --------------------------------------------
+
+let groqChatClient: OpenAI | null = null;
+let currentGroqChatKey: string = '';
+
+const getGroqChatClient = async (): Promise<OpenAI> => {
+  const keys = await getApiKeys();
+  const apiKey = keys.groq;
+  if (!apiKey) {
+    throw new Error('GROQ_API_KEY не задан. Укажите в переменных окружения или в админке.');
+  }
+  if (!groqChatClient || currentGroqChatKey !== apiKey) {
+    groqChatClient = new OpenAI({
+      apiKey,
+      baseURL: config.groq.baseUrl,
+      timeout: 30000,
+    });
+    currentGroqChatKey = apiKey;
+    aiLogger.info('Groq chat client initialized/updated');
+  }
+  return groqChatClient;
+};
+
+// --------------------------------------------
 // Dynamic Configuration from Database
 // --------------------------------------------
 
@@ -320,6 +373,29 @@ export interface AIChatOptions {
   modelOverride?: string;
   fallbackStrategy?: 'race' | 'sequential' | 'off';
   fallbackModelLimit?: number;
+}
+
+/**
+ * Получить модель для прямого провайдера (Cerebras / Groq).
+ * Приоритет: настройка в БД → первая модель из списка.
+ */
+async function getDirectProviderModel(provider: 'cerebras' | 'groq'): Promise<string> {
+  const settingKey = provider === 'cerebras' ? 'cerebras_model' : 'groq_model';
+  const dbModel = await settingsRepo.get(settingKey);
+  if (dbModel?.trim()) return dbModel.trim();
+  const defaultModels = provider === 'cerebras' ? CEREBRAS_CHAT_MODELS : GROQ_CHAT_MODELS;
+  return defaultModels[0] ?? 'qwen-3-235b-a22b-instruct-2507';
+}
+
+/**
+ * Получить клиент и модель для прямого провайдера.
+ */
+async function getDirectProviderClientAndModel(
+  provider: 'cerebras' | 'groq',
+): Promise<{ client: OpenAI; model: string; providerName: string }> {
+  const client = provider === 'cerebras' ? await getCerebrasClient() : await getGroqChatClient();
+  const model = await getDirectProviderModel(provider);
+  return { client, model, providerName: provider };
 }
 
 const getAIConfig = async (
@@ -545,6 +621,45 @@ export const aiService = {
       }
     }
 
+    // === ШАГ 0.5: Cerebras / Groq как основной провайдер ===
+    if (provider === 'cerebras' || provider === 'groq') {
+      try {
+        const direct = await getDirectProviderClientAndModel(provider);
+        aiLogger.debug({ model: direct.model, provider: direct.providerName }, `Trying ${provider} as primary provider`);
+
+        const result = await tryWithClient(direct.client, direct.model);
+        aiLogger.info(
+          { model: result.model, tokens: result.tokens_used.total, provider: direct.providerName },
+          `${provider} primary response received`
+        );
+        return result;
+      } catch (directError) {
+        const errorMessage = directError instanceof Error ? directError.message : String(directError);
+        aiLogger.warn({ error: errorMessage, provider }, `${provider} primary failed`);
+
+        // Если провайдер задан жёстко — пробуем все модели этого провайдера
+        const directModels = provider === 'cerebras' ? CEREBRAS_CHAT_MODELS : GROQ_CHAT_MODELS;
+        const directClient = provider === 'cerebras' ? await getCerebrasClient() : await getGroqChatClient();
+        const usedFirst = await getDirectProviderModel(provider);
+
+        for (const fallbackModel of directModels) {
+          if (fallbackModel === usedFirst) continue;
+          try {
+            aiLogger.debug({ model: fallbackModel, provider }, `Trying ${provider} fallback model`);
+            const result = await tryWithClient(directClient, fallbackModel);
+            aiLogger.info({ model: result.model, tokens: result.tokens_used.total, provider }, `${provider} fallback model OK`);
+            return result;
+          } catch (fbErr) {
+            const msg = fbErr instanceof Error ? fbErr.message : String(fbErr);
+            aiLogger.debug({ model: fallbackModel, provider, error: msg }, `${provider} fallback model failed`);
+          }
+        }
+
+        // Все модели провайдера упали — проваливаемся на OpenRouter
+        aiLogger.warn({ provider }, `All ${provider} models failed — falling back to OpenRouter`);
+      }
+    }
+
     // === ШАГ 1: OpenRouter — основная модель ===
     const client = await getClient();
 
@@ -686,12 +801,12 @@ export const aiService = {
       if (raceTimeoutId) clearTimeout(raceTimeoutId);
       raceAbort.abort();
 
-      // Все OpenRouter модели упали или таймаут — пробуем варп-переходы (Groq → Cerebras)
+      // Все OpenRouter модели упали или таймаут — пробуем варп-переходы (Cerebras → Groq)
       const reason = (raceError instanceof AppError && raceError.code === 'RACE_TIMEOUT')
         ? 'timeout' : 'all_failed';
       aiLogger.warn(
         { modelsCount: modelsToTry.length, reason, fallbackStrategy },
-        `💀 OpenRouter ${reason} — trying warp routes (Groq/Cerebras)`
+        `💀 OpenRouter ${reason} — trying warp routes (Cerebras/Groq)`
       );
 
       const warpResult = await tryWarpRoutes(fullMessages, aiConfig);
@@ -749,6 +864,10 @@ export const aiService = {
           streamModel = aiConfig.model;
         }
       }
+    } else if (provider === 'cerebras' || provider === 'groq') {
+      const direct = await getDirectProviderClientAndModel(provider);
+      streamClient = direct.client;
+      streamModel = direct.model;
     } else {
       streamClient = await getClient();
       streamModel = aiConfig.model;

@@ -53,6 +53,20 @@ const PREMIUM_MODELS = [
 
 const CUSTOM_MODEL_VALUE = '__custom__';
 
+// Cerebras / Groq model lists
+const CEREBRAS_MODELS = [
+  { id: 'qwen-3-235b-a22b-instruct-2507', name: 'Qwen 3 235B (рекомендуемая)' },
+  { id: 'llama3.1-8b', name: 'Llama 3.1 8B (быстрая)' },
+  { id: 'llama-3.3-70b', name: 'Llama 3.3 70B' },
+];
+
+const GROQ_MODELS = [
+  { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile (рекомендуемая)' },
+  { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant' },
+  { id: 'gemma2-9b-it', name: 'Gemma 2 9B' },
+  { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B' },
+];
+
 const SettingsPage = () => {
   const queryClient = useQueryClient();
   const [customModelInput, setCustomModelInput] = useState('');
@@ -60,6 +74,10 @@ const SettingsPage = () => {
   const [premiumModels, setPremiumModels] = useState(PREMIUM_MODELS);
   const [isRefreshingModels, setIsRefreshingModels] = useState(false);
   const [refreshMessage, setRefreshMessage] = useState('');
+  const [cerebrasModel, setCerebrasModel] = useState('qwen-3-235b-a22b-instruct-2507');
+  const [groqModel, setGroqModel] = useState('llama-3.3-70b-versatile');
+  const [providerModelsSaving, setProviderModelsSaving] = useState(false);
+  const [providerModelsMessage, setProviderModelsMessage] = useState('');
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings'],
@@ -130,6 +148,10 @@ const SettingsPage = () => {
 
       const modelValue = settingsMap['openrouter_model'] ?? 'openrouter/free';
       const customOverride = settingsMap['custom_model_override'] ?? '';
+
+      // Загружаем модели Cerebras / Groq
+      setCerebrasModel(settingsMap['cerebras_model'] || 'qwen-3-235b-a22b-instruct-2507');
+      setGroqModel(settingsMap['groq_model'] || 'llama-3.3-70b-versatile');
       
       // Check if model is in current lists (state or hardcoded fallback)
       const allKnownModels = [...freeModels, ...premiumModels];
@@ -478,6 +500,94 @@ const SettingsPage = () => {
           </button>
         </div>
       </form>
+
+      {/* Cerebras / Groq Provider Models */}
+      <div className="card mt-6">
+        <h3 className="font-semibold text-lg mb-2">Модели провайдеров (Cerebras / Groq)</h3>
+        <p className="text-xs text-gray-500 mb-4">
+          Эти модели используются когда провайдер выбран как основной (в разделе AI Provider) или как fallback.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Cerebras */}
+          <div>
+            <label htmlFor="cerebras_model" className="label">Cerebras Model</label>
+            <select
+              id="cerebras_model"
+              className="input bg-white text-gray-900"
+              style={{ colorScheme: 'light' }}
+              value={cerebrasModel}
+              onChange={(e) => setCerebrasModel(e.target.value)}
+            >
+              {CEREBRAS_MODELS.map((m) => (
+                <option key={m.id} value={m.id} className="bg-white text-gray-900">{m.name}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-gray-500">Сверхбыстрый inference от Cerebras</p>
+          </div>
+
+          {/* Groq */}
+          <div>
+            <label htmlFor="groq_model" className="label">Groq Chat Model</label>
+            <select
+              id="groq_model"
+              className="input bg-white text-gray-900"
+              style={{ colorScheme: 'light' }}
+              value={groqModel}
+              onChange={(e) => setGroqModel(e.target.value)}
+            >
+              {GROQ_MODELS.map((m) => (
+                <option key={m.id} value={m.id} className="bg-white text-gray-900">{m.name}</option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-gray-500">Быстрый inference от Groq (free tier 30 RPM)</p>
+          </div>
+        </div>
+
+        {providerModelsMessage && (
+          <div className={`mt-3 text-sm p-2 rounded ${providerModelsMessage.startsWith('✅') ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+            {providerModelsMessage}
+          </div>
+        )}
+
+        <div className="mt-4 flex justify-end">
+          <button
+            type="button"
+            disabled={providerModelsSaving}
+            onClick={async () => {
+              setProviderModelsSaving(true);
+              try {
+                await settingsApi.updateMany({
+                  cerebras_model: cerebrasModel,
+                  groq_model: groqModel,
+                });
+                queryClient.invalidateQueries({ queryKey: ['settings'] });
+                queryClient.invalidateQueries({ queryKey: ['settings-runtime-truth'] });
+                setProviderModelsMessage('✅ Модели сохранены');
+                setTimeout(() => setProviderModelsMessage(''), 3000);
+              } catch {
+                setProviderModelsMessage('❌ Ошибка сохранения');
+                setTimeout(() => setProviderModelsMessage(''), 3000);
+              } finally {
+                setProviderModelsSaving(false);
+              }
+            }}
+            className="btn-primary"
+          >
+            {providerModelsSaving ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                Сохранение...
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4 mr-2" />
+                Сохранить модели
+              </>
+            )}
+          </button>
+        </div>
+      </div>
     </div>
   );
 };

@@ -133,6 +133,9 @@ async function getSettingsSnapshot(): Promise<Record<string, string | undefined>
     'openrouter_api_key',
     'openrouter_model',
     'groq_api_key',
+    'cerebras_api_key',
+    'cerebras_model',
+    'groq_model',
     'preferred_vision_model',
     'effective_vision_model',
     'vision_model',
@@ -178,6 +181,11 @@ export async function getEffectiveSelfCoreState(): Promise<SelfCoreEffectiveStat
     label: 'Groq API key',
     dbValue: settings['groq_api_key'],
     envValue: process.env.GROQ_API_KEY,
+  });
+  const cerebrasKey = resolveStringValue({
+    label: 'Cerebras API key',
+    dbValue: settings['cerebras_api_key'],
+    envValue: process.env.CEREBRAS_API_KEY,
   });
   const perplexityKey = resolveStringValue({
     label: 'Perplexity API key',
@@ -255,18 +263,33 @@ export async function getEffectiveSelfCoreState(): Promise<SelfCoreEffectiveStat
       : Boolean(perplexityKey.value || openRouterKey.value);
 
   const hasLmStudio = Boolean(lmStudioConfig?.url && lmStudioConfig.model);
+  const cerebrasModel = trimValue(settings['cerebras_model']) || 'qwen-3-235b-a22b-instruct-2507';
+  const groqChatModel = trimValue(settings['groq_model']) || 'llama-3.3-70b-versatile';
+
   const effectiveChatProvider = aiProvider.value === 'lmstudio' && hasLmStudio
     ? 'lmstudio'
     : aiProvider.value === 'lmstudio'
       ? 'lmstudio (not ready)'
-      : aiProvider.value;
+      : aiProvider.value === 'cerebras'
+        ? 'cerebras'
+        : aiProvider.value === 'groq'
+          ? 'groq'
+          : aiProvider.value;
   const effectiveChatModel = aiProvider.value === 'lmstudio' && hasLmStudio
     ? lmStudioConfig?.model ?? ''
-    : openRouterModel.value;
+    : aiProvider.value === 'cerebras'
+      ? cerebrasModel
+      : aiProvider.value === 'groq'
+        ? groqChatModel
+        : openRouterModel.value;
 
   const chatCapabilityEnabled = aiProvider.value === 'lmstudio'
     ? hasLmStudio
-    : Boolean(openRouterKey.value || hasLmStudio);
+    : aiProvider.value === 'cerebras'
+      ? Boolean(cerebrasKey.value)
+      : aiProvider.value === 'groq'
+        ? Boolean(groqKey.value)
+        : Boolean(openRouterKey.value || hasLmStudio);
 
   const telephonyConfigured = Boolean(
     telephonyConfig.liraxToken
@@ -289,12 +312,20 @@ export async function getEffectiveSelfCoreState(): Promise<SelfCoreEffectiveStat
       reason: chatCapabilityEnabled
         ? aiProvider.value === 'lmstudio'
           ? 'Диалоговый runtime опирается на LM Studio.'
-          : hasLmStudio && aiProvider.value === 'auto'
-            ? 'Диалоговый runtime доступен через OpenRouter с optional LM Studio fallback.'
-            : 'Диалоговый runtime доступен через OpenRouter.'
+          : aiProvider.value === 'cerebras'
+            ? `Диалоговый runtime через Cerebras (${cerebrasModel}).`
+            : aiProvider.value === 'groq'
+              ? `Диалоговый runtime через Groq (${groqChatModel}).`
+              : hasLmStudio && aiProvider.value === 'auto'
+                ? 'Диалоговый runtime доступен через OpenRouter с optional LM Studio fallback.'
+                : 'Диалоговый runtime доступен через OpenRouter.'
         : aiProvider.value === 'lmstudio'
           ? 'Выбран LM Studio, но URL или модель не настроены.'
-          : 'Нет OpenRouter ключа и нет готового LM Studio runtime.',
+          : aiProvider.value === 'cerebras'
+            ? 'Выбран Cerebras, но API ключ не настроен.'
+            : aiProvider.value === 'groq'
+              ? 'Выбран Groq, но API ключ не настроен.'
+              : 'Нет OpenRouter ключа и нет готового LM Studio runtime.',
       detail: effectiveChatModel || undefined,
     }),
     createCapability({

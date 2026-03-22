@@ -230,20 +230,21 @@ const getMultimodalConfig = async (): Promise<MultimodalConfig> => {
     'vision_max_tokens',
   ]);
 
-  // Vision model: explicit override > effective runtime state > preferred admin choice > legacy key > default
+  // Vision model: explicit override > preferred admin choice > effective runtime state > legacy key > default
+  // ВАЖНО: preferred_vision_model (ручной выбор) ДОЛЖЕН быть приоритетнее effective_vision_model (fallback)
   let visionModel = DEFAULT_VISION_MODEL;
   let visionSource = 'default';
   if (settings['vision_model']?.trim()) {
     visionModel = settings['vision_model'].trim();
     visionSource = 'database';
   }
-  if (settings['preferred_vision_model']?.trim()) {
-    visionModel = settings['preferred_vision_model'].trim();
-    visionSource = 'preferred';
-  }
   if (settings['effective_vision_model']?.trim()) {
     visionModel = settings['effective_vision_model'].trim();
     visionSource = 'effective';
+  }
+  if (settings['preferred_vision_model']?.trim()) {
+    visionModel = settings['preferred_vision_model'].trim();
+    visionSource = 'preferred';
   }
   if (settings['vision_model_override']?.trim()) {
     visionModel = settings['vision_model_override'].trim();
@@ -770,7 +771,9 @@ function buildImageTaskInstruction(userCaption: string | undefined, isOcrRequest
 }
 
 /**
- * Обработать изображение: анализ + отправка в основную LLM
+ * Обработать изображение: ПРЯМОЙ ПРОБРОС в vision модель.
+ * Одноступенчатый пайплайн: vision модель видит картинку + получает системный промпт Амины.
+ * Двухступенчатый fallback (описание → LLM) используется только при ошибке.
  */
 export async function processImageWithLLM(
   imageBase64: string,
@@ -778,15 +781,29 @@ export async function processImageWithLLM(
   userCaption?: string,
   chatHistory?: { role: 'user' | 'assistant' | 'system'; content: string }[]
 ): Promise<AIResponse> {
-  // Выбираем промпт для vision-модели в зависимости от намерения
   const isOcrRequest = userCaption ? detectOcrIntent(userCaption) : false;
+  const multiConfig = await getMultimodalConfig();
+
+  // === ОДНОСТУПЕНЧАТЫЙ ПАЙПЛАЙН: vision модель видит картинку напрямую ===
+  try {
+    const result = await directVisionResponse(
+      imageBase64, mimeType, userCaption, isOcrRequest,
+      multiConfig, chatHistory,
+    );
+    aiLogger.info({ model: result.model, tokens: result.tokens_used.total }, 'Direct vision pipeline OK');
+    return result;
+  } catch (directError) {
+    const msg = directError instanceof Error ? directError.message : String(directError);
+    aiLogger.warn({ error: msg }, 'Direct vision pipeline failed — falling back to 2-step');
+  }
+
+  // === ДВУХСТУПЕНЧАТЫЙ FALLBACK: описание → основная LLM ===
   const visionPrompt = isOcrRequest
     ? OCR_VISION_PROMPT
     : (userCaption
         ? `Внимательно рассмотри изображение. Если на нём есть текст — прочитай его полностью. Затем ответь на вопрос пользователя: ${userCaption}`
-        : undefined); // undefined → будет использован DEFAULT_VISION_PROMPT из настроек
+        : undefined);
 
-  // 1. Анализируем изображение
   const analysis = await analyzeImage(imageBase64, mimeType, visionPrompt);
 
   const imageTask = buildImageTaskInstruction(userCaption, isOcrRequest);
@@ -797,7 +814,6 @@ export async function processImageWithLLM(
     imageTask,
   ].join('\n');
 
-  // OCR и проверка решения должны идти без self-core drift и без диалоговой персонализации.
   const useStrictImageMode = isOcrRequest;
 
   const { response } = useStrictImageMode
@@ -836,6 +852,77 @@ export async function processImageWithLLM(
       });
 
   return response;
+}
+
+/**
+ * Прямой одноступенчатый запрос: vision модель получает изображение + системный промпт.
+ * Модель ВИДИТ картинку и отвечает с полным контекстом персоны.
+ */
+async function directVisionResponse(
+  imageBase64: string,
+  mimeType: string,
+  userCaption: string | undefined,
+  isOcrRequest: boolean,
+  multiConfig: MultimodalConfig,
+  chatHistory?: { role: 'user' | 'assistant' | 'system'; content: string }[],
+): Promise<AIResponse> {
+  const client = await getClient();
+
+  // Собираем системный промпт с персоной
+  const { buildPersonaSystemPrompt } = await import('./persona.js');
+  const personaPrompt = await buildPersonaSystemPrompt({ channel: isOcrRequest ? 'system' : 'telegram', modelId: multiConfig.visionModel });
+
+  const systemContent = isOcrRequest
+    ? [OCR_RESPONSE_SYSTEM_PROMPT, personaPrompt].filter(Boolean).join('\n\n')
+    : personaPrompt;
+
+  // Формируем user content с картинкой
+  const userTextPart = isOcrRequest
+    ? (userCaption || 'Прочитай текст на изображении и опиши содержимое.')
+    : (userCaption || 'Опиши что ты видишь на этом изображении.');
+
+  const userContent: Array<{ type: string; text?: string; image_url?: { url: string } }> = [
+    { type: 'text', text: userTextPart },
+    { type: 'image_url', image_url: { url: `data:${mimeType};base64,${imageBase64}` } },
+  ];
+
+  // Формируем messages с историей (текстовая часть) + новый multimodal user message
+  const messages: OpenAI.ChatCompletionMessageParam[] = [
+    { role: 'system', content: systemContent },
+  ];
+
+  // Добавляем релевантную историю (только последние 4 сообщения)
+  if (chatHistory && chatHistory.length > 0) {
+    const recentHistory = chatHistory.slice(-4);
+    for (const msg of recentHistory) {
+      messages.push({ role: msg.role as 'user' | 'assistant', content: msg.content });
+    }
+  }
+
+  messages.push({ role: 'user', content: userContent as any });
+
+  aiLogger.info({ model: multiConfig.visionModel, isOcr: isOcrRequest, hasCaption: !!userCaption }, 'Direct vision: sending image to vision model with persona');
+
+  const response = await client.chat.completions.create({
+    model: multiConfig.visionModel,
+    messages,
+    max_tokens: Math.max(multiConfig.visionMaxTokens, 2048),
+    temperature: isOcrRequest ? 0.2 : 0.7,
+  });
+
+  const content = response.choices[0]?.message?.content;
+  if (!content) throw new Error('Empty response from direct vision');
+
+  return {
+    content,
+    model: response.model,
+    tokens_used: {
+      prompt: response.usage?.prompt_tokens ?? 0,
+      completion: response.usage?.completion_tokens ?? 0,
+      total: response.usage?.total_tokens ?? 0,
+    },
+    finish_reason: response.choices[0]?.finish_reason ?? 'unknown',
+  };
 }
 
 /**

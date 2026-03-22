@@ -3,7 +3,7 @@ import { aiLogger } from '../config/logger.js';
 import { settingsRepo } from '../db/index.js';
 import { SingleCache } from '../utils/cache.js';
 
-export type AIProvider = 'auto' | 'lmstudio' | 'openrouter';
+export type AIProvider = 'auto' | 'lmstudio' | 'openrouter' | 'cerebras' | 'groq';
 
 interface LMStudioConfig {
   url: string;
@@ -130,7 +130,7 @@ let consecutiveFailures = 0;
 
 export async function getAIProvider(): Promise<AIProvider> {
   const value = await settingsRepo.get('ai_provider');
-  if (value === 'lmstudio' || value === 'openrouter') return value;
+  if (value === 'lmstudio' || value === 'openrouter' || value === 'cerebras' || value === 'groq') return value;
   return 'auto';
 }
 
