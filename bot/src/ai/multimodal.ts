@@ -797,6 +797,13 @@ export async function processImageWithLLM(
   } catch (directError) {
     const msg = directError instanceof Error ? directError.message : String(directError);
     aiLogger.warn({ error: msg, elapsedMs: Date.now() - startTime }, 'Direct vision pipeline failed — falling back to 2-step');
+
+    // Авто-сброс мёртвой vision модели при 404 (удалена с OpenRouter)
+    if (msg.includes('404') || msg.includes('not found') || msg.includes('Not Found')) {
+      aiLogger.warn({ model: multiConfig.visionModel }, '⚠️ Vision model 404 — clearing preferred_vision_model');
+      settingsRepo.set('preferred_vision_model', '').catch(() => {});
+      settingsRepo.set('effective_vision_model', '').catch(() => {});
+    }
   }
 
   // Если уже прошло >35 секунд, не пробуем двухступенчатый fallback — сразу кидаем ошибку

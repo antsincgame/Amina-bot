@@ -356,6 +356,24 @@ const SettingsPage = () => {
                   {errors.openrouter_model.message}
                 </p>
               )}
+
+              {/* Тест выбранной OpenRouter модели */}
+              {selectedModel && selectedModel !== CUSTOM_MODEL_VALUE && (
+                <div className="mt-2 flex items-center gap-2">
+                  <button type="button"
+                    onClick={() => testModel('openrouter', selectedModel)}
+                    disabled={testingModelId === `openrouter:${selectedModel}`}
+                    className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white/70 hover:text-white text-xs transition-all disabled:opacity-50">
+                    {testingModelId === `openrouter:${selectedModel}` ? '⏳ Тестирую...' : '🧪 Проверить модель'}
+                  </button>
+                  {modelTestResults[`openrouter:${selectedModel}`]?.status === 'ok' && (
+                    <span className="text-xs text-green-400">✓ OK — {modelTestResults[`openrouter:${selectedModel}`].latencyMs}ms</span>
+                  )}
+                  {modelTestResults[`openrouter:${selectedModel}`]?.status === 'error' && (
+                    <span className="text-xs text-red-400">✗ {modelTestResults[`openrouter:${selectedModel}`].error}</span>
+                  )}
+                </div>
+              )}
               
               <p className="mt-2 text-xs text-gray-500">
                 🆓 Бесплатные модели не требуют оплаты. Премиум модели мощнее, но платные.
