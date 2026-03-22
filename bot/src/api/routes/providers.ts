@@ -6,7 +6,7 @@
 
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import OpenAI from 'openai';
-import { config, getApiKeys } from '../../config/index.js';
+import { config, getApiKeys, clearApiKeysCache } from '../../config/index.js';
 import { getProxyHeaders, getOpenRouterBaseUrl, getGroqBaseUrl } from '../../config/ai-proxy.js';
 import { aiLogger } from '../../config/logger.js';
 import { settingsRepo } from '../../db/index.js';
@@ -153,23 +153,35 @@ async function testPerplexity(apiKey: string): Promise<ProviderTestResult> {
   }
 }
 
-async function testVision(apiKey: string): Promise<ProviderTestResult> {
+async function testVision(openrouterKey: string): Promise<ProviderTestResult> {
   const start = Date.now();
   const { model, modelSource } = await resolveModel(['vision_model_override', 'preferred_vision_model', 'effective_vision_model', 'vision_model'], 'google/gemma-3-27b-it:free');
+  
+  const isGroq = model.startsWith('groq:');
+  const actualModel = isGroq ? model.replace('groq:', '') : model;
+  
   try {
-    const client = new OpenAI({
-      apiKey, baseURL: getOpenRouterBaseUrl(), timeout: 15000,
-      defaultHeaders: getProxyHeaders({ 'HTTP-Referer': config.botUrl, 'X-Title': 'Amina AI Bot' }),
-    });
+    let client: OpenAI;
+    if (isGroq) {
+      const keys = await getApiKeys();
+      if (!keys.groq) return { provider: 'vision', status: 'error', latencyMs: 0, model, modelSource, diagnosis: 'Vision модель Groq, но Groq API ключ не задан.' };
+      client = new OpenAI({ apiKey: keys.groq, baseURL: getGroqBaseUrl(), timeout: 15000, defaultHeaders: getProxyHeaders() });
+    } else {
+      client = new OpenAI({
+        apiKey: openrouterKey, baseURL: getOpenRouterBaseUrl(), timeout: 15000,
+        defaultHeaders: getProxyHeaders({ 'HTTP-Referer': config.botUrl, 'X-Title': 'Amina AI Bot' }),
+      });
+    }
     const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAADklEQVR4nGP4DwYMEAoAU7oL9ZisIGcAAAAASUVORK5CYII=';
     const res = await client.chat.completions.create({
-      model, messages: [{ role: 'user', content: [{ type: 'text', text: 'What color? One word.' }, { type: 'image_url', image_url: { url: `data:image/png;base64,${tinyPng}` } }] }], max_tokens: 10,
+      model: actualModel, messages: [{ role: 'user', content: [{ type: 'text', text: 'What color? One word.' }, { type: 'image_url', image_url: { url: `data:image/png;base64,${tinyPng}` } }] }], max_tokens: 10,
     });
     const content = res.choices?.[0]?.message?.content ?? '';
-    return { provider: 'vision', status: content.length > 0 ? 'ok' : 'error', latencyMs: Date.now() - start, model: res.model || model, modelSource, detail: content.slice(0, 50) };
+    return { provider: 'vision', status: content.length > 0 ? 'ok' : 'error', latencyMs: Date.now() - start, model: res.model || actualModel, modelSource, detail: content.slice(0, 50) };
   } catch (err) {
-    const d = diagnoseError(err, 'Vision (OpenRouter)');
-    return { provider: 'vision', status: 'error', latencyMs: Date.now() - start, model, modelSource, ...d };
+    const providerName = isGroq ? 'Vision (Groq)' : 'Vision (OpenRouter)';
+    const d = diagnoseError(err, providerName);
+    return { provider: 'vision', status: 'error', latencyMs: Date.now() - start, model: actualModel, modelSource, ...d };
   }
 }
 
@@ -186,13 +198,19 @@ async function testAppwrite(): Promise<ProviderTestResult> {
 
 export async function registerProvidersRoutes(server: FastifyInstance): Promise<void> {
   server.get('/providers/test', async (_request: FastifyRequest, reply: FastifyReply) => {
+    // Сбрасываем кэш ключей чтобы подхватить свежие из БД
+    clearApiKeysCache();
+    settingsRepo.invalidateCache();
+
     const keys = await getApiKeys();
     const perplexityKey = (await settingsRepo.get('perplexity_api_key'))?.trim() || config.perplexity.apiKey;
     const currentProvider = (await settingsRepo.get('ai_provider'))?.trim() || 'auto';
 
     const tests: Promise<ProviderTestResult>[] = [testAppwrite()];
-    if (keys.openrouter) { tests.push(testOpenRouter(keys.openrouter)); tests.push(testVision(keys.openrouter)); }
-    else { tests.push(Promise.resolve({ provider: 'openrouter', status: 'skipped' as const, latencyMs: 0, diagnosis: 'Ключ не задан. Укажите OPENROUTER_API_KEY в env или API Keys.' })); tests.push(Promise.resolve({ provider: 'vision', status: 'skipped' as const, latencyMs: 0, diagnosis: 'Для vision нужен OpenRouter ключ.' })); }
+    if (keys.openrouter) { tests.push(testOpenRouter(keys.openrouter)); }
+    else { tests.push(Promise.resolve({ provider: 'openrouter', status: 'skipped' as const, latencyMs: 0, diagnosis: 'Ключ не задан. Укажите OPENROUTER_API_KEY в env или API Keys.' })); }
+    // Vision тестируется всегда — может работать через Groq
+    tests.push(testVision(keys.openrouter || ''));
     if (keys.cerebras) { tests.push(testCerebras(keys.cerebras)); }
     else { tests.push(Promise.resolve({ provider: 'cerebras', status: 'skipped' as const, latencyMs: 0, diagnosis: 'Ключ не задан. Получите бесплатно на cerebras.ai и укажите в API Keys.' })); }
     if (keys.groq) { tests.push(testGroqChat(keys.groq)); tests.push(testGroqWhisper(keys.groq)); }
