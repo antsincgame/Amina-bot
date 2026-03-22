@@ -289,6 +289,38 @@ const MultimodalSettingsPage = () => {
   const selectedVisionModel = watch('vision_model');
   const selectedImageModel = watch('openrouter_image_model');
 
+  // Vision model test state
+  const [testingModel, setTestingModel] = useState<string | null>(null);
+  const [modelTestResults, setModelTestResults] = useState<Record<string, { status: 'ok' | 'error'; latencyMs: number; detail?: string; error?: string }>>({});
+
+  const testVisionModel = async (modelId: string) => {
+    setTestingModel(modelId);
+    try {
+      const resp = await fetchBotApi('/api/models/vision/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: modelId }),
+      });
+      const json = await resp.json();
+      setModelTestResults(prev => ({
+        ...prev,
+        [modelId]: {
+          status: json.status === 'ok' ? 'ok' : 'error',
+          latencyMs: json.latencyMs || 0,
+          detail: json.detail,
+          error: json.error,
+        },
+      }));
+    } catch (err) {
+      setModelTestResults(prev => ({
+        ...prev,
+        [modelId]: { status: 'error', latencyMs: 0, error: 'Сетевая ошибка' },
+      }));
+    } finally {
+      setTestingModel(null);
+    }
+  };
+
   // Load settings into form
   useEffect(() => {
     if (settings) {
@@ -777,7 +809,23 @@ const MultimodalSettingsPage = () => {
 
           {/* Vision Model Selection */}
           <div className="mb-6">
-            <label className="label mb-2">Основная vision модель</label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="label">Основная vision модель</label>
+              {visionModels.length > 0 && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    for (const m of visionModels) {
+                      await testVisionModel(m.id);
+                    }
+                  }}
+                  disabled={testingModel !== null}
+                  className="text-xs px-3 py-1 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 transition-all disabled:opacity-50"
+                >
+                  {testingModel ? '⏳ Тестирую...' : '🧪 Проверить все'}
+                </button>
+              )}
+            </div>
             {visionModels.length > 0 ? (
               <div className="space-y-2 max-h-[320px] overflow-y-auto pr-2 scrollbar-thin">
                 {visionModels.map((model) => (
@@ -797,8 +845,27 @@ const MultimodalSettingsPage = () => {
                         <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-medium text-white text-sm truncate">{model.name}</span>
                           <span className="badge-success text-xs">FREE</span>
+                          {modelTestResults[model.id]?.status === 'ok' && (
+                            <span className="text-xs px-1.5 py-0.5 rounded-full bg-green-500/20 text-green-400">✓ {modelTestResults[model.id].latencyMs}ms</span>
+                          )}
+                          {modelTestResults[model.id]?.status === 'error' && (
+                            <span className="text-xs px-1.5 py-0.5 rounded-full bg-red-500/20 text-red-400" title={modelTestResults[model.id].error}>✗ мёртвая</span>
+                          )}
                         </div>
-                        <p className="text-xs text-white/40 mt-0.5 font-mono truncate">{model.id}</p>
+                        <div className="flex items-center gap-2 mt-0.5">
+                          <p className="text-xs text-white/40 font-mono truncate flex-1">{model.id}</p>
+                          <button
+                            type="button"
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); testVisionModel(model.id); }}
+                            disabled={testingModel === model.id}
+                            className="text-xs px-2 py-0.5 rounded bg-white/10 hover:bg-white/20 text-white/60 hover:text-white transition-all flex-shrink-0 disabled:opacity-50"
+                          >
+                            {testingModel === model.id ? '⏳' : '🧪 тест'}
+                          </button>
+                        </div>
+                        {modelTestResults[model.id]?.status === 'error' && (
+                          <p className="text-xs text-red-400 mt-0.5">{modelTestResults[model.id].error}</p>
+                        )}
                       </div>
                     </div>
                   </label>

@@ -73,6 +73,66 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
   });
 
   /**
+   * POST /api/models/vision/test
+   * Проверяет конкретную vision модель реальным запросом с картинкой.
+   */
+  server.post('/models/vision/test', async (request: FastifyRequest<{ Body: { model: string } }>, reply: FastifyReply) => {
+    const { model } = request.body as { model?: string };
+    if (!model?.trim()) {
+      return reply.code(400).send({ success: false, error: 'model is required' });
+    }
+
+    const start = Date.now();
+    try {
+      const keys = await getApiKeys();
+      if (!keys.openrouter) {
+        return reply.code(200).send({ success: false, status: 'error', error: 'OpenRouter API key not configured', latencyMs: 0 });
+      }
+
+      const { getProxyHeaders, getOpenRouterBaseUrl } = await import('../../config/ai-proxy.js');
+      const { default: OpenAI } = await import('openai');
+      const client = new OpenAI({
+        apiKey: keys.openrouter,
+        baseURL: getOpenRouterBaseUrl(),
+        timeout: 15000,
+        defaultHeaders: getProxyHeaders({ 'HTTP-Referer': config.botUrl, 'X-Title': 'Amina AI Bot' }),
+      });
+
+      const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+      const res = await client.chat.completions.create({
+        model: model.trim(),
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'text', text: 'What color is this pixel? Answer in one word.' },
+            { type: 'image_url', image_url: { url: `data:image/png;base64,${tinyPng}` } },
+          ],
+        }],
+        max_tokens: 10,
+      });
+
+      const content = res.choices?.[0]?.message?.content ?? '';
+      const latencyMs = Date.now() - start;
+
+      if (content.length > 0) {
+        return reply.code(200).send({ success: true, status: 'ok', model: res.model || model, latencyMs, detail: content.slice(0, 50) });
+      }
+      return reply.code(200).send({ success: false, status: 'error', model, latencyMs, error: 'Модель вернула пустой ответ' });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const latencyMs = Date.now() - start;
+      let diagnosis = `Ошибка: ${msg.slice(0, 100)}`;
+      if (msg.includes('404') || msg.includes('not found')) diagnosis = 'Модель не найдена на OpenRouter — удалена или переименована.';
+      else if (msg.includes('429')) diagnosis = 'Превышен лимит запросов. Подождите минуту.';
+      else if (msg.includes('402')) diagnosis = 'Недостаточно кредитов для этой модели.';
+      else if (msg.includes('400')) diagnosis = 'Модель не поддерживает vision (изображения).';
+
+      aiLogger.warn({ model, error: msg, latencyMs }, 'Vision model test failed');
+      return reply.code(200).send({ success: false, status: 'error', model, latencyMs, error: diagnosis });
+    }
+  });
+
+  /**
    * GET /api/models/audio
    */
   server.get('/models/audio', async (request: FastifyRequest, reply: FastifyReply) => {
