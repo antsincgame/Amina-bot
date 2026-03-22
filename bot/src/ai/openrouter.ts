@@ -179,9 +179,9 @@ async function tryWarpRoutes(
   const keys = await getApiKeys();
   const chatMessages = messages as OpenAI.ChatCompletionMessageParam[];
 
-  const tryModel = async (provider: string, baseURL: string, apiKey: string, model: string): Promise<AIResponse & { usedModel: string }> => {
+  const tryModel = async (provider: string, baseURL: string, apiKey: string, model: string, headers: Record<string, string>): Promise<AIResponse & { usedModel: string }> => {
     providerHealth.trackRequest(provider);
-    const client = new OpenAI({ apiKey, baseURL, timeout: 8000 });
+    const client = new OpenAI({ apiKey, baseURL, timeout: 8000, defaultHeaders: headers });
     const completion = await client.chat.completions.create({
       model,
       messages: chatMessages,
@@ -205,17 +205,17 @@ async function tryWarpRoutes(
   };
 
   // Собираем все доступные варп-маршруты, пропуская мёртвые провайдеры (circuit breaker)
-  const candidates: Array<{ provider: string; baseURL: string; apiKey: string; model: string }> = [];
+  const candidates: Array<{ provider: string; baseURL: string; apiKey: string; model: string; headers: Record<string, string> }> = [];
 
   if (keys.cerebras && providerHealth.isProviderAvailable('cerebras')) {
-    for (const m of CEREBRAS_CHAT_MODELS) candidates.push({ provider: 'cerebras', baseURL: config.cerebras.baseUrl, apiKey: keys.cerebras, model: m });
+    for (const m of CEREBRAS_CHAT_MODELS) candidates.push({ provider: 'cerebras', baseURL: config.cerebras.baseUrl, apiKey: keys.cerebras, model: m, headers: getProxyHeaders() });
   } else if (keys.cerebras) {
     aiLogger.warn({ provider: 'cerebras' }, 'Cerebras has key but circuit-broken — skipped in warp routes');
   } else {
     aiLogger.warn({ provider: 'cerebras' }, 'Cerebras: no API key');
   }
   if (keys.groq && providerHealth.isProviderAvailable('groq')) {
-    for (const m of GROQ_CHAT_MODELS) candidates.push({ provider: 'groq', baseURL: config.groq.baseUrl, apiKey: keys.groq, model: m });
+    for (const m of GROQ_CHAT_MODELS) candidates.push({ provider: 'groq', baseURL: config.groq.baseUrl, apiKey: keys.groq, model: m, headers: getProxyHeaders() });
   } else if (keys.groq) {
     aiLogger.warn({ provider: 'groq' }, 'Groq has key but circuit-broken — skipped in warp routes');
   } else {
@@ -233,7 +233,7 @@ async function tryWarpRoutes(
     const winner = await Promise.any(
       candidates.map(async (c) => {
         try {
-          const result = await tryModel(c.provider, c.baseURL, c.apiKey, c.model);
+          const result = await tryModel(c.provider, c.baseURL, c.apiKey, c.model, c.headers);
           aiLogger.info({ model: result.usedModel, tokens: result.tokens_used.total }, '🔮 Warp route winner');
           return result;
         } catch (error) {
@@ -333,6 +333,7 @@ const getCerebrasClient = async (): Promise<OpenAI> => {
       apiKey,
       baseURL: config.cerebras.baseUrl,
       timeout: 30000,
+      defaultHeaders: getProxyHeaders(),
     });
     currentCerebrasKey = apiKey;
     aiLogger.info('Cerebras client initialized/updated');
@@ -358,6 +359,7 @@ const getGroqChatClient = async (): Promise<OpenAI> => {
       apiKey,
       baseURL: config.groq.baseUrl,
       timeout: 30000,
+      defaultHeaders: getProxyHeaders(),
     });
     currentGroqChatKey = apiKey;
     aiLogger.info('Groq chat client initialized/updated');

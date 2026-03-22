@@ -113,7 +113,7 @@ const env = parseEnv();
 // Токен Telegram: env или БД (устанавливается при старте в index.ts)
 let resolvedTelegramToken: string = env.TELEGRAM_BOT_TOKEN || '';
 
-import { getOpenRouterBaseUrl, getGroqBaseUrl, getPerplexityBaseUrl } from './ai-proxy.js';
+import { getOpenRouterBaseUrl, getGroqBaseUrl, getCerebrasBaseUrl, getPerplexityBaseUrl } from './ai-proxy.js';
 
 // --------------------------------------------
 // Static Config (from environment)
@@ -178,7 +178,7 @@ export const config = {
   // Cerebras — крайний fallback для чата
   cerebras: {
     apiKey: env.CEREBRAS_API_KEY || '',
-    baseUrl: 'https://api.cerebras.ai/v1',
+    baseUrl: getCerebrasBaseUrl(),
     model: env.CEREBRAS_MODEL || '',
   },
 
