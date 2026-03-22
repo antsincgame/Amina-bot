@@ -210,12 +210,16 @@ async function tryWarpRoutes(
   if (keys.cerebras && providerHealth.isProviderAvailable('cerebras')) {
     for (const m of CEREBRAS_CHAT_MODELS) candidates.push({ provider: 'cerebras', baseURL: config.cerebras.baseUrl, apiKey: keys.cerebras, model: m });
   } else if (keys.cerebras) {
-    aiLogger.debug('Cerebras skipped by circuit breaker');
+    aiLogger.warn({ provider: 'cerebras' }, 'Cerebras has key but circuit-broken — skipped in warp routes');
+  } else {
+    aiLogger.warn({ provider: 'cerebras' }, 'Cerebras: no API key');
   }
   if (keys.groq && providerHealth.isProviderAvailable('groq')) {
     for (const m of GROQ_CHAT_MODELS) candidates.push({ provider: 'groq', baseURL: config.groq.baseUrl, apiKey: keys.groq, model: m });
   } else if (keys.groq) {
-    aiLogger.debug('Groq skipped by circuit breaker');
+    aiLogger.warn({ provider: 'groq' }, 'Groq has key but circuit-broken — skipped in warp routes');
+  } else {
+    aiLogger.warn({ provider: 'groq' }, 'Groq: no API key');
   }
 
   if (candidates.length === 0) {

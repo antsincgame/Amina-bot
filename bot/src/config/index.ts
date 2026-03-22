@@ -208,13 +208,16 @@ export type Config = typeof config;
 
 import { SingleCache } from '../utils/cache.js';
 
-const API_KEYS_CACHE_TTL_MS = 5 * 60_000;
+const API_KEYS_CACHE_TTL_MS = 30 * 60_000; // 30 мин — ключи меняются редко
 const apiKeysCache = new SingleCache<{ openrouter: string; groq: string; cerebras: string }>(API_KEYS_CACHE_TTL_MS);
 let apiKeysCacheTimer: ReturnType<typeof setTimeout> | null = null;
 
 /**
  * Получить API ключи (приоритет: env → БД)
+ * Stale-while-revalidate: при ошибке БД возвращает последние известные ключи, а не пустоту.
  */
+let lastKnownKeys: { openrouter: string; groq: string; cerebras: string } | null = null;
+
 export async function getApiKeys(): Promise<{ openrouter: string; groq: string; cerebras: string }> {
   if (config.ai.apiKey && config.groq.apiKey && config.cerebras.apiKey) {
     return { openrouter: config.ai.apiKey, groq: config.groq.apiKey, cerebras: config.cerebras.apiKey };
@@ -246,12 +249,18 @@ export async function getApiKeys(): Promise<{ openrouter: string; groq: string; 
     }, API_KEYS_CACHE_TTL_MS);
     apiKeysCacheTimer.unref();
 
-    return {
+    const merged = {
       openrouter: config.ai.apiKey || result.openrouter,
       groq: config.groq.apiKey || result.groq,
       cerebras: config.cerebras.apiKey || result.cerebras,
     };
+    lastKnownKeys = merged;
+    return merged;
   } catch {
+    // Stale-while-revalidate: если БД недоступна, возвращаем последние рабочие ключи
+    if (lastKnownKeys) {
+      return lastKnownKeys;
+    }
     return { openrouter: config.ai.apiKey, groq: config.groq.apiKey, cerebras: config.cerebras.apiKey };
   }
 }
