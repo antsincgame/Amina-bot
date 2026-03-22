@@ -867,7 +867,13 @@ const MultimodalSettingsPage = () => {
             </div>
             {visionModels.length > 0 ? (
               <div className="space-y-2 max-h-[320px] overflow-y-auto pr-2 scrollbar-thin">
-                {visionModels.map((model) => (
+                {[...visionModels].sort((a, b) => {
+                  const aResult = modelTestResults[a.id];
+                  const bResult = modelTestResults[b.id];
+                  const aScore = aResult?.status === 'ok' ? 0 : aResult?.status === 'error' ? 2 : 1;
+                  const bScore = bResult?.status === 'ok' ? 0 : bResult?.status === 'error' ? 2 : 1;
+                  return aScore - bScore;
+                }).map((model) => (
                   <label key={model.id} className={`block p-3 rounded-xl border-2 cursor-pointer transition-all ${
                     selectedVisionModel === model.id
                       ? 'border-purple-500 bg-purple-500/10' 

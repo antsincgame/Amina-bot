@@ -811,13 +811,47 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
     lastError = err as Error;
   }
 
+  // ===== ЭТАП 3: Pollinations.ai — бесплатный, без ключа =====
+  try {
+    aiLogger.info({ prompt: translatedPrompt.substring(0, 60) }, 'Attempting Pollinations.ai as free fallback');
+    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(translatedPrompt)}?width=1024&height=1024&nologo=true&seed=${Date.now()}`;
+    
+    const controller = new AbortController();
+    const pollinationsTimeout = setTimeout(() => controller.abort(), 45_000);
+    
+    try {
+      const resp = await fetch(pollinationsUrl, { signal: controller.signal });
+      if (!resp.ok) throw new Error(`Pollinations HTTP ${resp.status}`);
+      
+      const buffer = Buffer.from(await resp.arrayBuffer());
+      if (buffer.length < 1000) throw new Error('Pollinations returned too small image');
+      
+      const generationTimeMs = Date.now() - startTime;
+      aiLogger.info({ sizeKB: Math.round(buffer.length / 1024), timeMs: generationTimeMs }, '✅ Pollinations.ai image generated');
+      
+      return {
+        image: buffer,
+        model: 'pollinations/flux',
+        prompt,
+        translatedPrompt,
+        generationTimeMs,
+      };
+    } finally {
+      clearTimeout(pollinationsTimeout);
+    }
+  } catch (pollError: unknown) {
+    const err2 = pollError as { message?: string };
+    aiLogger.warn({ error: err2.message }, 'Pollinations.ai also failed');
+    lastError = pollError as Error;
+  }
+
   // ===== ВСЕ ПРОВАЙДЕРЫ УПАЛИ =====
   const generationTimeMs = Date.now() - startTime;
   const err = lastError as { status?: number; message?: string; name?: string; code?: string } | null;
   
   aiLogger.error(
     { 
-      triedProviders: skippedHF ? ['OpenRouter'] : ['HuggingFace', 'OpenRouter'],
+      triedProviders: skippedHF ? ['OpenRouter', 'Pollinations'] : ['HuggingFace', 'OpenRouter', 'Pollinations'],
       triedHFModels: skippedHF ? 0 : FALLBACK_MODELS.length,
       lastError: err?.message,
       timeMs: generationTimeMs,
@@ -850,7 +884,7 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
   }
 
   // Generic error
-  const providerList = skippedHF ? 'OpenRouter' : `HuggingFace (${FALLBACK_MODELS.length} моделей) + OpenRouter`;
+  const providerList = skippedHF ? 'OpenRouter + Pollinations' : `HuggingFace (${FALLBACK_MODELS.length} моделей) + OpenRouter + Pollinations`;
   throw Object.assign(
     new Error(
       `Не удалось сгенерировать изображение (попробовано: ${providerList}): ${err?.message || 'неизвестная ошибка'}. Попробуй позже.`
