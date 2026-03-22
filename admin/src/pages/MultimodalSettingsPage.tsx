@@ -263,9 +263,10 @@ const MultimodalSettingsPage = () => {
     };
   }, [fetchImageModels]);
 
-  // Save mutation
+  // Save mutation with retry
   const { mutate: saveSettings, isPending: isSaving } = useMutation({
     mutationFn: (data: Record<string, string>) => settingsApi.updateMany(data),
+    retry: 1, // 1 автоматический retry при ошибке
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] });
       queryClient.invalidateQueries({ queryKey: ['settings-runtime-truth'] });
@@ -274,9 +275,15 @@ const MultimodalSettingsPage = () => {
       setSaveMessage('Настройки сохранены!');
       setTimeout(() => setSaveMessage(''), 3000);
     },
-    onError: () => {
-      setSaveMessage('Ошибка сохранения');
-      setTimeout(() => setSaveMessage(''), 3000);
+    onError: (err) => {
+      const msg = err instanceof Error ? err.message : 'Неизвестная ошибка';
+      // Если ошибка сети но бот ответил в логах — считаем что сохранилось
+      if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('timeout')) {
+        setSaveMessage('⚠️ Возможно сохранено (ответ не получен). Обновите страницу.');
+      } else {
+        setSaveMessage(`Ошибка: ${msg.slice(0, 100)}`);
+      }
+      setTimeout(() => setSaveMessage(''), 5000);
     },
   });
 

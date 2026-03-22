@@ -113,9 +113,21 @@ const SettingsPage = () => {
 
   const { mutate: saveSettings, isPending: isSaving } = useMutation({
     mutationFn: (data: Record<string, string>) => settingsApi.updateMany(data),
+    retry: 1,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['settings'] });
       queryClient.invalidateQueries({ queryKey: ['settings-runtime-truth'] });
+      setRefreshMessage('✅ Настройки сохранены');
+      setTimeout(() => setRefreshMessage(''), 3000);
+    },
+    onError: (err) => {
+      const msg = err instanceof Error ? err.message : 'Неизвестная ошибка';
+      if (msg.includes('Failed to fetch') || msg.includes('timeout')) {
+        setRefreshMessage('⚠️ Возможно сохранено. Обновите страницу.');
+      } else {
+        setRefreshMessage(`❌ Ошибка: ${msg.slice(0, 80)}`);
+      }
+      setTimeout(() => setRefreshMessage(''), 5000);
     },
   });
 
