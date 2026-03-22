@@ -208,4 +208,51 @@ export async function registerProvidersRoutes(server: FastifyInstance): Promise<
 
     return reply.code(200).send({ success: true, data, currentProvider, totalMs, timestamp: new Date().toISOString() });
   });
+
+  /**
+   * POST /api/providers/test-model
+   * Тестирует конкретную модель на конкретном провайдере.
+   */
+  server.post('/providers/test-model', async (request: FastifyRequest<{ Body: { provider: string; model: string } }>, reply: FastifyReply) => {
+    const { provider, model } = request.body as { provider?: string; model?: string };
+    if (!provider || !model) return reply.code(400).send({ success: false, error: 'provider and model required' });
+
+    const start = Date.now();
+    const keys = await getApiKeys();
+    let apiKey: string | undefined;
+    let baseURL: string;
+    let extraHeaders: Record<string, string> = {};
+
+    if (provider === 'openrouter') {
+      apiKey = keys.openrouter; baseURL = getOpenRouterBaseUrl();
+      extraHeaders = getProxyHeaders({ 'HTTP-Referer': config.botUrl, 'X-Title': 'Amina AI Bot' });
+    } else if (provider === 'cerebras') {
+      apiKey = keys.cerebras; baseURL = config.cerebras.baseUrl;
+    } else if (provider === 'groq') {
+      apiKey = keys.groq; baseURL = getGroqBaseUrl(); extraHeaders = getProxyHeaders();
+    } else {
+      return reply.code(400).send({ success: false, error: `Unknown provider: ${provider}` });
+    }
+
+    if (!apiKey) return reply.code(200).send({ success: false, status: 'error', error: `Нет API ключа для ${provider}`, latencyMs: 0 });
+
+    try {
+      const client = new OpenAI({ apiKey, baseURL, timeout: 12000, defaultHeaders: extraHeaders });
+      const res = await client.chat.completions.create({ model: model.trim(), messages: [{ role: 'user', content: 'Say OK' }], max_tokens: 5 });
+      const content = res.choices?.[0]?.message?.content ?? '';
+      const latencyMs = Date.now() - start;
+      if (content.length > 0) return reply.code(200).send({ success: true, status: 'ok', model: res.model || model, latencyMs, detail: content.slice(0, 50) });
+      return reply.code(200).send({ success: false, status: 'error', model, latencyMs, error: 'Пустой ответ' });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      const latencyMs = Date.now() - start;
+      let diagnosis = msg.slice(0, 120);
+      if (msg.includes('404') || msg.includes('not found')) diagnosis = `Модель ${model} не найдена на ${provider}.`;
+      else if (msg.includes('401')) diagnosis = `Ключ ${provider} невалидный.`;
+      else if (msg.includes('403')) diagnosis = `Доступ запрещён. Ключ ${provider} заблокирован.`;
+      else if (msg.includes('429')) diagnosis = 'Лимит запросов. Подождите минуту.';
+      else if (msg.includes('DOCTYPE') || msg.includes('<html')) diagnosis = `${provider} вернул HTML. Ключ невалидный.`;
+      return reply.code(200).send({ success: false, status: 'error', model, latencyMs, error: diagnosis });
+    }
+  });
 }

@@ -346,32 +346,6 @@ const MultimodalSettingsPage = () => {
     }
   };
 
-  /** Тихий тест — не блокирует UI спиннером, для автотеста при загрузке */
-  const testVisionModelSilent = async (modelId: string) => {
-    try {
-      const resp = await fetchBotApi('/api/models/vision/test', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: modelId }),
-      });
-      const json = await resp.json();
-      setModelTestResults(prev => ({
-        ...prev,
-        [modelId]: {
-          status: json.status === 'ok' ? 'ok' : 'error',
-          latencyMs: json.latencyMs || 0,
-          detail: json.detail,
-          error: json.error,
-        },
-      }));
-    } catch {
-      setModelTestResults(prev => ({
-        ...prev,
-        [modelId]: { status: 'error', latencyMs: 0, error: 'Сетевая ошибка' },
-      }));
-    }
-  };
-
   // Load settings into form
   useEffect(() => {
     if (settings) {
@@ -409,8 +383,6 @@ const MultimodalSettingsPage = () => {
       });
     }
   }, [settings, reset]);
-
-  const [saveWarning, setSaveWarning] = useState('');
 
   const onSubmit = (data: SettingsForm) => {
     // Проверка: выбранная vision модель мертва?

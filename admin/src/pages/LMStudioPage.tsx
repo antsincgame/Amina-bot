@@ -475,6 +475,11 @@ const LMStudioPage = () => {
                 <div>
                   <span className="text-white font-medium">{label}</span>
                   <p className="text-white/40 text-sm">{desc}</p>
+                  {provider === key && (key === 'cerebras' || key === 'groq') && (
+                    <p className="text-amber-400/70 text-xs mt-1">
+                      Модель настраивается в Settings → Модели провайдеров
+                    </p>
+                  )}
                 </div>
               </label>
             ),

@@ -33,6 +33,8 @@ const envSchema = z.object({
   OPENROUTER_MODEL: z.string().default('anthropic/claude-3-haiku'),
   GROQ_API_KEY: z.string().optional(),
   CEREBRAS_API_KEY: z.string().optional(),
+  CEREBRAS_MODEL: z.string().optional(),
+  GROQ_MODEL: z.string().optional(),
   PERPLEXITY_API_KEY: z.string().optional(), // Для веб-поиска
 
   // Server
@@ -170,12 +172,14 @@ export const config = {
   groq: {
     apiKey: env.GROQ_API_KEY || '',
     baseUrl: getGroqBaseUrl(),
+    model: env.GROQ_MODEL || '',
   },
 
   // Cerebras — крайний fallback для чата
   cerebras: {
     apiKey: env.CEREBRAS_API_KEY || '',
     baseUrl: 'https://api.cerebras.ai/v1',
+    model: env.CEREBRAS_MODEL || '',
   },
 
   // Perplexity — для веб-поиска (доступ в интернет)

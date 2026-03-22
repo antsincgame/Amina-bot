@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { settingsApi } from '../api/appwrite';
+import { settingsApi, fetchBotApi } from '../api/appwrite';
 import { fetchOpenRouterModels, filterFreeModels, filterPremiumModels, transformToSimpleModel } from '../api/openrouter';
 import { Save, Loader2, RefreshCw, Info, Download } from 'lucide-react';
 
@@ -78,6 +78,28 @@ const SettingsPage = () => {
   const [groqModel, setGroqModel] = useState('llama-3.3-70b-versatile');
   const [providerModelsSaving, setProviderModelsSaving] = useState(false);
   const [providerModelsMessage, setProviderModelsMessage] = useState('');
+
+  // Тест конкретной модели
+  const [modelTestResults, setModelTestResults] = useState<Record<string, { status: 'ok' | 'error'; latencyMs: number; detail?: string; error?: string }>>({});
+  const [testingModelId, setTestingModelId] = useState<string | null>(null);
+
+  const testModel = async (provider: string, model: string) => {
+    const key = `${provider}:${model}`;
+    setTestingModelId(key);
+    try {
+      const resp = await fetchBotApi('/api/providers/test-model', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider, model }),
+      });
+      const json = await resp.json();
+      setModelTestResults(prev => ({ ...prev, [key]: { status: json.status === 'ok' ? 'ok' : 'error', latencyMs: json.latencyMs || 0, detail: json.detail, error: json.error } }));
+    } catch {
+      setModelTestResults(prev => ({ ...prev, [key]: { status: 'error', latencyMs: 0, error: 'Сетевая ошибка' } }));
+    } finally {
+      setTestingModelId(null);
+    }
+  };
 
   const { data: settings, isLoading } = useQuery({
     queryKey: ['settings'],
@@ -512,34 +534,60 @@ const SettingsPage = () => {
           {/* Cerebras */}
           <div>
             <label htmlFor="cerebras_model" className="label">Cerebras Model</label>
-            <select
-              id="cerebras_model"
-              className="input bg-white text-gray-900"
-              style={{ colorScheme: 'light' }}
-              value={cerebrasModel}
-              onChange={(e) => setCerebrasModel(e.target.value)}
-            >
-              {CEREBRAS_MODELS.map((m) => (
-                <option key={m.id} value={m.id} className="bg-white text-gray-900">{m.name}</option>
-              ))}
-            </select>
+            <div className="flex gap-2">
+              <select
+                id="cerebras_model"
+                className="input bg-white text-gray-900 flex-1"
+                style={{ colorScheme: 'light' }}
+                value={cerebrasModel}
+                onChange={(e) => setCerebrasModel(e.target.value)}
+              >
+                {CEREBRAS_MODELS.map((m) => (
+                  <option key={m.id} value={m.id} className="bg-white text-gray-900">{m.name}</option>
+                ))}
+              </select>
+              <button type="button" onClick={() => testModel('cerebras', cerebrasModel)} disabled={testingModelId === `cerebras:${cerebrasModel}`}
+                className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white/70 hover:text-white text-xs transition-all disabled:opacity-50 whitespace-nowrap">
+                {testingModelId === `cerebras:${cerebrasModel}` ? '⏳' : '🧪 тест'}
+              </button>
+            </div>
+            {modelTestResults[`cerebras:${cerebrasModel}`] && (
+              <p className={`mt-1 text-xs ${modelTestResults[`cerebras:${cerebrasModel}`].status === 'ok' ? 'text-green-400' : 'text-red-400'}`}>
+                {modelTestResults[`cerebras:${cerebrasModel}`].status === 'ok'
+                  ? `✓ OK — ${modelTestResults[`cerebras:${cerebrasModel}`].latencyMs}ms`
+                  : `✗ ${modelTestResults[`cerebras:${cerebrasModel}`].error}`}
+              </p>
+            )}
             <p className="mt-1 text-xs text-gray-500">Сверхбыстрый inference от Cerebras</p>
           </div>
 
           {/* Groq */}
           <div>
             <label htmlFor="groq_model" className="label">Groq Chat Model</label>
-            <select
-              id="groq_model"
-              className="input bg-white text-gray-900"
-              style={{ colorScheme: 'light' }}
-              value={groqModel}
-              onChange={(e) => setGroqModel(e.target.value)}
-            >
-              {GROQ_MODELS.map((m) => (
-                <option key={m.id} value={m.id} className="bg-white text-gray-900">{m.name}</option>
-              ))}
-            </select>
+            <div className="flex gap-2">
+              <select
+                id="groq_model"
+                className="input bg-white text-gray-900 flex-1"
+                style={{ colorScheme: 'light' }}
+                value={groqModel}
+                onChange={(e) => setGroqModel(e.target.value)}
+              >
+                {GROQ_MODELS.map((m) => (
+                  <option key={m.id} value={m.id} className="bg-white text-gray-900">{m.name}</option>
+                ))}
+              </select>
+              <button type="button" onClick={() => testModel('groq', groqModel)} disabled={testingModelId === `groq:${groqModel}`}
+                className="px-3 py-1 rounded-lg bg-white/10 hover:bg-white/20 text-white/70 hover:text-white text-xs transition-all disabled:opacity-50 whitespace-nowrap">
+                {testingModelId === `groq:${groqModel}` ? '⏳' : '🧪 тест'}
+              </button>
+            </div>
+            {modelTestResults[`groq:${groqModel}`] && (
+              <p className={`mt-1 text-xs ${modelTestResults[`groq:${groqModel}`].status === 'ok' ? 'text-green-400' : 'text-red-400'}`}>
+                {modelTestResults[`groq:${groqModel}`].status === 'ok'
+                  ? `✓ OK — ${modelTestResults[`groq:${groqModel}`].latencyMs}ms`
+                  : `✗ ${modelTestResults[`groq:${groqModel}`].error}`}
+              </p>
+            )}
             <p className="mt-1 text-xs text-gray-500">Быстрый inference от Groq (free tier 30 RPM)</p>
           </div>
         </div>

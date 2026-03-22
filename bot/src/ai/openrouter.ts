@@ -383,6 +383,9 @@ async function getDirectProviderModel(provider: 'cerebras' | 'groq'): Promise<st
   const settingKey = provider === 'cerebras' ? 'cerebras_model' : 'groq_model';
   const dbModel = await settingsRepo.get(settingKey);
   if (dbModel?.trim()) return dbModel.trim();
+  // Fallback на env
+  const envModel = provider === 'cerebras' ? config.cerebras.model : config.groq.model;
+  if (envModel?.trim()) return envModel.trim();
   const defaultModels = provider === 'cerebras' ? CEREBRAS_CHAT_MODELS : GROQ_CHAT_MODELS;
   return defaultModels[0] ?? 'qwen-3-235b-a22b-instruct-2507';
 }
