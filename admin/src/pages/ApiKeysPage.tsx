@@ -752,8 +752,12 @@ interface TestResult {
   status: 'ok' | 'error' | 'skipped';
   latencyMs: number;
   model?: string;
+  modelSource?: string;
   error?: string;
   detail?: string;
+  keySource?: string;
+  keyPreview?: string;
+  diagnosis?: string;
 }
 
 const ProviderTestPanel = () => {
@@ -761,6 +765,7 @@ const ProviderTestPanel = () => {
   const [totalMs, setTotalMs] = useState<number>(0);
   const [testing, setTesting] = useState(false);
   const [testedAt, setTestedAt] = useState('');
+  const [currentProvider, setCurrentProvider] = useState('');
 
   const runTests = async () => {
     setTesting(true);
@@ -772,6 +777,7 @@ const ProviderTestPanel = () => {
         setResults(json.data);
         setTotalMs(json.totalMs || 0);
         setTestedAt(new Date().toLocaleTimeString('ru-RU'));
+        setCurrentProvider(json.currentProvider || '');
       } else {
         setResults([{ provider: 'api', status: 'error', latencyMs: 0, error: json.error || 'Unknown error' }]);
       }
@@ -821,6 +827,12 @@ const ProviderTestPanel = () => {
 
       {results.length > 0 && (
         <>
+          {currentProvider && (
+            <div className="mb-3 px-3 py-2 rounded-lg text-xs" style={{ background: 'rgba(255,215,0,0.08)', border: '1px solid rgba(255,215,0,0.15)' }}>
+              Активный AI провайдер: <span className="font-semibold text-amber-400">{currentProvider}</span>
+              {' • '}{results.filter(r => r.status === 'ok').length}/{results.length} сервисов работают
+            </div>
+          )}
           <div className="space-y-2">
             {results.map((r) => {
               const display = PROVIDER_DISPLAY[r.provider] || { label: r.provider, icon: '❓' };
@@ -834,9 +846,20 @@ const ProviderTestPanel = () => {
                     <span className="text-lg flex-shrink-0">{display.icon}</span>
                     <div className="min-w-0">
                       <p className="text-sm font-medium text-gray-200">{display.label}</p>
-                      {r.model && <p className="text-xs text-gray-500 truncate">{r.model}</p>}
-                      {r.error && r.status !== 'skipped' && <p className="text-xs text-red-400 truncate">{r.error.slice(0, 80)}</p>}
-                      {r.detail && r.status === 'ok' && <p className="text-xs text-gray-500 truncate">{r.detail}</p>}
+                      {r.model && (
+                        <p className="text-xs text-gray-500 truncate">
+                          {r.model}
+                          {r.modelSource && <span className="text-gray-600"> ({r.modelSource})</span>}
+                        </p>
+                      )}
+                      {r.detail && r.status === 'ok' && <p className="text-xs text-green-500/70 truncate">{r.detail}</p>}
+                      {r.keySource && <p className="text-xs text-gray-600">Ключ: {r.keyPreview} — {r.keySource}</p>}
+                      {r.diagnosis && r.status !== 'ok' && (
+                        <p className="text-xs text-amber-400 mt-0.5">{r.diagnosis}</p>
+                      )}
+                      {r.error && r.status === 'error' && !r.diagnosis && (
+                        <p className="text-xs text-red-400 truncate">{r.error.slice(0, 100)}</p>
+                      )}
                     </div>
                   </div>
                   <div className="flex items-center gap-3 flex-shrink-0">
