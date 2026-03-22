@@ -97,6 +97,7 @@ async function classifyAmbiguousBatch(
         promptMode: 'passthrough',
         maxTokens: LLM_MAX_TOKENS,
         temperature: 0,
+        priority: 'background',
       },
     );
 

@@ -18,6 +18,7 @@ import {
 } from './lmstudio.js';
 import { HEALTH_AI_TIMEOUT_MS } from '../config/constants.js';
 import { buildPersonaSystemPrompt } from './persona.js';
+import * as providerHealth from './provider-health.js';
 import { getActivePromptContent } from './self-core-kernel.js';
 import { getTelephonyRuntimeConfig } from '../features/telephony/service/telephony-runtime-config.js';
 
@@ -179,6 +180,7 @@ async function tryWarpRoutes(
   const chatMessages = messages as OpenAI.ChatCompletionMessageParam[];
 
   const tryModel = async (provider: string, baseURL: string, apiKey: string, model: string): Promise<AIResponse & { usedModel: string }> => {
+    providerHealth.trackRequest(provider);
     const client = new OpenAI({ apiKey, baseURL, timeout: 8000 });
     const completion = await client.chat.completions.create({
       model,
@@ -188,6 +190,7 @@ async function tryWarpRoutes(
     });
     const content = completion.choices?.[0]?.message?.content;
     if (!content) throw new Error('Empty response');
+    providerHealth.recordSuccess(provider);
     return {
       content,
       model: `${provider}/${model}`,
@@ -201,19 +204,22 @@ async function tryWarpRoutes(
     };
   };
 
-  // Собираем все доступные варп-маршруты в один массив и гоняем параллельно
-  // Cerebras первый — быстрее и стабильнее
+  // Собираем все доступные варп-маршруты, пропуская мёртвые провайдеры (circuit breaker)
   const candidates: Array<{ provider: string; baseURL: string; apiKey: string; model: string }> = [];
 
-  if (keys.cerebras) {
+  if (keys.cerebras && providerHealth.isProviderAvailable('cerebras')) {
     for (const m of CEREBRAS_CHAT_MODELS) candidates.push({ provider: 'cerebras', baseURL: config.cerebras.baseUrl, apiKey: keys.cerebras, model: m });
+  } else if (keys.cerebras) {
+    aiLogger.debug('Cerebras skipped by circuit breaker');
   }
-  if (keys.groq) {
+  if (keys.groq && providerHealth.isProviderAvailable('groq')) {
     for (const m of GROQ_CHAT_MODELS) candidates.push({ provider: 'groq', baseURL: config.groq.baseUrl, apiKey: keys.groq, model: m });
+  } else if (keys.groq) {
+    aiLogger.debug('Groq skipped by circuit breaker');
   }
 
   if (candidates.length === 0) {
-    aiLogger.error('No warp route API keys configured');
+    aiLogger.error('No warp route API keys configured or all providers circuit-broken');
     return null;
   }
 
@@ -228,6 +234,7 @@ async function tryWarpRoutes(
           return result;
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
+          providerHealth.recordFailure(c.provider, msg);
           aiLogger.debug({ model: `${c.provider}/${c.model}`, error: msg }, 'Warp candidate failed');
           throw error;
         }
@@ -373,6 +380,8 @@ export interface AIChatOptions {
   modelOverride?: string;
   fallbackStrategy?: 'race' | 'sequential' | 'off';
   fallbackModelLimit?: number;
+  /** user = пользовательский запрос (всегда проходит), background = фоновая задача (дросселируется) */
+  priority?: 'user' | 'background';
 }
 
 /**
@@ -522,7 +531,19 @@ export const aiService = {
     options?: AIChatOptions,
   ): Promise<AIResponse> {
     const promptMode = options?.promptMode ?? 'default';
+    const priority = options?.priority ?? 'user';
     const executionPlan = await resolveExecutionPlan(channel, options);
+
+    // Фоновые задачи проверяют бюджет провайдера — если >50% RPM использовано, пропускаем
+    if (priority === 'background') {
+      const providerName = executionPlan.provider;
+      if (providerName === 'cerebras' || providerName === 'groq') {
+        if (!providerHealth.hasBackgroundBudget(providerName)) {
+          throw new AppError('RATE_BUDGET_EXHAUSTED', `Background task throttled: ${providerName} rate budget >50%`);
+        }
+      }
+    }
+
     const aiConfig = await getAIConfig(channel, {
       includePrompt: promptMode === 'default',
       modelOverride: executionPlan.modelOverride,
@@ -626,40 +647,52 @@ export const aiService = {
 
     // === ШАГ 0.5: Cerebras / Groq как основной провайдер ===
     if (provider === 'cerebras' || provider === 'groq') {
-      try {
-        const direct = await getDirectProviderClientAndModel(provider);
-        aiLogger.debug({ model: direct.model, provider: direct.providerName }, `Trying ${provider} as primary provider`);
+      // Circuit breaker: если провайдер мёртв — сразу на OpenRouter
+      if (!providerHealth.isProviderAvailable(provider)) {
+        aiLogger.warn({ provider }, `${provider} circuit-broken — skipping to OpenRouter`);
+      } else {
+        try {
+          const direct = await getDirectProviderClientAndModel(provider);
+          aiLogger.debug({ model: direct.model, provider: direct.providerName }, `Trying ${provider} as primary provider`);
+          providerHealth.trackRequest(provider);
 
-        const result = await tryWithClient(direct.client, direct.model);
-        aiLogger.info(
-          { model: result.model, tokens: result.tokens_used.total, provider: direct.providerName },
-          `${provider} primary response received`
-        );
-        return result;
-      } catch (directError) {
-        const errorMessage = directError instanceof Error ? directError.message : String(directError);
-        aiLogger.warn({ error: errorMessage, provider }, `${provider} primary failed`);
+          const result = await tryWithClient(direct.client, direct.model);
+          providerHealth.recordSuccess(provider);
+          aiLogger.info(
+            { model: result.model, tokens: result.tokens_used.total, provider: direct.providerName },
+            `${provider} primary response received`
+          );
+          return result;
+        } catch (directError) {
+          const errorMessage = directError instanceof Error ? directError.message : String(directError);
+          providerHealth.recordFailure(provider, errorMessage);
+          aiLogger.warn({ error: errorMessage, provider }, `${provider} primary failed`);
 
-        // Если провайдер задан жёстко — пробуем все модели этого провайдера
-        const directModels = provider === 'cerebras' ? CEREBRAS_CHAT_MODELS : GROQ_CHAT_MODELS;
-        const directClient = provider === 'cerebras' ? await getCerebrasClient() : await getGroqChatClient();
-        const usedFirst = await getDirectProviderModel(provider);
+          // Если провайдер всё ещё доступен (не circuit-broken) — пробуем fallback модели
+          if (providerHealth.isProviderAvailable(provider)) {
+            const directModels = provider === 'cerebras' ? CEREBRAS_CHAT_MODELS : GROQ_CHAT_MODELS;
+            const directClient = provider === 'cerebras' ? await getCerebrasClient() : await getGroqChatClient();
+            const usedFirst = await getDirectProviderModel(provider);
 
-        for (const fallbackModel of directModels) {
-          if (fallbackModel === usedFirst) continue;
-          try {
-            aiLogger.debug({ model: fallbackModel, provider }, `Trying ${provider} fallback model`);
-            const result = await tryWithClient(directClient, fallbackModel);
-            aiLogger.info({ model: result.model, tokens: result.tokens_used.total, provider }, `${provider} fallback model OK`);
-            return result;
-          } catch (fbErr) {
-            const msg = fbErr instanceof Error ? fbErr.message : String(fbErr);
-            aiLogger.debug({ model: fallbackModel, provider, error: msg }, `${provider} fallback model failed`);
+            for (const fallbackModel of directModels) {
+              if (fallbackModel === usedFirst) continue;
+              try {
+                aiLogger.debug({ model: fallbackModel, provider }, `Trying ${provider} fallback model`);
+                providerHealth.trackRequest(provider);
+                const result = await tryWithClient(directClient, fallbackModel);
+                providerHealth.recordSuccess(provider);
+                aiLogger.info({ model: result.model, tokens: result.tokens_used.total, provider }, `${provider} fallback model OK`);
+                return result;
+              } catch (fbErr) {
+                const msg = fbErr instanceof Error ? fbErr.message : String(fbErr);
+                providerHealth.recordFailure(provider, msg);
+                aiLogger.debug({ model: fallbackModel, provider, error: msg }, `${provider} fallback model failed`);
+              }
+            }
           }
-        }
 
-        // Все модели провайдера упали — проваливаемся на OpenRouter
-        aiLogger.warn({ provider }, `All ${provider} models failed — falling back to OpenRouter`);
+          aiLogger.warn({ provider }, `All ${provider} models failed — falling back to OpenRouter`);
+        }
       }
     }
 

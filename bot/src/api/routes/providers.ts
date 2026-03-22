@@ -10,6 +10,7 @@ import { config, getApiKeys } from '../../config/index.js';
 import { getProxyHeaders, getOpenRouterBaseUrl, getGroqBaseUrl } from '../../config/ai-proxy.js';
 import { aiLogger } from '../../config/logger.js';
 import { settingsRepo } from '../../db/index.js';
+import { getProviderHealthStatus, resetProvider } from '../../ai/provider-health.js';
 
 interface ProviderTestResult {
   provider: string;
@@ -254,5 +255,18 @@ export async function registerProvidersRoutes(server: FastifyInstance): Promise<
       else if (msg.includes('DOCTYPE') || msg.includes('<html')) diagnosis = `${provider} вернул HTML. Ключ невалидный.`;
       return reply.code(200).send({ success: false, status: 'error', model, latencyMs, error: diagnosis });
     }
+  });
+
+  /** GET /api/providers/health — circuit breaker и rate budget статус */
+  server.get('/providers/health', async (_request: FastifyRequest, reply: FastifyReply) => {
+    return reply.code(200).send({ success: true, data: getProviderHealthStatus() });
+  });
+
+  /** POST /api/providers/reset — сброс circuit breaker для провайдера */
+  server.post('/providers/reset', async (request: FastifyRequest<{ Body: { provider: string } }>, reply: FastifyReply) => {
+    const { provider } = request.body as { provider?: string };
+    if (!provider) return reply.code(400).send({ success: false, error: 'provider required' });
+    resetProvider(provider);
+    return reply.code(200).send({ success: true, message: `Circuit breaker reset for ${provider}` });
   });
 }

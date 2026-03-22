@@ -2,9 +2,9 @@ import { aiService } from '../ai/openrouter.js';
 import { appLogger } from '../config/logger.js';
 import type { ParsedHeadline } from '../../../shared/types/index.js';
 
-const DESCRIPTION_TRANSLATION_BATCH_SIZE = 12;
-const DESCRIPTION_TRANSLATION_RETRY_BATCH_SIZE = 4;
-const DESCRIPTION_TRANSLATION_CONCURRENCY = 2;
+const DESCRIPTION_TRANSLATION_BATCH_SIZE = 8;
+const DESCRIPTION_TRANSLATION_RETRY_BATCH_SIZE = 3;
+const DESCRIPTION_TRANSLATION_CONCURRENCY = 1;
 const DESCRIPTION_TRANSLATION_TIMEOUT_MS = 45_000;
 const DESCRIPTION_TRANSLATION_MAX_TOKENS = 1400;
 const DESCRIPTION_TRANSLATION_TEMPERATURE = 0.2;
@@ -248,6 +248,7 @@ async function translateDescriptionBatch(
           promptMode: 'passthrough',
           maxTokens: DESCRIPTION_TRANSLATION_MAX_TOKENS,
           temperature: DESCRIPTION_TRANSLATION_TEMPERATURE,
+          priority: 'background',
         },
       ),
       DESCRIPTION_TRANSLATION_TIMEOUT_MS,
