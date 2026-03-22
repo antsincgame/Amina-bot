@@ -13,6 +13,7 @@ import { transcribeAudio } from '../../ai/multimodal.js';
 
 const MINI_APP_MESSAGE_MAX = 4000;
 const MAX_VOICE_FILE_BYTES = 10 * 1024 * 1024; // 10MB
+const MINI_APP_HISTORY_LIMIT = 20; // Максимум сообщений в контексте LLM
 
 type AvatarEmotion =
   | 'neutral'
@@ -86,20 +87,26 @@ function stripEmojis(text: string): string {
 }
 
 async function processAiResponse(userId: string, messageContent: string, request: FastifyRequest, withAudio: boolean) {
+  const t0 = Date.now();
+
   const conversation: Conversation = await conversationsRepo.getOrCreate(userId, 'telegram', {
     source: 'mini_app',
     userAgent: request.headers['user-agent'] || 'mini-app',
   });
+  const tConv = Date.now();
 
   const userMessage: Message = {
     role: 'user',
     content: messageContent,
     timestamp: new Date().toISOString(),
   };
-  await conversationsRepo.addMessage(conversation.id, userMessage);
+  // Fire-and-forget: не блокируем AI вызов записью в БД
+  conversationsRepo.addMessage(conversation.id, userMessage).catch(() => {});
 
+  // Берём только последние N сообщений (не всю историю)
   const existingMessages = Array.isArray(conversation.messages) ? conversation.messages : [];
-  const aiMessages: AIMessage[] = existingMessages
+  const recentMessages = existingMessages.slice(-MINI_APP_HISTORY_LIMIT);
+  const aiMessages: AIMessage[] = recentMessages
     .concat([userMessage])
     .map(m => ({ role: m.role, content: m.content }));
 
@@ -112,6 +119,7 @@ async function processAiResponse(userId: string, messageContent: string, request
     includeSearch: false,
     enableSelfGrowth: false,
   });
+  const tAi = Date.now();
 
   const assistantMessage: Message = {
     role: 'assistant',
@@ -136,6 +144,18 @@ async function processAiResponse(userId: string, messageContent: string, request
       }
     }
   }
+  const tTts = Date.now();
+
+  aiLogger.info({
+    userId,
+    convMs: tConv - t0,
+    aiMs: tAi - tConv,
+    ttsMs: tTts - tAi,
+    totalMs: tTts - t0,
+    model: aiResponse.model,
+    historyLen: aiMessages.length,
+    withAudio,
+  }, 'Mini-app processAiResponse timing');
 
   return {
     conversationId: conversation.id,
@@ -243,8 +263,10 @@ export async function registerMiniAppRoutes(server: FastifyInstance): Promise<vo
           mimeType: audioMimeType,
         }, 'Mini-app voice message received');
 
+        const tTranscribeStart = Date.now();
         const audioBase64 = audioBuffer.toString('base64');
         const transcription = await transcribeAudio(audioBase64, audioMimeType);
+        const tTranscribeEnd = Date.now();
 
         if (!transcription.text.trim()) {
           return reply.code(200).send({
@@ -262,6 +284,7 @@ export async function registerMiniAppRoutes(server: FastifyInstance): Promise<vo
           userId,
           transcript: transcription.text.slice(0, 100),
           model: transcription.model,
+          transcribeMs: tTranscribeEnd - tTranscribeStart,
         }, 'Mini-app voice transcribed');
 
         const messageContent = validateMessageContent(transcription.text);

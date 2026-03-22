@@ -775,6 +775,7 @@ function buildImageTaskInstruction(userCaption: string | undefined, isOcrRequest
  * Обработать изображение: ПРЯМОЙ ПРОБРОС в vision модель.
  * Одноступенчатый пайплайн: vision модель видит картинку + получает системный промпт Амины.
  * Двухступенчатый fallback (описание → LLM) используется только при ошибке.
+ * Общий таймаут 45 секунд на весь пайплайн.
  */
 export async function processImageWithLLM(
   imageBase64: string,
@@ -782,6 +783,7 @@ export async function processImageWithLLM(
   userCaption?: string,
   chatHistory?: { role: 'user' | 'assistant' | 'system'; content: string }[]
 ): Promise<AIResponse> {
+  const startTime = Date.now();
   const isOcrRequest = userCaption ? detectOcrIntent(userCaption) : false;
   const multiConfig = await getMultimodalConfig();
 
@@ -791,11 +793,16 @@ export async function processImageWithLLM(
       imageBase64, mimeType, userCaption, isOcrRequest,
       multiConfig, chatHistory,
     );
-    aiLogger.info({ model: result.model, tokens: result.tokens_used.total }, 'Direct vision pipeline OK');
+    aiLogger.info({ model: result.model, tokens: result.tokens_used.total, pipelineMs: Date.now() - startTime }, 'Direct vision pipeline OK');
     return result;
   } catch (directError) {
     const msg = directError instanceof Error ? directError.message : String(directError);
-    aiLogger.warn({ error: msg }, 'Direct vision pipeline failed — falling back to 2-step');
+    aiLogger.warn({ error: msg, elapsedMs: Date.now() - startTime }, 'Direct vision pipeline failed — falling back to 2-step');
+  }
+
+  // Если уже прошло >35 секунд, не пробуем двухступенчатый fallback — сразу кидаем ошибку
+  if (Date.now() - startTime > 35_000) {
+    throw new AppError('VISION_RACE_TIMEOUT', 'Vision: прямой запрос не успел, таймаут пайплайна.');
   }
 
   // === ДВУХСТУПЕНЧАТЫЙ FALLBACK: описание → основная LLM ===
