@@ -27,7 +27,8 @@ export const useAuthStore = create<AuthState>()(
           const user = await account.get();
           set({ user, isLoading: false });
         } catch {
-          // No active session
+          // Невалидная или отсутствующая сессия — чистим всё
+          try { await account.deleteSession('current'); } catch { /* ignore */ }
           set({ user: null, isLoading: false });
         }
       },
@@ -39,9 +40,33 @@ export const useAuthStore = create<AuthState>()(
           const user = await account.get();
           set({ user, isLoading: false });
         } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+
+          // Appwrite: "Creation of a session is prohibited when a session is active"
+          // → убиваем старую сессию и пробуем снова
+          if (msg.includes('session') && msg.includes('prohibited')) {
+            try {
+              await account.deleteSession('current');
+            } catch {
+              // Сессия могла быть невалидной — игнорируем
+            }
+            try {
+              await account.createEmailPasswordSession(email, password);
+              const user = await account.get();
+              set({ user, isLoading: false });
+              return;
+            } catch (retryError) {
+              set({
+                isLoading: false,
+                error: retryError instanceof Error ? retryError.message : 'Sign in failed after session cleanup',
+              });
+              throw retryError;
+            }
+          }
+
           set({
             isLoading: false,
-            error: error instanceof Error ? error.message : 'Sign in failed',
+            error: msg,
           });
           throw error;
         }
