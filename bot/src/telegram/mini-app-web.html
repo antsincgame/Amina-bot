@@ -397,14 +397,112 @@
       finally{setLocked(false);setStatus('')}
     }
 
-    if(micBtn)micBtn.addEventListener('click',function(){if(isRecording)stopRecording();else startRecording()});
+    if(micBtn)micBtn.addEventListener('click',function(){
+      if(isRecording){stopRecording();if(speechRecognition)try{speechRecognition.stop()}catch(e){};return}
+      if(isProcessing)return;
+      responseOverlay.classList.remove('visible');
+      // Web Speech API — мгновенное распознавание
+      if(useWebSpeech&&startWebSpeech())return;
+      // Fallback — MediaRecorder + серверный Whisper
+      startRecording();
+    });
+
+    /* -- Parallel TTS: озвучка ответа через ElevenLabs -- */
+    async function fetchAndPlayTTS(text){
+      if(!text||text.length<3||!initData)return;
+      try{
+        logPipeline('TTS → ElevenLabs…');
+        var ttsStart=Date.now();
+        var res=await fetch(apiBase+'/mini-app/tts',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({text:text,initData:initData})
+        });
+        var json=await res.json().catch(function(){return null});
+        if(json&&json.success&&json.data&&json.data.audioBase64){
+          logPipeline('TTS OK '+(Date.now()-ttsStart)+'ms','ok');
+          playAudioBase64(json.data.audioBase64,json.data.audioMimeType);
+        }else{logPipeline('TTS: no audio returned')}
+      }catch(e){logPipeline('TTS err: '+e.message,'error')}
+    }
+
+    /* -- Web Speech API: мгновенное распознавание в браузере -- */
+    var SpeechRecognitionClass=window.SpeechRecognition||window.webkitSpeechRecognition;
+    var useWebSpeech=!!SpeechRecognitionClass;
+    var speechRecognition=null;
+    logPipeline('Web Speech API: '+(useWebSpeech?'доступен':'нет, fallback на Whisper'));
+
+    function startWebSpeech(){
+      if(!useWebSpeech)return false;
+      try{
+        speechRecognition=new SpeechRecognitionClass();
+        speechRecognition.lang='ru-RU';
+        speechRecognition.interimResults=false;
+        speechRecognition.maxAlternatives=1;
+        speechRecognition.continuous=false;
+        
+        speechRecognition.onstart=function(){
+          isRecording=true;micBtn.classList.add('recording');
+          setStatus('🔴 Говорите…');logPipeline('Web Speech started');
+        };
+        speechRecognition.onresult=function(event){
+          var transcript=event.results[0][0].transcript;
+          logPipeline('Web Speech: "'+transcript.slice(0,60)+'" conf='+Math.round(event.results[0][0].confidence*100)+'%','ok');
+          isRecording=false;micBtn.classList.remove('recording');
+          sendTextFromSpeech(transcript);
+        };
+        speechRecognition.onerror=function(event){
+          logPipeline('Web Speech err: '+event.error,'error');
+          isRecording=false;micBtn.classList.remove('recording');
+          if(event.error==='no-speech'){setStatus('Не услышала. Попробуйте ещё раз.');setTimeout(function(){setStatus('')},2000);return}
+          // Fallback на MediaRecorder + серверный Whisper
+          logPipeline('Fallback → MediaRecorder + Whisper');
+          startRecording();
+        };
+        speechRecognition.onend=function(){
+          if(isRecording){isRecording=false;micBtn.classList.remove('recording');setStatus('')}
+        };
+        speechRecognition.start();
+        return true;
+      }catch(e){logPipeline('Web Speech init err: '+e.message,'error');return false}
+    }
+
+    /* -- Отправка распознанного текста (Web Speech) -- */
+    async function sendTextFromSpeech(transcript){
+      if(!initData||!transcript.trim())return;
+      setLocked(true);setStatus('💭 Амина думает…');setEmotion('thinking');
+      var tStart=Date.now();
+      logPipeline('Text → server (from speech): "'+transcript.slice(0,40)+'"');
+      try{
+        var res=await fetch(apiBase+'/mini-app/message',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({message:transcript,initData:initData,withAudio:false})
+        });
+        var json=await res.json().catch(function(){return null});
+        var respMs=Date.now()-tStart;
+        if(!res.ok||!json||!json.success){
+          var err=(json&&json.error)||'Ошибка ('+res.status+')';
+          showError(err);logPipeline('API err: '+err,'error');return;
+        }
+        logPipeline('AI response '+respMs+'ms','ok');
+        var text=json.data.response||'';
+        showResponse(text,transcript);
+        setEmotion(json.data.emotion||'neutral');
+        // Озвучка параллельно — текст уже показан
+        fetchAndPlayTTS(text);
+      }catch(e){showError('Сеть: '+e.message);logPipeline('Err: '+e.message,'error')}
+      finally{setLocked(false);setStatus('')}
+    }
 
     /* -- Response handling -- */
     function handleAiResponse(data,transcript){
       var text=data.response||'';
       showResponse(text,transcript);
       setEmotion(data.emotion||'neutral');
+      // Если сервер вернул аудио — играем; иначе запрашиваем TTS
       if(data.audioBase64)playAudioBase64(data.audioBase64,data.audioMimeType);
+      else fetchAndPlayTTS(text);
     }
 
     logPipeline('PNGTuber mode loaded for '+userName,'ok');

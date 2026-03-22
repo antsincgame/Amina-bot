@@ -306,4 +306,47 @@ export async function registerMiniAppRoutes(server: FastifyInstance): Promise<vo
       }
     },
   );
+
+  /**
+   * POST /mini-app/tts
+   * Озвучивает текст через ElevenLabs/OpenAI TTS.
+   * Фронт вызывает ПОСЛЕ получения текстового ответа — параллельно показу текста.
+   */
+  server.post(
+    '/mini-app/tts',
+    async (request: FastifyRequest, reply: FastifyReply) => {
+      try {
+        const body = request.body as { text?: string; initData?: string };
+        if (!body?.text?.trim()) return reply.code(400).send({ success: false, error: 'text required' });
+        if (!body?.initData) return reply.code(400).send({ success: false, error: 'initData required' });
+
+        const userIdRaw = ensureTelegramInit(reply, body.initData);
+        if (!userIdRaw) return;
+
+        const tStart = Date.now();
+        const cleanText = stripEmojis(body.text.trim()).slice(0, 2000); // макс 2000 символов
+        if (cleanText.length === 0) {
+          return reply.code(200).send({ success: true, data: { audioBase64: null } });
+        }
+
+        const lang = detectLanguage(cleanText);
+        const audio = await textToSpeech(cleanText, lang);
+        const ttsMs = Date.now() - tStart;
+
+        if (audio && audio.length > 0) {
+          aiLogger.info({ userId: userIdRaw, ttsMs, textLen: cleanText.length }, 'Mini-app TTS generated');
+          return reply.code(200).send({
+            success: true,
+            data: { audioBase64: audio.toString('base64'), audioMimeType: 'audio/mpeg' },
+          });
+        }
+
+        return reply.code(200).send({ success: true, data: { audioBase64: null } });
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+        aiLogger.warn({ error: errMsg }, 'Mini-app TTS failed');
+        return reply.code(200).send({ success: true, data: { audioBase64: null } });
+      }
+    },
+  );
 }
