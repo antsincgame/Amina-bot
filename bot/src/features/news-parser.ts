@@ -144,7 +144,7 @@ function recordSiteFailure(url: string): void {
 export const DEFAULT_AI_TECH_SOURCES: NewsSite[] = [
   // ===== AI Labs (5) — первоисточники =====
   { name: 'OpenAI News', url: 'https://openai.com/news/rss.xml', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },
-  { name: 'Anthropic News', url: 'https://www.anthropic.com/rss.xml', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },
+  { name: 'Anthropic News', url: 'https://www.anthropic.com/rss.xml', enabled: false, type: 'rss', category: 'ai_tech', language: 'en' }, // timeout — блокирует серверные запросы
   { name: 'Google AI Blog', url: 'https://blog.google/technology/ai/rss/', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },
   { name: 'DeepMind Blog', url: 'https://deepmind.google/blog/rss.xml', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },
   { name: 'Hugging Face Blog', url: 'https://huggingface.co/blog/feed.xml', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },
@@ -183,7 +183,7 @@ export const DEFAULT_AI_TECH_SOURCES: NewsSite[] = [
 
   // ===== Блоги (2) =====
   { name: 'Simon Willison', url: 'https://simonwillison.net/atom/entries/', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },
-  { name: 'The Batch (DeepLearning.AI)', url: 'https://www.deeplearning.ai/the-batch/feed/', enabled: true, type: 'rss', category: 'ai_tech', language: 'en' },
+  { name: 'The Batch (DeepLearning.AI)', url: 'https://www.deeplearning.ai/the-batch/feed/', enabled: false, type: 'rss', category: 'ai_tech', language: 'en' }, // 404 — feed удалён
 
   // ===== Отключённые (доступны для включения в админке) =====
   { name: 'Meta AI Blog', url: 'https://ai.meta.com/blog/rss/', enabled: false, type: 'rss', category: 'ai_tech', language: 'en' },

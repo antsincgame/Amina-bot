@@ -127,7 +127,7 @@ export const ASIA_NEWS_SOURCE_MANIFEST: NewsSite[] = [
   {
     name: 'TechCrunch Japan',
     url: 'https://jp.techcrunch.com/feed/',
-    enabled: true,
+    enabled: false, // Сайт закрыт (fetch failed)
     type: 'rss',
     category: 'asia_tech',
     language: 'ja',
@@ -163,7 +163,7 @@ export const ASIA_NEWS_SOURCE_MANIFEST: NewsSite[] = [
   {
     name: 'PR Times (Vibe Coding)',
     url: 'https://prtimes.jp/main/html/searchrlp/company_id/0?kw=%E3%83%90%E3%82%A4%E3%83%96%E3%82%B3%E3%83%BC%E3%83%87%E3%82%A3%E3%83%B3%E3%82%B0',
-    enabled: true,
+    enabled: false, // 404 — URL невалидный
     type: 'html_scrape',
     category: 'asia_tech',
     language: 'ja',
@@ -241,7 +241,7 @@ export const ASIA_NEWS_SOURCE_MANIFEST: NewsSite[] = [
   {
     name: 'KoreaTechToday',
     url: 'https://www.koreatechtoday.com/feed/',
-    enabled: true,
+    enabled: false, // 403 — блокирует парсинг
     type: 'rss',
     category: 'asia_tech',
     language: 'ko',
