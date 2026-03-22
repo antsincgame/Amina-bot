@@ -766,6 +766,26 @@ const ProviderTestPanel = () => {
   const [testing, setTesting] = useState(false);
   const [testedAt, setTestedAt] = useState('');
   const [currentProvider, setCurrentProvider] = useState('');
+  const [health, setHealth] = useState<Record<string, { available: boolean; consecutiveFailures: number; lastFailureCode: string; cooldownUntil: string | null; rpm: number; rpmLimit: number }>>({});
+
+  const loadHealth = async () => {
+    try {
+      const resp = await fetchBotApi('/api/providers/health');
+      const json = await resp.json();
+      if (json.success) setHealth(json.data || {});
+    } catch { /* ignore */ }
+  };
+
+  const resetCircuitBreaker = async (provider: string) => {
+    try {
+      await fetchBotApi('/api/providers/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider }),
+      });
+      await loadHealth();
+    } catch { /* ignore */ }
+  };
 
   const runTests = async () => {
     setTesting(true);
@@ -781,6 +801,7 @@ const ProviderTestPanel = () => {
       } else {
         setResults([{ provider: 'api', status: 'error', latencyMs: 0, error: json.error || 'Unknown error' }]);
       }
+      await loadHealth();
     } catch (err) {
       setResults([{ provider: 'api', status: 'error', latencyMs: 0, error: err instanceof Error ? err.message : 'Network error' }]);
     } finally {
@@ -833,6 +854,17 @@ const ProviderTestPanel = () => {
               {' • '}{results.filter(r => r.status === 'ok').length}/{results.length} сервисов работают
             </div>
           )}
+          {/* Circuit breaker warnings */}
+          {Object.entries(health).some(([, h]) => !h.available) && (
+            <div className="mb-3 px-3 py-2 rounded-lg text-xs" style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)' }}>
+              <span className="text-red-400 font-medium">⚡ Circuit breaker активен:</span>{' '}
+              {Object.entries(health).filter(([, h]) => !h.available).map(([name, h]) => (
+                <span key={name} className="text-red-300">
+                  {name} ({h.lastFailureCode}, до {h.cooldownUntil ? new Date(h.cooldownUntil).toLocaleTimeString('ru-RU') : '?'})
+                </span>
+              )).reduce((prev, curr, i) => <>{prev}{i > 0 ? ', ' : ''}{curr}</> as any, <></>)}
+            </div>
+          )}
           <div className="space-y-2">
             {results.map((r) => {
               const display = PROVIDER_DISPLAY[r.provider] || { label: r.provider, icon: '❓' };
@@ -860,6 +892,28 @@ const ProviderTestPanel = () => {
                       {r.error && r.status === 'error' && !r.diagnosis && (
                         <p className="text-xs text-red-400 truncate">{r.error.slice(0, 100)}</p>
                       )}
+                      {/* Circuit breaker status */}
+                      {(() => {
+                        const hKey = r.provider === 'groq_chat' || r.provider === 'groq_whisper' ? 'groq' : r.provider;
+                        const h = health[hKey];
+                        if (!h) return null;
+                        const parts: string[] = [];
+                        if (h.rpm > 0) parts.push(`${h.rpm}/${h.rpmLimit} RPM`);
+                        if (!h.available && h.cooldownUntil) parts.push(`⚡ circuit breaker до ${new Date(h.cooldownUntil).toLocaleTimeString('ru-RU')}`);
+                        if (h.consecutiveFailures > 0 && h.available) parts.push(`${h.consecutiveFailures} ошибок подряд`);
+                        if (parts.length === 0) return null;
+                        return (
+                          <div className="flex items-center gap-2 mt-0.5">
+                            <p className={`text-xs ${!h.available ? 'text-red-400' : 'text-gray-500'}`}>{parts.join(' • ')}</p>
+                            {!h.available && (
+                              <button type="button" onClick={() => resetCircuitBreaker(hKey)}
+                                className="text-xs px-1.5 py-0.5 rounded bg-red-500/20 hover:bg-red-500/30 text-red-400 transition-all">
+                                сброс
+                              </button>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                   <div className="flex items-center gap-3 flex-shrink-0">
