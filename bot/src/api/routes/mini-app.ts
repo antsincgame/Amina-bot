@@ -208,9 +208,8 @@ export async function registerMiniAppRoutes(server: FastifyInstance): Promise<vo
 
   /**
    * POST /mini-app/voice
-   * Голосовой ввод: принимает audio blob (FormData), транскрибирует через Groq Whisper,
-   * обрабатывает через AI, возвращает ответ + TTS + transcript.
-   * Работает на iOS (MediaRecorder → audio/mp4) и Chrome (audio/webm).
+   * Голосовой ввод: принимает audio как base64 в JSON (обход проблем с multipart).
+   * Транскрибирует через Groq Whisper, обрабатывает через AI.
    */
   server.post(
     '/mini-app/voice',
@@ -222,57 +221,28 @@ export async function registerMiniAppRoutes(server: FastifyInstance): Promise<vo
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
-        aiLogger.info({ 
-          contentType: (request.headers['content-type'] || '').slice(0, 80),
-          contentLength: request.headers['content-length'],
-        }, 'Mini-app voice: request received');
+        const body = request.body as { audioBase64?: string; mimeType?: string; initData?: string };
 
-        let audioBuffer: Buffer | null = null;
-        let audioMimeType = 'audio/webm';
-        let initData = '';
-
-        // Проверяем что запрос действительно multipart
-        const contentType = request.headers['content-type'] || '';
-        if (!contentType.includes('multipart/form-data')) {
-          return reply.code(400).send({
-            success: false,
-            error: 'Expected multipart/form-data, got: ' + contentType.split(';')[0],
-          });
+        if (!body?.audioBase64) {
+          return reply.code(400).send({ success: false, error: 'audioBase64 required' });
         }
-
-        aiLogger.info('Mini-app voice: parsing multipart...');
-        const parts = request.parts();
-        for await (const part of parts) {
-          if (part.type === 'file' && part.fieldname === 'audio') {
-            audioMimeType = part.mimetype || 'audio/webm';
-            audioBuffer = await part.toBuffer();
-            aiLogger.info({ size: audioBuffer.length, mime: audioMimeType }, 'Mini-app voice: audio parsed');
-          } else if (part.type === 'field' && part.fieldname === 'initData') {
-            initData = String(part.value ?? '');
-          }
-        }
-
-        if (!audioBuffer || audioBuffer.length === 0) {
-          return reply.code(400).send({ success: false, error: 'No audio file provided' });
-        }
-        if (!initData) {
+        if (!body?.initData) {
           return reply.code(400).send({ success: false, error: 'Missing initData' });
         }
 
-        const userIdRaw = ensureTelegramInit(reply, initData);
+        const audioBase64 = body.audioBase64;
+        const audioMimeType = body.mimeType || 'audio/webm';
+        const audioSize = Math.round(audioBase64.length * 3 / 4);
+
+        const userIdRaw = ensureTelegramInit(reply, body.initData);
         if (!userIdRaw) return;
 
         const userId = validateUserId(userIdRaw);
 
-        aiLogger.info({
-          userId,
-          audioSize: audioBuffer.length,
-          mimeType: audioMimeType,
-        }, 'Mini-app voice message received');
+        aiLogger.info({ userId, audioSize, mimeType: audioMimeType }, 'Mini-app voice message received');
 
         const tTranscribeStart = Date.now();
-        const audioBase64 = audioBuffer.toString('base64');
-        aiLogger.info({ audioSize: audioBuffer.length }, 'Mini-app voice: starting Whisper transcription...');
+        aiLogger.info({ audioSize }, 'Mini-app voice: starting Whisper transcription...');
         
         // Таймаут 20с на транскрипцию
         const transcriptionPromise = transcribeAudio(audioBase64, audioMimeType);

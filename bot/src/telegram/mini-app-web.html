@@ -368,14 +368,26 @@
     async function sendVoiceToServer(blob){
       if(!initData){showError('Откройте из Telegram');return}
       setLocked(true);setStatus('⏳ Распознаю речь…');setEmotion('thinking');
-      logPipeline('Voice → server, size='+blob.size+', type='+blob.type+', api='+apiBase);
-      var ext=blob.type.includes('mp4')?'mp4':blob.type.includes('ogg')?'ogg':'webm';
-      var fd=new FormData();fd.append('audio',blob,'voice.'+ext);fd.append('initData',initData);
+      logPipeline('Voice → converting to base64, size='+blob.size+', type='+blob.type);
       var tStart=Date.now();
       try{
+        // Конвертируем blob в base64
+        var reader=new FileReader();
+        var audioBase64=await new Promise(function(resolve,reject){
+          reader.onload=function(){var result=reader.result;resolve(result.split(',')[1])};
+          reader.onerror=function(){reject(new Error('FileReader failed'))};
+          reader.readAsDataURL(blob);
+        });
+        logPipeline('Base64 ready: '+Math.round(audioBase64.length/1024)+'KB, sending JSON...');
+        
         var controller=new AbortController();
-        var timeout=setTimeout(function(){controller.abort()},60000);
-        var res=await fetch(apiBase+'/mini-app/voice',{method:'POST',body:fd,signal:controller.signal});
+        var timeout=setTimeout(function(){controller.abort()},30000);
+        var res=await fetch(apiBase+'/mini-app/voice',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({audioBase64:audioBase64,mimeType:blob.type||'audio/webm',initData:initData}),
+          signal:controller.signal
+        });
         clearTimeout(timeout);
         var fetchMs=Date.now()-tStart;
         logPipeline('Server responded in '+fetchMs+'ms, status='+res.status);
@@ -391,7 +403,7 @@
         logPipeline('STT: "'+tr.slice(0,80)+'" emotion='+json.data.emotion+' total='+totalMs+'ms','ok');
         handleAiResponse(json.data,tr);
       }catch(e){
-        var errMsg=e.name==='AbortError'?'Таймаут 60 сек. Попробуйте короче.':'Сеть недоступна: '+e.message;
+        var errMsg=e.name==='AbortError'?'Таймаут 30 сек. Попробуйте короче.':'Сеть недоступна: '+e.message;
         showError(errMsg);logPipeline('Voice err: '+e.name+' '+e.message+' after '+(Date.now()-tStart)+'ms','error');
       }
       finally{setLocked(false);setStatus('')}
