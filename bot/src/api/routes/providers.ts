@@ -237,6 +237,7 @@ export async function registerProvidersRoutes(server: FastifyInstance): Promise<
     if (!provider || !model) return reply.code(400).send({ success: false, error: 'provider and model required' });
 
     const start = Date.now();
+    clearApiKeysCache();
     const keys = await getApiKeys();
     let apiKey: string | undefined;
     let baseURL: string;
@@ -247,6 +248,7 @@ export async function registerProvidersRoutes(server: FastifyInstance): Promise<
       extraHeaders = getProxyHeaders({ 'HTTP-Referer': config.botUrl, 'X-Title': 'Amina AI Bot' });
     } else if (provider === 'cerebras') {
       apiKey = keys.cerebras; baseURL = config.cerebras.baseUrl;
+      extraHeaders = getProxyHeaders();
     } else if (provider === 'groq') {
       apiKey = keys.groq; baseURL = getGroqBaseUrl(); extraHeaders = getProxyHeaders();
     } else {
