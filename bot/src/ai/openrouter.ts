@@ -162,12 +162,13 @@ const GROQ_CHAT_MODELS = [
   'openai/gpt-oss-120b',
 ];
 
-// Cerebras модели — сверхбыстрый инференс (3000+ tok/s)
-// Актуальные на март 2026: https://inference-docs.cerebras.ai/models/overview
+// Cerebras модели — сверхбыстрый инференс (1000-3000 tok/s)
+// https://inference-docs.cerebras.ai/models/overview
 const CEREBRAS_CHAT_MODELS = [
-  'qwen-3-235b-a22b-instruct-2507',  // Qwen3 235B MoE — flagship, уровень Claude Sonnet
-  'gpt-oss-120b',                      // OpenAI GPT-OSS 120B — reasoning модель
-  'llama3.1-8b',                       // Llama 3.1 8B — быстрая, лёгкая
+  'qwen-3-235b-a22b-instruct-2507',  // Qwen3 235B MoE — flagship (~1400 tok/s)
+  'gpt-oss-120b',                      // OpenAI GPT-OSS 120B — reasoning (~3000 tok/s)
+  'zai-glm-4.7',                       // Z.ai GLM 4.7 355B — reasoning, философия (~1000 tok/s)
+  'llama3.1-8b',                       // Llama 3.1 8B — быстрая (~2200 tok/s)
 ];
 
 /**
