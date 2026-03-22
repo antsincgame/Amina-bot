@@ -4,11 +4,27 @@ const { execSync } = require('child_process');
 
 const APP_NAME = 'AminaTunnel';
 
-// Start tunnel (it launches HTTP dashboard on port 9876)
-require('./tunnel.js');
+// Запрет запуска второго экземпляра
+const gotTheLock = app.requestSingleInstanceLock();
+if (!gotTheLock) {
+  console.log('Another instance is already running — quitting.');
+  app.quit();
+  return;
+}
 
 let mainWindow = null;
 let tray = null;
+
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
+
+// Start tunnel (it launches HTTP dashboard on port 9876)
+require('./tunnel.js');
 
 // ============================================
 //  Autostart (Windows registry)
@@ -86,6 +102,21 @@ const autostartServer = http.createServer((req, res) => {
   }
   res.writeHead(404); res.end();
 });
+
+autostartServer.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.log('Autostart API port 9877 already in use — retrying...');
+    try {
+      if (process.platform === 'win32') {
+        execSync(`powershell -Command "Get-NetTCPConnection -LocalPort 9877 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"`, { stdio: 'pipe', timeout: 5000 });
+      }
+    } catch { /* ignore */ }
+    setTimeout(() => autostartServer.listen(9877, '127.0.0.1'), 1500);
+  } else {
+    console.error('Autostart server error:', err.message);
+  }
+});
+
 autostartServer.listen(9877, '127.0.0.1');
 
 function createWindow() {

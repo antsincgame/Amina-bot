@@ -707,6 +707,27 @@ function startDashboard() {
     }
     res.writeHead(404); res.end('Not found');
   });
+
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      log(`⚠️ Port ${CONFIG.dashboardPort} already in use — killing old process...`);
+      try {
+        if (process.platform === 'win32') {
+          execSync(`powershell -Command "Get-NetTCPConnection -LocalPort ${CONFIG.dashboardPort} -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"`, { stdio: 'pipe', timeout: 5000 });
+        } else {
+          execSync(`fuser -k ${CONFIG.dashboardPort}/tcp`, { stdio: 'pipe' });
+        }
+      } catch { /* процесс мог уже умереть */ }
+      setTimeout(() => {
+        server.listen(CONFIG.dashboardPort, '127.0.0.1', () => {
+          log(`Dashboard: http://localhost:${CONFIG.dashboardPort} (retried after EADDRINUSE)`);
+        });
+      }, 1500);
+    } else {
+      log(`❌ Dashboard server error: ${err.message}`);
+    }
+  });
+
   server.listen(CONFIG.dashboardPort, '127.0.0.1', () => {
     log(`Dashboard: http://localhost:${CONFIG.dashboardPort}`);
   });
