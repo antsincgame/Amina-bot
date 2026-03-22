@@ -428,9 +428,12 @@
 
     /* -- Web Speech API: мгновенное распознавание в браузере -- */
     var SpeechRecognitionClass=window.SpeechRecognition||window.webkitSpeechRecognition;
-    var useWebSpeech=!!SpeechRecognitionClass;
+    // В Telegram WebView Web Speech API зависает — отключаем
+    var isTelegramWebView=!!(window.Telegram&&window.Telegram.WebApp);
+    var useWebSpeech=!!SpeechRecognitionClass&&!isTelegramWebView;
     var speechRecognition=null;
-    logPipeline('Web Speech API: '+(useWebSpeech?'доступен':'нет, fallback на Whisper'));
+    var webSpeechTimeout=null;
+    logPipeline('Web Speech: '+(SpeechRecognitionClass?'class exists':'missing')+', TG WebView: '+isTelegramWebView+', enabled: '+useWebSpeech);
 
     function startWebSpeech(){
       if(!useWebSpeech)return false;
@@ -441,30 +444,43 @@
         speechRecognition.maxAlternatives=1;
         speechRecognition.continuous=false;
         
+        // Таймаут 5 сек — если Web Speech зависнет, fallback на Whisper
+        webSpeechTimeout=setTimeout(function(){
+          logPipeline('Web Speech timeout 5s — fallback','error');
+          try{speechRecognition.abort()}catch(e){}
+          isRecording=false;micBtn.classList.remove('recording');
+          useWebSpeech=false; // Больше не пробуем в этой сессии
+          startRecording();
+        },5000);
+
         speechRecognition.onstart=function(){
           isRecording=true;micBtn.classList.add('recording');
           setStatus('🔴 Говорите…');logPipeline('Web Speech started');
         };
         speechRecognition.onresult=function(event){
+          clearTimeout(webSpeechTimeout);
           var transcript=event.results[0][0].transcript;
           logPipeline('Web Speech: "'+transcript.slice(0,60)+'" conf='+Math.round(event.results[0][0].confidence*100)+'%','ok');
           isRecording=false;micBtn.classList.remove('recording');
           sendTextFromSpeech(transcript);
         };
         speechRecognition.onerror=function(event){
+          clearTimeout(webSpeechTimeout);
           logPipeline('Web Speech err: '+event.error,'error');
           isRecording=false;micBtn.classList.remove('recording');
           if(event.error==='no-speech'){setStatus('Не услышала. Попробуйте ещё раз.');setTimeout(function(){setStatus('')},2000);return}
           // Fallback на MediaRecorder + серверный Whisper
           logPipeline('Fallback → MediaRecorder + Whisper');
+          useWebSpeech=false; // Больше не пробуем
           startRecording();
         };
         speechRecognition.onend=function(){
+          clearTimeout(webSpeechTimeout);
           if(isRecording){isRecording=false;micBtn.classList.remove('recording');setStatus('')}
         };
         speechRecognition.start();
         return true;
-      }catch(e){logPipeline('Web Speech init err: '+e.message,'error');return false}
+      }catch(e){logPipeline('Web Speech init err: '+e.message,'error');useWebSpeech=false;return false}
     }
 
     /* -- Отправка распознанного текста (Web Speech) -- */
