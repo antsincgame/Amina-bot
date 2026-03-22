@@ -55,9 +55,9 @@ const CUSTOM_MODEL_VALUE = '__custom__';
 
 // Cerebras / Groq model lists
 const CEREBRAS_MODELS = [
-  { id: 'qwen-3-235b-a22b-instruct-2507', name: 'Qwen 3 235B (рекомендуемая)' },
+  { id: 'qwen-3-235b-a22b-instruct-2507', name: 'Qwen3 235B MoE (flagship, уровень Claude Sonnet)' },
+  { id: 'gpt-oss-120b', name: 'GPT-OSS 120B (reasoning, размышляющая)' },
   { id: 'llama3.1-8b', name: 'Llama 3.1 8B (быстрая)' },
-  { id: 'llama-3.3-70b', name: 'Llama 3.3 70B' },
 ];
 
 const GROQ_MODELS = [

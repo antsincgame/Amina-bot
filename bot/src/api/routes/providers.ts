@@ -96,7 +96,7 @@ async function testCerebras(apiKey: string): Promise<ProviderTestResult> {
   const keyInfo = await getKeySource('cerebras_api_key', process.env.CEREBRAS_API_KEY);
   const { model, modelSource } = await resolveModel(['cerebras_model'], 'qwen-3-235b-a22b-instruct-2507');
   try {
-    const client = new OpenAI({ apiKey, baseURL: config.cerebras.baseUrl, timeout: 10000 });
+    const client = new OpenAI({ apiKey, baseURL: config.cerebras.baseUrl, timeout: 10000, defaultHeaders: getProxyHeaders() });
     const res = await client.chat.completions.create({ model, messages: [{ role: 'user', content: 'Say OK' }], max_tokens: 5 });
     const content = res.choices?.[0]?.message?.content ?? '';
     return { provider: 'cerebras', status: content.length > 0 ? 'ok' : 'error', latencyMs: Date.now() - start, model: res.model || model, modelSource, detail: content.slice(0, 50), keySource: keyInfo.source, keyPreview: maskKey(apiKey) };
