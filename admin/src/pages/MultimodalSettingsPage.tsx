@@ -145,8 +145,33 @@ const MultimodalSettingsPage = () => {
         if (models && models.length > 0) {
           setVisionModels(models);
           if (force) {
-            setRefreshMessage(`Загружено ${models.length} бесплатных vision моделей`);
-            setTimeout(() => setRefreshMessage(''), 3000);
+            setRefreshMessage(`Загружено ${models.length} моделей. Автотест...`);
+            // Автотест всех моделей после обновления
+            let tested = 0;
+            let ok = 0;
+            for (const m of models) {
+              try {
+                const resp = await fetchBotApi('/api/models/vision/test', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ model: m.id }),
+                });
+                const json = await resp.json();
+                const isOk = json.status === 'ok';
+                if (isOk) ok++;
+                tested++;
+                setModelTestResults(prev => ({
+                  ...prev,
+                  [m.id]: { status: isOk ? 'ok' : 'error', latencyMs: json.latencyMs || 0, detail: json.detail, error: json.error },
+                }));
+                setRefreshMessage(`Тест ${tested}/${models.length}... (${ok} рабочих)`);
+              } catch {
+                tested++;
+                setModelTestResults(prev => ({ ...prev, [m.id]: { status: 'error', latencyMs: 0, error: 'Сетевая ошибка' } }));
+              }
+            }
+            setRefreshMessage(`✅ ${ok}/${models.length} моделей рабочие`);
+            setTimeout(() => setRefreshMessage(''), 5000);
           }
         }
       } else {
@@ -321,6 +346,32 @@ const MultimodalSettingsPage = () => {
     }
   };
 
+  /** Тихий тест — не блокирует UI спиннером, для автотеста при загрузке */
+  const testVisionModelSilent = async (modelId: string) => {
+    try {
+      const resp = await fetchBotApi('/api/models/vision/test', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: modelId }),
+      });
+      const json = await resp.json();
+      setModelTestResults(prev => ({
+        ...prev,
+        [modelId]: {
+          status: json.status === 'ok' ? 'ok' : 'error',
+          latencyMs: json.latencyMs || 0,
+          detail: json.detail,
+          error: json.error,
+        },
+      }));
+    } catch {
+      setModelTestResults(prev => ({
+        ...prev,
+        [modelId]: { status: 'error', latencyMs: 0, error: 'Сетевая ошибка' },
+      }));
+    }
+  };
+
   // Load settings into form
   useEffect(() => {
     if (settings) {
@@ -359,7 +410,16 @@ const MultimodalSettingsPage = () => {
     }
   }, [settings, reset]);
 
+  const [saveWarning, setSaveWarning] = useState('');
+
   const onSubmit = (data: SettingsForm) => {
+    // Проверка: выбранная vision модель мертва?
+    const visionTest = modelTestResults[data.vision_model];
+    if (visionTest?.status === 'error') {
+      const ok = confirm(`⚠️ Vision модель "${data.vision_model}" не прошла тест: ${visionTest.error || 'ошибка'}.\n\nВсё равно сохранить?`);
+      if (!ok) return;
+    }
+
     const toSave: Record<string, string> = {
       audio_model: data.audio_model,
       tts_enabled: data.tts_enabled ? 'true' : 'false',
