@@ -161,7 +161,7 @@ async function testVision(apiKey: string): Promise<ProviderTestResult> {
       apiKey, baseURL: getOpenRouterBaseUrl(), timeout: 15000,
       defaultHeaders: getProxyHeaders({ 'HTTP-Referer': config.botUrl, 'X-Title': 'Amina AI Bot' }),
     });
-    const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
+    const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAADklEQVR4nGP4DwYMEAoAU7oL9ZisIGcAAAAASUVORK5CYII=';
     const res = await client.chat.completions.create({
       model, messages: [{ role: 'user', content: [{ type: 'text', text: 'What color? One word.' }, { type: 'image_url', image_url: { url: `data:image/png;base64,${tinyPng}` } }] }], max_tokens: 10,
     });

@@ -100,7 +100,7 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
         client = new OpenAI({ apiKey: keys.openrouter, baseURL: getOpenRouterBaseUrl(), timeout: 15000, defaultHeaders: getHeaders({ 'HTTP-Referer': config.botUrl, 'X-Title': 'Amina AI Bot' }) });
       }
 
-      const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
+      const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAADklEQVR4nGP4DwYMEAoAU7oL9ZisIGcAAAAASUVORK5CYII=';
       const res = await client.chat.completions.create({
         model: actualModel,
         messages: [{
