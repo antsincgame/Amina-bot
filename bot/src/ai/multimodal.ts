@@ -108,7 +108,8 @@ async function fetchFreeVisionModels(): Promise<Array<{ id: string; name: string
 /** Принудительно обновить кэш vision моделей */
 export async function refreshFreeVisionModelsCache(): Promise<Array<{ id: string; name: string; description: string }>> {
   visionModelsCache.clear();
-  return await fetchFreeVisionModels();
+  const openrouterModels = await fetchFreeVisionModels();
+  return [...GROQ_VISION_ENTRIES, ...openrouterModels];
 }
 
 // Groq vision модели — всегда доступны (не зависят от OpenRouter)
