@@ -8,7 +8,7 @@ const DEFAULT_LIRAX_EXT = '201';
 const DEFAULT_LATENCY_BUDGET_MS = 1800;
 const DEFAULT_RECORDING_RETENTION_DAYS = 30;
 
-export type TelephonyAiProvider = 'inherit' | 'openrouter' | 'lmstudio';
+export type TelephonyAiProvider = 'inherit' | 'openrouter' | 'lmstudio' | 'cerebras' | 'groq';
 
 export interface TelephonyAiEffectiveState {
   preferredProvider: TelephonyAiProvider;
@@ -17,7 +17,7 @@ export interface TelephonyAiEffectiveState {
   preferredOpenrouterModel: string;
   preferredOpenrouterModelSource: 'db' | 'env' | 'default';
   preferredOpenrouterModelReason: string;
-  effectiveProvider: 'auto' | 'openrouter' | 'lmstudio';
+  effectiveProvider: 'auto' | 'openrouter' | 'lmstudio' | 'cerebras' | 'groq';
   effectiveProviderSource: 'db' | 'env' | 'default' | 'derived';
   effectiveProviderReason: string;
   effectiveModel: string;
@@ -108,15 +108,15 @@ function resolveAiProvider(
   envValue: string | undefined,
 ): TelephonyAiProvider {
   for (const v of [dbValue, envValue]) {
-    if (v === 'openrouter' || v === 'lmstudio') {
+    if (v === 'openrouter' || v === 'lmstudio' || v === 'cerebras' || v === 'groq') {
       return v;
     }
   }
   return 'inherit';
 }
 
-function resolveGlobalAiProvider(dbValue: string | undefined): 'auto' | 'openrouter' | 'lmstudio' {
-  if (dbValue === 'openrouter' || dbValue === 'lmstudio') {
+function resolveGlobalAiProvider(dbValue: string | undefined): 'auto' | 'openrouter' | 'lmstudio' | 'cerebras' | 'groq' {
+  if (dbValue === 'openrouter' || dbValue === 'lmstudio' || dbValue === 'cerebras' || dbValue === 'groq') {
     return dbValue;
   }
   return 'auto';
@@ -132,6 +132,8 @@ function resolveEffectiveTelephonyAiState(input: {
   globalOpenrouterModelEnv: string | undefined;
   globalCustomModelOverrideDb: string | undefined;
   lmstudioModelDb: string | undefined;
+  cerebrasModelDb: string | undefined;
+  groqModelDb: string | undefined;
 }): TelephonyAiEffectiveState {
   const providerDb = input.telephonyProviderDb?.trim();
   const providerEnv = input.telephonyProviderEnv?.trim();
@@ -219,6 +221,42 @@ function resolveEffectiveTelephonyAiState(input: {
     };
   }
 
+  if (preferredProvider === 'cerebras') {
+    const cerebrasModel = input.cerebrasModelDb?.trim() || 'qwen-3-235b-a22b-instruct-2507';
+    return {
+      preferredProvider,
+      preferredProviderSource,
+      preferredProviderReason,
+      preferredOpenrouterModel,
+      preferredOpenrouterModelSource,
+      preferredOpenrouterModelReason,
+      effectiveProvider: 'cerebras',
+      effectiveProviderSource: preferredProviderSource,
+      effectiveProviderReason: 'Telephony provider принудительно переключён на Cerebras.',
+      effectiveModel: cerebrasModel,
+      effectiveModelSource: input.cerebrasModelDb?.trim() ? 'db' : 'default',
+      effectiveModelReason: `Cerebras модель: ${cerebrasModel}.`,
+    };
+  }
+
+  if (preferredProvider === 'groq') {
+    const groqModel = input.groqModelDb?.trim() || 'llama-3.3-70b-versatile';
+    return {
+      preferredProvider,
+      preferredProviderSource,
+      preferredProviderReason,
+      preferredOpenrouterModel,
+      preferredOpenrouterModelSource,
+      preferredOpenrouterModelReason,
+      effectiveProvider: 'groq',
+      effectiveProviderSource: preferredProviderSource,
+      effectiveProviderReason: 'Telephony provider принудительно переключён на Groq.',
+      effectiveModel: groqModel,
+      effectiveModelSource: input.groqModelDb?.trim() ? 'db' : 'default',
+      effectiveModelReason: `Groq модель: ${groqModel}.`,
+    };
+  }
+
   const globalProvider = resolveGlobalAiProvider(input.globalProviderDb?.trim());
   const customOverride = input.globalCustomModelOverrideDb?.trim();
   const globalModelDb = input.globalOpenrouterModelDb?.trim();
@@ -276,6 +314,42 @@ function resolveEffectiveTelephonyAiState(input: {
       effectiveModelReason: lmstudioModel
         ? 'Telephony наследует модель из LM Studio конфигурации.'
         : 'Telephony наследует LM Studio, но явная модель не задана.',
+    };
+  }
+
+  if (globalProvider === 'cerebras') {
+    const cerebrasModel = input.cerebrasModelDb?.trim() || 'qwen-3-235b-a22b-instruct-2507';
+    return {
+      preferredProvider,
+      preferredProviderSource,
+      preferredProviderReason,
+      preferredOpenrouterModel,
+      preferredOpenrouterModelSource,
+      preferredOpenrouterModelReason,
+      effectiveProvider: 'cerebras',
+      effectiveProviderSource: 'derived',
+      effectiveProviderReason: 'Telephony provider = inherit, поэтому унаследован глобальный Cerebras runtime.',
+      effectiveModel: cerebrasModel,
+      effectiveModelSource: input.cerebrasModelDb?.trim() ? 'db' : 'default',
+      effectiveModelReason: `Telephony наследует Cerebras модель: ${cerebrasModel}.`,
+    };
+  }
+
+  if (globalProvider === 'groq') {
+    const groqModel = input.groqModelDb?.trim() || 'llama-3.3-70b-versatile';
+    return {
+      preferredProvider,
+      preferredProviderSource,
+      preferredProviderReason,
+      preferredOpenrouterModel,
+      preferredOpenrouterModelSource,
+      preferredOpenrouterModelReason,
+      effectiveProvider: 'groq',
+      effectiveProviderSource: 'derived',
+      effectiveProviderReason: 'Telephony provider = inherit, поэтому унаследован глобальный Groq runtime.',
+      effectiveModel: groqModel,
+      effectiveModelSource: input.groqModelDb?.trim() ? 'db' : 'default',
+      effectiveModelReason: `Telephony наследует Groq модель: ${groqModel}.`,
     };
   }
 
@@ -348,6 +422,8 @@ export async function getTelephonyRuntimeConfig(): Promise<TelephonyRuntimeConfi
     'openrouter_model',
     'custom_model_override',
     'lmstudio_model',
+    'cerebras_model',
+    'groq_model',
   ]);
 
   // Единый приоритет для всех telephony полей: DB -> env -> code default
@@ -371,6 +447,8 @@ export async function getTelephonyRuntimeConfig(): Promise<TelephonyRuntimeConfi
     globalOpenrouterModelEnv: process.env.OPENROUTER_MODEL,
     globalCustomModelOverrideDb: settings['custom_model_override'],
     lmstudioModelDb: settings['lmstudio_model'],
+    cerebrasModelDb: settings['cerebras_model'],
+    groqModelDb: settings['groq_model'],
   });
 
   const runtimeConfig: TelephonyRuntimeConfig = {

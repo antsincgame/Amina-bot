@@ -410,7 +410,7 @@ const TelephonyPage = () => {
   const [sipLogin, setSipLogin] = useState('');
   const [sipPassword, setSipPassword] = useState('');
   const [externalNumber, setExternalNumber] = useState('');
-  const [telephonyAiProvider, setTelephonyAiProvider] = useState<'inherit' | 'openrouter' | 'lmstudio'>('inherit');
+  const [telephonyAiProvider, setTelephonyAiProvider] = useState<'inherit' | 'openrouter' | 'lmstudio' | 'cerebras' | 'groq'>('inherit');
   const [telephonyOpenrouterModel, setTelephonyOpenrouterModel] = useState('');
   const [notifyCalls, setNotifyCalls] = useState(true);
   const [notifyRecords, setNotifyRecords] = useState(true);
@@ -505,7 +505,7 @@ const TelephonyPage = () => {
     setExternalNumber(map.get('telephony_external_number') || '');
     const provider = map.get('telephony_ai_provider');
     setTelephonyAiProvider(
-      provider === 'openrouter' || provider === 'lmstudio' ? provider : 'inherit',
+      provider === 'openrouter' || provider === 'lmstudio' || provider === 'cerebras' || provider === 'groq' ? provider : 'inherit',
     );
     setTelephonyOpenrouterModel(map.get('telephony_openrouter_model') || '');
     setNotifyCalls(map.get('lirax_notify_calls') !== 'false');
@@ -1030,11 +1030,13 @@ const TelephonyPage = () => {
                 <select
                   className="input w-full"
                   value={telephonyAiProvider}
-                  onChange={(e) => setTelephonyAiProvider(e.target.value as 'inherit' | 'openrouter' | 'lmstudio')}
+                  onChange={(e) => setTelephonyAiProvider(e.target.value as 'inherit' | 'openrouter' | 'lmstudio' | 'cerebras' | 'groq')}
                 >
                   <option value="inherit">Наследовать общий provider</option>
                   <option value="openrouter">Принудительно OpenRouter</option>
                   <option value="lmstudio">Принудительно LM Studio</option>
+                  <option value="cerebras">Принудительно Cerebras</option>
+                  <option value="groq">Принудительно Groq</option>
                 </select>
               </Field>
               <Field label="Telephony OpenRouter model" hint="Это preferred OpenRouter model телефонии. Она применяется напрямую при provider=openrouter и используется как telephony-specific model, если inherit в итоге резолвится в OpenRouter.">
