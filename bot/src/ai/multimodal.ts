@@ -13,7 +13,6 @@ import { getProxyHeaders } from '../config/ai-proxy.js';
 import { AppError } from '../utils/error-handler.js';
 import type { AIResponse } from '../../../shared/types/index.js';
 import { SingleCache } from '../utils/cache.js';
-import { buildPersonaSystemPrompt } from './persona.js';
 
 // --------------------------------------------
 // Types
@@ -876,7 +875,8 @@ async function directVisionResponse(
 ): Promise<AIResponse> {
   const client = await getClient();
 
-  // Системный промпт с персоной
+  // Системный промпт с персоной (dynamic import — избегаем circular dep)
+  const { buildPersonaSystemPrompt } = await import('./persona.js');
   const personaPrompt = await buildPersonaSystemPrompt({
     channel: isOcrRequest ? 'system' : 'telegram',
     modelId: multiConfig.visionModel,
