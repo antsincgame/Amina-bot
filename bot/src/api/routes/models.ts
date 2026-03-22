@@ -85,22 +85,24 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
     const start = Date.now();
     try {
       const keys = await getApiKeys();
-      if (!keys.openrouter) {
-        return reply.code(200).send({ success: false, status: 'error', error: 'OpenRouter API key not configured', latencyMs: 0 });
-      }
-
-      const { getProxyHeaders, getOpenRouterBaseUrl } = await import('../../config/ai-proxy.js');
+      const { getProxyHeaders: getHeaders, getOpenRouterBaseUrl, getGroqBaseUrl } = await import('../../config/ai-proxy.js');
       const { default: OpenAI } = await import('openai');
-      const client = new OpenAI({
-        apiKey: keys.openrouter,
-        baseURL: getOpenRouterBaseUrl(),
-        timeout: 15000,
-        defaultHeaders: getProxyHeaders({ 'HTTP-Referer': config.botUrl, 'X-Title': 'Amina AI Bot' }),
-      });
+
+      const isGroq = model.trim().startsWith('groq:');
+      const actualModel = isGroq ? model.trim().replace('groq:', '') : model.trim();
+
+      let client: InstanceType<typeof OpenAI>;
+      if (isGroq) {
+        if (!keys.groq) return reply.code(200).send({ success: false, status: 'error', error: 'Groq API key not configured', latencyMs: 0 });
+        client = new OpenAI({ apiKey: keys.groq, baseURL: getGroqBaseUrl(), timeout: 15000, defaultHeaders: getHeaders() });
+      } else {
+        if (!keys.openrouter) return reply.code(200).send({ success: false, status: 'error', error: 'OpenRouter API key not configured', latencyMs: 0 });
+        client = new OpenAI({ apiKey: keys.openrouter, baseURL: getOpenRouterBaseUrl(), timeout: 15000, defaultHeaders: getHeaders({ 'HTTP-Referer': config.botUrl, 'X-Title': 'Amina AI Bot' }) });
+      }
 
       const tinyPng = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
       const res = await client.chat.completions.create({
-        model: model.trim(),
+        model: actualModel,
         messages: [{
           role: 'user',
           content: [
@@ -122,9 +124,10 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
       const msg = err instanceof Error ? err.message : String(err);
       const latencyMs = Date.now() - start;
       let diagnosis = `Ошибка: ${msg.slice(0, 100)}`;
-      if (msg.includes('404') || msg.includes('not found')) diagnosis = 'Модель не найдена на OpenRouter — удалена или переименована.';
+      if (msg.includes('404') || msg.includes('not found')) diagnosis = `Модель не найдена на ${isGroq ? 'Groq' : 'OpenRouter'} — удалена или переименована.`;
       else if (msg.includes('429')) diagnosis = 'Превышен лимит запросов. Подождите минуту.';
       else if (msg.includes('402')) diagnosis = 'Недостаточно кредитов для этой модели.';
+      else if (msg.includes('400') && msg.includes('decommissioned')) diagnosis = 'Модель устарела и удалена. Выберите другую.';
       else if (msg.includes('400')) diagnosis = 'Модель не поддерживает vision (изображения).';
 
       aiLogger.warn({ model, error: msg, latencyMs }, 'Vision model test failed');

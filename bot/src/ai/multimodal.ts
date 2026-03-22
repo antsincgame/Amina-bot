@@ -111,12 +111,20 @@ export async function refreshFreeVisionModelsCache(): Promise<Array<{ id: string
   return await fetchFreeVisionModels();
 }
 
+// Groq vision модели — всегда доступны (не зависят от OpenRouter)
+const GROQ_VISION_ENTRIES = [
+  { id: 'groq:meta-llama/llama-4-scout-17b-16e-instruct', name: '[Groq] Llama 4 Scout 17B', description: 'Groq: быстрая multimodal модель (бесплатная)' },
+  { id: 'groq:meta-llama/llama-4-maverick-17b-128e-instruct', name: '[Groq] Llama 4 Maverick 128E', description: 'Groq: мощная multimodal модель (бесплатная)' },
+];
+
 /** Получить бесплатные vision модели (для API и админки) */
 export async function getFreeVisionModels(): Promise<Array<{ id: string; name: string; description: string }>> {
   try {
-    return await fetchFreeVisionModels();
+    const openrouterModels = await fetchFreeVisionModels();
+    // Groq модели вверху — они стабильнее
+    return [...GROQ_VISION_ENTRIES, ...openrouterModels];
   } catch {
-    return STATIC_FREE_VISION_MODELS;
+    return [...GROQ_VISION_ENTRIES, ...STATIC_FREE_VISION_MODELS];
   }
 }
 
@@ -892,7 +900,28 @@ async function directVisionResponse(
   multiConfig: MultimodalConfig,
   chatHistory?: { role: 'user' | 'assistant' | 'system'; content: string }[],
 ): Promise<AIResponse> {
-  const client = await getClient();
+  // Определяем клиент по префиксу модели
+  let client: OpenAI;
+  let actualModel: string;
+  const isGroqModel = multiConfig.visionModel.startsWith('groq:');
+
+  if (isGroqModel) {
+    // Groq vision модель
+    const keys = await getApiKeys();
+    if (!keys.groq) throw new Error('Groq API key not configured for vision');
+    const { getGroqBaseUrl } = await import('../config/ai-proxy.js');
+    client = new OpenAI({
+      apiKey: keys.groq,
+      baseURL: getGroqBaseUrl(),
+      timeout: 20000,
+      defaultHeaders: getProxyHeaders(),
+    });
+    actualModel = multiConfig.visionModel.replace('groq:', '');
+  } else {
+    // OpenRouter vision модель
+    client = await getClient();
+    actualModel = multiConfig.visionModel;
+  }
 
   // Системный промпт с персоной (dynamic import — избегаем circular dep)
   const { buildPersonaSystemPrompt } = await import('./persona.js');
@@ -935,7 +964,8 @@ async function directVisionResponse(
   });
 
   aiLogger.info({
-    model: multiConfig.visionModel,
+    model: actualModel,
+    provider: isGroqModel ? 'groq' : 'openrouter',
     isOcr: isOcrRequest,
     hasCaption: !!userCaption,
     historyLen: chatHistory?.length ?? 0,
@@ -948,7 +978,7 @@ async function directVisionResponse(
   try {
     const response = await client.chat.completions.create(
       {
-        model: multiConfig.visionModel,
+        model: actualModel,
         messages,
         max_tokens: Math.max(multiConfig.visionMaxTokens, 2048),
         temperature: isOcrRequest ? 0.2 : 0.7,
@@ -961,7 +991,7 @@ async function directVisionResponse(
 
     return {
       content,
-      model: response.model || multiConfig.visionModel,
+      model: response.model || actualModel,
       tokens_used: {
         prompt: response.usage?.prompt_tokens ?? 0,
         completion: response.usage?.completion_tokens ?? 0,
