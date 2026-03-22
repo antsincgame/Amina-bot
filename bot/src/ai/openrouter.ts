@@ -901,9 +901,16 @@ export const aiService = {
         }
       }
     } else if (provider === 'cerebras' || provider === 'groq') {
-      const direct = await getDirectProviderClientAndModel(provider);
-      streamClient = direct.client;
-      streamModel = direct.model;
+      if (!providerHealth.isProviderAvailable(provider)) {
+        // Circuit-broken — fallback на OpenRouter
+        aiLogger.warn({ provider }, `${provider} circuit-broken in stream — falling back to OpenRouter`);
+        streamClient = await getClient();
+        streamModel = aiConfig.model;
+      } else {
+        const direct = await getDirectProviderClientAndModel(provider);
+        streamClient = direct.client;
+        streamModel = direct.model;
+      }
     } else {
       streamClient = await getClient();
       streamModel = aiConfig.model;

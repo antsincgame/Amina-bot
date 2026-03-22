@@ -609,7 +609,7 @@ ${rawData.join('\n\n')}${citationsBlock}
         firstName,
         taskContext: `Утренний дайджест для ${nameStr} из города ${city}.`,
       },
-      options: { promptMode: 'passthrough' },
+      options: { promptMode: 'passthrough', priority: 'background' },
     });
     
     // Пост-обработка: заменяем [N] на кликабельные Markdown-ссылки

@@ -288,6 +288,7 @@ ${inputLines}`;
         promptMode: 'passthrough',
         maxTokens: DIGEST_HEADLINE_ANNOTATION_MAX_TOKENS,
         temperature: DIGEST_HEADLINE_ANNOTATION_TEMPERATURE,
+        priority: 'background',
       },
     });
     const content = response.content.trim();
