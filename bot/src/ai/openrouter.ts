@@ -158,8 +158,8 @@ const RACE_TIMEOUT_MS = 15000;
 const GROQ_CHAT_MODELS = [
   'llama-3.3-70b-versatile',
   'llama-3.1-8b-instant',
-  'gemma2-9b-it',
-  'mixtral-8x7b-32768',
+  'qwen/qwen3-32b',
+  'openai/gpt-oss-120b',
 ];
 
 // Cerebras модели (бесплатный tier)

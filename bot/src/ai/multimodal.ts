@@ -974,10 +974,10 @@ async function directVisionResponse(
   }
 }
 
-// Groq vision модели (поддерживают image_url)
+// Groq vision модели (поддерживают image_url) — актуальные на март 2026
 const GROQ_VISION_MODELS = [
-  'llama-3.2-11b-vision-preview',   // быстрая
-  'llama-3.2-90b-vision-preview',   // качественная
+  'meta-llama/llama-4-scout-17b-16e-instruct',     // быстрая, multimodal
+  'meta-llama/llama-4-maverick-17b-128e-instruct',  // мощнее, 128 experts
 ];
 
 /**

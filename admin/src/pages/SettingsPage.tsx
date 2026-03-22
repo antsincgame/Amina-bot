@@ -63,8 +63,8 @@ const CEREBRAS_MODELS = [
 const GROQ_MODELS = [
   { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile (рекомендуемая)' },
   { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant' },
-  { id: 'gemma2-9b-it', name: 'Gemma 2 9B' },
-  { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B' },
+  { id: 'qwen/qwen3-32b', name: 'Qwen3 32B' },
+  { id: 'openai/gpt-oss-120b', name: 'GPT-OSS 120B' },
 ];
 
 const SettingsPage = () => {
