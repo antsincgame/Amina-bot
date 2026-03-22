@@ -16,6 +16,7 @@ import { registerTelephonyRoutes } from './telephony.js';
 import { registerSelfCoreRoutes } from './self-core.js';
 import { registerReconciliationRoutes } from './reconciliation.js';
 import { registerMiniAppRoutes } from './mini-app.js';
+import { registerProvidersRoutes } from './providers.js';
 
 export async function registerApiRoutes(server: FastifyInstance): Promise<void> {
   // Multipart для голосовых сообщений (mini-app voice)
@@ -59,6 +60,7 @@ export async function registerApiRoutes(server: FastifyInstance): Promise<void> 
       await registerSelfCoreRoutes(apiServer);
       await registerReconciliationRoutes(apiServer);
       await registerMiniAppRoutes(apiServer);
+      await registerProvidersRoutes(apiServer);
     },
     { prefix: '/api' }
   );

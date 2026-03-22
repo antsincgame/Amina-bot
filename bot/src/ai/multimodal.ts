@@ -13,6 +13,7 @@ import { getProxyHeaders } from '../config/ai-proxy.js';
 import { AppError } from '../utils/error-handler.js';
 import type { AIResponse } from '../../../shared/types/index.js';
 import { SingleCache } from '../utils/cache.js';
+import { buildPersonaSystemPrompt } from './persona.js';
 
 // --------------------------------------------
 // Types
@@ -856,7 +857,7 @@ export async function processImageWithLLM(
 
 /**
  * Прямой одноступенчатый запрос: vision модель получает изображение + системный промпт.
- * Модель ВИДИТ картинку и отвечает с полным контекстом персоны.
+ * Модель ВИДИТ картинку и отвечает сразу — нет потери качества через текстовое описание.
  */
 async function directVisionResponse(
   imageBase64: string,
@@ -868,61 +869,83 @@ async function directVisionResponse(
 ): Promise<AIResponse> {
   const client = await getClient();
 
-  // Собираем системный промпт с персоной
-  const { buildPersonaSystemPrompt } = await import('./persona.js');
-  const personaPrompt = await buildPersonaSystemPrompt({ channel: isOcrRequest ? 'system' : 'telegram', modelId: multiConfig.visionModel });
+  // Системный промпт с персоной
+  const personaPrompt = await buildPersonaSystemPrompt({
+    channel: isOcrRequest ? 'system' : 'telegram',
+    modelId: multiConfig.visionModel,
+  });
 
   const systemContent = isOcrRequest
     ? [OCR_RESPONSE_SYSTEM_PROMPT, personaPrompt].filter(Boolean).join('\n\n')
     : personaPrompt;
 
-  // Формируем user content с картинкой
+  // User content с картинкой
   const userTextPart = isOcrRequest
     ? (userCaption || 'Прочитай текст на изображении и опиши содержимое.')
     : (userCaption || 'Опиши что ты видишь на этом изображении.');
 
-  const userContent: Array<{ type: string; text?: string; image_url?: { url: string } }> = [
-    { type: 'text', text: userTextPart },
-    { type: 'image_url', image_url: { url: `data:${mimeType};base64,${imageBase64}` } },
-  ];
-
-  // Формируем messages с историей (текстовая часть) + новый multimodal user message
+  // Формируем messages
   const messages: OpenAI.ChatCompletionMessageParam[] = [
     { role: 'system', content: systemContent },
   ];
 
-  // Добавляем релевантную историю (только последние 4 сообщения)
+  // Добавляем релевантную историю (только последние 4 текстовых сообщения)
   if (chatHistory && chatHistory.length > 0) {
     const recentHistory = chatHistory.slice(-4);
     for (const msg of recentHistory) {
-      messages.push({ role: msg.role as 'user' | 'assistant', content: msg.content });
+      if (msg.role === 'user' || msg.role === 'assistant') {
+        messages.push({ role: msg.role, content: msg.content });
+      }
     }
   }
 
-  messages.push({ role: 'user', content: userContent as any });
-
-  aiLogger.info({ model: multiConfig.visionModel, isOcr: isOcrRequest, hasCaption: !!userCaption }, 'Direct vision: sending image to vision model with persona');
-
-  const response = await client.chat.completions.create({
-    model: multiConfig.visionModel,
-    messages,
-    max_tokens: Math.max(multiConfig.visionMaxTokens, 2048),
-    temperature: isOcrRequest ? 0.2 : 0.7,
+  // Мультимодальное сообщение с картинкой
+  messages.push({
+    role: 'user',
+    content: [
+      { type: 'text' as const, text: userTextPart },
+      { type: 'image_url' as const, image_url: { url: `data:${mimeType};base64,${imageBase64}` } },
+    ],
   });
 
-  const content = response.choices[0]?.message?.content;
-  if (!content) throw new Error('Empty response from direct vision');
+  aiLogger.info({
+    model: multiConfig.visionModel,
+    isOcr: isOcrRequest,
+    hasCaption: !!userCaption,
+    historyLen: chatHistory?.length ?? 0,
+  }, 'Direct vision: sending image to vision model');
 
-  return {
-    content,
-    model: response.model,
-    tokens_used: {
-      prompt: response.usage?.prompt_tokens ?? 0,
-      completion: response.usage?.completion_tokens ?? 0,
-      total: response.usage?.total_tokens ?? 0,
-    },
-    finish_reason: response.choices[0]?.finish_reason ?? 'unknown',
-  };
+  // Таймаут 30 секунд для прямого vision запроса
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30_000);
+
+  try {
+    const response = await client.chat.completions.create(
+      {
+        model: multiConfig.visionModel,
+        messages,
+        max_tokens: Math.max(multiConfig.visionMaxTokens, 2048),
+        temperature: isOcrRequest ? 0.2 : 0.7,
+      },
+      { signal: controller.signal },
+    );
+
+    const content = response.choices[0]?.message?.content;
+    if (!content) throw new Error('Empty response from direct vision');
+
+    return {
+      content,
+      model: response.model || multiConfig.visionModel,
+      tokens_used: {
+        prompt: response.usage?.prompt_tokens ?? 0,
+        completion: response.usage?.completion_tokens ?? 0,
+        total: response.usage?.total_tokens ?? 0,
+      },
+      finish_reason: response.choices[0]?.finish_reason ?? 'unknown',
+    };
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 /**

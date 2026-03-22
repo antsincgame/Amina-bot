@@ -113,6 +113,7 @@ const ADMIN_GUARDED_API_ROUTES = [
   /^\/lmstudio(?:\/|$)/,
   /^\/self-core(?:\/|$)/,
   /^\/reconciliation(?:\/|$)/,
+  /^\/providers(?:\/|$)/,
   /^\/debug\/raw-news$/,
 ] as const;
 

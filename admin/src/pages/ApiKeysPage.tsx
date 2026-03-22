@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { settingsApi } from '../api/appwrite';
+import { settingsApi, fetchBotApi } from '../api/appwrite';
 import {
   Save,
   Loader2,
@@ -729,6 +729,141 @@ const ApiKeysPage = () => {
           </div>
         </div>
       </form>
+
+      {/* === Тест соединений всех провайдеров === */}
+      <ProviderTestPanel />
+    </div>
+  );
+};
+
+// Провайдер лейблы для отображения
+const PROVIDER_DISPLAY: Record<string, { label: string; icon: string }> = {
+  appwrite: { label: 'Appwrite (БД)', icon: '🗄️' },
+  openrouter: { label: 'OpenRouter (Chat)', icon: '🤖' },
+  cerebras: { label: 'Cerebras (Chat)', icon: '⚡' },
+  groq_chat: { label: 'Groq (Chat)', icon: '🟢' },
+  groq_whisper: { label: 'Groq Whisper (Аудио)', icon: '🎙️' },
+  perplexity: { label: 'Perplexity (Поиск)', icon: '🌐' },
+  vision: { label: 'Vision (Зрение)', icon: '👁️' },
+};
+
+interface TestResult {
+  provider: string;
+  status: 'ok' | 'error' | 'skipped';
+  latencyMs: number;
+  model?: string;
+  error?: string;
+  detail?: string;
+}
+
+const ProviderTestPanel = () => {
+  const [results, setResults] = useState<TestResult[]>([]);
+  const [totalMs, setTotalMs] = useState<number>(0);
+  const [testing, setTesting] = useState(false);
+  const [testedAt, setTestedAt] = useState('');
+
+  const runTests = async () => {
+    setTesting(true);
+    setResults([]);
+    try {
+      const resp = await fetchBotApi('/api/providers/test');
+      const json = await resp.json();
+      if (json.success && Array.isArray(json.data)) {
+        setResults(json.data);
+        setTotalMs(json.totalMs || 0);
+        setTestedAt(new Date().toLocaleTimeString('ru-RU'));
+      } else {
+        setResults([{ provider: 'api', status: 'error', latencyMs: 0, error: json.error || 'Unknown error' }]);
+      }
+    } catch (err) {
+      setResults([{ provider: 'api', status: 'error', latencyMs: 0, error: err instanceof Error ? err.message : 'Network error' }]);
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const statusBadge = (r: TestResult) => {
+    if (r.status === 'ok') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-500/20 text-green-400"><CheckCircle className="w-3 h-3" /> OK</span>;
+    if (r.status === 'skipped') return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-500/20 text-gray-400"><AlertCircle className="w-3 h-3" /> Пропущен</span>;
+    return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-500/20 text-red-400"><AlertCircle className="w-3 h-3" /> Ошибка</span>;
+  };
+
+  const latencyColor = (ms: number) => {
+    if (ms === 0) return 'text-gray-500';
+    if (ms < 500) return 'text-green-400';
+    if (ms < 2000) return 'text-amber-400';
+    return 'text-red-400';
+  };
+
+  return (
+    <div className="card mt-8">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <Zap className="w-5 h-5 text-amber-400" />
+          <h3 className="font-semibold text-lg">Тест соединений</h3>
+        </div>
+        <div className="flex items-center gap-3">
+          {testedAt && <span className="text-xs text-gray-500">Проверено в {testedAt}</span>}
+          <button
+            type="button"
+            onClick={runTests}
+            disabled={testing}
+            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-gradient-to-r from-amber-500 to-orange-500 rounded-lg hover:from-amber-600 hover:to-orange-600 transition-all shadow-md disabled:opacity-50"
+          >
+            {testing ? (
+              <><Loader2 className="w-4 h-4 animate-spin" /> Тестирую...</>
+            ) : (
+              <><Zap className="w-4 h-4" /> Тест всех провайдеров</>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {results.length > 0 && (
+        <>
+          <div className="space-y-2">
+            {results.map((r) => {
+              const display = PROVIDER_DISPLAY[r.provider] || { label: r.provider, icon: '❓' };
+              return (
+                <div
+                  key={r.provider}
+                  className="flex items-center justify-between py-2.5 px-3 rounded-lg"
+                  style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="text-lg flex-shrink-0">{display.icon}</span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-200">{display.label}</p>
+                      {r.model && <p className="text-xs text-gray-500 truncate">{r.model}</p>}
+                      {r.error && r.status !== 'skipped' && <p className="text-xs text-red-400 truncate">{r.error.slice(0, 80)}</p>}
+                      {r.detail && r.status === 'ok' && <p className="text-xs text-gray-500 truncate">{r.detail}</p>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3 flex-shrink-0">
+                    <span className={`text-sm font-mono ${latencyColor(r.latencyMs)}`}>
+                      {r.latencyMs > 0 ? `${r.latencyMs}ms` : '—'}
+                    </span>
+                    {statusBadge(r)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="mt-3 pt-3 flex items-center justify-between text-xs text-gray-500" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+            <span>Всего: {totalMs}ms параллельно</span>
+            <span>
+              {results.filter(r => r.status === 'ok').length}/{results.length} OK
+            </span>
+          </div>
+        </>
+      )}
+
+      {results.length === 0 && !testing && (
+        <p className="text-sm text-gray-500 text-center py-4">
+          Нажмите «Тест всех провайдеров» для проверки соединений
+        </p>
+      )}
     </div>
   );
 };
