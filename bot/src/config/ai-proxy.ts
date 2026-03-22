@@ -14,7 +14,7 @@ export const isProxyEnabled = Boolean(PROXY_URL);
 /**
  * Get base URL for a service, routing through proxy if configured.
  */
-export function getProxyUrl(service: 'openrouter' | 'perplexity' | 'groq' | 'cerebras' | 'huggingface' | 'openrouter-raw'): string {
+export function getProxyUrl(service: 'openrouter' | 'perplexity' | 'groq' | 'cerebras' | 'huggingface' | 'elevenlabs' | 'openrouter-raw'): string {
   const directUrls: Record<string, string> = {
     'openrouter': 'https://openrouter.ai/api',
     'openrouter-raw': 'https://openrouter.ai',
@@ -22,6 +22,7 @@ export function getProxyUrl(service: 'openrouter' | 'perplexity' | 'groq' | 'cer
     'groq': 'https://api.groq.com/openai',
     'cerebras': 'https://api.cerebras.ai',
     'huggingface': 'https://api-inference.huggingface.co',
+    'elevenlabs': 'https://api.elevenlabs.io',
   };
 
   if (!PROXY_URL) return directUrls[service]!;
@@ -65,4 +66,11 @@ export function getCerebrasBaseUrl(): string {
  */
 export function getPerplexityBaseUrl(): string {
   return getProxyUrl('perplexity');
+}
+
+/**
+ * Convenience: get ElevenLabs base URL
+ */
+export function getElevenLabsBaseUrl(): string {
+  return getProxyUrl('elevenlabs');
 }

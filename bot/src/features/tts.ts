@@ -19,6 +19,7 @@ import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 import OpenAI from 'openai';
 import { settingsRepo } from '../db/index.js';
 import { appLogger } from '../config/logger.js';
+import { getElevenLabsBaseUrl, getProxyHeaders } from '../config/ai-proxy.js';
 
 // ===== Типы =====
 
@@ -57,7 +58,7 @@ const ELEVENLABS_CHUNK_SIZE = 5000; // ElevenLabs лимит ~5000 символ�
 const OPENAI_CHUNK_SIZE = 4000;     // OpenAI лимит 4096 символов
 const EDGE_CHUNK_SIZE = 3000;       // Edge TTS чанк
 const TTS_TIMEOUT_MS = 60_000;
-const ELEVENLABS_API_URL = 'https://api.elevenlabs.io/v1/text-to-speech';
+const ELEVENLABS_API_URL = 'https://api.elevenlabs.io/v1/text-to-speech'; // fallback, overridden by proxy
 const ELEVENLABS_DEFAULT_VOICE = '21m00Tcm4TlvDq8ikWAM'; // Rachel
 const ELEVENLABS_DEFAULT_MODEL = 'eleven_multilingual_v2';
 const ELEVENLABS_TURBO_MODEL = 'eleven_turbo_v2_5';
@@ -296,11 +297,13 @@ async function generateElevenLabsChunk(
   const timeoutId = setTimeout(() => controller.abort(), TTS_TIMEOUT_MS);
 
   try {
-    const url = `${ELEVENLABS_API_URL}/${config.elevenlabsVoiceId}`;
+    const url = `${getElevenLabsBaseUrl()}/v1/text-to-speech/${config.elevenlabsVoiceId}`;
 
+    const proxyHeaders = getProxyHeaders();
     const response = await fetch(url, {
       method: 'POST',
       headers: {
+        ...proxyHeaders,
         'xi-api-key': config.elevenlabsApiKey!,
         'Content-Type': 'application/json',
         'Accept': 'audio/mpeg',
