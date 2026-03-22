@@ -678,12 +678,12 @@ async function tryGenerateViaOpenRouter(prompt: string, timeoutMs: number): Prom
 }
 
 /**
- * Генерирует изображение по текстовому описанию с fallback на альтернативные модели.
- * Автоматически переводит русский промпт на английский для лучшего результата.
+ * Генерирует изображение по текстовому описанию.
  * 
- * Стратегия fallback:
- * 1. HuggingFace (4 модели: FLUX, SD3, SDXL) - БЕСПЛАТНО (если есть токен)
- * 2. OpenRouter (Gemini 2.5 Flash Image) - $0.04 за картинку
+ * Стратегия:
+ * 1. OpenRouter (Gemini) — ОСНОВНОЙ (платный, быстрый, качественный)
+ * 2. Pollinations.ai — бесплатный fallback (FLUX)
+ * 3. HuggingFace — последний fallback (если есть токен)
  */
 export async function generateImage(prompt: string): Promise<ImageGenResult> {
   const startTime = Date.now();
@@ -694,94 +694,11 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
   aiLogger.info({ 
     originalPrompt: prompt, 
     translatedPrompt, 
-    primaryModel: FALLBACK_MODELS[0],
-    fallbackCount: FALLBACK_MODELS.length - 1,
-  }, 'Starting image generation with fallback support');
+  }, 'Starting image generation (OpenRouter → Pollinations → HF)');
 
   let lastError: Error | null = null;
-  let skippedHF = false;
 
-  // ===== ЭТАП 1: Пробуем HuggingFace модели =====
-  try {
-    const client = await getClient();
-    aiLogger.info({ modelsCount: FALLBACK_MODELS.length }, 'HF client initialized, trying models');
-
-    for (let i = 0; i < FALLBACK_MODELS.length; i++) {
-      const model = FALLBACK_MODELS[i]!;
-      const isFallback = i > 0;
-      
-      if (isFallback) {
-        aiLogger.info({ model, attemptNumber: i + 1 }, 'Primary model failed, trying fallback model');
-      }
-
-      try {
-        const buffer = await tryGenerateWithModel(client, model, translatedPrompt, GENERATION_TIMEOUT_MS);
-        const generationTimeMs = Date.now() - startTime;
-
-        if (isFallback) {
-          aiLogger.info({ 
-            model, 
-            attemptNumber: i + 1,
-            timeMs: generationTimeMs,
-          }, '✅ Fallback model succeeded!');
-        }
-
-        return {
-          image: buffer,
-          model,
-          prompt,
-          translatedPrompt,
-          generationTimeMs,
-        };
-      } catch (error: unknown) {
-        const err = error as { status?: number; message?: string; name?: string; code?: string };
-        lastError = err as Error;
-        
-        const timeElapsed = Date.now() - startTime;
-        
-        aiLogger.warn({ 
-          model, 
-          attemptNumber: i + 1,
-          error: err.message,
-          status: err.status,
-          code: err.code,
-          timeElapsed,
-        }, `Model ${model} failed${i < FALLBACK_MODELS.length - 1 ? ', trying next' : ', exhausted HF models'}`);
-
-        if (err.status === 401 || err.code === 'HF_AUTH_ERROR') {
-          aiLogger.warn('HF auth error - will skip to OpenRouter fallback');
-          skippedHF = true;
-          break;
-        }
-
-        if (err.message?.includes('Credit balance is depleted') || err.message?.includes('purchase pre-paid credits')) {
-          aiLogger.warn('HF credits depleted - skipping to OpenRouter fallback');
-          skippedHF = true;
-          break;
-        }
-
-        if (err.message?.includes('Rate limit') || err.status === 429) {
-          aiLogger.warn('HF rate limited - skipping to OpenRouter fallback');
-          skippedHF = true;
-          break;
-        }
-
-        continue;
-      }
-    }
-  } catch (clientError: unknown) {
-    const err = clientError as { code?: string; message?: string };
-    aiLogger.warn({ error: err.message, code: err.code }, 'Failed to initialize HF client, skipping to OpenRouter');
-    lastError = err as Error;
-    skippedHF = true;
-  }
-
-  // ===== ЭТАП 2: Все HF модели упали или пропущены → пробуем OpenRouter =====
-  aiLogger.info({ 
-    reason: skippedHF ? 'HF_SKIP' : 'HF_ALL_FAILED',
-    triedHFModels: skippedHF ? 'skipped' : FALLBACK_MODELS.length,
-  }, 'Attempting OpenRouter as final fallback');
-
+  // ===== ЭТАП 1: OpenRouter (платный, основной) =====
   try {
     const orResult = await tryGenerateViaOpenRouter(translatedPrompt, GENERATION_TIMEOUT_MS);
     const generationTimeMs = Date.now() - startTime;
@@ -789,8 +706,7 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
     aiLogger.info({ 
       model: orResult.model,
       timeMs: generationTimeMs,
-      hfAttempted: !skippedHF,
-    }, '✅ OpenRouter fallback succeeded!');
+    }, '✅ OpenRouter image generated');
 
     return {
       image: orResult.buffer,
@@ -801,48 +717,77 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
     };
   } catch (orError: unknown) {
     const err = orError as { code?: string; message?: string };
-    aiLogger.error({ 
-      error: err.message,
-      code: err.code,
-      triedHF: !skippedHF,
-      triedOpenRouter: true,
-    }, 'OpenRouter fallback also failed');
-    
-    lastError = err as Error;
+    aiLogger.warn({ error: err.message, code: err.code }, 'OpenRouter image failed');
+    lastError = orError as Error;
   }
 
-  // ===== ЭТАП 3: Pollinations.ai — бесплатный, без ключа =====
-  try {
-    aiLogger.info({ prompt: translatedPrompt.substring(0, 60) }, 'Attempting Pollinations.ai as free fallback');
-    const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(translatedPrompt)}?width=1024&height=1024&nologo=true&seed=${Date.now()}`;
+  // ===== ЭТАП 2: Pollinations.ai (бесплатный, без ключа) =====
+  {
+    // Pollinations может 500 на длинных промптах — пробуем с коротким
+    const prompts = [translatedPrompt, (translatedPrompt.split('.')[0] || translatedPrompt).slice(0, 100)];
+    const models = ['flux', 'turbo'];
     
-    const controller = new AbortController();
-    const pollinationsTimeout = setTimeout(() => controller.abort(), 45_000);
-    
-    try {
-      const resp = await fetch(pollinationsUrl, { signal: controller.signal });
-      if (!resp.ok) throw new Error(`Pollinations HTTP ${resp.status}`);
-      
-      const buffer = Buffer.from(await resp.arrayBuffer());
-      if (buffer.length < 1000) throw new Error('Pollinations returned too small image');
-      
-      const generationTimeMs = Date.now() - startTime;
-      aiLogger.info({ sizeKB: Math.round(buffer.length / 1024), timeMs: generationTimeMs }, '✅ Pollinations.ai image generated');
-      
-      return {
-        image: buffer,
-        model: 'pollinations/flux',
-        prompt,
-        translatedPrompt,
-        generationTimeMs,
-      };
-    } finally {
-      clearTimeout(pollinationsTimeout);
+    for (const model of models) {
+      for (const p of prompts) {
+        try {
+          const pollinationsUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(p)}?width=1024&height=1024&nologo=true&model=${model}&seed=${Date.now()}`;
+          aiLogger.info({ prompt: p.substring(0, 60), model }, 'Attempting Pollinations.ai');
+          
+          const controller = new AbortController();
+          const pollinationsTimeout = setTimeout(() => controller.abort(), 45_000);
+          
+          try {
+            const resp = await fetch(pollinationsUrl, { signal: controller.signal });
+            if (!resp.ok) throw new Error(`Pollinations HTTP ${resp.status}`);
+            
+            const buffer = Buffer.from(await resp.arrayBuffer());
+            if (buffer.length < 1000) throw new Error('Pollinations returned too small image');
+            
+            const generationTimeMs = Date.now() - startTime;
+            aiLogger.info({ sizeKB: Math.round(buffer.length / 1024), timeMs: generationTimeMs, model }, '✅ Pollinations.ai image generated');
+            
+            return {
+              image: buffer,
+              model: `pollinations/${model}`,
+              prompt,
+              translatedPrompt,
+              generationTimeMs,
+            };
+          } finally {
+            clearTimeout(pollinationsTimeout);
+          }
+        } catch (pollError: unknown) {
+          const err2 = pollError as { message?: string };
+          aiLogger.warn({ error: err2.message, model, promptLen: p.length }, 'Pollinations attempt failed');
+          lastError = pollError as Error;
+        }
+      }
     }
-  } catch (pollError: unknown) {
-    const err2 = pollError as { message?: string };
-    aiLogger.warn({ error: err2.message }, 'Pollinations.ai also failed');
-    lastError = pollError as Error;
+  }
+
+  // ===== ЭТАП 3: HuggingFace (бесплатный, если есть токен) =====
+  try {
+    const client = await getClient();
+    for (let i = 0; i < FALLBACK_MODELS.length; i++) {
+      const model = FALLBACK_MODELS[i]!;
+      try {
+        const buffer = await tryGenerateWithModel(client, model, translatedPrompt, GENERATION_TIMEOUT_MS);
+        const generationTimeMs = Date.now() - startTime;
+        aiLogger.info({ model, timeMs: generationTimeMs }, '✅ HuggingFace image generated');
+        return { image: buffer, model, prompt, translatedPrompt, generationTimeMs };
+      } catch (hfErr: unknown) {
+        const err = hfErr as { status?: number; message?: string; code?: string };
+        aiLogger.warn({ model, error: err.message, status: err.status }, `HF model ${model} failed`);
+        if (err.status === 401 || err.code === 'HF_AUTH_ERROR') break;
+        if (err.message?.includes('Credit balance is depleted')) break;
+        if (err.message?.includes('Rate limit') || err.status === 429) break;
+        lastError = hfErr as Error;
+      }
+    }
+  } catch (clientError: unknown) {
+    const err = clientError as { message?: string };
+    aiLogger.warn({ error: err.message }, 'HF client init failed');
+    lastError = clientError as Error;
   }
 
   // ===== ВСЕ ПРОВАЙДЕРЫ УПАЛИ =====
@@ -851,8 +796,7 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
   
   aiLogger.error(
     { 
-      triedProviders: skippedHF ? ['OpenRouter', 'Pollinations'] : ['HuggingFace', 'OpenRouter', 'Pollinations'],
-      triedHFModels: skippedHF ? 0 : FALLBACK_MODELS.length,
+      triedProviders: ['OpenRouter', 'Pollinations', 'HuggingFace'],
       lastError: err?.message,
       timeMs: generationTimeMs,
     },
@@ -884,7 +828,7 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
   }
 
   // Generic error
-  const providerList = skippedHF ? 'OpenRouter + Pollinations' : `HuggingFace (${FALLBACK_MODELS.length} моделей) + OpenRouter + Pollinations`;
+  const providerList = 'OpenRouter + Pollinations + HuggingFace';
   throw Object.assign(
     new Error(
       `Не удалось сгенерировать изображение (попробовано: ${providerList}): ${err?.message || 'неизвестная ошибка'}. Попробуй позже.`
@@ -897,11 +841,8 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
  * Проверить доступность генерации изображений
  */
 export async function isImageGenAvailable(): Promise<boolean> {
-  const token = await getHfToken();
-  if (token) return true;
-  const { getApiKeys } = await import('../config/index.js');
-  const keys = await getApiKeys();
-  return !!keys.openrouter;
+  // Pollinations.ai всегда доступен (без ключа), поэтому генерация всегда возможна
+  return true;
 }
 
 // ============================================

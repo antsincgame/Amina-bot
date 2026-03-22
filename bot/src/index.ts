@@ -220,7 +220,11 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
 
   const sendMiniAppHtml = (reply: FastifyReply) => {
     try {
-      return reply.type('text/html; charset=utf-8').send(getMiniAppHtml());
+      return reply
+        .header('Cache-Control', 'no-store, no-cache, must-revalidate')
+        .header('Pragma', 'no-cache')
+        .type('text/html; charset=utf-8')
+        .send(getMiniAppHtml());
     } catch (err) {
       appLogger.error({ err }, 'mini-app: не удалось прочитать mini-app-web.html');
       return reply.code(503).send({ error: 'Mini-app unavailable', code: 'MINI_APP_MISSING' });

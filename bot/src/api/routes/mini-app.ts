@@ -288,7 +288,9 @@ export async function registerMiniAppRoutes(server: FastifyInstance): Promise<vo
         }, 'Mini-app voice transcribed');
 
         const messageContent = validateMessageContent(transcription.text);
-        const data = await processAiResponse(userId, messageContent, request, true);
+        // Отправляем текст сразу БЕЗ TTS — чтобы не ждать 2-4 сек
+        // Фронт запросит TTS отдельно через /mini-app/tts
+        const data = await processAiResponse(userId, messageContent, request, false);
 
         return reply.code(200).send({
           success: true,

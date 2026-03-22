@@ -326,11 +326,13 @@
       responseOverlay.classList.remove('visible');
       try{
         logPipeline('Requesting mic…');
-        var stream=await navigator.mediaDevices.getUserMedia({audio:true});audioChunks=[];
+        var stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,sampleRate:16000,echoCancellation:true,noiseSuppression:true}});audioChunks=[];
         var mimes=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus'],sel='';
         for(var i=0;i<mimes.length;i++){if(mimes[i]&&MediaRecorder.isTypeSupported(mimes[i])){sel=mimes[i];break}}
         logPipeline('Mime: '+(sel||'default'));
-        mediaRecorder=new MediaRecorder(stream,sel?{mimeType:sel}:{});
+        var recOpts=sel?{mimeType:sel}:{};
+        if(typeof MediaRecorder.isTypeSupported==='function'){recOpts.audioBitsPerSecond=24000}
+        mediaRecorder=new MediaRecorder(stream,recOpts);
         mediaRecorder.ondataavailable=function(e){if(e.data&&e.data.size>0)audioChunks.push(e.data)};
         mediaRecorder.onstop=function(){
           stream.getTracks().forEach(function(t){t.stop()});
@@ -366,11 +368,17 @@
     async function sendVoiceToServer(blob){
       if(!initData){showError('Откройте из Telegram');return}
       setLocked(true);setStatus('⏳ Распознаю речь…');setEmotion('thinking');
-      logPipeline('Voice → server, size='+blob.size+', type='+blob.type);
+      logPipeline('Voice → server, size='+blob.size+', type='+blob.type+', api='+apiBase);
       var ext=blob.type.includes('mp4')?'mp4':blob.type.includes('ogg')?'ogg':'webm';
       var fd=new FormData();fd.append('audio',blob,'voice.'+ext);fd.append('initData',initData);
+      var tStart=Date.now();
       try{
-        var res=await fetch(apiBase+'/mini-app/voice',{method:'POST',body:fd});
+        var controller=new AbortController();
+        var timeout=setTimeout(function(){controller.abort()},60000);
+        var res=await fetch(apiBase+'/mini-app/voice',{method:'POST',body:fd,signal:controller.signal});
+        clearTimeout(timeout);
+        var fetchMs=Date.now()-tStart;
+        logPipeline('Server responded in '+fetchMs+'ms, status='+res.status);
         setStatus('💭 Амина думает…');
         var json=await res.json().catch(function(){return null});
         if(!res.ok||!json||!json.success){
@@ -378,10 +386,14 @@
           showError(err);logPipeline('API '+res.status+': '+err,'error');return;
         }
         setStatus('');
+        var totalMs=Date.now()-tStart;
         var tr=json.data.transcript||'';
-        logPipeline('STT: "'+tr.slice(0,80)+'" emotion='+json.data.emotion,'ok');
+        logPipeline('STT: "'+tr.slice(0,80)+'" emotion='+json.data.emotion+' total='+totalMs+'ms','ok');
         handleAiResponse(json.data,tr);
-      }catch(e){showError('Сеть недоступна');logPipeline('Voice err: '+e.message,'error')}
+      }catch(e){
+        var errMsg=e.name==='AbortError'?'Таймаут 60 сек. Попробуйте короче.':'Сеть недоступна: '+e.message;
+        showError(errMsg);logPipeline('Voice err: '+e.name+' '+e.message+' after '+(Date.now()-tStart)+'ms','error');
+      }
       finally{setLocked(false);setStatus('')}
     }
 
