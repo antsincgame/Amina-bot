@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { analyticsApi, statusApi } from '../api/appwrite';
+import { analyticsApi, statusApi, fetchBotApi } from '../api/appwrite';
 import {
   MessageSquare,
   Phone,
@@ -32,8 +32,22 @@ const DashboardPage = () => {
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ['service-status'],
     queryFn: () => statusApi.getServiceStatus(),
-    refetchInterval: 30000, // Refresh every 30 seconds
+    refetchInterval: 30000,
   });
+
+  // Провайдеры — загружаем один раз при открытии
+  const { data: providersData } = useQuery({
+    queryKey: ['providers-status'],
+    queryFn: async () => {
+      const resp = await fetchBotApi('/api/providers/test');
+      return resp.json();
+    },
+    staleTime: 60000,
+    refetchInterval: 120000,
+  });
+
+  const providerResults: { provider: string; status: string; latencyMs: number; model?: string; error?: string; diagnosis?: string }[] =
+    providersData?.success ? providersData.data : [];
 
   const statCards = [
     {
@@ -170,29 +184,52 @@ const DashboardPage = () => {
           </div>
         </div>
 
-        {/* Activity Card */}
+        {/* Provider Status */}
         <div className="card">
           <div className="flex items-center gap-2 mb-4">
             <Activity className="w-5 h-5 text-amber-400" />
-            <h3 className="font-semibold text-gray-200">Статус системы</h3>
+            <h3 className="font-semibold text-gray-200">Статус провайдеров</h3>
+            {providersData?.currentProvider && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 ml-auto">
+                {providersData.currentProvider}
+              </span>
+            )}
           </div>
-          <div className="space-y-4">
-            <StatusItem
-              label="Telegram Bot"
-              {...getStatusInfo('telegram')}
-            />
-            <StatusItem
-              label="OpenRouter API"
-              {...getStatusInfo('ai')}
-            />
-            <StatusItem
-              label="База данных"
-              {...getStatusInfo('database')}
-            />
-            <StatusItem
-              label="Админ панель"
-              {...getStatusInfo('admin')}
-            />
+          <div className="space-y-1">
+            {providerResults.length > 0 ? (
+              providerResults.map((r) => {
+                const LABELS: Record<string, string> = {
+                  appwrite: '🗄 Appwrite', openrouter: '🤖 OpenRouter', vision: '👁 Vision',
+                  cerebras: '⚡ Cerebras', groq_chat: '🟢 Groq Chat', groq_whisper: '🎤 Groq Whisper',
+                  perplexity: '🌐 Perplexity',
+                };
+                const label = LABELS[r.provider] || r.provider;
+                const isOk = r.status === 'ok';
+                const isSkipped = r.status === 'skipped';
+                return (
+                  <div key={r.provider} className="flex items-center justify-between py-2 border-b last:border-0" style={{ borderColor: 'rgba(255,215,0,0.08)' }}>
+                    <div className="flex items-center gap-2 min-w-0">
+                      <div className={`w-2 h-2 rounded-full flex-shrink-0 ${isOk ? 'bg-green-400' : isSkipped ? 'bg-gray-500' : 'bg-red-400'}`} />
+                      <span className="text-sm text-gray-200">{label}</span>
+                      {r.model && <span className="text-xs text-gray-500 truncate max-w-[150px]">{r.model}</span>}
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      {r.latencyMs > 0 && <span className="text-xs text-gray-500">{r.latencyMs}ms</span>}
+                      <span className={`text-xs px-1.5 py-0.5 rounded ${isOk ? 'bg-green-500/20 text-green-400' : isSkipped ? 'bg-gray-500/20 text-gray-400' : 'bg-red-500/20 text-red-400'}`}>
+                        {isOk ? 'OK' : isSkipped ? 'N/A' : 'ERR'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <>
+                <StatusItem label="Telegram Bot" {...getStatusInfo('telegram')} />
+                <StatusItem label="OpenRouter API" {...getStatusInfo('ai')} />
+                <StatusItem label="База данных" {...getStatusInfo('database')} />
+                <StatusItem label="Админ панель" {...getStatusInfo('admin')} />
+              </>
+            )}
           </div>
         </div>
       </div>
