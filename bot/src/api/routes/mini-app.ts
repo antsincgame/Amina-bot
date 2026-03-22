@@ -222,6 +222,11 @@ export async function registerMiniAppRoutes(server: FastifyInstance): Promise<vo
     },
     async (request: FastifyRequest, reply: FastifyReply) => {
       try {
+        aiLogger.info({ 
+          contentType: (request.headers['content-type'] || '').slice(0, 80),
+          contentLength: request.headers['content-length'],
+        }, 'Mini-app voice: request received');
+
         let audioBuffer: Buffer | null = null;
         let audioMimeType = 'audio/webm';
         let initData = '';
@@ -235,11 +240,13 @@ export async function registerMiniAppRoutes(server: FastifyInstance): Promise<vo
           });
         }
 
+        aiLogger.info('Mini-app voice: parsing multipart...');
         const parts = request.parts();
         for await (const part of parts) {
           if (part.type === 'file' && part.fieldname === 'audio') {
             audioMimeType = part.mimetype || 'audio/webm';
             audioBuffer = await part.toBuffer();
+            aiLogger.info({ size: audioBuffer.length, mime: audioMimeType }, 'Mini-app voice: audio parsed');
           } else if (part.type === 'field' && part.fieldname === 'initData') {
             initData = String(part.value ?? '');
           }
@@ -265,7 +272,14 @@ export async function registerMiniAppRoutes(server: FastifyInstance): Promise<vo
 
         const tTranscribeStart = Date.now();
         const audioBase64 = audioBuffer.toString('base64');
-        const transcription = await transcribeAudio(audioBase64, audioMimeType);
+        aiLogger.info({ audioSize: audioBuffer.length }, 'Mini-app voice: starting Whisper transcription...');
+        
+        // Таймаут 20с на транскрипцию
+        const transcriptionPromise = transcribeAudio(audioBase64, audioMimeType);
+        const timeoutPromise = new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('Whisper transcription timeout (20s)')), 20_000)
+        );
+        const transcription = await Promise.race([transcriptionPromise, timeoutPromise]);
         const tTranscribeEnd = Date.now();
 
         if (!transcription.text.trim()) {
