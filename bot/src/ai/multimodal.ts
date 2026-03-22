@@ -806,6 +806,18 @@ export async function processImageWithLLM(
     }
   }
 
+  // === GROQ VISION FALLBACK: Groq поддерживает vision модели ===
+  if (Date.now() - startTime < 30_000) {
+    try {
+      const result = await groqVisionFallback(imageBase64, mimeType, userCaption, isOcrRequest, chatHistory);
+      aiLogger.info({ model: result.model, tokens: result.tokens_used.total, pipelineMs: Date.now() - startTime }, 'Groq vision fallback OK');
+      return result;
+    } catch (groqError) {
+      const groqMsg = groqError instanceof Error ? groqError.message : String(groqError);
+      aiLogger.warn({ error: groqMsg, elapsedMs: Date.now() - startTime }, 'Groq vision fallback failed — falling back to 2-step');
+    }
+  }
+
   // Если уже прошло >35 секунд, не пробуем двухступенчатый fallback — сразу кидаем ошибку
   if (Date.now() - startTime > 35_000) {
     throw new AppError('VISION_RACE_TIMEOUT', 'Vision: прямой запрос не успел, таймаут пайплайна.');
@@ -960,6 +972,100 @@ async function directVisionResponse(
   } finally {
     clearTimeout(timeoutId);
   }
+}
+
+// Groq vision модели (поддерживают image_url)
+const GROQ_VISION_MODELS = [
+  'llama-3.2-11b-vision-preview',   // быстрая
+  'llama-3.2-90b-vision-preview',   // качественная
+];
+
+/**
+ * Vision через Groq — fallback когда OpenRouter лимитирован.
+ * Groq поддерживает vision модели (llama-3.2-*-vision-preview).
+ */
+async function groqVisionFallback(
+  imageBase64: string,
+  mimeType: string,
+  userCaption: string | undefined,
+  isOcrRequest: boolean,
+  chatHistory?: { role: 'user' | 'assistant' | 'system'; content: string }[],
+): Promise<AIResponse> {
+  const keys = await getApiKeys();
+  if (!keys.groq) throw new Error('Groq API key not configured');
+
+  const { getGroqBaseUrl } = await import('../config/ai-proxy.js');
+  const groqClient = new OpenAI({
+    apiKey: keys.groq,
+    baseURL: getGroqBaseUrl(),
+    timeout: 20000,
+    defaultHeaders: getProxyHeaders(),
+  });
+
+  const { buildPersonaSystemPrompt } = await import('./persona.js');
+  const personaPrompt = await buildPersonaSystemPrompt({
+    channel: isOcrRequest ? 'system' : 'telegram',
+  });
+
+  const systemContent = isOcrRequest
+    ? [OCR_RESPONSE_SYSTEM_PROMPT, personaPrompt].filter(Boolean).join('\n\n')
+    : personaPrompt;
+
+  const userTextPart = isOcrRequest
+    ? (userCaption || 'Прочитай текст на изображении и опиши содержимое.')
+    : (userCaption || 'Опиши что ты видишь на этом изображении.');
+
+  const messages: OpenAI.ChatCompletionMessageParam[] = [
+    { role: 'system', content: systemContent },
+  ];
+
+  if (chatHistory && chatHistory.length > 0) {
+    for (const msg of chatHistory.slice(-4)) {
+      if (msg.role === 'user' || msg.role === 'assistant') {
+        messages.push({ role: msg.role, content: msg.content });
+      }
+    }
+  }
+
+  messages.push({
+    role: 'user',
+    content: [
+      { type: 'text' as const, text: userTextPart },
+      { type: 'image_url' as const, image_url: { url: `data:${mimeType};base64,${imageBase64}` } },
+    ],
+  });
+
+  // Пробуем модели последовательно (быстрая → качественная)
+  for (const model of GROQ_VISION_MODELS) {
+    try {
+      aiLogger.info({ model, provider: 'groq' }, 'Trying Groq vision model');
+      const response = await groqClient.chat.completions.create({
+        model,
+        messages,
+        max_tokens: 2048,
+        temperature: isOcrRequest ? 0.2 : 0.7,
+      });
+
+      const content = response.choices[0]?.message?.content;
+      if (!content) continue;
+
+      return {
+        content,
+        model: `groq/${response.model || model}`,
+        tokens_used: {
+          prompt: response.usage?.prompt_tokens ?? 0,
+          completion: response.usage?.completion_tokens ?? 0,
+          total: response.usage?.total_tokens ?? 0,
+        },
+        finish_reason: response.choices[0]?.finish_reason ?? 'unknown',
+      };
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : String(err);
+      aiLogger.warn({ model, error: errMsg }, 'Groq vision model failed');
+    }
+  }
+
+  throw new Error('All Groq vision models failed');
 }
 
 /**
