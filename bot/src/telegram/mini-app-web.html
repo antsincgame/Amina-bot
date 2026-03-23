@@ -28,17 +28,13 @@
       position: absolute; inset: 0; width: 100%; height: 100%;
       object-fit: cover; object-position: center 20%;
       opacity: 0; transition: opacity .5s ease-in-out;
-      animation: breathe 4s ease-in-out infinite, float 6s ease-in-out infinite;
+      animation: breathe 4s ease-in-out infinite, float 6s ease-in-out infinite, blink 5s ease-in-out infinite;
     }
     .avatar-img.active { opacity: 1; }
-    /* Mouth/eyes layer sits on top, instant swap for lip-sync */
-    .avatar-img.pngtuber-layer {
-      transition: opacity .08s linear;
-      animation: none;
-    }
 
     @keyframes breathe { 0%,100%{transform:scale(1)} 50%{transform:scale(1.015)} }
     @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
+    @keyframes blink { 0%,46%,54%,100%{filter:brightness(1)} 48%,52%{filter:brightness(.9)} }
 
     /* -- Speaking glow (PNGTubing active) -- */
     .fullscreen-avatar.speaking {
@@ -142,7 +138,6 @@
   <div class="fullscreen-avatar" id="avatarArea">
     <img id="avatarImgA" class="avatar-img active" src="/mini-app/avatars/base-neutral.png" alt="Амина" />
     <img id="avatarImgB" class="avatar-img" src="" alt="" />
-    <img id="pngtuberLayer" class="avatar-img pngtuber-layer" src="" alt="" />
     <div class="avatar-name"><h1>Амина</h1></div>
     <div class="response-overlay" id="responseOverlay">
       <button class="close-overlay" id="closeOverlay" aria-label="Закрыть">&times;</button>
@@ -222,13 +217,12 @@
       var file=emotionMap[emotion]||'base-neutral';
       var newSrc='/mini-app/avatars/'+file+'.png';
       currentEmotion=emotion;
-      if(crossfading){currentImg.src=newSrc;updatePngtuberLayer();return}
+      if(crossfading){currentImg.src=newSrc;return}
       crossfading=true;
       var preload=new Image();
       preload.onload=function(){
         nextImg.src=newSrc;nextImg.classList.add('active');currentImg.classList.remove('active');
         setTimeout(function(){var tmp=currentImg;currentImg=nextImg;nextImg=tmp;crossfading=false},550);
-        updatePngtuberLayer();
       };
       preload.onerror=function(){crossfading=false};
       preload.src=newSrc;
@@ -254,79 +248,22 @@
       responseTimer=setTimeout(function(){responseOverlay.classList.remove('visible')},6000);
     }
 
-    /* -- PNGTubing: sprite-based lip-sync + blink -- */
+    /* -- PNGTubing: audio-reactive avatar -- */
     var audioCtx=null,pngTubeRaf=null,currentSource=null,currentAnalyser=null;
-    var pngtuberLayer=document.getElementById('pngtuberLayer');
-    var isSpeaking=false,isBlinking=false,mouthOpen=false;
-    var blinkTimer=null;
-    var RMS_THRESHOLD=0.12; // Порог открытия рта
-
-    /* Preload all pngtuber sprites */
-    var pngtuberCache={};
-    var emotionFileKeys=Object.keys(emotionMap);
-    var suffixes=['_mouth-open','_eyes-closed','_mouth-open_eyes-closed'];
-    for(var ei=0;ei<emotionFileKeys.length;ei++){
-      var efile=emotionMap[emotionFileKeys[ei]];
-      for(var si=0;si<suffixes.length;si++){
-        var spriteUrl='/mini-app/avatars/pngtuber/'+efile+suffixes[si]+'.png';
-        var pImg=new Image();pImg.src=spriteUrl;
-        pngtuberCache[efile+suffixes[si]]=spriteUrl;
-      }
-    }
-
-    function getPngtuberSrc(emotionFile,wantMouthOpen,wantEyesClosed){
-      if(wantMouthOpen&&wantEyesClosed) return pngtuberCache[emotionFile+'_mouth-open_eyes-closed']||'';
-      if(wantMouthOpen) return pngtuberCache[emotionFile+'_mouth-open']||'';
-      if(wantEyesClosed) return pngtuberCache[emotionFile+'_eyes-closed']||'';
-      return '';
-    }
-
-    function updatePngtuberLayer(){
-      var needOverlay=mouthOpen||isBlinking;
-      if(!needOverlay){
-        pngtuberLayer.classList.remove('active');
-        return;
-      }
-      var emotionFile=emotionMap[currentEmotion]||'base-neutral';
-      var src=getPngtuberSrc(emotionFile,mouthOpen,isBlinking);
-      if(src&&pngtuberLayer.src!==src){
-        pngtuberLayer.src=src;
-      }
-      if(src)pngtuberLayer.classList.add('active');
-      else pngtuberLayer.classList.remove('active');
-    }
-
-    /* -- Blink system: random blinks every 3-6s, blink lasts 150ms -- */
-    function scheduleBlink(){
-      var delay=2000+Math.random()*3000;
-      blinkTimer=setTimeout(function(){
-        isBlinking=true;
-        updatePngtuberLayer();
-        setTimeout(function(){
-          isBlinking=false;
-          updatePngtuberLayer();
-          scheduleBlink();
-        },150);
-      },delay);
-    }
-    scheduleBlink();
 
     function stopPngTube(){
       if(pngTubeRaf){cancelAnimationFrame(pngTubeRaf);pngTubeRaf=null}
       if(currentSource){try{currentSource.disconnect()}catch(e){}}
       if(currentAnalyser){try{currentAnalyser.disconnect()}catch(e){}}
       currentSource=null;currentAnalyser=null;
-      isSpeaking=false;mouthOpen=false;
       avatarArea.classList.remove('speaking');
       avatarArea.style.boxShadow='';
       if(currentImg){currentImg.style.transform='';currentImg.style.filter=''}
-      updatePngtuberLayer();
     }
 
     function startPngTube(analyser){
       var dataArray=new Uint8Array(analyser.fftSize);
       avatarArea.classList.add('speaking');
-      isSpeaking=true;
 
       function tick(){
         if(!pngTubeRaf)return;
@@ -336,14 +273,6 @@
         var rms=Math.sqrt(sum/dataArray.length);
         var level=Math.min(rms*3.5,1);
 
-        /* Lip-sync: open mouth when RMS exceeds threshold */
-        var shouldOpen=rms>RMS_THRESHOLD;
-        if(shouldOpen!==mouthOpen){
-          mouthOpen=shouldOpen;
-          updatePngtuberLayer();
-        }
-
-        /* Visual effects: scale, glow */
         var scale=1.0+level*0.03;
         var ty=-level*5;
         var glow=Math.round(20+level*40);
@@ -604,7 +533,7 @@
       else fetchAndPlayTTS(text);
     }
 
-    logPipeline('PNGTuber v2 loaded: sprite lip-sync + blink for '+userName,'ok');
+    logPipeline('PNGTuber mode loaded for '+userName,'ok');
   })();
   </script>
 </body>
