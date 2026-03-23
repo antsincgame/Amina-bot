@@ -34,14 +34,7 @@
 
     @keyframes breathe { 0%,100%{transform:scale(1)} 50%{transform:scale(1.015)} }
     @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
-
-    /* -- Overlay layers for mouth/eyes (tiny crops, no jitter) -- */
-    .overlay-layer {
-      position: absolute; pointer-events: none;
-      opacity: 0; transition: opacity .12s ease-out;
-      object-fit: cover; object-position: center 20%;
-    }
-    .overlay-layer.visible { opacity: 1; }
+    @keyframes blink { 0%,46%,54%,100%{filter:brightness(1)} 48%,52%{filter:brightness(.9)} }
 
     /* -- Speaking glow (PNGTubing active) -- */
     .fullscreen-avatar.speaking {
@@ -145,8 +138,6 @@
   <div class="fullscreen-avatar" id="avatarArea">
     <img id="avatarImgA" class="avatar-img active" src="/mini-app/avatars/base-neutral.png" alt="Амина" />
     <img id="avatarImgB" class="avatar-img" src="" alt="" />
-    <img id="mouthOverlay" class="overlay-layer" src="" alt="" />
-    <img id="eyesOverlay" class="overlay-layer" src="" alt="" />
     <div class="avatar-name"><h1>Амина</h1></div>
     <div class="response-overlay" id="responseOverlay">
       <button class="close-overlay" id="closeOverlay" aria-label="Закрыть">&times;</button>
@@ -226,7 +217,6 @@
       var file=emotionMap[emotion]||'base-neutral';
       var newSrc='/mini-app/avatars/'+file+'.png';
       currentEmotion=emotion;
-      updateOverlaySources(emotion);
       if(crossfading){currentImg.src=newSrc;return}
       crossfading=true;
       var preload=new Image();
@@ -258,67 +248,8 @@
       responseTimer=setTimeout(function(){responseOverlay.classList.remove('visible')},6000);
     }
 
-    /* -- Overlay system: small mouth/eyes crops over original avatar -- */
-    var mouthOverlay=document.getElementById('mouthOverlay');
-    var eyesOverlay=document.getElementById('eyesOverlay');
-    var emotionShortMap={
-      neutral:'neutral',happy:'happy',ecstatic:'ecstatic',sad:'sad',
-      surprised:'surprised',thinking:'thinking',angry:'angry',smirk:'smirk',
-      sleepy:'sleepy',flirty:'flirty',loving:'loving'
-    };
-
-    /* Overlay positioning: maps crop coords to CSS cover-fit positioning */
-    var OVERLAY_META={
-      neutral:{mouth:{x:280,y:470,w:280,h:150},eyes:{x:210,y:400,w:420,h:145}},
-      angry:{mouth:{x:280,y:470,w:280,h:150},eyes:{x:210,y:400,w:420,h:145}},
-      ecstatic:{mouth:{x:275,y:460,w:290,h:165},eyes:{x:210,y:400,w:420,h:145}},
-      flirty:{mouth:{x:280,y:470,w:280,h:150},eyes:{x:210,y:400,w:420,h:145}},
-      happy:{mouth:{x:280,y:470,w:280,h:150},eyes:{x:210,y:400,w:420,h:145}},
-      loving:{mouth:{x:280,y:470,w:280,h:150},eyes:{x:210,y:400,w:420,h:145}},
-      sad:{mouth:{x:280,y:470,w:280,h:150},eyes:{x:210,y:400,w:420,h:145}},
-      sleepy:{mouth:{x:280,y:470,w:280,h:150},eyes:{x:210,y:395,w:420,h:160}},
-      smirk:{mouth:{x:280,y:470,w:280,h:150},eyes:{x:210,y:400,w:420,h:145}},
-      surprised:{mouth:{x:270,y:455,w:300,h:175},eyes:{x:190,y:370,w:460,h:175}},
-      thinking:{mouth:{x:280,y:470,w:280,h:150},eyes:{x:210,y:400,w:420,h:145}}
-    };
-
-    function positionOverlay(el,meta){
-      /* Convert model coords (832x1216) to CSS percentages for cover-fit */
-      el.style.left=(meta.x/832*100)+'%';
-      el.style.top=(meta.y/1216*100)+'%';
-      el.style.width=(meta.w/832*100)+'%';
-      el.style.height=(meta.h/1216*100)+'%';
-    }
-
-    function updateOverlaySources(emotion){
-      var short=emotionShortMap[emotion]||'neutral';
-      var meta=OVERLAY_META[short]||OVERLAY_META.neutral;
-      mouthOverlay.src='/mini-app/avatars/overlays/'+short+'_mouth.png';
-      eyesOverlay.src='/mini-app/avatars/overlays/'+short+'_eyes.png';
-      positionOverlay(mouthOverlay,meta.mouth);
-      positionOverlay(eyesOverlay,meta.eyes);
-    }
-
-    /* Preload overlays for current emotion */
-    updateOverlaySources('neutral');
-
-    /* -- Blink: smooth opacity on eyes overlay -- */
-    var blinkTimer=null;
-    function scheduleBlink(){
-      var delay=2000+Math.random()*3000;
-      blinkTimer=setTimeout(function(){
-        eyesOverlay.classList.add('visible');
-        setTimeout(function(){
-          eyesOverlay.classList.remove('visible');
-          scheduleBlink();
-        },150);
-      },delay);
-    }
-    scheduleBlink();
-
-    /* -- PNGTubing: audio-reactive avatar with smooth mouth overlay -- */
+    /* -- PNGTubing: audio-reactive avatar -- */
     var audioCtx=null,pngTubeRaf=null,currentSource=null,currentAnalyser=null;
-    var smoothRms=0;
 
     function stopPngTube(){
       if(pngTubeRaf){cancelAnimationFrame(pngTubeRaf);pngTubeRaf=null}
@@ -328,9 +259,6 @@
       avatarArea.classList.remove('speaking');
       avatarArea.style.boxShadow='';
       if(currentImg){currentImg.style.transform='';currentImg.style.filter=''}
-      smoothRms=0;
-      mouthOverlay.style.opacity='0';
-      mouthOverlay.classList.remove('visible');
     }
 
     function startPngTube(analyser){
@@ -345,14 +273,6 @@
         var rms=Math.sqrt(sum/dataArray.length);
         var level=Math.min(rms*3.5,1);
 
-        /* Smooth mouth overlay opacity (no jitter, gradual open/close) */
-        smoothRms=smoothRms*0.65+rms*0.35;
-        var mouthAlpha=Math.min(smoothRms*3,1);
-        mouthOverlay.style.opacity=mouthAlpha.toFixed(3);
-        if(mouthAlpha>0.05)mouthOverlay.classList.add('visible');
-        else mouthOverlay.classList.remove('visible');
-
-        /* Visual effects on base image (scale, glow, brightness) */
         var scale=1.0+level*0.03;
         var ty=-level*5;
         var glow=Math.round(20+level*40);
