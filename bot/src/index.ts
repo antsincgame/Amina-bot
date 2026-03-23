@@ -251,6 +251,23 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
       .type('image/png')
       .send(readFileSync(filePath));
   });
+
+  // Serve overlay crops for PNGTuber v2 (mouth/eyes small PNGs)
+  const overlaysDir = resolve(avatarsDir, 'overlays');
+  server.get('/mini-app/avatars/overlays/:filename', async (request: FastifyRequest<{ Params: { filename: string } }>, reply: FastifyReply) => {
+    const { filename } = request.params;
+    if (!/^[\w-]+\.png$/.test(filename)) {
+      return reply.code(400).send({ error: 'Invalid filename' });
+    }
+    const filePath = resolve(overlaysDir, filename);
+    if (!existsSync(filePath)) {
+      return reply.code(404).send({ error: 'Overlay not found' });
+    }
+    return reply
+      .header('Cache-Control', 'public, max-age=86400')
+      .type('image/png')
+      .send(readFileSync(filePath));
+  });
   try {
     getMiniAppHtml();
     appLogger.info('📱 Telegram mini-app: HTML из src/telegram/mini-app-web.html');

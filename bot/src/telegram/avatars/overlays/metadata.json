@@ -1,0 +1,182 @@
+{
+  "imgWidth": 832,
+  "imgHeight": 1216,
+  "emotions": {
+    "neutral": {
+      "mouth": {
+        "file": "neutral_mouth.png",
+        "x": 280,
+        "y": 470,
+        "w": 280,
+        "h": 150
+      },
+      "eyes": {
+        "file": "neutral_eyes.png",
+        "x": 210,
+        "y": 400,
+        "w": 420,
+        "h": 145
+      }
+    },
+    "angry": {
+      "mouth": {
+        "file": "angry_mouth.png",
+        "x": 280,
+        "y": 470,
+        "w": 280,
+        "h": 150
+      },
+      "eyes": {
+        "file": "angry_eyes.png",
+        "x": 210,
+        "y": 400,
+        "w": 420,
+        "h": 145
+      }
+    },
+    "ecstatic": {
+      "mouth": {
+        "file": "ecstatic_mouth.png",
+        "x": 275,
+        "y": 460,
+        "w": 290,
+        "h": 165
+      },
+      "eyes": {
+        "file": "ecstatic_eyes.png",
+        "x": 210,
+        "y": 400,
+        "w": 420,
+        "h": 145
+      }
+    },
+    "flirty": {
+      "mouth": {
+        "file": "flirty_mouth.png",
+        "x": 280,
+        "y": 470,
+        "w": 280,
+        "h": 150
+      },
+      "eyes": {
+        "file": "flirty_eyes.png",
+        "x": 210,
+        "y": 400,
+        "w": 420,
+        "h": 145
+      }
+    },
+    "happy": {
+      "mouth": {
+        "file": "happy_mouth.png",
+        "x": 280,
+        "y": 470,
+        "w": 280,
+        "h": 150
+      },
+      "eyes": {
+        "file": "happy_eyes.png",
+        "x": 210,
+        "y": 400,
+        "w": 420,
+        "h": 145
+      }
+    },
+    "loving": {
+      "mouth": {
+        "file": "loving_mouth.png",
+        "x": 280,
+        "y": 470,
+        "w": 280,
+        "h": 150
+      },
+      "eyes": {
+        "file": "loving_eyes.png",
+        "x": 210,
+        "y": 400,
+        "w": 420,
+        "h": 145
+      }
+    },
+    "sad": {
+      "mouth": {
+        "file": "sad_mouth.png",
+        "x": 280,
+        "y": 470,
+        "w": 280,
+        "h": 150
+      },
+      "eyes": {
+        "file": "sad_eyes.png",
+        "x": 210,
+        "y": 400,
+        "w": 420,
+        "h": 145
+      }
+    },
+    "sleepy": {
+      "mouth": {
+        "file": "sleepy_mouth.png",
+        "x": 280,
+        "y": 470,
+        "w": 280,
+        "h": 150
+      },
+      "eyes": {
+        "file": "sleepy_eyes.png",
+        "x": 210,
+        "y": 395,
+        "w": 420,
+        "h": 160
+      }
+    },
+    "smirk": {
+      "mouth": {
+        "file": "smirk_mouth.png",
+        "x": 280,
+        "y": 470,
+        "w": 280,
+        "h": 150
+      },
+      "eyes": {
+        "file": "smirk_eyes.png",
+        "x": 210,
+        "y": 400,
+        "w": 420,
+        "h": 145
+      }
+    },
+    "surprised": {
+      "mouth": {
+        "file": "surprised_mouth.png",
+        "x": 270,
+        "y": 455,
+        "w": 300,
+        "h": 175
+      },
+      "eyes": {
+        "file": "surprised_eyes.png",
+        "x": 190,
+        "y": 370,
+        "w": 460,
+        "h": 175
+      }
+    },
+    "thinking": {
+      "mouth": {
+        "file": "thinking_mouth.png",
+        "x": 280,
+        "y": 470,
+        "w": 280,
+        "h": 150
+      },
+      "eyes": {
+        "file": "thinking_eyes.png",
+        "x": 210,
+        "y": 400,
+        "w": 420,
+        "h": 145
+      }
+    }
+  }
+}
