@@ -18,20 +18,40 @@
       font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
       background: #000; color: var(--text); line-height: 1.45;
     }
+
+    /* -- Fullscreen Avatar -- */
     .fullscreen-avatar {
       position: fixed; inset: 0; width: 100vw; height: 100vh;
       overflow: hidden; background: #000;
     }
-    #live2dCanvas {
+    .avatar-img {
       position: absolute; inset: 0; width: 100%; height: 100%;
-      object-fit: cover;
+      object-fit: cover; object-position: center 20%;
+      opacity: 0; transition: opacity .5s ease-in-out;
+      animation: breathe 4s ease-in-out infinite, float 6s ease-in-out infinite;
     }
-    .speaking { box-shadow: inset 0 0 80px 20px rgba(212,168,83,.15); }
-    .speaking::after {
+    .avatar-img.active { opacity: 1; }
+    /* Mouth/eyes layer sits on top, instant swap for lip-sync */
+    .avatar-img.pngtuber-layer {
+      transition: opacity .08s linear;
+      animation: none;
+    }
+
+    @keyframes breathe { 0%,100%{transform:scale(1)} 50%{transform:scale(1.015)} }
+    @keyframes float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-5px)} }
+
+    /* -- Speaking glow (PNGTubing active) -- */
+    .fullscreen-avatar.speaking {
+      box-shadow: inset 0 0 80px 20px rgba(212,168,83,.15);
+    }
+    .fullscreen-avatar.speaking::after {
       content: ''; position: absolute; inset: 0; pointer-events: none;
       border: 2px solid rgba(212,168,83,.25);
       box-shadow: 0 0 30px 10px rgba(212,168,83,.1);
+      transition: opacity .3s;
     }
+
+    /* -- Name overlay -- */
     .avatar-name {
       position: absolute; top: 0; left: 0; right: 0; z-index: 5;
       padding: .6rem 1rem .8rem;
@@ -43,6 +63,8 @@
       color: var(--gold); text-shadow: 0 0 15px rgba(212,168,83,.4);
       text-transform: uppercase;
     }
+
+    /* -- Response overlay -- */
     .response-overlay {
       position: absolute; bottom: 130px; left: 5%; right: 5%; z-index: 10;
       background: linear-gradient(135deg, rgba(0,0,0,.82), rgba(20,10,30,.78));
@@ -53,16 +75,26 @@
       transition: opacity .4s ease, transform .4s ease;
       pointer-events: none; max-height: 40vh; overflow-y: auto;
     }
-    .response-overlay.visible { opacity: 1; transform: translateY(0); pointer-events: auto; }
+    .response-overlay.visible {
+      opacity: 1; transform: translateY(0); pointer-events: auto;
+    }
     .close-overlay {
       position: absolute; top: 8px; right: 10px;
       background: none; border: none; color: rgba(255,255,255,.5);
-      font-size: 1.2rem; cursor: pointer; padding: 4px 8px; line-height: 1;
+      font-size: 1.2rem; cursor: pointer; padding: 4px 8px;
+      line-height: 1;
     }
     .close-overlay:hover { color: #fff; }
-    .user-said { font-size: .75rem; color: var(--hint); font-style: italic; margin-bottom: .3rem; }
-    .amina-says { font-size: .9rem; color: var(--text); line-height: 1.5; }
+    .user-said {
+      font-size: .75rem; color: var(--hint); font-style: italic;
+      margin-bottom: .3rem;
+    }
+    .amina-says {
+      font-size: .9rem; color: var(--text); line-height: 1.5;
+    }
     .error-text { color: #f66; font-size: .82rem; }
+
+    /* -- Mic area -- */
     .mic-area {
       position: absolute; bottom: 0; left: 0; right: 0; z-index: 10;
       display: flex; flex-direction: column; align-items: center;
@@ -93,6 +125,8 @@
       0%,100% { box-shadow: 0 0 0 0 rgba(231,76,60,.5); }
       50% { box-shadow: 0 0 0 14px rgba(231,76,60,0); }
     }
+
+    /* -- Debug log -- */
     .pipeline-log {
       display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
       font-size: .65rem; color: var(--hint); background: rgba(0,0,0,.9);
@@ -106,7 +140,9 @@
 </head>
 <body>
   <div class="fullscreen-avatar" id="avatarArea">
-    <canvas id="live2dCanvas"></canvas>
+    <img id="avatarImgA" class="avatar-img active" src="/mini-app/avatars/base-neutral.png" alt="Амина" />
+    <img id="avatarImgB" class="avatar-img" src="" alt="" />
+    <img id="pngtuberLayer" class="avatar-img pngtuber-layer" src="" alt="" />
     <div class="avatar-name"><h1>Амина</h1></div>
     <div class="response-overlay" id="responseOverlay">
       <button class="close-overlay" id="closeOverlay" aria-label="Закрыть">&times;</button>
@@ -128,30 +164,40 @@
   <script>
   (function(){
     'use strict';
-
-    /* ===== Telegram WebApp init ===== */
     var tg=window.Telegram&&window.Telegram.WebApp;
     if(tg){tg.ready();tg.expand();if(tg.setHeaderColor)tg.setHeaderColor('#000000')}
     var initData=(tg&&tg.initData)?String(tg.initData):'';
-    var userName=(tg&&tg.initDataUnsafe&&tg.initDataUnsafe.user&&tg.initDataUnsafe.user.first_name)||'';
+    var userName=(tg&&tg.initDataUnsafe&&tg.initDataUnsafe.user&&tg.initDataUnsafe.user.first_name)||'друг';
 
-    /* ===== DOM refs ===== */
-    var canvas=document.getElementById('live2dCanvas');
-    var ctx=canvas.getContext('2d');
-    var micBtn=document.getElementById('micBtn');
-    var statusEl=document.getElementById('status');
-    var avatarArea=document.getElementById('avatarArea');
-    var responseOverlay=document.getElementById('responseOverlay');
-    var userSaidEl=document.getElementById('userSaid');
-    var aminaSaysEl=document.getElementById('aminaSays');
-    var pipelineLogEl=document.getElementById('pipelineLog');
+    var micBtn=document.getElementById('micBtn'),
+        statusEl=document.getElementById('status'),
+        avatarArea=document.getElementById('avatarArea'),
+        responseOverlay=document.getElementById('responseOverlay'),
+        userSaidEl=document.getElementById('userSaid'),
+        aminaSaysEl=document.getElementById('aminaSays'),
+        pipelineLogEl=document.getElementById('pipelineLog');
 
     var isProcessing=false,isRecording=false,mediaRecorder=null,audioChunks=[];
     var apiBase=window.location.origin.replace(/\/$/,'')+'/api';
     var responseTimer=null,recordStartTime=0;
     var MIN_RECORD_MS=1200;
 
-    /* ===== Debug log ===== */
+    /* -- Dual-image crossfade -- */
+    var imgA=document.getElementById('avatarImgA'),imgB=document.getElementById('avatarImgB');
+    var currentImg=imgA,nextImg=imgB,currentEmotion='neutral',crossfading=false;
+    var emotionMap={
+      neutral:'base-neutral',happy:'emotion-happy',ecstatic:'emotion-ecstatic',
+      sad:'emotion-sad',surprised:'emotion-surprised',thinking:'emotion-thinking',
+      angry:'emotion-angry',smirk:'emotion-smirk',sleepy:'emotion-sleepy',
+      flirty:'emotion-flirty',loving:'emotion-loving'
+    };
+
+    var emotionKeys=Object.keys(emotionMap);
+    for(var k=0;k<emotionKeys.length;k++){
+      var p=new Image();p.src='/mini-app/avatars/'+emotionMap[emotionKeys[k]]+'.png';
+    }
+
+    /* -- Debug: triple-tap -- */
     var debugMode=false,tapCount=0,tapTimer=null;
     avatarArea.addEventListener('click',function(e){
       if(e.target===micBtn||micBtn.contains(e.target))return;
@@ -159,322 +205,36 @@
       tapTimer=setTimeout(function(){tapCount=0},500);
       if(tapCount>=3){debugMode=!debugMode;pipelineLogEl.classList.toggle('show',debugMode);tapCount=0}
     });
+
     function logPipeline(msg,type){
       var d=document.createElement('div');
       d.className='entry'+(type==='error'?' error':type==='ok'?' ok':'');
       d.textContent='['+new Date().toLocaleTimeString()+'] '+msg;
       pipelineLogEl.appendChild(d);pipelineLogEl.scrollTop=pipelineLogEl.scrollHeight;
-      if(pipelineLogEl.childNodes.length>200)pipelineLogEl.removeChild(pipelineLogEl.firstChild);
     }
+
     function setStatus(t){if(statusEl)statusEl.textContent=t||''}
     function setLocked(v){isProcessing=v;if(micBtn&&!isRecording)micBtn.disabled=v}
 
-    /* ===== Emotion mapping ===== */
-    var emotionMap={
-      neutral:'base-neutral',happy:'emotion-happy',ecstatic:'emotion-ecstatic',
-      sad:'emotion-sad',surprised:'emotion-surprised',thinking:'emotion-thinking',
-      angry:'emotion-angry',smirk:'emotion-smirk',sleepy:'emotion-sleepy',
-      flirty:'emotion-flirty',loving:'emotion-loving'
-    };
-    var emotionShort={
-      neutral:'neutral',happy:'happy',ecstatic:'ecstatic',sad:'sad',
-      surprised:'surprised',thinking:'thinking',angry:'angry',smirk:'smirk',
-      sleepy:'sleepy',flirty:'flirty',loving:'loving'
-    };
-
-    /* ===== Canvas sizing ===== */
-    var MODEL_W=832,MODEL_H=1216;
-    function resizeCanvas(){
-      var dpr=window.devicePixelRatio||1;
-      var vw=window.innerWidth,vh=window.innerHeight;
-      canvas.width=vw*dpr;canvas.height=vh*dpr;
-      canvas.style.width=vw+'px';canvas.style.height=vh+'px';
-      ctx.setTransform(1,0,0,1,0,0);
-    }
-    resizeCanvas();
-    window.addEventListener('resize',resizeCanvas);
-
-    /* ===== Image loader with LRU cache (max 30 entries) ===== */
-    var imageCache={};
-    var imageCacheOrder=[];
-    var IMAGE_CACHE_MAX=30;
-
-    function loadImage(url){
-      if(imageCache[url]){
-        var idx=imageCacheOrder.indexOf(url);
-        if(idx>-1){imageCacheOrder.splice(idx,1);imageCacheOrder.push(url)}
-        return Promise.resolve(imageCache[url]);
-      }
-      return new Promise(function(resolve,reject){
-        var img=new Image();
-        img.onload=function(){
-          imageCache[url]=img;imageCacheOrder.push(url);
-          while(imageCacheOrder.length>IMAGE_CACHE_MAX){
-            var old=imageCacheOrder.shift();delete imageCache[old];
-          }
-          resolve(img);
-        };
-        img.onerror=function(){reject(new Error('Failed: '+url))};
-        img.src=url;
-      });
-    }
-
-    /* ===== Layer System ===== */
-    var currentEmotion='neutral';
-    var layers={base:null,eyelids:null,mouth_open:null,hair_back:null,hair_front:null};
-    var layersReady=false;
-    var loadingEmotion=null;
-
-    function getBaseUrl(emotion){return '/mini-app/avatars/'+emotionMap[emotion]+'.png'}
-    function getLayerUrl(emotion,layer){return '/mini-app/avatars/layers/'+emotionShort[emotion]+'/'+layer+'.png'}
-    function getSharedUrl(layer){return '/mini-app/avatars/layers/shared/'+layer+'.png'}
-
-    function loadEmotionLayers(emotion){
-      loadingEmotion=emotion;
-      return Promise.all([
-        loadImage(getBaseUrl(emotion)),
-        loadImage(getLayerUrl(emotion,'eyelids')).catch(function(){return null}),
-        loadImage(getLayerUrl(emotion,'mouth_open')).catch(function(){return null}),
-        loadImage(getSharedUrl('hair_back')).catch(function(){return null}),
-        loadImage(getSharedUrl('hair_front')).catch(function(){return null}),
-      ]).then(function(imgs){
-        if(loadingEmotion!==emotion)return;
-        layers.base=imgs[0];
-        layers.eyelids=imgs[1];
-        layers.mouth_open=imgs[2];
-        layers.hair_back=imgs[3];
-        layers.hair_front=imgs[4];
-        layersReady=true;
-        logPipeline('Layers: '+emotion+(imgs[1]?' +eyelids':'')+(imgs[2]?' +mouth':''),'ok');
-      }).catch(function(e){
-        logPipeline('Layer error: '+e.message+' - base only fallback','error');
-        return loadImage(getBaseUrl(emotion)).then(function(img){
-          if(loadingEmotion!==emotion)return;
-          layers.base=img;layers.eyelids=null;layers.mouth_open=null;
-          layersReady=true;
-        });
-      });
-    }
-
-    /* ===== Parameter Driver ===== */
-    var params={
-      rms:0,smoothRms:0,
-      breathPhase:0,breathRate:0.8,
-      blinkState:'open',blinkProgress:0,blinkTimer:0,nextBlinkDelay:3000,
-      headTime:0,headX:0,headY:0,
-      hairBack:{angle:0,velocity:0,stiffness:60,damping:6},
-      hairFront:{angle:0,velocity:0,stiffness:100,damping:8},
-      isSpeaking:false,
-      glowIntensity:0,
-    };
-
-    /* ===== Blink State Machine ===== */
-    function updateBlink(dt){
-      params.blinkTimer-=dt;
-      if(params.blinkState==='open'){
-        if(params.blinkTimer<=0){params.blinkState='closing';params.blinkProgress=0}
-      }else if(params.blinkState==='closing'){
-        params.blinkProgress+=dt/80;
-        if(params.blinkProgress>=1){params.blinkProgress=1;params.blinkState='closed';params.blinkTimer=50}
-      }else if(params.blinkState==='closed'){
-        if(params.blinkTimer<=0)params.blinkState='opening';
-      }else if(params.blinkState==='opening'){
-        params.blinkProgress-=dt/120;
-        if(params.blinkProgress<=0){
-          params.blinkProgress=0;params.blinkState='open';
-          params.blinkTimer=2000+Math.random()*3000;
-        }
-      }
-    }
-
-    function easeInOutQuad(t){return t<0.5?2*t*t:1-Math.pow(-2*t+2,2)/2}
-
-    function updateSpring(spring,externalForce,dt){
-      var s=dt/1000;
-      var f=-spring.stiffness*spring.angle-spring.damping*spring.velocity+externalForce;
-      spring.velocity+=f*s;spring.angle+=spring.velocity*s;
-    }
-
-    var lastTime=0;
-    function updateParams(now){
-      var dt=lastTime?Math.min(now-lastTime,50):16;
-      lastTime=now;
-      params.smoothRms=params.smoothRms*0.7+params.rms*0.3;
-      params.breathPhase+=dt*0.001*params.breathRate*Math.PI*2;
-      updateBlink(dt);
-      params.headTime+=dt*0.001;
-      params.headX=Math.sin(params.headTime*0.5)*3;
-      params.headY=Math.cos(params.headTime*0.7)*2;
-      var hf=Math.sin(params.headTime*0.5)*50;
-      updateSpring(params.hairBack,hf*0.5,dt);
-      updateSpring(params.hairFront,hf*0.8,dt);
-      var tg=params.isSpeaking?0.2+params.smoothRms*0.5:0;
-      params.glowIntensity+=(tg-params.glowIntensity)*0.1;
-    }
-
-    /* ===== Render ===== */
-    function render(){
-      if(!layersReady||!layers.base)return;
-      var cw=canvas.width,ch=canvas.height;
-      ctx.clearRect(0,0,cw,ch);
-
-      var scaleX=cw/MODEL_W,scaleY=ch/MODEL_H;
-      var scale=Math.max(scaleX,scaleY);
-      var dw=MODEL_W*scale,dh=MODEL_H*scale;
-      var ox=(cw-dw)/2,oy=(ch-dh)/2-dh*0.05;
-
-      var bs=1+Math.sin(params.breathPhase)*0.012;
-      ctx.save();
-      ctx.translate(ox+dw/2,oy+dh);ctx.scale(1,bs);ctx.translate(-(ox+dw/2),-(oy+dh));
-
-      /* Base avatar with head bob */
-      ctx.save();
-      ctx.translate(params.headX*scale*0.3,params.headY*scale*0.3);
-      ctx.drawImage(layers.base,ox,oy,dw,dh);
-      ctx.restore();
-
-      /* Mouth open overlay - smooth opacity by RMS */
-      if(layers.mouth_open&&params.smoothRms>0.02){
-        ctx.save();
-        ctx.globalAlpha=Math.min(params.smoothRms*2.5,1);
-        ctx.translate(params.headX*scale*0.3,params.headY*scale*0.3);
-        var ms=1+params.smoothRms*0.15;
-        var my=oy+dh*0.45;
-        ctx.translate(0,my);ctx.scale(1,ms);ctx.translate(0,-my);
-        ctx.drawImage(layers.mouth_open,ox,oy,dw,dh);
-        ctx.restore();
-      }
-
-      /* Eyelid overlay - smooth blink with easing */
-      if(layers.eyelids&&params.blinkProgress>0){
-        ctx.save();
-        ctx.globalAlpha=easeInOutQuad(params.blinkProgress);
-        ctx.translate(params.headX*scale*0.3,params.headY*scale*0.3);
-        ctx.drawImage(layers.eyelids,ox,oy,dw,dh);
-        ctx.restore();
-      }
-
-      /* Hair front with spring physics */
-      if(layers.hair_front){
-        ctx.save();
-        var ha=params.hairFront.angle*0.02;
-        var px=ox+dw*0.5,py=oy+dh*0.15;
-        ctx.translate(px,py);ctx.rotate(ha);ctx.translate(-px,-py);
-        ctx.translate(params.headX*scale*0.5,params.headY*scale*0.4);
-        ctx.drawImage(layers.hair_front,ox,oy,dw,dh);
-        ctx.restore();
-      }
-
-      ctx.restore();
-
-      /* Glow effect */
-      if(params.glowIntensity>0.01){
-        var gi=params.glowIntensity;
-        avatarArea.style.boxShadow='inset 0 0 '+Math.round(20+gi*60)+'px '+Math.round(8+gi*20)+'px rgba(212,168,83,'+gi.toFixed(2)+')';
-      }else{
-        avatarArea.style.boxShadow='';
-      }
-    }
-
-    /* ===== Animation loop ===== */
-    function animLoop(now){updateParams(now);render();requestAnimationFrame(animLoop)}
-
-    loadEmotionLayers('neutral').then(function(){
-      params.blinkTimer=2000+Math.random()*3000;
-      requestAnimationFrame(animLoop);
-      logPipeline('Live2D engine started','ok');
-    });
-
-    /* ===== Emotion change ===== */
+    /* -- Emotion crossfade -- */
     function setEmotion(emotion){
       if(!emotion||emotion===currentEmotion)return;
+      var file=emotionMap[emotion]||'base-neutral';
+      var newSrc='/mini-app/avatars/'+file+'.png';
       currentEmotion=emotion;
-      loadEmotionLayers(emotion);
+      if(crossfading){currentImg.src=newSrc;updatePngtuberLayer();return}
+      crossfading=true;
+      var preload=new Image();
+      preload.onload=function(){
+        nextImg.src=newSrc;nextImg.classList.add('active');currentImg.classList.remove('active');
+        setTimeout(function(){var tmp=currentImg;currentImg=nextImg;nextImg=tmp;crossfading=false},550);
+        updatePngtuberLayer();
+      };
+      preload.onerror=function(){crossfading=false};
+      preload.src=newSrc;
     }
 
-    /* ===== Audio system ===== */
-    var audioCtx=null,currentAudio=null,currentSource=null,currentAnalyser=null,audioRaf=null;
-    var currentBlobUrl=null;
-
-    function ensureAudioCtx(){
-      if(audioCtx&&audioCtx.state!=='closed')return audioCtx;
-      var AC=window.AudioContext||window.webkitAudioContext;
-      if(!AC)return null;
-      audioCtx=new AC();
-      return audioCtx;
-    }
-
-    function stopAudio(){
-      if(audioRaf){cancelAnimationFrame(audioRaf);audioRaf=null}
-      if(currentAudio){
-        try{currentAudio.pause()}catch(e){}
-        currentAudio.onended=null;currentAudio.onerror=null;currentAudio.onpause=null;
-        currentAudio=null;
-      }
-      if(currentSource){try{currentSource.disconnect()}catch(e){};currentSource=null}
-      if(currentAnalyser){try{currentAnalyser.disconnect()}catch(e){};currentAnalyser=null}
-      if(currentBlobUrl){URL.revokeObjectURL(currentBlobUrl);currentBlobUrl=null}
-      params.isSpeaking=false;params.rms=0;
-      avatarArea.classList.remove('speaking');
-    }
-
-    function startAudioAnalysis(analyser){
-      var data=new Uint8Array(analyser.fftSize);
-      avatarArea.classList.add('speaking');
-      params.isSpeaking=true;
-      function tick(){
-        if(!audioRaf)return;
-        analyser.getByteTimeDomainData(data);
-        var sum=0;
-        for(var i=0;i<data.length;i++){var v=(data[i]-128)/128;sum+=v*v}
-        params.rms=Math.sqrt(sum/data.length);
-        audioRaf=requestAnimationFrame(tick);
-      }
-      audioRaf=requestAnimationFrame(tick);
-    }
-
-    function playAudioBase64(b64,mime){
-      if(!b64)return;
-      stopAudio();
-      try{
-        var bin=atob(b64),bytes=new Uint8Array(bin.length);
-        for(var i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
-        var blob=new Blob([bytes],{type:mime||'audio/mpeg'});
-        currentBlobUrl=URL.createObjectURL(blob);
-        var a=new Audio(currentBlobUrl);
-        currentAudio=a;
-
-        var actx=ensureAudioCtx();
-        if(actx){
-          /* Resume suspended context (iOS requirement) */
-          if(actx.state==='suspended')actx.resume();
-          try{
-            var source=actx.createMediaElementSource(a);
-            var analyser=actx.createAnalyser();
-            analyser.fftSize=256;analyser.smoothingTimeConstant=0.7;
-            source.connect(analyser);analyser.connect(actx.destination);
-            currentSource=source;currentAnalyser=analyser;
-            a.onplay=function(){startAudioAnalysis(analyser)};
-          }catch(e){
-            /* createMediaElementSource can fail if element already connected */
-            logPipeline('Web Audio fallback: '+e.message);
-            a.onplay=function(){params.isSpeaking=true;avatarArea.classList.add('speaking')};
-          }
-        }else{
-          /* No Web Audio API - still play audio, animate with speaking flag */
-          a.onplay=function(){params.isSpeaking=true;avatarArea.classList.add('speaking');params.rms=0.3};
-        }
-        a.onended=function(){stopAudio()};
-        a.onerror=function(){stopAudio()};
-        a.onpause=function(){stopAudio()};
-        a.play().catch(function(e){
-          logPipeline('Play failed: '+e.message,'error');
-          stopAudio();
-        });
-      }catch(e){logPipeline('Audio error: '+e.message,'error')}
-    }
-
-    /* ===== Response overlay ===== */
+    /* -- Response overlay (остаётся до ручного закрытия) -- */
     var closeBtn=document.getElementById('closeOverlay');
     if(closeBtn)closeBtn.addEventListener('click',function(){responseOverlay.classList.remove('visible')});
 
@@ -484,6 +244,7 @@
       else{userSaidEl.textContent='';userSaidEl.style.display='none'}
       aminaSaysEl.textContent=text||'';aminaSaysEl.className='amina-says';
       responseOverlay.classList.add('visible');
+      // Не скрываем автоматически — пользователь закроет сам кнопкой ×
     }
     function showError(text){
       if(responseTimer)clearTimeout(responseTimer);
@@ -493,36 +254,173 @@
       responseTimer=setTimeout(function(){responseOverlay.classList.remove('visible')},6000);
     }
 
-    /* ===== Voice recording ===== */
+    /* -- PNGTubing: sprite-based lip-sync + blink -- */
+    var audioCtx=null,pngTubeRaf=null,currentSource=null,currentAnalyser=null;
+    var pngtuberLayer=document.getElementById('pngtuberLayer');
+    var isSpeaking=false,isBlinking=false,mouthOpen=false;
+    var blinkTimer=null;
+    var RMS_THRESHOLD=0.12; // Порог открытия рта
+
+    /* Preload all pngtuber sprites */
+    var pngtuberCache={};
+    var emotionFileKeys=Object.keys(emotionMap);
+    var suffixes=['_mouth-open','_eyes-closed','_mouth-open_eyes-closed'];
+    for(var ei=0;ei<emotionFileKeys.length;ei++){
+      var efile=emotionMap[emotionFileKeys[ei]];
+      for(var si=0;si<suffixes.length;si++){
+        var spriteUrl='/mini-app/avatars/pngtuber/'+efile+suffixes[si]+'.png';
+        var pImg=new Image();pImg.src=spriteUrl;
+        pngtuberCache[efile+suffixes[si]]=spriteUrl;
+      }
+    }
+
+    function getPngtuberSrc(emotionFile,wantMouthOpen,wantEyesClosed){
+      if(wantMouthOpen&&wantEyesClosed) return pngtuberCache[emotionFile+'_mouth-open_eyes-closed']||'';
+      if(wantMouthOpen) return pngtuberCache[emotionFile+'_mouth-open']||'';
+      if(wantEyesClosed) return pngtuberCache[emotionFile+'_eyes-closed']||'';
+      return '';
+    }
+
+    function updatePngtuberLayer(){
+      var needOverlay=mouthOpen||isBlinking;
+      if(!needOverlay){
+        pngtuberLayer.classList.remove('active');
+        return;
+      }
+      var emotionFile=emotionMap[currentEmotion]||'base-neutral';
+      var src=getPngtuberSrc(emotionFile,mouthOpen,isBlinking);
+      if(src&&pngtuberLayer.src!==src){
+        pngtuberLayer.src=src;
+      }
+      if(src)pngtuberLayer.classList.add('active');
+      else pngtuberLayer.classList.remove('active');
+    }
+
+    /* -- Blink system: random blinks every 3-6s, blink lasts 150ms -- */
+    function scheduleBlink(){
+      var delay=2000+Math.random()*3000;
+      blinkTimer=setTimeout(function(){
+        isBlinking=true;
+        updatePngtuberLayer();
+        setTimeout(function(){
+          isBlinking=false;
+          updatePngtuberLayer();
+          scheduleBlink();
+        },150);
+      },delay);
+    }
+    scheduleBlink();
+
+    function stopPngTube(){
+      if(pngTubeRaf){cancelAnimationFrame(pngTubeRaf);pngTubeRaf=null}
+      if(currentSource){try{currentSource.disconnect()}catch(e){}}
+      if(currentAnalyser){try{currentAnalyser.disconnect()}catch(e){}}
+      currentSource=null;currentAnalyser=null;
+      isSpeaking=false;mouthOpen=false;
+      avatarArea.classList.remove('speaking');
+      avatarArea.style.boxShadow='';
+      if(currentImg){currentImg.style.transform='';currentImg.style.filter=''}
+      updatePngtuberLayer();
+    }
+
+    function startPngTube(analyser){
+      var dataArray=new Uint8Array(analyser.fftSize);
+      avatarArea.classList.add('speaking');
+      isSpeaking=true;
+
+      function tick(){
+        if(!pngTubeRaf)return;
+        analyser.getByteTimeDomainData(dataArray);
+        var sum=0;
+        for(var i=0;i<dataArray.length;i++){var v=(dataArray[i]-128)/128;sum+=v*v}
+        var rms=Math.sqrt(sum/dataArray.length);
+        var level=Math.min(rms*3.5,1);
+
+        /* Lip-sync: open mouth when RMS exceeds threshold */
+        var shouldOpen=rms>RMS_THRESHOLD;
+        if(shouldOpen!==mouthOpen){
+          mouthOpen=shouldOpen;
+          updatePngtuberLayer();
+        }
+
+        /* Visual effects: scale, glow */
+        var scale=1.0+level*0.03;
+        var ty=-level*5;
+        var glow=Math.round(20+level*40);
+        var glowAlpha=(0.2+level*0.5).toFixed(2);
+        var bright=(1.0+level*0.1).toFixed(3);
+
+        if(currentImg){
+          currentImg.style.transform='scale('+scale.toFixed(4)+') translateY('+ty.toFixed(1)+'px)';
+          currentImg.style.filter='brightness('+bright+')';
+        }
+        avatarArea.style.boxShadow='inset 0 0 '+glow+'px '+(8+Math.round(level*12))+'px rgba(212,168,83,'+glowAlpha+')';
+        pngTubeRaf=requestAnimationFrame(tick);
+      }
+      pngTubeRaf=requestAnimationFrame(tick);
+    }
+
+    function playAudioBase64(b64,mime){
+      if(!b64)return;
+      stopPngTube();
+      try{
+        var bin=atob(b64),bytes=new Uint8Array(bin.length);
+        for(var i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+        var blob=new Blob([bytes],{type:mime||'audio/mpeg'}),url=URL.createObjectURL(blob);
+        var a=new Audio(url);
+
+        if(!audioCtx){var AC=window.AudioContext||window.webkitAudioContext;if(AC)audioCtx=new AC()}
+
+        var cleanup=function(){stopPngTube();URL.revokeObjectURL(url)};
+
+        if(audioCtx&&audioCtx.state!=='closed'){
+          var source=audioCtx.createMediaElementSource(a);
+          var analyser=audioCtx.createAnalyser();
+          analyser.fftSize=256;analyser.smoothingTimeConstant=0.7;
+          source.connect(analyser);analyser.connect(audioCtx.destination);
+          currentSource=source;currentAnalyser=analyser;
+          a.onplay=function(){if(audioCtx.state==='suspended')audioCtx.resume();startPngTube(analyser)};
+        }else{
+          a.onplay=function(){avatarArea.classList.add('speaking')};
+        }
+        a.onended=function(){cleanup()};
+        a.onerror=function(){cleanup()};
+        a.onpause=function(){stopPngTube()};
+        a.play().catch(function(){cleanup()});
+      }catch(e){}
+    }
+
+    /* -- Voice recording (MediaRecorder) -- */
     async function startRecording(){
       if(isProcessing||isRecording)return;
-      if(!window.MediaRecorder){showError('Браузер не поддерживает запись.');return}
+      if(!window.MediaRecorder){showError('Браузер не поддерживает запись. Обновите Telegram.');return}
       responseOverlay.classList.remove('visible');
       try{
-        logPipeline('Requesting mic...');
-        var stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,sampleRate:16000,echoCancellation:true,noiseSuppression:true}});
-        audioChunks=[];
+        logPipeline('Requesting mic…');
+        var stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,sampleRate:16000,echoCancellation:true,noiseSuppression:true}});audioChunks=[];
         var mimes=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus'],sel='';
         for(var i=0;i<mimes.length;i++){if(mimes[i]&&MediaRecorder.isTypeSupported(mimes[i])){sel=mimes[i];break}}
-        mediaRecorder=new MediaRecorder(stream,sel?{mimeType:sel}:{});
+        logPipeline('Mime: '+(sel||'default'));
+        var recOpts=sel?{mimeType:sel}:{};
+        if(typeof MediaRecorder.isTypeSupported==='function'){recOpts.audioBitsPerSecond=24000}
+        mediaRecorder=new MediaRecorder(stream,recOpts);
         mediaRecorder.ondataavailable=function(e){if(e.data&&e.data.size>0)audioChunks.push(e.data)};
         mediaRecorder.onstop=function(){
           stream.getTracks().forEach(function(t){t.stop()});
           var blob=new Blob(audioChunks,{type:mediaRecorder.mimeType||'audio/webm'});
-          logPipeline('Rec: '+blob.size+'B, '+(Date.now()-recordStartTime)+'ms');
+          logPipeline('Rec done, size='+blob.size+', duration='+(Date.now()-recordStartTime)+'ms');
           if(blob.size>100)sendVoiceToServer(blob);
-          else showError('Запись слишком короткая. Говорите дольше.');
+          else{showError('Запись слишком короткая. Говорите дольше.');logPipeline('Blob too small: '+blob.size,'error')}
           audioChunks=[];
         };
         mediaRecorder.onerror=function(e){logPipeline('Rec err: '+(e.error?e.error.message:'?'),'error');stopRecording()};
         mediaRecorder.start(250);recordStartTime=Date.now();
         isRecording=true;micBtn.classList.add('recording');
-        setStatus('Говорите... нажмите ещё раз');logPipeline('Recording','ok');
+        setStatus('🔴 Говорите… нажмите ещё раз');logPipeline('Recording started','ok');
       }catch(e){
-        var msg='Нет доступа к микрофону';
-        if(e.name==='NotAllowedError')msg='Разрешите микрофон в настройках браузера.';
-        else if(e.name==='NotFoundError')msg='Микрофон не найден.';
-        showError(msg);setStatus('');logPipeline('Mic: '+e.name+' '+e.message,'error');
+        logPipeline('Mic denied: '+e.message,'error');
+        showError('Нет доступа к микрофону');
+        setStatus('');
       }
     }
 
@@ -530,7 +428,7 @@
       if(!mediaRecorder||!isRecording)return;
       var elapsed=Date.now()-recordStartTime;
       if(elapsed<MIN_RECORD_MS){
-        setStatus('Говорите дольше...');
+        setStatus('Говорите дольше…');
         setTimeout(function(){if(isRecording)stopRecording()},MIN_RECORD_MS-elapsed+100);
         return;
       }
@@ -540,16 +438,19 @@
 
     async function sendVoiceToServer(blob){
       if(!initData){showError('Откройте из Telegram');return}
-      setLocked(true);setStatus('Распознаю речь...');setEmotion('thinking');
+      setLocked(true);setStatus('⏳ Распознаю речь…');setEmotion('thinking');
+      logPipeline('Voice → converting to base64, size='+blob.size+', type='+blob.type);
       var tStart=Date.now();
       try{
+        // Конвертируем blob в base64
         var reader=new FileReader();
         var audioBase64=await new Promise(function(resolve,reject){
-          reader.onload=function(){resolve(reader.result.split(',')[1])};
+          reader.onload=function(){var result=reader.result;resolve(result.split(',')[1])};
           reader.onerror=function(){reject(new Error('FileReader failed'))};
           reader.readAsDataURL(blob);
         });
-        logPipeline('Voice: '+Math.round(audioBase64.length/1024)+'KB');
+        logPipeline('Base64 ready: '+Math.round(audioBase64.length/1024)+'KB, sending JSON...');
+        
         var controller=new AbortController();
         var timeout=setTimeout(function(){controller.abort()},30000);
         var res=await fetch(apiBase+'/mini-app/voice',{
@@ -560,35 +461,41 @@
         });
         clearTimeout(timeout);
         var fetchMs=Date.now()-tStart;
-        logPipeline('Server: '+fetchMs+'ms, status='+res.status);
-        setStatus('Амина думает...');
+        logPipeline('Server responded in '+fetchMs+'ms, status='+res.status);
+        setStatus('💭 Амина думает…');
         var json=await res.json().catch(function(){return null});
         if(!res.ok||!json||!json.success){
-          showError((json&&json.error)||'Ошибка сервера ('+res.status+')');
-          logPipeline('API err: '+((json&&json.error)||res.status),'error');return;
+          var err=(json&&json.error)||'Ошибка сервера ('+res.status+')';
+          showError(err);logPipeline('API '+res.status+': '+err,'error');return;
         }
         setStatus('');
-        handleAiResponse(json.data,json.data.transcript||'');
-        logPipeline('Done: '+(Date.now()-tStart)+'ms','ok');
+        var totalMs=Date.now()-tStart;
+        var tr=json.data.transcript||'';
+        logPipeline('STT: "'+tr.slice(0,80)+'" emotion='+json.data.emotion+' total='+totalMs+'ms','ok');
+        handleAiResponse(json.data,tr);
       }catch(e){
-        showError(e.name==='AbortError'?'Таймаут 30 сек. Попробуйте короче.':'Сеть недоступна: '+e.message);
-        logPipeline('Voice err: '+e.message,'error');
-      }finally{setLocked(false);setStatus('')}
+        var errMsg=e.name==='AbortError'?'Таймаут 30 сек. Попробуйте короче.':'Сеть недоступна: '+e.message;
+        showError(errMsg);logPipeline('Voice err: '+e.name+' '+e.message+' after '+(Date.now()-tStart)+'ms','error');
+      }
+      finally{setLocked(false);setStatus('')}
     }
 
     if(micBtn)micBtn.addEventListener('click',function(){
       if(isRecording){stopRecording();if(speechRecognition)try{speechRecognition.stop()}catch(e){};return}
       if(isProcessing)return;
       responseOverlay.classList.remove('visible');
+      // Web Speech API — мгновенное распознавание
       if(useWebSpeech&&startWebSpeech())return;
+      // Fallback — MediaRecorder + серверный Whisper
       startRecording();
     });
 
-    /* ===== TTS ===== */
+    /* -- Parallel TTS: озвучка ответа через ElevenLabs -- */
     async function fetchAndPlayTTS(text){
       if(!text||text.length<3||!initData)return;
       try{
-        logPipeline('TTS...');var ts=Date.now();
+        logPipeline('TTS → ElevenLabs…');
+        var ttsStart=Date.now();
         var res=await fetch(apiBase+'/mini-app/tts',{
           method:'POST',
           headers:{'Content-Type':'application/json'},
@@ -596,58 +503,75 @@
         });
         var json=await res.json().catch(function(){return null});
         if(json&&json.success&&json.data&&json.data.audioBase64){
-          logPipeline('TTS OK '+(Date.now()-ts)+'ms','ok');
+          logPipeline('TTS OK '+(Date.now()-ttsStart)+'ms','ok');
           playAudioBase64(json.data.audioBase64,json.data.audioMimeType);
-        }else{logPipeline('TTS: no audio')}
+        }else{logPipeline('TTS: no audio returned')}
       }catch(e){logPipeline('TTS err: '+e.message,'error')}
     }
 
-    /* ===== Web Speech API ===== */
+    /* -- Web Speech API: мгновенное распознавание в браузере -- */
     var SpeechRecognitionClass=window.SpeechRecognition||window.webkitSpeechRecognition;
+    // В Telegram WebView Web Speech API зависает — отключаем
     var isTelegramWebView=!!(window.Telegram&&window.Telegram.WebApp);
     var useWebSpeech=!!SpeechRecognitionClass&&!isTelegramWebView;
-    var speechRecognition=null,webSpeechTimeout=null;
-    logPipeline('WebSpeech: '+(useWebSpeech?'on':'off (TG:'+isTelegramWebView+')'));
+    var speechRecognition=null;
+    var webSpeechTimeout=null;
+    logPipeline('Web Speech: '+(SpeechRecognitionClass?'class exists':'missing')+', TG WebView: '+isTelegramWebView+', enabled: '+useWebSpeech);
 
     function startWebSpeech(){
       if(!useWebSpeech)return false;
       try{
         speechRecognition=new SpeechRecognitionClass();
-        speechRecognition.lang='ru-RU';speechRecognition.interimResults=false;
-        speechRecognition.maxAlternatives=1;speechRecognition.continuous=false;
+        speechRecognition.lang='ru-RU';
+        speechRecognition.interimResults=false;
+        speechRecognition.maxAlternatives=1;
+        speechRecognition.continuous=false;
+        
+        // Таймаут 5 сек — если Web Speech зависнет, fallback на Whisper
         webSpeechTimeout=setTimeout(function(){
-          logPipeline('WebSpeech timeout - fallback','error');
+          logPipeline('Web Speech timeout 5s — fallback','error');
           try{speechRecognition.abort()}catch(e){}
           isRecording=false;micBtn.classList.remove('recording');
-          useWebSpeech=false;startRecording();
+          useWebSpeech=false; // Больше не пробуем в этой сессии
+          startRecording();
         },5000);
-        speechRecognition.onstart=function(){isRecording=true;micBtn.classList.add('recording');setStatus('Говорите...');logPipeline('WebSpeech started')};
+
+        speechRecognition.onstart=function(){
+          isRecording=true;micBtn.classList.add('recording');
+          setStatus('🔴 Говорите…');logPipeline('Web Speech started');
+        };
         speechRecognition.onresult=function(event){
           clearTimeout(webSpeechTimeout);
-          var t=event.results[0][0].transcript;
-          logPipeline('WebSpeech: "'+t.slice(0,50)+'" conf='+Math.round(event.results[0][0].confidence*100)+'%','ok');
+          var transcript=event.results[0][0].transcript;
+          logPipeline('Web Speech: "'+transcript.slice(0,60)+'" conf='+Math.round(event.results[0][0].confidence*100)+'%','ok');
           isRecording=false;micBtn.classList.remove('recording');
-          sendTextFromSpeech(t);
+          sendTextFromSpeech(transcript);
         };
         speechRecognition.onerror=function(event){
           clearTimeout(webSpeechTimeout);
-          logPipeline('WebSpeech err: '+event.error,'error');
+          logPipeline('Web Speech err: '+event.error,'error');
           isRecording=false;micBtn.classList.remove('recording');
-          if(event.error==='no-speech'){setStatus('Не услышала. Ещё раз.');setTimeout(function(){setStatus('')},2000);return}
-          useWebSpeech=false;startRecording();
+          if(event.error==='no-speech'){setStatus('Не услышала. Попробуйте ещё раз.');setTimeout(function(){setStatus('')},2000);return}
+          // Fallback на MediaRecorder + серверный Whisper
+          logPipeline('Fallback → MediaRecorder + Whisper');
+          useWebSpeech=false; // Больше не пробуем
+          startRecording();
         };
         speechRecognition.onend=function(){
           clearTimeout(webSpeechTimeout);
           if(isRecording){isRecording=false;micBtn.classList.remove('recording');setStatus('')}
         };
-        speechRecognition.start();return true;
-      }catch(e){logPipeline('WebSpeech init err: '+e.message,'error');useWebSpeech=false;return false}
+        speechRecognition.start();
+        return true;
+      }catch(e){logPipeline('Web Speech init err: '+e.message,'error');useWebSpeech=false;return false}
     }
 
+    /* -- Отправка распознанного текста (Web Speech) -- */
     async function sendTextFromSpeech(transcript){
       if(!initData||!transcript.trim())return;
-      setLocked(true);setStatus('Амина думает...');setEmotion('thinking');
-      var ts=Date.now();logPipeline('Text: "'+transcript.slice(0,40)+'"');
+      setLocked(true);setStatus('💭 Амина думает…');setEmotion('thinking');
+      var tStart=Date.now();
+      logPipeline('Text → server (from speech): "'+transcript.slice(0,40)+'"');
       try{
         var res=await fetch(apiBase+'/mini-app/message',{
           method:'POST',
@@ -655,23 +579,32 @@
           body:JSON.stringify({message:transcript,initData:initData,withAudio:false})
         });
         var json=await res.json().catch(function(){return null});
-        if(!res.ok||!json||!json.success){showError((json&&json.error)||'Ошибка');logPipeline('Err: '+((json&&json.error)||res.status),'error');return}
-        logPipeline('AI '+(Date.now()-ts)+'ms','ok');
+        var respMs=Date.now()-tStart;
+        if(!res.ok||!json||!json.success){
+          var err=(json&&json.error)||'Ошибка ('+res.status+')';
+          showError(err);logPipeline('API err: '+err,'error');return;
+        }
+        logPipeline('AI response '+respMs+'ms','ok');
         var text=json.data.response||'';
-        showResponse(text,transcript);setEmotion(json.data.emotion||'neutral');
+        showResponse(text,transcript);
+        setEmotion(json.data.emotion||'neutral');
+        // Озвучка параллельно — текст уже показан
         fetchAndPlayTTS(text);
       }catch(e){showError('Сеть: '+e.message);logPipeline('Err: '+e.message,'error')}
       finally{setLocked(false);setStatus('')}
     }
 
+    /* -- Response handling -- */
     function handleAiResponse(data,transcript){
-      showResponse(data.response||'',transcript);
+      var text=data.response||'';
+      showResponse(text,transcript);
       setEmotion(data.emotion||'neutral');
+      // Если сервер вернул аудио — играем; иначе запрашиваем TTS
       if(data.audioBase64)playAudioBase64(data.audioBase64,data.audioMimeType);
-      else fetchAndPlayTTS(data.response||'');
+      else fetchAndPlayTTS(text);
     }
 
-    logPipeline('Pseudo-Live2D v2 for '+(userName||'guest'),'ok');
+    logPipeline('PNGTuber v2 loaded: sprite lip-sync + blink for '+userName,'ok');
   })();
   </script>
 </body>
