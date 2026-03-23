@@ -215,18 +215,17 @@
     function setEmotion(emotion){
       if(!emotion||emotion===currentEmotion)return;
       var file=emotionMap[emotion]||'base-neutral';
-      var newSrc=getSpriteUrl(emotion);
+      var newSrc='/mini-app/avatars/'+file+'.png';
       currentEmotion=emotion;
-      preloadEmotion(emotion);
       if(crossfading){currentImg.src=newSrc;return}
       crossfading=true;
-      var preloadImg=new Image();
-      preloadImg.onload=function(){
+      var preload=new Image();
+      preload.onload=function(){
         nextImg.src=newSrc;nextImg.classList.add('active');currentImg.classList.remove('active');
         setTimeout(function(){var tmp=currentImg;currentImg=nextImg;nextImg=tmp;crossfading=false},550);
       };
-      preloadImg.onerror=function(){crossfading=false};
-      preloadImg.src=newSrc;
+      preload.onerror=function(){crossfading=false};
+      preload.src=newSrc;
     }
 
     /* -- Response overlay (остаётся до ручного закрытия) -- */
@@ -249,45 +248,6 @@
       responseTimer=setTimeout(function(){responseOverlay.classList.remove('visible')},6000);
     }
 
-    /* -- PNGTuber: sprite states -- */
-    var mouthOpen=false,eyesClosed=false,isSpeaking=false;
-    var RMS_THRESHOLD=0.12;
-
-    function getSpriteUrl(emotion){
-      var file=emotionMap[emotion]||'base-neutral';
-      if(mouthOpen&&eyesClosed) return '/mini-app/avatars/pngtuber/'+file+'_mouth-open_eyes-closed.png';
-      if(mouthOpen) return '/mini-app/avatars/pngtuber/'+file+'_mouth-open.png';
-      if(eyesClosed) return '/mini-app/avatars/pngtuber/'+file+'_eyes-closed.png';
-      return '/mini-app/avatars/'+file+'.png';
-    }
-
-    function updateSprite(){
-      var url=getSpriteUrl(currentEmotion);
-      if(currentImg&&currentImg.src!==url) currentImg.src=url;
-    }
-
-    /* Preload pngtuber sprites for current emotion */
-    function preloadEmotion(emotion){
-      var file=emotionMap[emotion]||'base-neutral';
-      ['_mouth-open','_eyes-closed','_mouth-open_eyes-closed'].forEach(function(s){
-        var p=new Image();p.src='/mini-app/avatars/pngtuber/'+file+s+'.png';
-      });
-    }
-    preloadEmotion('neutral');
-
-    /* Blink: switch to eyes-closed sprite for 150ms */
-    var blinkTimer=null;
-    function scheduleBlink(){
-      blinkTimer=setTimeout(function(){
-        eyesClosed=true;updateSprite();
-        setTimeout(function(){
-          eyesClosed=false;updateSprite();
-          scheduleBlink();
-        },150);
-      },2000+Math.random()*3000);
-    }
-    scheduleBlink();
-
     /* -- PNGTubing: audio-reactive avatar -- */
     var audioCtx=null,pngTubeRaf=null,currentSource=null,currentAnalyser=null;
 
@@ -296,17 +256,14 @@
       if(currentSource){try{currentSource.disconnect()}catch(e){}}
       if(currentAnalyser){try{currentAnalyser.disconnect()}catch(e){}}
       currentSource=null;currentAnalyser=null;
-      isSpeaking=false;mouthOpen=false;
       avatarArea.classList.remove('speaking');
       avatarArea.style.boxShadow='';
       if(currentImg){currentImg.style.transform='';currentImg.style.filter=''}
-      updateSprite();
     }
 
     function startPngTube(analyser){
       var dataArray=new Uint8Array(analyser.fftSize);
       avatarArea.classList.add('speaking');
-      isSpeaking=true;
 
       function tick(){
         if(!pngTubeRaf)return;
@@ -315,10 +272,6 @@
         for(var i=0;i<dataArray.length;i++){var v=(dataArray[i]-128)/128;sum+=v*v}
         var rms=Math.sqrt(sum/dataArray.length);
         var level=Math.min(rms*3.5,1);
-
-        /* Lip-sync: switch sprite by RMS threshold */
-        var shouldOpen=rms>RMS_THRESHOLD;
-        if(shouldOpen!==mouthOpen){mouthOpen=shouldOpen;updateSprite()}
 
         var scale=1.0+level*0.03;
         var ty=-level*5;
