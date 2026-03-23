@@ -251,6 +251,23 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
       .type('image/png')
       .send(readFileSync(filePath));
   });
+
+  // Serve PNGTuber sprite variants (mouth-open, eyes-closed, combo)
+  const pngtuberDir = resolve(avatarsDir, 'pngtuber');
+  server.get('/mini-app/avatars/pngtuber/:filename', async (request: FastifyRequest<{ Params: { filename: string } }>, reply: FastifyReply) => {
+    const { filename } = request.params;
+    if (!/^[\w-]+\.png$/.test(filename)) {
+      return reply.code(400).send({ error: 'Invalid filename' });
+    }
+    const filePath = resolve(pngtuberDir, filename);
+    if (!existsSync(filePath)) {
+      return reply.code(404).send({ error: 'PNGTuber sprite not found' });
+    }
+    return reply
+      .header('Cache-Control', 'public, max-age=86400')
+      .type('image/png')
+      .send(readFileSync(filePath));
+  });
   try {
     getMiniAppHtml();
     appLogger.info('📱 Telegram mini-app: HTML из src/telegram/mini-app-web.html');
