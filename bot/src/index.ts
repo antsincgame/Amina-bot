@@ -268,6 +268,23 @@ const setupRoutes = async (server: FastifyInstance): Promise<void> => {
       .type('image/png')
       .send(readFileSync(filePath));
   });
+
+  // Serve Pseudo-Live2D layer assets
+  const layersDir = resolve(avatarsDir, 'layers');
+  server.get('/mini-app/avatars/layers/:folder/:filename', async (request: FastifyRequest<{ Params: { folder: string; filename: string } }>, reply: FastifyReply) => {
+    const { folder, filename } = request.params;
+    if (!/^[\w-]+$/.test(folder) || !/^[\w-]+\.png$/.test(filename)) {
+      return reply.code(400).send({ error: 'Invalid path' });
+    }
+    const filePath = resolve(layersDir, folder, filename);
+    if (!existsSync(filePath)) {
+      return reply.code(404).send({ error: 'Layer not found' });
+    }
+    return reply
+      .header('Cache-Control', 'public, max-age=86400')
+      .type('image/png')
+      .send(readFileSync(filePath));
+  });
   try {
     getMiniAppHtml();
     appLogger.info('📱 Telegram mini-app: HTML из src/telegram/mini-app-web.html');
