@@ -487,6 +487,7 @@ export interface ParsedHeadline {
   language?: NewsSourceLanguage;
   sourceUrl?: string;
   sourceTier?: NewsSourceTier;
+  articleExcerpt?: string;
 }
 
 export * from './reconciliation.js';

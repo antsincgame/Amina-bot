@@ -1791,7 +1791,10 @@ export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
   const deduped = dedupeParsedHeadlines(allHeadlines);
   const enrichedHeadlines = await enrichParsedHeadlineDescriptions(deduped.headlines);
   const localizedHeadlines = await localizeParsedHeadlines(enrichedHeadlines);
-  const filteredHeadlines = await filterHeadlinesForVibecoding(localizedHeadlines);
+  const vibeFiltered = await filterHeadlinesForVibecoding(localizedHeadlines);
+  const filteredHeadlines = vibeFiltered.filter(
+    h => h.category !== 'city_local' && h.category !== 'uncategorized',
+  );
   const grouped = groupHeadlinesByCategory(filteredHeadlines);
 
   appLogger.info(

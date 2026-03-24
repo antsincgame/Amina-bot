@@ -75,7 +75,21 @@ describe('news-description-enrichment', () => {
     expect(enrichedHeadline?.description).not.toContain('We’re on a journey to advance');
   });
 
-  it('не ходит в сеть, если description уже содержательный', async () => {
+  it('ходит в сеть для excerpt даже если description содержательный, но не меняет description', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      headers: new Headers({ 'content-type': 'text/html' }),
+      text: async () => `
+        <html><body>
+          <main>
+            <article>
+              <p>Some article content about sequence parallelism and attention distribution.</p>
+            </article>
+          </main>
+        </body></html>
+      `,
+    });
+
     const meaningfulHeadline = buildHeadline({
       description: 'Пост разбирает sequence parallelism Ulysses, распределение attention между GPU и практику обучения с контекстом до миллиона токенов.',
       language: 'ru',
@@ -83,7 +97,8 @@ describe('news-description-enrichment', () => {
 
     const [enrichedHeadline] = await enrichParsedHeadlineDescriptions([meaningfulHeadline]);
 
-    expect(mockFetch).not.toHaveBeenCalled();
-    expect(enrichedHeadline).toEqual(meaningfulHeadline);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(enrichedHeadline?.description).toBe(meaningfulHeadline.description);
+    expect(enrichedHeadline?.articleExcerpt).toBeTruthy();
   });
 });

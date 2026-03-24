@@ -53,7 +53,7 @@ import type { ParsedHeadline } from '../../../shared/types/index.js';
 // Helpers
 // ============================================
 
-function makeHeadline(title: string, description = ''): ParsedHeadline {
+function makeHeadline(title: string, description = '', articleExcerpt?: string): ParsedHeadline {
   return {
     title,
     url: 'https://example.com/article',
@@ -64,6 +64,7 @@ function makeHeadline(title: string, description = ''): ParsedHeadline {
     fingerprint: `fp-${title.slice(0, 10)}`,
     alternateSources: [],
     category: 'vibecoding' as ParsedHeadline['category'],
+    ...(articleExcerpt !== undefined ? { articleExcerpt } : {}),
   };
 }
 
@@ -287,7 +288,7 @@ describe('News Vibecoding Filter', () => {
       expect(mockedAiChat).not.toHaveBeenCalled();
     });
 
-    it('неоднозначные → LLM вызван для классификации', async () => {
+    it('неоднозначные с excerpt → LLM вызван для классификации', async () => {
       mockedAiChat.mockResolvedValueOnce({
         content: '{"0": true, "1": false}',
         model: 'test',
@@ -295,8 +296,8 @@ describe('News Vibecoding Filter', () => {
       });
 
       const headlines = [
-        makeHeadline('New AI model released'),    // ambiguous, index 0
-        makeHeadline('Python 3.13 features'),     // ambiguous, index 1
+        makeHeadline('New AI model released', '', 'This model improves code generation significantly.'),
+        makeHeadline('Python 3.13 features', '', 'Python 3.13 brings performance improvements.'),
       ];
       const result = await filterHeadlinesForVibecoding(headlines);
       expect(mockedAiChat).toHaveBeenCalledTimes(1);
@@ -304,7 +305,7 @@ describe('News Vibecoding Filter', () => {
       expect(result[0]!.title).toBe('New AI model released');
     });
 
-    it('LLM возвращает не-JSON → все ambiguous сохранены (fail-open)', async () => {
+    it('LLM возвращает не-JSON → все ambiguous дропнуты (fail-closed)', async () => {
       mockedAiChat.mockResolvedValueOnce({
         content: 'Sorry, I cannot classify these headlines.',
         model: 'test',
@@ -312,25 +313,25 @@ describe('News Vibecoding Filter', () => {
       });
 
       const headlines = [
-        makeHeadline('Cloud computing trends'),
-        makeHeadline('Docker best practices'),
+        makeHeadline('Cloud computing trends', '', 'Cloud computing article excerpt.'),
+        makeHeadline('Docker best practices', '', 'Docker article excerpt.'),
       ];
       const result = await filterHeadlinesForVibecoding(headlines);
-      expect(result).toHaveLength(2);
+      expect(result).toHaveLength(0);
     });
 
-    it('LLM бросает ошибку → все ambiguous сохранены (fail-open)', async () => {
+    it('LLM бросает ошибку → все ambiguous дропнуты (fail-closed)', async () => {
       mockedAiChat.mockRejectedValueOnce(new Error('API timeout'));
 
       const headlines = [
-        makeHeadline('Quantum computing news'),
-        makeHeadline('WebAssembly update'),
+        makeHeadline('Quantum computing news', '', 'Quantum computing article excerpt.'),
+        makeHeadline('WebAssembly update', '', 'WebAssembly article excerpt.'),
       ];
       const result = await filterHeadlinesForVibecoding(headlines);
-      expect(result).toHaveLength(2);
+      expect(result).toHaveLength(0);
     });
 
-    it('LLM не возвращает ключ для headline → headline сохранён (undefined = keep)', async () => {
+    it('LLM не возвращает ключ для headline → headline дропнут (fail-closed)', async () => {
       mockedAiChat.mockResolvedValueOnce({
         content: '{"0": false}',
         model: 'test',
@@ -338,12 +339,21 @@ describe('News Vibecoding Filter', () => {
       });
 
       const headlines = [
-        makeHeadline('First ambiguous news'),   // LLM says false → drop
-        makeHeadline('Second ambiguous news'),  // LLM returns nothing → keep
+        makeHeadline('First ambiguous news', '', 'First article excerpt.'),
+        makeHeadline('Second ambiguous news', '', 'Second article excerpt.'),
       ];
       const result = await filterHeadlinesForVibecoding(headlines);
-      expect(result).toHaveLength(1);
-      expect(result[0]!.title).toBe('Second ambiguous news');
+      expect(result).toHaveLength(0);
+    });
+
+    it('ambiguous без excerpt → дропнуты без LLM', async () => {
+      const headlines = [
+        makeHeadline('Cloud computing trends'),
+        makeHeadline('Docker best practices'),
+      ];
+      const result = await filterHeadlinesForVibecoding(headlines);
+      expect(result).toHaveLength(0);
+      expect(mockedAiChat).not.toHaveBeenCalled();
     });
 
     it('пустой массив заголовков → пустой результат', async () => {
@@ -362,30 +372,35 @@ describe('News Vibecoding Filter', () => {
       expect(result).toHaveLength(0);
     });
 
-    it('один headline: ambiguous — LLM says true', async () => {
+    it('один headline: ambiguous с excerpt — LLM says true', async () => {
       mockedAiChat.mockResolvedValueOnce({
         content: '{"0": true}',
         model: 'test',
         usage: { prompt_tokens: 5, completion_tokens: 5, total_tokens: 10 },
       });
-      const result = await filterHeadlinesForVibecoding([makeHeadline('New programming language')]);
+      const result = await filterHeadlinesForVibecoding([makeHeadline('New programming language', '', 'A new language for AI coding.')]);
       expect(result).toHaveLength(1);
     });
 
-    it('один headline: ambiguous — LLM says false', async () => {
+    it('один headline: ambiguous с excerpt — LLM says false', async () => {
       mockedAiChat.mockResolvedValueOnce({
         content: '{"0": false}',
         model: 'test',
         usage: { prompt_tokens: 5, completion_tokens: 5, total_tokens: 10 },
       });
-      const result = await filterHeadlinesForVibecoding([makeHeadline('New programming language')]);
+      const result = await filterHeadlinesForVibecoding([makeHeadline('New programming language', '', 'A new systems language with novel memory management.')]);
       expect(result).toHaveLength(0);
     });
 
-    it('большой batch (25 ambiguous) → разбивка на 2 батча по 20', async () => {
+    it('большой batch (25 ambiguous с excerpt) → разбивка на 3 батча по 10', async () => {
       mockedAiChat
         .mockResolvedValueOnce({
-          content: JSON.stringify(Object.fromEntries(Array.from({ length: 20 }, (_, i) => [String(i), true]))),
+          content: JSON.stringify(Object.fromEntries(Array.from({ length: 10 }, (_, i) => [String(i), true]))),
+          model: 'test',
+          usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
+        })
+        .mockResolvedValueOnce({
+          content: JSON.stringify(Object.fromEntries(Array.from({ length: 10 }, (_, i) => [String(i + 10), true]))),
           model: 'test',
           usage: { prompt_tokens: 100, completion_tokens: 50, total_tokens: 150 },
         })
@@ -395,13 +410,13 @@ describe('News Vibecoding Filter', () => {
           usage: { prompt_tokens: 50, completion_tokens: 20, total_tokens: 70 },
         });
 
-      const headlines = Array.from({ length: 25 }, (_, i) => makeHeadline(`Generic tech news ${i}`));
+      const headlines = Array.from({ length: 25 }, (_, i) => makeHeadline(`Generic tech news ${i}`, '', `Article excerpt ${i}.`));
       const result = await filterHeadlinesForVibecoding(headlines);
-      expect(mockedAiChat).toHaveBeenCalledTimes(2);
-      expect(result).toHaveLength(20); // first 20 kept, last 5 dropped
+      expect(mockedAiChat).toHaveBeenCalledTimes(3);
+      expect(result).toHaveLength(20); // first 20 kept, last 5 dropped, limited to 20
     });
 
-    it('positive + ambiguous + negative → правильная фильтрация', async () => {
+    it('positive + ambiguous с excerpt + negative → правильная фильтрация', async () => {
       mockedAiChat.mockResolvedValueOnce({
         content: '{"1": true}',
         model: 'test',
@@ -409,8 +424,8 @@ describe('News Vibecoding Filter', () => {
       });
 
       const headlines = [
-        makeHeadline('Cursor new release'),         // positive → kept
-        makeHeadline('Generic AI news'),             // ambiguous → LLM says true → kept
+        makeHeadline('Cursor IDE new release'),      // positive → kept (matches 'cursor ide')
+        makeHeadline('Generic tech news', '', 'Some tech discussion about developer tools.'),  // ambiguous → LLM says true → kept
         makeHeadline('AI regulation crackdown'),     // negative → dropped
       ];
       const result = await filterHeadlinesForVibecoding(headlines);
@@ -425,8 +440,8 @@ describe('News Vibecoding Filter', () => {
       });
 
       const headlines = [
-        makeHeadline('Some tech news A'),
-        makeHeadline('Some tech news B'),
+        makeHeadline('Some tech news A', '', 'Article A about AI coding.'),
+        makeHeadline('Some tech news B', '', 'Article B about general tech.'),
       ];
       const result = await filterHeadlinesForVibecoding(headlines);
       expect(result).toHaveLength(1);

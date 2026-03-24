@@ -5,7 +5,8 @@ import type { ParsedHeadline } from '../../../shared/types/index.js';
 const ARTICLE_DESCRIPTION_FETCH_TIMEOUT_MS = 8_000;
 const ARTICLE_DESCRIPTION_CONCURRENCY = 4;
 const MIN_MEANINGFUL_DESCRIPTION_LENGTH = 50;
-const MAX_ARTICLE_DESCRIPTION_LENGTH = 420;
+const MAX_ARTICLE_DESCRIPTION_LENGTH = 200;
+const MAX_ARTICLE_EXCERPT_LENGTH = 500;
 
 const USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
@@ -201,6 +202,37 @@ function extractParagraphCandidates(html: string): string[] {
   return candidates;
 }
 
+function extractArticleExcerpt(html: string): string | null {
+  const $ = load(html);
+  $('script, style, noscript, svg, nav, header, footer, form, aside').remove();
+
+  const paragraphs: string[] = [];
+  for (const selector of PARAGRAPH_SELECTORS) {
+    $(selector).each((_index, element) => {
+      if (paragraphs.length >= 10) return false;
+      const text = cleanText($(element).text());
+      if (text && text.length >= 30) {
+        paragraphs.push(text);
+      }
+      return undefined;
+    });
+    if (paragraphs.length > 0) break;
+  }
+
+  if (paragraphs.length === 0) return null;
+
+  let excerpt = paragraphs.join(' ');
+  if (excerpt.length > MAX_ARTICLE_EXCERPT_LENGTH) {
+    excerpt = `${excerpt.slice(0, MAX_ARTICLE_EXCERPT_LENGTH - 1).trimEnd()}…`;
+  }
+  return excerpt || null;
+}
+
+interface ArticleEnrichmentResult {
+  description: string | null;
+  excerpt: string | null;
+}
+
 function pickBestCandidate(headline: ParsedHeadline, html: string): string | null {
   const $ = load(html);
   const rawMetaCandidates = [
@@ -229,7 +261,7 @@ function pickBestCandidate(headline: ParsedHeadline, html: string): string | nul
     : null;
 }
 
-async function fetchArticleDescription(headline: ParsedHeadline): Promise<string | null> {
+async function fetchArticleEnrichment(headline: ParsedHeadline): Promise<ArticleEnrichmentResult> {
   try {
     const response = await fetch(headline.url, {
       headers: {
@@ -241,22 +273,24 @@ async function fetchArticleDescription(headline: ParsedHeadline): Promise<string
     });
 
     if (!response.ok) {
-      return null;
+      return { description: null, excerpt: null };
     }
 
     const contentType = response.headers.get('content-type') ?? '';
     if (!contentType.includes('html') && !contentType.includes('xml')) {
-      return null;
+      return { description: null, excerpt: null };
     }
 
     const html = await response.text();
-    return pickBestCandidate(headline, html);
+    const description = pickBestCandidate(headline, html);
+    const excerpt = extractArticleExcerpt(html);
+    return { description, excerpt };
   } catch (error) {
     appLogger.debug(
       { error, url: headline.url, source: headline.source },
       'News description enrichment failed to fetch article',
     );
-    return null;
+    return { description: null, excerpt: null };
   }
 }
 
@@ -295,23 +329,35 @@ export async function enrichParsedHeadlineDescriptions(headlines: ParsedHeadline
   if (headlines.length === 0) return headlines;
 
   const enriched = [...headlines];
-  const queue = headlines
-    .map((headline, index) => ({ headline, index }))
-    .filter(({ headline }) => isWeakHeadlineDescription(headline));
+  const queue = headlines.map((headline, index) => ({ headline, index }));
 
-  if (queue.length === 0) {
-    return enriched;
-  }
+  let enrichedDescriptions = 0;
+  let enrichedExcerpts = 0;
 
   await runWithConcurrency(queue, ARTICLE_DESCRIPTION_CONCURRENCY, async ({ headline, index }) => {
-    const articleDescription = await fetchArticleDescription(headline);
-    if (!articleDescription) return;
+    const { description, excerpt } = await fetchArticleEnrichment(headline);
 
-    enriched[index] = {
-      ...headline,
-      description: articleDescription,
-    };
+    const updates: Partial<ParsedHeadline> = {};
+
+    if (description && isWeakHeadlineDescription(headline)) {
+      updates.description = description;
+      enrichedDescriptions++;
+    }
+
+    if (excerpt) {
+      updates.articleExcerpt = excerpt;
+      enrichedExcerpts++;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      enriched[index] = { ...headline, ...updates };
+    }
   });
+
+  appLogger.info(
+    { total: headlines.length, enrichedDescriptions, enrichedExcerpts },
+    'News enrichment: descriptions and excerpts extracted',
+  );
 
   return enriched;
 }
