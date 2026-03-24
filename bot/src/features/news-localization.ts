@@ -2,8 +2,8 @@ import { aiService } from '../ai/openrouter.js';
 import { appLogger } from '../config/logger.js';
 import type { ParsedHeadline } from '../../../shared/types/index.js';
 
-const DESCRIPTION_TRANSLATION_BATCH_SIZE = 8;
-const DESCRIPTION_TRANSLATION_RETRY_BATCH_SIZE = 3;
+const DESCRIPTION_TRANSLATION_BATCH_SIZE = 4;
+const DESCRIPTION_TRANSLATION_RETRY_BATCH_SIZE = 2;
 const DESCRIPTION_TRANSLATION_CONCURRENCY = 1;
 const DESCRIPTION_TRANSLATION_TIMEOUT_MS = 45_000;
 const DESCRIPTION_TRANSLATION_MAX_TOKENS = 2000;
@@ -177,35 +177,18 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, scope: str
 }
 
 function buildTranslationPrompt(items: DescriptionTranslationInput[]): string {
-  const payload = items.map(({ id, headline }) => ({
-    id,
-    title: headline.title,
-    source: headline.source,
-    language: headline.language ?? 'unknown',
-    description: headline.description,
-    excerpt: headline.articleExcerpt?.slice(0, 400) ?? '',
-  }));
+  const lines = items.map(({ id, headline }) => {
+    const excerpt = headline.articleExcerpt?.slice(0, 300) ?? '';
+    const desc = headline.description.slice(0, 200);
+    return `[${id}] "${headline.title}" | ${desc}${excerpt ? ` | ${excerpt}` : ''}`;
+  }).join('\n');
 
-  return [
-    'Для каждой новостной карточки создай КРАТКУЮ ВЫЖИМКУ на русском языке.',
-    '',
-    'У тебя есть title, description и excerpt (начало статьи). На основании ВСЕХ этих данных:',
-    '1. Напиши "title" — заголовок на русском. Если оригинал на английском/корейском/японском/китайском — переведи.',
-    '2. Напиши "description" — выжимку сути статьи на русском (что произошло и почему это важно).',
-    '',
-    'Правила:',
-    '- ВЕСЬ текст в title и description должен быть НА РУССКОМ ЯЗЫКЕ.',
-    '- Запрещён текст на корейском, японском, китайском, английском в title и description.',
-    '- Названия продуктов/компаний (Claude Code, Cursor, OpenAI) оставляй латиницей.',
-    '- Не выдумывай факты — бери только из входных данных.',
-    '- Убирай HTML-теги, RSS-мусор.',
-    `- description: максимум ${MAX_LOCALIZED_DESCRIPTION_LENGTH} символов.`,
-    '- Верни ТОЛЬКО JSON-массив.',
-    '- Формат: [{"id":1,"title":"заголовок по-русски","description":"выжимка по-русски"}]',
-    '',
-    'Входные данные:',
-    JSON.stringify(payload, null, 2),
-  ].join('\n');
+  return `Переведи на русский. Для каждого пункта верни title (заголовок) и description (о чём статья, 1-2 предложения).
+Названия продуктов (Claude Code, Cursor и т.д.) оставь латиницей. Всё остальное — по-русски.
+Максимум ${MAX_LOCALIZED_DESCRIPTION_LENGTH} символов на description.
+Ответ — ТОЛЬКО JSON: [{"id":0,"title":"...","description":"..."}]
+
+${lines}`;
 }
 
 function isTranslationAcceptable(text: string): boolean {
@@ -215,11 +198,10 @@ function isTranslationAcceptable(text: string): boolean {
   const cyrillicCount = countMatches(normalized, /[а-яё]/gi);
   if (cyrillicCount < 4) return false;
 
-  const latinCount = countMatches(normalized, /[a-z]/gi);
   const cjkCount = countMatches(normalized, /[\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/g);
-  const foreignCount = latinCount + cjkCount;
+  if (cjkCount > cyrillicCount) return false;
 
-  return cyrillicCount > foreignCount;
+  return true;
 }
 
 interface AcceptedTranslation {
@@ -307,7 +289,7 @@ async function translateDescriptionBatch(
         [
           {
             role: 'system',
-            content: 'Ты — AI-редактор новостного дайджеста. Твоя задача: прочитать excerpt статьи и написать краткую выжимку на русском. Отвечай ТОЛЬКО валидным JSON-массивом. Никакого текста кроме JSON.',
+            content: 'Переводчик технических новостей. Ответ: только JSON-массив. Никакого другого текста.',
           },
           {
             role: 'user',
