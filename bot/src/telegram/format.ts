@@ -269,25 +269,19 @@ export const splitIntoChunks = (text: string): string[] => {
   return chunks;
 };
 
-// ---- Кэш полного текста для озвучки (все длинные сообщения) ----
+// ---- Кэш полного текста для озвучки (TTLCache, max 100 записей) ----
 const fullTextCache = new Map<string, { text: string; createdAt: number }>();
 const FULL_TEXT_CACHE_TTL_MS = FULL_TEXT_CACHE_TTL;
-const MAX_CACHE_SIZE = 100; // Максимум 100 записей
+const MAX_CACHE_SIZE = 100;
 
 /** Сохранить полный текст сообщения и вернуть ID для озвучки */
 export function cacheFullText(text: string): string {
-  const now = Date.now();
-  // Очистка устаревших записей
-  for (const [key, val] of fullTextCache) {
-    if (now - val.createdAt > FULL_TEXT_CACHE_TTL_MS) fullTextCache.delete(key);
-  }
-  // Ограничение размера: удаляем старейшие если превышен лимит
   if (fullTextCache.size >= MAX_CACHE_SIZE) {
-    const oldestKey = fullTextCache.keys().next().value;
-    if (oldestKey) fullTextCache.delete(oldestKey);
+    const firstKey = fullTextCache.keys().next().value;
+    if (firstKey) fullTextCache.delete(firstKey);
   }
   const id = randomUUID();
-  fullTextCache.set(id, { text, createdAt: now });
+  fullTextCache.set(id, { text, createdAt: Date.now() });
   return id;
 }
 

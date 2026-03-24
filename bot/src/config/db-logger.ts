@@ -53,19 +53,24 @@ export async function flushLogs(): Promise<void> {
       const dropped = logsToInsert.length - 200;
       process.stderr.write(`[DB Logger] WARNING: ${dropped} logs dropped due to overflow (queue exceeded 200)\n`);
     }
-    const promises = logsToInsert.slice(0, 200).map(log =>
-      aw.createDocument(DB_ID(), COLL, ID.unique(), {
-        level: log.level,
-        module: log.module,
-        message: (log.message || '').slice(0, 10000),
-        data: log.data ? JSON.stringify(log.data).slice(0, 100000) : null,
-        error_stack: log.error_stack?.slice(0, 50000) || null,
-        user_id: log.user_id || null,
-        request_id: log.request_id || null,
-        timestamp: log.timestamp || new Date().toISOString(),
-      }).catch(() => {})
-    );
-    await Promise.allSettled(promises);
+    const capped = logsToInsert.slice(0, 200);
+    const DB_WRITE_BATCH_SIZE = 20;
+    for (let i = 0; i < capped.length; i += DB_WRITE_BATCH_SIZE) {
+      const batch = capped.slice(i, i + DB_WRITE_BATCH_SIZE);
+      const promises = batch.map(log =>
+        aw.createDocument(DB_ID(), COLL, ID.unique(), {
+          level: log.level,
+          module: log.module,
+          message: (log.message || '').slice(0, 10000),
+          data: log.data ? JSON.stringify(log.data).slice(0, 100000) : null,
+          error_stack: log.error_stack?.slice(0, 50000) || null,
+          user_id: log.user_id || null,
+          request_id: log.request_id || null,
+          timestamp: log.timestamp || new Date().toISOString(),
+        }).catch(() => {})
+      );
+      await Promise.allSettled(promises);
+    }
 
   } catch (err) {
     process.stderr.write(`[DB Logger] Exception during flush: ${err}\n`);
@@ -82,9 +87,9 @@ export function createLogFromPino(pinoLog: Record<string, unknown>): Omit<System
   if (pinoLog.error && typeof pinoLog.error === 'object') errorStack = errorStack || (pinoLog.error as { stack?: string }).stack;
 
   const data: Record<string, unknown> = {};
-  const excludeKeys = ['level', 'time', 'pid', 'hostname', 'msg', 'module', 'err', 'error', 'v'];
+  const excludeKeys = new Set(['level', 'time', 'pid', 'hostname', 'msg', 'module', 'err', 'error', 'v']);
   for (const [key, value] of Object.entries(pinoLog)) {
-    if (!excludeKeys.includes(key)) data[key] = value;
+    if (!excludeKeys.has(key)) data[key] = value;
   }
 
   return {
