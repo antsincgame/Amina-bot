@@ -6,7 +6,7 @@ const DESCRIPTION_TRANSLATION_BATCH_SIZE = 8;
 const DESCRIPTION_TRANSLATION_RETRY_BATCH_SIZE = 3;
 const DESCRIPTION_TRANSLATION_CONCURRENCY = 1;
 const DESCRIPTION_TRANSLATION_TIMEOUT_MS = 45_000;
-const DESCRIPTION_TRANSLATION_MAX_TOKENS = 1400;
+const DESCRIPTION_TRANSLATION_MAX_TOKENS = 2000;
 const DESCRIPTION_TRANSLATION_TEMPERATURE = 0.2;
 const MAX_LOCALIZED_DESCRIPTION_LENGTH = 200;
 
@@ -186,6 +186,20 @@ function buildTranslationPrompt(items: DescriptionTranslationInput[]): string {
   ].join('\n');
 }
 
+function isTranslationAcceptable(text: string): boolean {
+  const normalized = normalizeDescriptionText(text);
+  if (!normalized) return false;
+
+  const cyrillicCount = countMatches(normalized, /[а-яё]/gi);
+  if (cyrillicCount < 4) return false;
+
+  const latinCount = countMatches(normalized, /[a-z]/gi);
+  const cjkCount = countMatches(normalized, /[\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/g);
+  const foreignCount = latinCount + cjkCount;
+
+  return cyrillicCount > foreignCount;
+}
+
 function acceptTranslatedDescriptions(
   items: DescriptionTranslationInput[],
   translations: DescriptionTranslationOutput[],
@@ -196,10 +210,10 @@ function acceptTranslatedDescriptions(
   items.forEach(({ id, headline }) => {
     const translatedDescription = translationsById.get(id);
     if (!translatedDescription) return;
-    if (needsRussianLocalization(translatedDescription)) {
+    if (!isTranslationAcceptable(translatedDescription)) {
       appLogger.debug(
         { id, source: headline.source, category: headline.category },
-        'News localization: translated description still contains long English fragment',
+        'News localization: translated description is not mostly Russian, rejecting',
       );
       return;
     }
