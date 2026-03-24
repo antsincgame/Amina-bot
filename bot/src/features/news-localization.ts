@@ -20,8 +20,24 @@ interface DescriptionTranslationOutput {
   description: string;
 }
 
-function normalizeDescriptionText(text: string): string {
+function decodeHtmlEntities(text: string): string {
   return text
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&#(\d+);/g, (_, code: string) => String.fromCharCode(parseInt(code, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, code: string) => String.fromCharCode(parseInt(code, 16)));
+}
+
+function stripHtmlTags(text: string): string {
+  return text.replace(/<[^>]+>/g, ' ');
+}
+
+function normalizeDescriptionText(text: string): string {
+  return stripHtmlTags(decodeHtmlEntities(text))
     .replace(/\s+/g, ' ')
     .replace(/\s+([,.;:!?])/g, '$1')
     .trim();
@@ -44,12 +60,18 @@ function hasLongLatinPhrase(text: string): boolean {
   return matches.some(match => countMatches(match, /[a-z]/gi) >= 12);
 }
 
+function hasCjkCharacters(text: string): boolean {
+  return /[\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(text);
+}
+
 export function hasMostlyRussianText(text: string): boolean {
   const normalized = normalizeDescriptionText(text);
   if (!normalized) return false;
 
   const cyrillicCount = countMatches(normalized, /[а-яё]/gi);
   if (cyrillicCount === 0) return false;
+
+  if (hasCjkCharacters(normalized)) return false;
 
   const latinCount = countMatches(normalized, /[a-z]/gi);
   return cyrillicCount >= 6 || cyrillicCount >= latinCount;
@@ -58,6 +80,8 @@ export function hasMostlyRussianText(text: string): boolean {
 function needsRussianLocalization(text: string): boolean {
   const normalized = normalizeDescriptionText(text);
   if (!normalized) return false;
+
+  if (hasCjkCharacters(normalized)) return true;
 
   if (!hasMostlyRussianText(normalized)) {
     return true;
@@ -143,12 +167,15 @@ function buildTranslationPrompt(items: DescriptionTranslationInput[]): string {
   }));
 
   return [
-    'Переведи descriptions новостных карточек на точный естественный русский язык.',
+    'Переведи ВСЕ descriptions новостных карточек на точный естественный русский язык.',
+    'Языки источников: английский, корейский, японский, китайский и другие — все переводить на русский.',
     'Правила:',
+    '- ОБЯЗАТЕЛЬНО переведи каждое описание ПОЛНОСТЬЮ на русский. Никакого текста на других языках в результате.',
     '- Не выдумывай новые факты, причины, выводы и детали.',
     '- Сохраняй смысл, степень уверенности и фактические формулировки исходника.',
-    '- Названия компаний, моделей, продуктов, библиотек и городов оставляй в оригинальном написании, если так точнее.',
-    '- Убирай RSS-боилерплейт и хвосты вроде "The post ... appeared first on ...", "Read more", "Continue reading", если они не добавляют сути новости.',
+    '- Названия компаний, моделей, продуктов, библиотек оставляй в оригинальном написании (латиницей), если так точнее.',
+    '- Убирай RSS-боилерплейт и хвосты вроде "The post ... appeared first on ...", "Read more", "Continue reading".',
+    '- Убирай HTML-теги и сущности если они попали в описание.',
     '- Если описание уже на русском, только нормализуй формулировку.',
     `- Максимум ${MAX_LOCALIZED_DESCRIPTION_LENGTH} символов на description.`,
     '- Верни только JSON-массив без markdown fences.',
