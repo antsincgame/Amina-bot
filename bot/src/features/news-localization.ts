@@ -4,7 +4,6 @@ import type { ParsedHeadline } from '../../../shared/types/index.js';
 
 const DESCRIPTION_TRANSLATION_BATCH_SIZE = 4;
 const DESCRIPTION_TRANSLATION_RETRY_BATCH_SIZE = 2;
-const DESCRIPTION_TRANSLATION_CONCURRENCY = 1;
 const DESCRIPTION_TRANSLATION_TIMEOUT_MS = 45_000;
 const DESCRIPTION_TRANSLATION_MAX_TOKENS = 2000;
 const DESCRIPTION_TRANSLATION_TEMPERATURE = 0.2;
@@ -143,21 +142,27 @@ function parseTranslationItem(value: unknown): DescriptionTranslationOutput | nu
     ? normalizeDescriptionText(record.title).slice(0, 300)
     : undefined;
 
-  if (id == null || !description) return null;
+  if (id === null || id === undefined || !description) return null;
   return { id, description, title };
 }
 
+// FIX: обёрнуто в try-catch — JSON.parse может выбросить SyntaxError
 function parseTranslationResponse(content: string): DescriptionTranslationOutput[] {
   const sanitized = stripMarkdownFences(content);
   const arrayText = extractJsonArray(sanitized);
   if (!arrayText) return [];
 
-  const parsed = JSON.parse(arrayText) as unknown;
-  if (!Array.isArray(parsed)) return [];
+  try {
+    const parsed = JSON.parse(arrayText) as unknown;
+    if (!Array.isArray(parsed)) return [];
 
-  return parsed
-    .map(parseTranslationItem)
-    .filter((item): item is DescriptionTranslationOutput => item !== null);
+    return parsed
+      .map(parseTranslationItem)
+      .filter((item): item is DescriptionTranslationOutput => item !== null);
+  } catch {
+    appLogger.debug({ content: arrayText.slice(0, 100) }, 'News localization: failed to parse translation JSON');
+    return [];
+  }
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, scope: string): Promise<T> {
@@ -218,7 +223,10 @@ function acceptTranslatedDescriptions(
 
   items.forEach(({ id, headline }) => {
     const translation = translationsById.get(id);
-    if (!translation) return;
+    if (!translation) {
+      appLogger.debug({ id, source: headline.source }, 'News localization: no translation returned for item');
+      return;
+    }
     if (!isTranslationAcceptable(translation.description)) {
       appLogger.debug(
         { id, source: headline.source, category: headline.category },
@@ -255,28 +263,7 @@ function mergeTranslationMaps(target: Map<number, AcceptedTranslation>, source: 
   });
 }
 
-async function runWithConcurrency<T>(
-  items: T[],
-  concurrency: number,
-  worker: (item: T) => Promise<void>,
-): Promise<void> {
-  let nextIndex = 0;
-
-  const runner = async (): Promise<void> => {
-    while (nextIndex < items.length) {
-      const currentIndex = nextIndex;
-      nextIndex += 1;
-      await worker(items[currentIndex]!);
-    }
-  };
-
-  const runners = Array.from(
-    { length: Math.min(concurrency, items.length) },
-    () => runner(),
-  );
-  await Promise.all(runners);
-}
-
+// FIX: Cerebras как провайдер перевода + убран priority='background' (дросселирует запросы)
 async function translateDescriptionBatch(
   items: DescriptionTranslationInput[],
   scope: 'batch' | 'retry_batch' | 'single',
@@ -302,11 +289,11 @@ async function translateDescriptionBatch(
           promptMode: 'passthrough',
           maxTokens: DESCRIPTION_TRANSLATION_MAX_TOKENS,
           temperature: DESCRIPTION_TRANSLATION_TEMPERATURE,
-          priority: 'background',
+          providerOverride: 'cerebras',
         },
       ),
       DESCRIPTION_TRANSLATION_TIMEOUT_MS,
-      `News description localization ${scope}`,
+      `News localization ${scope}`,
     );
 
     const parsed = parseTranslationResponse(response.content);
@@ -323,38 +310,38 @@ async function translateDescriptionBatch(
 
     return accepted;
   } catch (error) {
-    appLogger.warn({ error, batchSize: items.length, scope }, 'News localization: translation batch failed');
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    appLogger.warn({ error: errorMsg, batchSize: items.length, scope }, 'News localization: translation batch failed');
     return new Map<number, AcceptedTranslation>();
   }
 }
 
+// FIX: убрано `|| items.length <= 1` — single-item батчи тоже должны иметь retry
 async function translateDescriptionBatchWithFallback(
   items: DescriptionTranslationInput[],
 ): Promise<Map<number, AcceptedTranslation>> {
   const translated = await translateDescriptionBatch(items, 'batch');
-  if (translated.size === items.length || items.length <= 1) {
+  if (translated.size === items.length) {
     return translated;
   }
 
   let missingItems = items.filter(({ id }) => !translated.has(id));
-  // Retry в мини-батчах по 4
+
+  // FIX: сначала запоминаем failed, потом merge — правильный порядок
   const failedInRetry = new Set<number>();
   if (missingItems.length > 1) {
     const retryBatches = chunkTranslationInputs(missingItems, DESCRIPTION_TRANSLATION_RETRY_BATCH_SIZE);
     for (const retryBatch of retryBatches) {
       const retryResult = await translateDescriptionBatch(retryBatch, 'retry_batch');
-      mergeTranslationMaps(translated, retryResult);
-      // Запоминаем items, которые не перевелись и в retry — нет смысла пробовать single
       for (const item of retryBatch) {
-        if (!retryResult.has(item.id) && !translated.has(item.id)) {
+        if (!retryResult.has(item.id)) {
           failedInRetry.add(item.id);
         }
       }
+      mergeTranslationMaps(translated, retryResult);
     }
   }
 
-  // Single retry только для items, которые НЕ провалились в retry_batch
-  // (те что провалились — модель уже 2 раза не справилась, третья попытка — waste)
   missingItems = items.filter(({ id }) => !translated.has(id) && !failedInRetry.has(id));
   if (missingItems.length > 0) {
     for (const missingItem of missingItems) {
@@ -397,7 +384,7 @@ export async function localizeParsedHeadlines(headlines: ParsedHeadline[]): Prom
   const localizedHeadlines = [...normalizedHeadlines];
   const translationBatches = chunkTranslationInputs(translationQueue, DESCRIPTION_TRANSLATION_BATCH_SIZE);
 
-  await runWithConcurrency(translationBatches, DESCRIPTION_TRANSLATION_CONCURRENCY, async batch => {
+  for (const batch of translationBatches) {
     const translatedBatch = await translateDescriptionBatchWithFallback(batch);
 
     batch.forEach(({ id, headline }) => {
@@ -410,7 +397,7 @@ export async function localizeParsedHeadlines(headlines: ParsedHeadline[]): Prom
         ...(translation.title ? { translatedTitle: translation.title } : {}),
       };
     });
-  });
+  }
 
   return localizedHeadlines;
 }
