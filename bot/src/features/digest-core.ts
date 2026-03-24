@@ -160,12 +160,13 @@ function buildAlternateSourcesText(headline: ParsedHeadline): string {
 }
 
 export function renderStructuredHeadlineItem(headline: ParsedHeadline, number: number): string {
+  const displayTitle = headline.translatedTitle ?? headline.title;
   const metaLine = `Источник: ${headline.source} · Категория: ${formatCategoryLabel(headline.category)}`;
   const descriptionLine = `Описание: ${headline.description}`;
   const alternateSources = buildAlternateSourcesText(headline);
 
   return [
-    `**${number}. [${headline.title}](${headline.url})**`,
+    `**${number}. [${displayTitle}](${headline.url})**`,
     metaLine,
     descriptionLine,
     alternateSources,
@@ -239,7 +240,8 @@ async function annotateHeadlineBatch(
     const alternateSources = headline.alternateSources.length > 0
       ? ` | alternate_sources=${headline.alternateSources.join(', ')}`
       : '';
-    return `${number}. [${headline.title}](${headline.url}) | source=${headline.source} | category=${formatCategoryLabel(headline.category)} | description=${headline.description}${language}${alternateSources}`;
+    const displayTitle = headline.translatedTitle ?? headline.title;
+    return `${number}. [${displayTitle}](${headline.url}) | source=${headline.source} | category=${formatCategoryLabel(headline.category)} | description=${headline.description}${language}${alternateSources}`;
   }).join('\n');
 
   const digestScope = mode === 'asia'

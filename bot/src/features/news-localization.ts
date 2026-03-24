@@ -18,6 +18,7 @@ interface DescriptionTranslationInput {
 interface DescriptionTranslationOutput {
   id: number;
   description: string;
+  title?: string;
 }
 
 function decodeHtmlEntities(text: string): string {
@@ -90,8 +91,24 @@ function needsRussianLocalization(text: string): boolean {
   return hasLongLatinPhrase(normalized);
 }
 
+function needsTitleTranslation(title: string): boolean {
+  const normalized = normalizeDescriptionText(title);
+  if (!normalized) return false;
+  if (hasCjkCharacters(normalized)) return true;
+
+  const cyrillicCount = countMatches(normalized, /[а-яё]/gi);
+  if (cyrillicCount >= 4) return false;
+
+  const latinCount = countMatches(normalized, /[a-z]/gi);
+  return latinCount > cyrillicCount;
+}
+
 export function shouldTranslateHeadlineDescription(headline: ParsedHeadline): boolean {
   return needsRussianLocalization(headline.description);
+}
+
+export function shouldTranslateHeadline(headline: ParsedHeadline): boolean {
+  return needsRussianLocalization(headline.description) || needsTitleTranslation(headline.title);
 }
 
 function stripMarkdownFences(text: string): string {
@@ -122,9 +139,12 @@ function parseTranslationItem(value: unknown): DescriptionTranslationOutput | nu
   const description = typeof record.description === 'string'
     ? truncateDescription(normalizeDescriptionText(record.description))
     : '';
+  const title = typeof record.title === 'string'
+    ? normalizeDescriptionText(record.title).slice(0, 300)
+    : undefined;
 
   if (id == null || !description) return null;
-  return { id, description };
+  return { id, description, title };
 }
 
 function parseTranslationResponse(content: string): DescriptionTranslationOutput[] {
@@ -167,19 +187,20 @@ function buildTranslationPrompt(items: DescriptionTranslationInput[]): string {
   }));
 
   return [
-    'Переведи ВСЕ descriptions новостных карточек на точный естественный русский язык.',
+    'Переведи title И description новостных карточек на точный естественный русский язык.',
     'Языки источников: английский, корейский, японский, китайский и другие — все переводить на русский.',
     'Правила:',
-    '- ОБЯЗАТЕЛЬНО переведи каждое описание ПОЛНОСТЬЮ на русский. Никакого текста на других языках в результате.',
+    '- ОБЯЗАТЕЛЬНО переведи КАЖДЫЙ title и description ПОЛНОСТЬЮ на русский.',
+    '- Никакого текста на корейском, японском, китайском или других языках в результате.',
     '- Не выдумывай новые факты, причины, выводы и детали.',
     '- Сохраняй смысл, степень уверенности и фактические формулировки исходника.',
     '- Названия компаний, моделей, продуктов, библиотек оставляй в оригинальном написании (латиницей), если так точнее.',
     '- Убирай RSS-боилерплейт и хвосты вроде "The post ... appeared first on ...", "Read more", "Continue reading".',
     '- Убирай HTML-теги и сущности если они попали в описание.',
-    '- Если описание уже на русском, только нормализуй формулировку.',
+    '- Если title или description уже на русском, только нормализуй формулировку.',
     `- Максимум ${MAX_LOCALIZED_DESCRIPTION_LENGTH} символов на description.`,
     '- Верни только JSON-массив без markdown fences.',
-    '- Формат ответа: [{"id":1,"description":"..."}].',
+    '- Формат ответа: [{"id":1,"title":"переведённый заголовок","description":"переведённое описание"}].',
     '',
     'Входные данные:',
     JSON.stringify(payload, null, 2),
@@ -200,24 +221,33 @@ function isTranslationAcceptable(text: string): boolean {
   return cyrillicCount > foreignCount;
 }
 
+interface AcceptedTranslation {
+  description: string;
+  title?: string;
+}
+
 function acceptTranslatedDescriptions(
   items: DescriptionTranslationInput[],
   translations: DescriptionTranslationOutput[],
-): Map<number, string> {
-  const translationsById = new Map(translations.map(item => [item.id, item.description]));
-  const accepted = new Map<number, string>();
+): Map<number, AcceptedTranslation> {
+  const translationsById = new Map(translations.map(item => [item.id, item]));
+  const accepted = new Map<number, AcceptedTranslation>();
 
   items.forEach(({ id, headline }) => {
-    const translatedDescription = translationsById.get(id);
-    if (!translatedDescription) return;
-    if (!isTranslationAcceptable(translatedDescription)) {
+    const translation = translationsById.get(id);
+    if (!translation) return;
+    if (!isTranslationAcceptable(translation.description)) {
       appLogger.debug(
         { id, source: headline.source, category: headline.category },
         'News localization: translated description is not mostly Russian, rejecting',
       );
       return;
     }
-    accepted.set(id, translatedDescription);
+    const result: AcceptedTranslation = { description: translation.description };
+    if (translation.title && translation.title.length >= 3) {
+      result.title = translation.title;
+    }
+    accepted.set(id, result);
   });
 
   return accepted;
@@ -236,9 +266,9 @@ function chunkTranslationInputs(
   return batches;
 }
 
-function mergeTranslationMaps(target: Map<number, string>, source: Map<number, string>): void {
-  source.forEach((description, id) => {
-    target.set(id, description);
+function mergeTranslationMaps(target: Map<number, AcceptedTranslation>, source: Map<number, AcceptedTranslation>): void {
+  source.forEach((translation, id) => {
+    target.set(id, translation);
   });
 }
 
@@ -267,8 +297,8 @@ async function runWithConcurrency<T>(
 async function translateDescriptionBatch(
   items: DescriptionTranslationInput[],
   scope: 'batch' | 'retry_batch' | 'single',
-): Promise<Map<number, string>> {
-  if (items.length === 0) return new Map<number, string>();
+): Promise<Map<number, AcceptedTranslation>> {
+  if (items.length === 0) return new Map<number, AcceptedTranslation>();
 
   try {
     const response = await withTimeout(
@@ -276,7 +306,7 @@ async function translateDescriptionBatch(
         [
           {
             role: 'system',
-            content: 'Ты переводчик новостных дайджестов. Отвечай только валидным JSON-массивом без пояснений.',
+            content: 'Ты переводчик новостных дайджестов. Переводи и title, и description на русский. Отвечай только валидным JSON-массивом без пояснений.',
           },
           {
             role: 'user',
@@ -299,25 +329,25 @@ async function translateDescriptionBatch(
     const parsed = parseTranslationResponse(response.content);
     if (parsed.length === 0) {
       appLogger.warn({ batchSize: items.length, scope }, 'News localization: model returned empty translation batch');
-      return new Map<number, string>();
+      return new Map<number, AcceptedTranslation>();
     }
 
     const accepted = acceptTranslatedDescriptions(items, parsed);
     if (accepted.size === 0) {
-      appLogger.warn({ batchSize: items.length, scope }, 'News localization: batch returned no acceptable Russian descriptions');
-      return new Map<number, string>();
+      appLogger.warn({ batchSize: items.length, scope }, 'News localization: batch returned no acceptable Russian translations');
+      return new Map<number, AcceptedTranslation>();
     }
 
     return accepted;
   } catch (error) {
     appLogger.warn({ error, batchSize: items.length, scope }, 'News localization: translation batch failed');
-    return new Map<number, string>();
+    return new Map<number, AcceptedTranslation>();
   }
 }
 
 async function translateDescriptionBatchWithFallback(
   items: DescriptionTranslationInput[],
-): Promise<Map<number, string>> {
+): Promise<Map<number, AcceptedTranslation>> {
   const translated = await translateDescriptionBatch(items, 'batch');
   if (translated.size === items.length || items.length <= 1) {
     return translated;
@@ -375,7 +405,7 @@ export async function localizeParsedHeadlines(headlines: ParsedHeadline[]): Prom
 
   const translationQueue = normalizedHeadlines
     .map((headline, index) => ({ id: index, headline }))
-    .filter(({ headline }) => shouldTranslateHeadlineDescription(headline));
+    .filter(({ headline }) => shouldTranslateHeadline(headline));
 
   if (translationQueue.length === 0) {
     return normalizedHeadlines;
@@ -388,12 +418,13 @@ export async function localizeParsedHeadlines(headlines: ParsedHeadline[]): Prom
     const translatedBatch = await translateDescriptionBatchWithFallback(batch);
 
     batch.forEach(({ id, headline }) => {
-      const translatedDescription = translatedBatch.get(id);
-      if (!translatedDescription) return;
+      const translation = translatedBatch.get(id);
+      if (!translation) return;
 
       localizedHeadlines[id] = {
         ...headline,
-        description: translatedDescription,
+        description: translation.description,
+        ...(translation.title ? { translatedTitle: translation.title } : {}),
       };
     });
   });
