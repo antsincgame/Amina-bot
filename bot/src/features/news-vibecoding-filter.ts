@@ -71,6 +71,20 @@ const TITLE_DESCRIPTION_POSITIVE_SCORE = 10;
 const EXCERPT_POSITIVE_SCORE = 5;
 const NEGATIVE_SCORE = -20;
 
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const POSITIVE_REGEX = new RegExp(
+  POSITIVE_KEYWORDS.map(escapeRegex).join('|'),
+  'gi',
+);
+
+const NEGATIVE_REGEX = new RegExp(
+  NEGATIVE_KEYWORDS.map(escapeRegex).join('|'),
+  'gi',
+);
+
 interface ScoredHeadline {
   headline: ParsedHeadline;
   score: number;
@@ -81,18 +95,23 @@ export function scoreHeadlineRelevance(headline: ParsedHeadline): number {
   const excerpt = (headline.articleExcerpt ?? '').toLowerCase();
   let score = 0;
 
-  for (const keyword of POSITIVE_KEYWORDS) {
-    if (titleDesc.includes(keyword)) {
-      score += TITLE_DESCRIPTION_POSITIVE_SCORE;
-    } else if (excerpt && excerpt.includes(keyword)) {
-      score += EXCERPT_POSITIVE_SCORE;
+  POSITIVE_REGEX.lastIndex = 0;
+  const titleDescPositiveMatches = titleDesc.match(POSITIVE_REGEX);
+  if (titleDescPositiveMatches) {
+    score += titleDescPositiveMatches.length * TITLE_DESCRIPTION_POSITIVE_SCORE;
+  } else if (excerpt) {
+    POSITIVE_REGEX.lastIndex = 0;
+    const excerptPositiveMatches = excerpt.match(POSITIVE_REGEX);
+    if (excerptPositiveMatches) {
+      score += excerptPositiveMatches.length * EXCERPT_POSITIVE_SCORE;
     }
   }
 
-  for (const keyword of NEGATIVE_KEYWORDS) {
-    if (titleDesc.includes(keyword) || excerpt.includes(keyword)) {
-      score += NEGATIVE_SCORE;
-    }
+  NEGATIVE_REGEX.lastIndex = 0;
+  const allText = `${titleDesc} ${excerpt}`;
+  const negativeMatches = allText.match(NEGATIVE_REGEX);
+  if (negativeMatches) {
+    score += negativeMatches.length * NEGATIVE_SCORE;
   }
 
   return score;

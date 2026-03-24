@@ -54,7 +54,13 @@ function getState(provider: string): ProviderState {
 
 function cleanOldTimestamps(state: ProviderState): void {
   const cutoff = Date.now() - RPM_WINDOW_MS;
-  state.requestTimestamps = state.requestTimestamps.filter(ts => ts > cutoff);
+  let firstValidIndex = 0;
+  while (firstValidIndex < state.requestTimestamps.length && state.requestTimestamps[firstValidIndex]! <= cutoff) {
+    firstValidIndex++;
+  }
+  if (firstValidIndex > 0) {
+    state.requestTimestamps = state.requestTimestamps.slice(firstValidIndex);
+  }
 }
 
 /** Классифицирует ошибку и возвращает cooldown */

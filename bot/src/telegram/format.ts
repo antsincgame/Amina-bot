@@ -458,9 +458,14 @@ const SEARCH_SIMULATION_PATTERNS = [
  * (частая проблема бесплатных моделей — они пишут "Ищу..." вместо ответа)
  */
 export const looksLikeSearchSimulation = (text: string): boolean => {
-  const matches = SEARCH_SIMULATION_PATTERNS.filter(p => p.test(text));
-  if (matches.length >= 2) return true;
-  if (matches.length >= 1 && text.length < 300) return true;
+  const threshold = text.length < 300 ? 1 : 2;
+  let matchCount = 0;
+  for (const pattern of SEARCH_SIMULATION_PATTERNS) {
+    if (pattern.test(text)) {
+      matchCount++;
+      if (matchCount >= threshold) return true;
+    }
+  }
   return false;
 };
 

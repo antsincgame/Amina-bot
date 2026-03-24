@@ -87,25 +87,15 @@ let nextDigestId = 1;
 const DIGEST_MESSAGE_DELAY_MS = 250;
 const DIGEST_SEND_RETRY_ATTEMPTS = 4;
 
-/** Сохранить полный текст дайджеста и вернуть ID */
+/** Сохранить полный текст дайджеста и вернуть ID (Map сохраняет insertion order → первый ключ = старейший) */
 function cacheDigestText(text: string): string {
   const now = Date.now();
-  // Очистка устаревших записей
-  for (const [key, val] of digestFullTextCache) {
-    if (now - val.createdAt > DIGEST_CACHE_TTL_MS) digestFullTextCache.delete(key);
-  }
-  // Ограничение размера: максимум 50 записей — удаляем запись с наименьшим createdAt
+
   if (digestFullTextCache.size >= 50) {
-    let oldestKey: string | null = null;
-    let oldestTime = Infinity;
-    for (const [key, val] of digestFullTextCache) {
-      if (val.createdAt < oldestTime) {
-        oldestTime = val.createdAt;
-        oldestKey = key;
-      }
-    }
-    if (oldestKey) digestFullTextCache.delete(oldestKey);
+    const firstKey = digestFullTextCache.keys().next().value;
+    if (firstKey) digestFullTextCache.delete(firstKey);
   }
+
   const id = String(nextDigestId++);
   digestFullTextCache.set(id, { text, createdAt: now });
   return id;
