@@ -302,6 +302,23 @@ async function fetchLiraXStatus(): Promise<LiraXStatus> {
   return json.data;
 }
 
+interface TestConnectionResult {
+  connected: boolean;
+  latencyMs?: number;
+  usersCount?: number;
+  users?: Array<{ id: string; name: string; ext: string; active: string }>;
+  apiUrl?: string;
+}
+
+async function testLiraXConnection(): Promise<TestConnectionResult> {
+  const response = await fetchBotApi('/api/lirax/test-connection');
+  const json = await readJson<{ success: boolean; data: TestConnectionResult; error?: string }>(response);
+  if (!json.success) {
+    throw new Error(json.error || 'Неизвестная ошибка');
+  }
+  return json.data;
+}
+
 async function fetchScenarios(): Promise<TelephonyAiScenario[]> {
   const response = await fetchBotApi('/api/lirax/scenarios');
   const json = await readJson<{ data: TelephonyAiScenario[] }>(response);
@@ -445,6 +462,25 @@ const TelephonyPage = () => {
   const [previewData, setPreviewData] = useState<TelephonyAiPreviewResponse | null>(null);
   const [startSuccess, setStartSuccess] = useState<string | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+
+  // Тест подключения к LiraX
+  const [connectionTestResult, setConnectionTestResult] = useState<TestConnectionResult | null>(null);
+  const [connectionTestError, setConnectionTestError] = useState<string | null>(null);
+  const [connectionTesting, setConnectionTesting] = useState(false);
+
+  const handleTestConnection = async () => {
+    setConnectionTesting(true);
+    setConnectionTestResult(null);
+    setConnectionTestError(null);
+    try {
+      const result = await testLiraXConnection();
+      setConnectionTestResult(result);
+    } catch (error) {
+      setConnectionTestError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setConnectionTesting(false);
+    }
+  };
 
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ['lirax-status'],
@@ -797,6 +833,55 @@ const TelephonyPage = () => {
         ) : (
           !statusLoading && <p className="text-sm text-gray-500">Не удалось загрузить статус LiraX</p>
         )}
+
+        {/* Тест подключения к LiraX API */}
+        <div className="mt-5 pt-5 border-t border-white/10">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleTestConnection}
+              disabled={connectionTesting}
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white text-sm font-medium transition-colors"
+            >
+              {connectionTesting ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Phone className="w-4 h-4" />
+              )}
+              Тест подключения LiraX
+            </button>
+            {connectionTestResult?.connected && (
+              <span className="flex items-center gap-1.5 text-sm text-emerald-400">
+                <CheckCircle className="w-4 h-4" />
+                Подключено за {connectionTestResult.latencyMs}ms · {connectionTestResult.usersCount} пользователей
+              </span>
+            )}
+            {connectionTestResult && !connectionTestResult.connected && (
+              <span className="flex items-center gap-1.5 text-sm text-red-400">
+                <AlertCircle className="w-4 h-4" />
+                Не подключено
+              </span>
+            )}
+            {connectionTestError && (
+              <span className="flex items-center gap-1.5 text-sm text-red-400">
+                <AlertCircle className="w-4 h-4" />
+                {connectionTestError}
+              </span>
+            )}
+          </div>
+          {connectionTestResult?.connected && connectionTestResult.users && connectionTestResult.users.length > 0 && (
+            <div className="mt-3 text-xs text-gray-400 space-y-1">
+              {connectionTestResult.users.map((u) => (
+                <div key={u.id} className="flex gap-3">
+                  <span className="text-gray-500">ext {u.ext}</span>
+                  <span>{u.name}</span>
+                  <span className={u.active === '1' ? 'text-emerald-500' : 'text-gray-600'}>
+                    {u.active === '1' ? 'активен' : 'неактивен'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="card p-6">

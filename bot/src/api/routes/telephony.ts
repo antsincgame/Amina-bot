@@ -9,6 +9,7 @@ import {
   formatCallEvent,
   clearLiraXConfigCache,
   connectCall,
+  getUsers as getLiraXUsers,
   getTelephonyUsers,
   addTelephonyUser,
   removeTelephonyUser,
@@ -42,11 +43,9 @@ export async function registerTelephonyRoutes(server: FastifyInstance): Promise<
   // ============================================
 
   /**
-   * POST /api/lirax
+   * POST /api/lirax (+ alias /api/telephony/webhook)
    */
-  server.post(
-    '/lirax',
-    async (request: FastifyRequest, reply: FastifyReply) => {
+  const liraxWebhookHandler = async (request: FastifyRequest, reply: FastifyReply) => {
       try {
         const payload = request.body as Record<string, string>;
         const cmd = payload['cmd'];
@@ -165,8 +164,10 @@ export async function registerTelephonyRoutes(server: FastifyInstance): Promise<
         aiLogger.error({ error: msg }, '[LiraX webhook] Error');
         return reply.code(500).send({ error: msg });
       }
-    },
-  );
+  };
+
+  server.post('/lirax', liraxWebhookHandler);
+  server.post('/telephony/webhook', liraxWebhookHandler);
 
   /**
    * GET /api/lirax/status
@@ -213,6 +214,50 @@ export async function registerTelephonyRoutes(server: FastifyInstance): Promise<
     clearLiraXConfigCache();
     aiLogger.info('LiraX config cache cleared via API');
     return reply.code(200).send({ success: true, message: 'LiraX config cache cleared' });
+  });
+
+  /**
+   * GET /api/lirax/test-connection
+   * Проверяет соединение с LiraX API — вызывает getUsers и возвращает результат.
+   */
+  server.get('/lirax/test-connection', async (request: FastifyRequest, reply: FastifyReply) => {
+    try {
+      const admin = await requireAdminAuth(request, reply);
+      if (!admin) {
+        return;
+      }
+
+      const runtimeConfig = await getTelephonyRuntimeConfig();
+      if (!runtimeConfig.liraxToken) {
+        return reply.code(200).send({
+          success: false,
+          error: 'LiraX API token не задан. Заполни настройки.',
+        });
+      }
+
+      const startMs = Date.now();
+      const users = await getLiraXUsers();
+      const latencyMs = Date.now() - startMs;
+
+      return reply.code(200).send({
+        success: true,
+        data: {
+          connected: true,
+          latencyMs,
+          usersCount: users.length,
+          users: users.map((u) => ({ id: u.id, name: u.Name, ext: u.ext, active: u.active })),
+          apiUrl: runtimeConfig.liraxUrl,
+        },
+      });
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      aiLogger.error({ error: msg }, '[LiraX] Test connection failed');
+      return reply.code(200).send({
+        success: false,
+        error: msg,
+        data: { connected: false },
+      });
+    }
   });
 
   /**
