@@ -4,7 +4,7 @@
  * Трёхуровневая фильтрация + ранжирование:
  * 1. Быстрый keyword-scoring по title + description + articleExcerpt
  * 2. LLM-классификация ambiguous headlines с excerpt контекстом
- * 3. Ранжирование по score + лимит 20 новостей
+ * 3. Ранжирование по score + лимит 30 новостей
  */
 
 import { aiService } from '../ai/openrouter.js';
@@ -13,7 +13,7 @@ import type { ParsedHeadline, NewsSourceTier } from '../../../shared/types/index
 
 const LLM_BATCH_SIZE = 10;
 const LLM_MAX_TOKENS = 800;
-const MAX_DIGEST_HEADLINES = 20;
+const MAX_DIGEST_HEADLINES = 30;
 const LLM_EXCERPT_LIMIT = 400;
 
 const POSITIVE_KEYWORDS: readonly string[] = [
