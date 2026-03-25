@@ -801,7 +801,7 @@ const LMStudioPage = () => {
             <CodeBlock
               code="cloudflared tunnel --url http://localhost:1234"
               onCopy={handleCopyCommand}
-              copied={copied}
+              copiedCommand={copiedCommand}
             />
             <p className="text-white/30 text-xs mt-2">
               Скопируй URL из вывода cloudflared и вставь в поле выше вручную.
