@@ -290,6 +290,7 @@ async function translateDescriptionBatch(
           maxTokens: DESCRIPTION_TRANSLATION_MAX_TOKENS,
           temperature: DESCRIPTION_TRANSLATION_TEMPERATURE,
           providerOverride: 'cerebras',
+          priority: 'background',
         },
       ),
       DESCRIPTION_TRANSLATION_TIMEOUT_MS,

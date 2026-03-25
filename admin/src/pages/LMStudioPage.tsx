@@ -43,25 +43,39 @@ interface HealthStatus {
 const PROVIDER_LABELS: Record<AIProvider, { label: string; desc: string }> = {
   auto: {
     label: 'Auto',
-    desc: 'LM Studio если доступна, иначе OpenRouter',
+    desc: 'LM Studio → Cerebras → Groq → OpenRouter (каскадный fallback)',
   },
   lmstudio: {
     label: 'LM Studio',
     desc: 'Только LM Studio (ошибка если offline)',
   },
-  openrouter: {
-    label: 'OpenRouter',
-    desc: 'Только облачные модели (игнорировать LM Studio)',
-  },
   cerebras: {
     label: 'Cerebras',
-    desc: 'Сверхбыстрый inference (qwen-3-235b, llama3.1-8b)',
+    desc: 'Сверхбыстрый inference (~1400-3000 tok/s), fallback → Groq → OpenRouter',
   },
   groq: {
     label: 'Groq',
-    desc: 'Быстрый inference (llama-3.3-70b, mixtral)',
+    desc: 'Быстрый inference (30 RPM free), fallback → Cerebras → OpenRouter',
+  },
+  openrouter: {
+    label: 'OpenRouter',
+    desc: 'Облачные модели (крайний fallback, бесплатные модели)',
   },
 };
+
+const CEREBRAS_MODELS = [
+  { id: 'qwen-3-235b-a22b-instruct-2507', name: 'Qwen3 235B MoE — flagship (~1400 tok/s)' },
+  { id: 'gpt-oss-120b', name: 'GPT-OSS 120B — reasoning (~3000 tok/s)' },
+  { id: 'zai-glm-4.7', name: 'Z.ai GLM 4.7 355B — reasoning (~1000 tok/s)' },
+  { id: 'llama3.1-8b', name: 'Llama 3.1 8B — быстрая (~2200 tok/s)' },
+];
+
+const GROQ_MODELS = [
+  { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile' },
+  { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant' },
+  { id: 'qwen/qwen3-32b', name: 'Qwen3 32B' },
+  { id: 'openai/gpt-oss-120b', name: 'GPT-OSS 120B' },
+];
 
 const LMStudioPage = () => {
   const queryClient = useQueryClient();
@@ -70,12 +84,14 @@ const LMStudioPage = () => {
   const [model, setModel] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [provider, setProvider] = useState<AIProvider>('auto');
+  const [cerebrasModel, setCerebrasModel] = useState('qwen-3-235b-a22b-instruct-2507');
+  const [groqModel, setGroqModel] = useState('llama-3.3-70b-versatile');
 
   const [healthStatus, setHealthStatus] = useState<HealthStatus | null>(null);
   const [isCheckingHealth, setIsCheckingHealth] = useState(false);
   const [models, setModels] = useState<LMStudioModel[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [copiedCommand, setCopiedCommand] = useState<string | null>(null);
   const [saveMessage, setSaveMessage] = useState('');
   const [urlUpdatedAt, setUrlUpdatedAt] = useState('');
   const [modelSearch, setModelSearch] = useState('');
@@ -116,6 +132,8 @@ const LMStudioPage = () => {
     setModel(map['lmstudio_model'] ?? '');
     setApiKey(map['lmstudio_api_key'] ?? '');
     setUrlUpdatedAt(map['lmstudio_url_updated_at'] ?? '');
+    setCerebrasModel(map['cerebras_model'] || 'qwen-3-235b-a22b-instruct-2507');
+    setGroqModel(map['groq_model'] || 'llama-3.3-70b-versatile');
     const p = map['ai_provider'];
     if (p === 'lmstudio' || p === 'openrouter' || p === 'cerebras' || p === 'groq') {
       setProvider(p);
@@ -166,11 +184,9 @@ const LMStudioPage = () => {
           }));
         }
       } else {
-        console.error('LM Studio models fetch failed:', res.status);
         setModels([]);
       }
-    } catch (err) {
-      console.error('LM Studio models error:', err);
+    } catch {
       setModels([]);
     } finally {
       setIsLoadingModels(false);
@@ -208,7 +224,8 @@ const LMStudioPage = () => {
     checkHealth();
   }, [checkHealth]);
 
-  const needsPolling = healthStatus?.configured === true && healthStatus?.healthy === false;
+  const isLmStudioRelevant = provider === 'lmstudio' || provider === 'auto';
+  const needsPolling = isLmStudioRelevant && healthStatus?.configured === true && healthStatus?.healthy === false;
   useEffect(() => {
     if (!needsPolling) return;
     const interval = setInterval(() => checkHealth(), 15_000);
@@ -227,14 +244,16 @@ const LMStudioPage = () => {
       lmstudio_model: model.trim(),
       lmstudio_api_key: apiKey.trim(),
       ai_provider: provider,
+      cerebras_model: cerebrasModel,
+      groq_model: groqModel,
     };
     saveSettings(toSave);
   };
 
   const handleCopyCommand = (text: string) => {
     navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setCopiedCommand(text);
+    setTimeout(() => setCopiedCommand(null), 2000);
   };
 
   if (isLoading) {
@@ -472,13 +491,32 @@ const LMStudioPage = () => {
                   onChange={() => setProvider(key)}
                   className="mt-1 accent-amber-400"
                 />
-                <div>
+                <div className="flex-1">
                   <span className="text-white font-medium">{label}</span>
                   <p className="text-white/40 text-sm">{desc}</p>
-                  {provider === key && (key === 'cerebras' || key === 'groq') && (
-                    <p className="text-amber-400/70 text-xs mt-1">
-                      Модель настраивается в Settings → Модели провайдеров
-                    </p>
+                  {provider === key && key === 'cerebras' && (
+                    <select
+                      value={cerebrasModel}
+                      onChange={(e) => setCerebrasModel(e.target.value)}
+                      className="input mt-2 text-sm"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {CEREBRAS_MODELS.map((m) => (
+                        <option key={m.id} value={m.id}>{m.name}</option>
+                      ))}
+                    </select>
+                  )}
+                  {provider === key && key === 'groq' && (
+                    <select
+                      value={groqModel}
+                      onChange={(e) => setGroqModel(e.target.value)}
+                      className="input mt-2 text-sm"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {GROQ_MODELS.map((m) => (
+                        <option key={m.id} value={m.id}>{m.name}</option>
+                      ))}
+                    </select>
                   )}
                 </div>
               </label>
@@ -707,7 +745,7 @@ const LMStudioPage = () => {
                 <CodeBlock
                   code="cd ~/Amina && ./tunnel.sh"
                   onCopy={handleCopyCommand}
-                  copied={copied}
+                  copiedCommand={copiedCommand}
                 />
               </div>
 
@@ -716,7 +754,7 @@ const LMStudioPage = () => {
                 <CodeBlock
                   code="systemctl --user enable --now amina-tunnel"
                   onCopy={handleCopyCommand}
-                  copied={copied}
+                  copiedCommand={copiedCommand}
                 />
               </div>
             </div>
@@ -728,22 +766,22 @@ const LMStudioPage = () => {
               <CodeBlock
                 code="systemctl --user status amina-tunnel"
                 onCopy={handleCopyCommand}
-                copied={copied}
+                copiedCommand={copiedCommand}
               />
               <CodeBlock
                 code="systemctl --user restart amina-tunnel"
                 onCopy={handleCopyCommand}
-                copied={copied}
+                copiedCommand={copiedCommand}
               />
               <CodeBlock
                 code="journalctl --user -u amina-tunnel -f"
                 onCopy={handleCopyCommand}
-                copied={copied}
+                copiedCommand={copiedCommand}
               />
               <CodeBlock
                 code="systemctl --user stop amina-tunnel"
                 onCopy={handleCopyCommand}
-                copied={copied}
+                copiedCommand={copiedCommand}
               />
             </div>
           </div>
@@ -778,25 +816,28 @@ const LMStudioPage = () => {
 interface CodeBlockProps {
   code: string;
   onCopy: (text: string) => void;
-  copied: boolean;
+  copiedCommand: string | null;
 }
 
-const CodeBlock = ({ code, onCopy, copied }: CodeBlockProps) => (
-  <div
-    className="flex items-center gap-2 p-3 rounded-lg font-mono text-xs overflow-x-auto"
-    style={{
-      background: 'rgba(0,0,0,0.4)',
-      border: '1px solid rgba(255,255,255,0.05)',
-    }}
-  >
-    <code className="text-emerald-300 flex-1 whitespace-pre">{code}</code>
-    <button
-      onClick={() => onCopy(code)}
-      className="flex-shrink-0 p-1.5 rounded-md text-white/40 hover:text-white hover:bg-white/10 transition-all"
+const CodeBlock = ({ code, onCopy, copiedCommand }: CodeBlockProps) => {
+  const isCopied = copiedCommand === code;
+  return (
+    <div
+      className="flex items-center gap-2 p-3 rounded-lg font-mono text-xs overflow-x-auto"
+      style={{
+        background: 'rgba(0,0,0,0.4)',
+        border: '1px solid rgba(255,255,255,0.05)',
+      }}
     >
-      {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
-    </button>
-  </div>
-);
+      <code className="text-emerald-300 flex-1 whitespace-pre">{code}</code>
+      <button
+        onClick={() => onCopy(code)}
+        className="flex-shrink-0 p-1.5 rounded-md text-white/40 hover:text-white hover:bg-white/10 transition-all"
+      >
+        {isCopied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+      </button>
+    </div>
+  );
+};
 
 export { LMStudioPage };

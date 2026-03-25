@@ -172,7 +172,7 @@ const CEREBRAS_CHAT_MODELS = [
 ];
 
 /**
- * Варп-маршруты: Groq → Cerebras как крайний fallback
+ * Варп-маршруты: Cerebras → Groq — первый fallback перед OpenRouter
  * Псайкер Амина находит путь к свободным нейронкам через Имматериум
  */
 async function tryWarpRoutes(
@@ -700,12 +700,27 @@ export const aiService = {
             }
           }
 
-          aiLogger.warn({ provider }, `All ${provider} models failed — falling back to OpenRouter`);
+          aiLogger.warn({ provider }, `All ${provider} models failed — falling back to warp routes`);
         }
       }
     }
 
-    // === ШАГ 1: OpenRouter — основная модель ===
+    // === ШАГ 1: Warp routes (Cerebras → Groq) — быстрый fallback до OpenRouter ===
+    // Бесплатные быстрые провайдеры проверяются первыми, OpenRouter — крайний fallback
+    if (provider !== 'cerebras' && provider !== 'groq') {
+      // Пропускаем если уже пробовали как основной провайдер
+      const warpResult = await tryWarpRoutes(fullMessages, aiConfig);
+      if (warpResult) {
+        aiLogger.info(
+          { model: warpResult.usedModel, tokens: warpResult.tokens_used.total },
+          '🔮 Warp route succeeded before OpenRouter fallback',
+        );
+        return warpResult;
+      }
+      aiLogger.info('🔮 Warp routes exhausted — falling back to OpenRouter');
+    }
+
+    // === ШАГ 2: OpenRouter — основная модель (крайний fallback) ===
     const client = await getClient();
 
     const tryModel = async (model: string, signal?: AbortSignal): Promise<AIResponse & { usedModel: string }> =>
@@ -746,7 +761,7 @@ export const aiService = {
       aiLogger.info({ originalError: errorMessage, fallbackStrategy }, '🔄 Will try free models fallback');
     }
 
-    // === ШАГ 2: Динамический fallback бесплатных моделей ===
+    // === ШАГ 3: Динамический fallback бесплатных моделей OpenRouter (крайний) ===
     // Принудительно обновляем список: модель упала → кэш может быть устаревшим
     const freeModels = await refreshFreeModelsCache();
 
@@ -846,20 +861,17 @@ export const aiService = {
       if (raceTimeoutId) clearTimeout(raceTimeoutId);
       raceAbort.abort();
 
-      // Все OpenRouter модели упали или таймаут — пробуем варп-переходы (Cerebras → Groq)
+      // Warp routes уже были проверены на ШАГ 1 — дальше падать нечем
       const reason = (raceError instanceof AppError && raceError.code === 'RACE_TIMEOUT')
         ? 'timeout' : 'all_failed';
-      aiLogger.warn(
+      aiLogger.error(
         { modelsCount: modelsToTry.length, reason, fallbackStrategy },
-        `💀 OpenRouter ${reason} — trying warp routes (Cerebras/Groq)`
+        `💀 All providers exhausted: warp routes (step 1) + OpenRouter (step 2/3)`,
       );
-
-      const warpResult = await tryWarpRoutes(fullMessages, aiConfig);
-      if (warpResult) return finalizeWinner(warpResult);
 
       throw new AppError(
         'ALL_MODELS_FAILED',
-        `Все ${modelsToTry.length} моделей и варп-маршруты недоступны. Попробуйте позже.`,
+        `Все провайдеры недоступны (Cerebras, Groq, OpenRouter). Попробуйте позже.`,
         raceError,
       );
     }

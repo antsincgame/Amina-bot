@@ -524,6 +524,7 @@ export async function getConfiguredSites(): Promise<NewsSite[]> {
 export async function saveConfiguredSites(sites: NewsSite[]): Promise<void> {
   const normalizedSites = normalizeNewsSites(sites);
   await settingsRepo.set(SETTINGS_KEY, JSON.stringify(normalizedSites));
+  settingsRepo.invalidateCache?.();
   clearParsedNewsCache();
 }
 
@@ -1740,6 +1741,10 @@ export async function parseAllConfiguredSites(): Promise<ParsedHeadline[]> {
 
   const results: PromiseSettledResult<ParsedHeadline[]>[] = [];
   for (let i = 0; i < enabledSites.length; i += NEWS_PARSE_BATCH_SIZE) {
+    if (newsParsingKilled) {
+      appLogger.info('News parsing kill-switch triggered mid-batch — aborting');
+      return [];
+    }
     const batch = enabledSites.slice(i, i + NEWS_PARSE_BATCH_SIZE);
     const batchResults = await Promise.allSettled(
       batch.map(async (site) => {

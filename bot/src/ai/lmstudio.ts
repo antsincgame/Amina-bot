@@ -362,25 +362,7 @@ export async function probeLMStudioDirect(
 }
 
 async function checkLMStudioHealthDirect(cfg: LMStudioConfig): Promise<boolean> {
-  const heartbeatUrl = await getHeartbeatUrl();
-  const heartbeatUrlMatches = heartbeatUrl
-    ? normalizeLMStudioBaseUrl(heartbeatUrl) === normalizeLMStudioBaseUrl(cfg.url)
-    : false;
-
-  if (heartbeatUrlMatches && await isHeartbeatRecent(cfg.url)) {
-    healthCache.set(true);
-    consecutiveFailures = 0;
-    aiLogger.debug({ url: cfg.url }, 'LM Studio healthy via heartbeat');
-    return true;
-  }
-
-  if (!heartbeatUrlMatches && heartbeatUrl) {
-    aiLogger.warn(
-      { heartbeatUrl, configUrl: cfg.url },
-      'Heartbeat URL mismatch, ignoring heartbeat — using direct probe',
-    );
-  }
-
+  // Heartbeat уже проверен в getLMStudioHealthStatus() — здесь только direct probe + cache
   const cached = healthCache.get();
   if (cached !== null) return cached;
 
