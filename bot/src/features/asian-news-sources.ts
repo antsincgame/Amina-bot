@@ -1,5 +1,7 @@
 import type { NewsSite } from '../../../shared/types/index.js';
 
+const RSSHUB_BASE = process.env.RSSHUB_BASE_URL?.replace(/\/+$/, '') || 'https://rsshub.vibecoding.by';
+
 const JAPAN_AI_KEYWORDS = [
   'AI',
   '生成AI',
@@ -367,7 +369,7 @@ export const ASIA_NEWS_SOURCE_MANIFEST: NewsSite[] = [
   },
   {
     name: '机器之心 (RSSHub)',
-    url: 'https://rsshub.app/wechat/mp/jiqizhixin',
+    url: `${RSSHUB_BASE}/wechat/mp/jiqizhixin`,
     enabled: true,
     type: 'rss',
     category: 'asia_tech',
@@ -377,7 +379,7 @@ export const ASIA_NEWS_SOURCE_MANIFEST: NewsSite[] = [
   },
   {
     name: '量子位 (RSSHub)',
-    url: 'https://rsshub.app/wechat/mp/QbitAI',
+    url: `${RSSHUB_BASE}/wechat/mp/QbitAI`,
     enabled: true,
     type: 'rss',
     category: 'asia_tech',
@@ -387,7 +389,7 @@ export const ASIA_NEWS_SOURCE_MANIFEST: NewsSite[] = [
   },
   {
     name: '新智元 (RSSHub)',
-    url: 'https://rsshub.app/wechat/mp/aiera',
+    url: `${RSSHUB_BASE}/wechat/mp/aiera`,
     enabled: true,
     type: 'rss',
     category: 'asia_tech',
