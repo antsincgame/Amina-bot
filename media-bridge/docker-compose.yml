@@ -1,0 +1,57 @@
+# Amina Media Bridge — FreeSWITCH + Node.js Bridge
+# Развёртывание: docker compose up -d
+# Порты: 5060/UDP (SIP), 5080/UDP (SIP external), 3100 (Bridge API), 8022 (ESL)
+
+services:
+  freeswitch:
+    build:
+      context: ./docker
+      dockerfile: Dockerfile.freeswitch
+    container_name: amina-freeswitch
+    restart: unless-stopped
+    network_mode: host  # Нужен для SIP/RTP — host networking обязателен
+    volumes:
+      - ./config/freeswitch/vars.xml:/etc/freeswitch/vars.xml:ro
+      - ./config/freeswitch/sip_profiles:/etc/freeswitch/sip_profiles:ro
+      - ./config/freeswitch/dialplan:/etc/freeswitch/dialplan:ro
+      - ./config/freeswitch/autoload_configs/event_socket.conf.xml:/etc/freeswitch/autoload_configs/event_socket.conf.xml:ro
+      - ./config/freeswitch/autoload_configs/modules.conf.xml:/etc/freeswitch/autoload_configs/modules.conf.xml:ro
+      - freeswitch-recordings:/var/lib/freeswitch/recordings
+      - freeswitch-logs:/var/log/freeswitch
+    environment:
+      - MOD_AUDIO_STREAM_WS_URL=ws://127.0.0.1:3100/audio
+    healthcheck:
+      test: ["CMD", "fs_cli", "-x", "status"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  bridge:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.bridge
+    container_name: amina-media-bridge
+    restart: unless-stopped
+    network_mode: host  # Нужен для ws://127.0.0.1 связки с FreeSWITCH
+    volumes:
+      - freeswitch-recordings:/recordings:ro
+    environment:
+      - PORT=3100
+      - ESL_HOST=127.0.0.1
+      - ESL_PORT=8022
+      - ESL_PASSWORD=ClueCon
+      - BRIDGE_TOKEN=${BRIDGE_TOKEN:-amina-bridge-secret}
+      - AMINA_BOT_URL=${AMINA_BOT_URL:-https://amina.vibecoding.by}
+      - NODE_ENV=production
+    depends_on:
+      freeswitch:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3100/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  freeswitch-recordings:
+  freeswitch-logs:

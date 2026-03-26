@@ -1,0 +1,48 @@
+<!-- public.xml — Dialplan для входящих звонков от LiraX -->
+<include>
+  <context name="public">
+
+    <!-- Входящий звонок от LiraX make2Calls (to2 = SIP URI FreeSWITCH) -->
+    <!-- FreeSWITCH отвечает, стримит аудио в Bridge через WebSocket -->
+    <extension name="amina-ai-bridge">
+      <condition field="destination_number" expression="^(.*)$">
+        <action application="answer"/>
+        <action application="sleep" data="200"/>
+        <action application="set" data="RECORD_STEREO=true"/>
+
+        <!-- Запись звонка для архива -->
+        <action application="set" data="recording_path=/var/lib/freeswitch/recordings/${strftime(%Y%m%d)}_${uuid}.wav"/>
+        <action application="record_session" data="${recording_path}"/>
+
+        <!-- audio_fork: стримит аудио по WebSocket в Bridge сервер -->
+        <!-- Формат: PCM 16-bit 8kHz mono, двунаправленный -->
+        <action application="set" data="RECORD_READ_ONLY=false"/>
+        <action application="export" data="nolocal:execute_on_answer=audio_fork::start $${bridge_ws_url} mono 8000 ${uuid}"/>
+
+        <!-- Ждём пока Bridge управляет разговором -->
+        <!-- Bridge закроет канал через ESL когда закончит -->
+        <action application="park"/>
+      </condition>
+    </extension>
+
+    <!-- Health-check / echo test -->
+    <extension name="echo-test">
+      <condition field="destination_number" expression="^9196$">
+        <action application="answer"/>
+        <action application="echo"/>
+      </condition>
+    </extension>
+
+    <!-- Тестовый звонок — играет гудок и кладёт трубку -->
+    <extension name="test-tone">
+      <condition field="destination_number" expression="^9999$">
+        <action application="answer"/>
+        <action application="playback" data="tone_stream://%(200,100,500,400);loops=3"/>
+        <action application="sleep" data="1000"/>
+        <action application="playback" data="tone_stream://%(1000,0,600)"/>
+        <action application="hangup"/>
+      </condition>
+    </extension>
+
+  </context>
+</include>

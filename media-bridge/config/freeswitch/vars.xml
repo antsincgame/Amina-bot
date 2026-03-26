@@ -1,0 +1,33 @@
+<!-- vars.xml — глобальные переменные FreeSWITCH для Amina Media Bridge -->
+<include>
+  <!-- Внешний IP VPS — FreeSWITCH подставит автоматически -->
+  <X-PRE-PROCESS cmd="stun-set" data="external_rtp_ip=host:stun.freeswitch.org"/>
+  <X-PRE-PROCESS cmd="stun-set" data="external_sip_ip=host:stun.freeswitch.org"/>
+
+  <!-- Если STUN не работает — раскомментируй и подставь IP VPS -->
+  <!-- <X-PRE-PROCESS cmd="set" data="external_rtp_ip=45.135.234.145"/> -->
+  <!-- <X-PRE-PROCESS cmd="set" data="external_sip_ip=45.135.234.145"/> -->
+
+  <!-- Локальный IP -->
+  <X-PRE-PROCESS cmd="set" data="local_ip_v4=auto"/>
+
+  <!-- SIP-аккаунт LiraX (подставляется из переменных окружения или вручную) -->
+  <X-PRE-PROCESS cmd="set" data="lirax_sip_server=lira.lirax.net"/>
+  <X-PRE-PROCESS cmd="set" data="lirax_sip_login=1129570"/>
+  <X-PRE-PROCESS cmd="set" data="lirax_sip_password=CHANGEME"/>
+
+  <!-- WebSocket URL для аудио стриминга к Bridge серверу -->
+  <X-PRE-PROCESS cmd="set" data="bridge_ws_url=ws://127.0.0.1:3100/audio"/>
+
+  <!-- Кодеки -->
+  <X-PRE-PROCESS cmd="set" data="global_codec_prefs=PCMU,PCMA,G722"/>
+  <X-PRE-PROCESS cmd="set" data="outbound_codec_prefs=PCMU,PCMA,G722"/>
+
+  <!-- Порты RTP -->
+  <X-PRE-PROCESS cmd="set" data="rtp_port_low=16384"/>
+  <X-PRE-PROCESS cmd="set" data="rtp_port_high=16484"/>
+
+  <!-- Домен по умолчанию -->
+  <X-PRE-PROCESS cmd="set" data="domain=$${local_ip_v4}"/>
+  <X-PRE-PROCESS cmd="set" data="domain_name=$${domain}"/>
+</include>

@@ -1,0 +1,19 @@
+# FreeSWITCH для Amina Media Bridge
+# Фаза 1: SIP + ESL + базовые звонки
+# Фаза 2: + WebSocket аудио-стриминг (mod_audio_fork)
+#
+# Используем публичный образ drachtio с mod_audio_fork
+
+FROM drachtio/drachtio-freeswitch-mrf:0.5.8-rc2
+
+# Чистим стандартные конфиги — подставим свои через volumes
+RUN rm -rf /etc/freeswitch/sip_profiles/* \
+  && rm -rf /etc/freeswitch/dialplan/* \
+  && mkdir -p /etc/freeswitch/sip_profiles/external \
+  && mkdir -p /etc/freeswitch/dialplan/default \
+  && mkdir -p /var/lib/freeswitch/recordings
+
+EXPOSE 5060/udp 5060/tcp 5080/udp 5080/tcp 8022/tcp 16384-16484/udp
+
+CMD ["freeswitch", "-nonat", "-nf"]
+
