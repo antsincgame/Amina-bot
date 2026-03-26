@@ -376,6 +376,17 @@ export const newsSourcesApi = {
     }, 'Failed to add presets');
     return result.data;
   },
+
+  async suggestKeywords(params: { url: string; name: string; category?: string; language?: string }): Promise<string[]> {
+    const result = await fetchBotApiJson<{ success: boolean; data?: { keywords: string[] }; error?: string }>('/api/news-sites/suggest-keywords', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    }, 'Failed to suggest keywords');
+    if (!result.success || !result.data?.keywords) {
+      throw new Error(result.error ?? 'No keywords returned');
+    }
+    return result.data.keywords;
+  },
 };
 
 // News Parsing Kill Switch

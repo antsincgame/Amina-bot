@@ -35,6 +35,8 @@ import {
   Pencil,
   StopCircle,
   PlayCircle,
+  Wand2,
+  Zap,
 } from 'lucide-react';
 
 // ===== Метки =====
@@ -70,6 +72,16 @@ const TIER_LABELS: Record<NewsSourceTier, string> = {
   tier2: 'Tier 2',
   tier3: 'Tier 3',
 };
+
+const DEFAULT_VIBECODING_KEYWORDS = [
+  'vibecoding', 'vibe coding', 'вайбкодинг',
+  'ai coding', 'ai-assisted coding',
+  'cursor', 'copilot', 'claude code',
+  'windsurf', 'codeium', 'bolt.new', 'v0.dev',
+  'replit agent', 'devin', 'aider',
+  'code generation', 'ai ide',
+  'deepseek coder', 'qwen coder',
+];
 
 const formatJsonBlock = (value?: JsonFieldMapping | HtmlFieldMapping): string =>
   value ? JSON.stringify(value, null, 2) : '';
@@ -120,7 +132,9 @@ const NewsSourcesPage = () => {
   const [newFilterKeywords, setNewFilterKeywords] = useState('');
   const [newJsonMapping, setNewJsonMapping] = useState('');
   const [newHtmlMapping, setNewHtmlMapping] = useState('');
+  const [newAutoMode, setNewAutoMode] = useState(false);
   const [addError, setAddError] = useState('');
+  const [suggestLoading, setSuggestLoading] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState<NewsSourceCategory | 'all'>('all');
 
   const [testResult, setTestResult] = useState<{
@@ -190,6 +204,7 @@ const NewsSourcesPage = () => {
     setNewFilterKeywords('');
     setNewJsonMapping('');
     setNewHtmlMapping('');
+    setNewAutoMode(false);
     setAddError('');
   };
 
@@ -204,6 +219,7 @@ const NewsSourcesPage = () => {
     setNewFilterKeywords(site.filterKeywords?.join(', ') ?? '');
     setNewJsonMapping(formatJsonBlock(site.jsonMapping));
     setNewHtmlMapping(formatJsonBlock(site.htmlMapping));
+    setNewAutoMode(site.autoMode ?? false);
     setAddError('');
   };
 
@@ -246,6 +262,7 @@ const NewsSourcesPage = () => {
         ...(jsonMapping ? { jsonMapping } : {}),
         ...(htmlMapping ? { htmlMapping } : {}),
         ...(filterKeywords.length > 0 ? { filterKeywords } : {}),
+        ...(newAutoMode ? { autoMode: true } : {}),
       };
 
       if (editingIndex !== null) {
@@ -286,6 +303,7 @@ const NewsSourcesPage = () => {
       jsonMapping: site.jsonMapping,
       htmlMapping: site.htmlMapping,
       filterKeywords: site.filterKeywords,
+      autoMode: site.autoMode,
     });
   };
 
@@ -490,6 +508,12 @@ const NewsSourcesPage = () => {
                           keywords {site.filterKeywords.length}
                         </span>
                       )}
+                      {site.autoMode && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-amber-300 border border-amber-400/20 rounded">
+                          <Zap className="w-2.5 h-2.5" />
+                          auto
+                        </span>
+                      )}
                       {(site.jsonMapping || site.htmlMapping) && (
                         <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] text-violet-300 border border-violet-400/20 rounded">
                           config
@@ -641,7 +665,57 @@ const NewsSourcesPage = () => {
 
         <div className="grid grid-cols-1 gap-4 mb-4">
           <div>
-            <label className="label text-sm text-gray-400">Ключевые слова фильтрации</label>
+            <div className="flex items-center justify-between mb-2">
+              <label className="label text-sm text-gray-400 mb-0">Ключевые слова фильтрации</label>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const existing = newFilterKeywords.split(',').map(k => k.trim()).filter(Boolean);
+                    const merged = [...new Set([...existing, ...DEFAULT_VIBECODING_KEYWORDS])];
+                    setNewFilterKeywords(merged.join(', '));
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg
+                             text-cyan-400 hover:bg-cyan-400/10 transition-all"
+                  style={{ border: '1px solid rgba(34, 211, 238, 0.25)' }}
+                >
+                  <Sparkles className="w-3 h-3" />
+                  Дефолтные
+                </button>
+                <button
+                  type="button"
+                  disabled={suggestLoading || !newUrl.trim()}
+                  onClick={async () => {
+                    setSuggestLoading(true);
+                    setAddError('');
+                    try {
+                      const keywords = await newsSourcesApi.suggestKeywords({
+                        url: newUrl.trim(),
+                        name: newName.trim(),
+                        category: newCategory,
+                        language: newLanguage,
+                      });
+                      const existing = newFilterKeywords.split(',').map(k => k.trim()).filter(Boolean);
+                      const merged = [...new Set([...existing, ...keywords])];
+                      setNewFilterKeywords(merged.join(', '));
+                    } catch (err) {
+                      setAddError(`Автоподбор: ${err instanceof Error ? err.message : 'ошибка'}`);
+                    }
+                    setSuggestLoading(false);
+                  }}
+                  className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded-lg
+                             text-purple-400 hover:bg-purple-400/10 transition-all disabled:opacity-40"
+                  style={{ border: '1px solid rgba(168, 85, 247, 0.25)' }}
+                >
+                  {suggestLoading ? (
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                  ) : (
+                    <Wand2 className="w-3 h-3" />
+                  )}
+                  AI подбор
+                </button>
+              </div>
+            </div>
             <input
               type="text"
               className="input bg-white/5 text-gray-200"
@@ -650,6 +724,32 @@ const NewsSourcesPage = () => {
               onChange={(e) => { setNewFilterKeywords(e.target.value); setAddError(''); }}
             />
             <p className="text-xs text-gray-500 mt-1">Через запятую. Используются для отсеивания нерелевантных заголовков.</p>
+          </div>
+        </div>
+
+        {/* Auto-mode toggle */}
+        <div className="flex items-center gap-3 mb-4 p-3 rounded-xl"
+          style={{ background: 'rgba(255, 215, 0, 0.03)', border: '1px solid rgba(255, 215, 0, 0.1)' }}
+        >
+          <button
+            type="button"
+            onClick={() => setNewAutoMode(!newAutoMode)}
+            className="flex-shrink-0"
+          >
+            {newAutoMode ? (
+              <ToggleRight className="w-6 h-6 text-amber-400" />
+            ) : (
+              <ToggleLeft className="w-6 h-6 text-gray-500" />
+            )}
+          </button>
+          <div>
+            <div className="flex items-center gap-2">
+              <Zap className="w-4 h-4 text-amber-400" />
+              <span className="text-sm font-medium text-gray-200">Авто-режим парсинга</span>
+            </div>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Бот пробует ВСЕ каналы (RSS → HTML scrape) и объединяет результаты. Больше новостей, но медленнее.
+            </p>
           </div>
         </div>
 

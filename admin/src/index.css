@@ -371,6 +371,31 @@
     padding-right: 40px;
   }
 
+  /* Native <select> & <option> dark theme fix */
+  select.input,
+  select.select {
+    background-color: rgba(15, 15, 25, 0.95);
+    color: #f5f5f5;
+  }
+
+  select.input option,
+  select.select option {
+    background-color: #1a1a2e;
+    color: #f5f5f5;
+    padding: 8px 12px;
+  }
+
+  select.input option:checked,
+  select.select option:checked {
+    background-color: rgba(255, 215, 0, 0.2);
+    color: #ffd700;
+  }
+
+  select.input option:hover,
+  select.select option:hover {
+    background-color: rgba(255, 215, 0, 0.1);
+  }
+
   /* ═══════════════════════════════════════════
      Premium Sidebar — Премиальный Сайдбар
      ═══════════════════════════════════════════ */

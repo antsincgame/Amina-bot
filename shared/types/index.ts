@@ -471,6 +471,8 @@ export interface NewsSite {
   htmlMapping?: HtmlFieldMapping;
   /** Ключевые слова для фильтрации заголовков (хотя бы одно должно совпасть) */
   filterKeywords?: string[];
+  /** Авто-режим: парсер пробует ВСЕ каналы (RSS→HTML scrape) и объединяет результаты */
+  autoMode?: boolean;
 }
 
 export interface ParsedHeadline {

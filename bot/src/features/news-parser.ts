@@ -326,6 +326,7 @@ export function normalizeNewsSite(site: NewsSite): NewsSite {
     ...(jsonMapping ? { jsonMapping } : {}),
     ...(htmlMapping ? { htmlMapping } : {}),
     ...(filterKeywords ? { filterKeywords } : {}),
+    ...(site.autoMode ? { autoMode: true } : {}),
   };
 }
 
@@ -1473,6 +1474,43 @@ export async function parseNewsFromSite(siteOrUrl: NewsSite | string): Promise<P
     sourceUrl: site.url,
     sourceTier: site.tier,
   };
+
+  // ── Auto-mode: пробуем ВСЕ каналы и объединяем результаты ──
+  if (site.autoMode) {
+    const allHeadlines: ParsedHeadline[] = [];
+    const origin = new URL(siteUrl).origin;
+
+    // Канал 1: RSS (каскадная логика)
+    try {
+      const rssSite = { ...site, type: 'rss' as const, autoMode: false };
+      const rssHeadlines = await parseNewsFromSite(rssSite);
+      if (rssHeadlines.length > 0) {
+        allHeadlines.push(...rssHeadlines);
+        appLogger.info({ siteUrl, rssCount: rssHeadlines.length }, 'Auto-mode: RSS channel');
+      }
+    } catch (err) {
+      appLogger.debug({ error: err, siteUrl }, 'Auto-mode: RSS channel failed');
+    }
+
+    // Канал 2: HTML scrape
+    try {
+      const response = await fetchWithTimeout(siteUrl, FETCH_TIMEOUT_MS);
+      if (response.ok) {
+        const html = await response.text();
+        const htmlHeadlines = parseHtmlContent(html, siteUrl, origin, parseOptions);
+        if (htmlHeadlines.length > 0) {
+          allHeadlines.push(...htmlHeadlines);
+          appLogger.info({ siteUrl, htmlCount: htmlHeadlines.length }, 'Auto-mode: HTML channel');
+        }
+      }
+    } catch (err) {
+      appLogger.debug({ error: err, siteUrl }, 'Auto-mode: HTML channel failed');
+    }
+
+    const deduped = dedupeParsedHeadlines(allHeadlines);
+    appLogger.info({ siteUrl, totalDeduped: deduped.length, rawTotal: allHeadlines.length }, 'Auto-mode: merged results');
+    return deduped;
+  }
 
   // JSON API — специальный путь
   if (site.type === 'json_api') {

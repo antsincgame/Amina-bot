@@ -21,6 +21,7 @@ import {
   type NewsPresetGroup,
 } from '../../features/news-parser.js';
 import { localizeParsedHeadlines } from '../../features/news-localization.js';
+import { aiService } from '../../ai/openrouter.js';
 import { buildDigest } from '../../features/digest-scheduler.js';
 import { buildHybridDigest, PreparedDigestUnavailableError } from '../../features/digest-hybrid.js';
 import { markdownToTelegramHtml } from '../../telegram/format.js';
@@ -110,6 +111,7 @@ export async function registerNewsRoutes(server: FastifyInstance): Promise<void>
           jsonMapping: payload.jsonMapping,
           htmlMapping: payload.htmlMapping,
           filterKeywords: payload.filterKeywords,
+          autoMode: payload.autoMode,
         });
         await assertNewsSiteUrlIsSafe(testSite.url);
 
@@ -189,6 +191,64 @@ export async function registerNewsRoutes(server: FastifyInstance): Promise<void>
       return reply.code(500).send({ success: false, error: 'Failed to add preset sources' });
     }
   });
+
+  /**
+   * POST /api/news-sites/suggest-keywords
+   * LLM-подбор ключевых слов для источника (Google AdWords-стиль)
+   */
+  server.post(
+    '/news-sites/suggest-keywords',
+    async (
+      request: FastifyRequest<{ Body: { url: string; name: string; category?: string; language?: string } }>,
+      reply: FastifyReply,
+    ) => {
+      try {
+        const { url, name, category, language } = request.body ?? {};
+        if (!url) {
+          return reply.code(400).send({ success: false, error: 'URL is required' });
+        }
+
+        const prompt = [
+          'Ты — SEO-эксперт и специалист по AI/tech новостям.',
+          `Источник: "${name || url}" (${url})`,
+          category ? `Категория: ${category}` : '',
+          language ? `Язык контента: ${language}` : '',
+          '',
+          'Подбери 10-15 ключевых слов для фильтрации релевантных новостей об AI-программировании, вайбкодинге и AI-инструментах разработки.',
+          'Ключевые слова должны помочь отсеять нерелевантный контент и оставить только статьи про:',
+          '- Вайбкодинг, AI-assisted coding, AI IDE',
+          '- Конкретные инструменты: Cursor, Copilot, Claude Code, Windsurf, Bolt, v0, Replit',
+          '- LLM для кода: CodeLlama, DeepSeek Coder, Qwen Coder, StarCoder',
+          '- AI code generation, code completion, AI pair programming',
+          '',
+          'Верни ТОЛЬКО JSON массив строк, без пояснений:',
+          '["keyword1", "keyword2", ...]',
+        ].filter(Boolean).join('\n');
+
+        const result = await aiService.chat(prompt, {
+          temperature: 0.3,
+          maxTokens: 500,
+          priority: 'background',
+        });
+
+        const cleaned = result.content.replace(/```json\s*/g, '').replace(/```/g, '').trim();
+        const keywords: string[] = JSON.parse(cleaned);
+
+        if (!Array.isArray(keywords) || keywords.length === 0) {
+          return reply.code(200).send({ success: false, error: 'LLM вернула пустой результат' });
+        }
+
+        return reply.code(200).send({
+          success: true,
+          data: { keywords: keywords.map(k => String(k).trim()).filter(Boolean) },
+        });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : 'Unknown error';
+        aiLogger.warn({ error: msg }, 'Keyword suggestion failed');
+        return reply.code(200).send({ success: false, error: msg });
+      }
+    },
+  );
 
   // ====== NEWS PARSING KILL SWITCH ======
 
