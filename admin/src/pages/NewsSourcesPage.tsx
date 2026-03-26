@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { newsSourcesApi, newsParsingApi } from '../api/appwrite';
+import { newsSourcesApi, newsParsingApi, settingsApi } from '../api/appwrite';
 import type {
   NewsSite,
   NewsSourceType,
@@ -107,10 +107,25 @@ const NewsSourcesPage = () => {
   const [hasChanges, setHasChanges] = useState(false);
   const [parsingKilled, setParsingKilled] = useState(false);
   const [killLoading, setKillLoading] = useState(false);
+  const [translationProvider, setTranslationProvider] = useState<string>('auto');
+  const [providerSaving, setProviderSaving] = useState(false);
 
   useEffect(() => {
     newsParsingApi.getStatus().then(setParsingKilled).catch(() => {});
+    settingsApi.getAll().then(settings => {
+      const found = settings.find(s => s.key === 'news_translation_provider');
+      if (found?.value) setTranslationProvider(found.value);
+    }).catch(() => {});
   }, []);
+
+  const handleProviderChange = async (provider: string) => {
+    setTranslationProvider(provider);
+    setProviderSaving(true);
+    try {
+      await settingsApi.update('news_translation_provider', provider);
+    } catch { /* ignore */ }
+    setProviderSaving(false);
+  };
 
   const toggleParsing = async () => {
     setKillLoading(true);
@@ -403,6 +418,45 @@ const NewsSourcesPage = () => {
             <><StopCircle className="w-4 h-4" /> Остановить</>
           )}
         </button>
+      </div>
+
+      {/* AI Translation Provider */}
+      <div className="card mb-6">
+        <div className="flex items-center gap-3 mb-3">
+          <Cpu className="w-5 h-5 text-purple-400" />
+          <div>
+            <h3 className="text-white font-medium">AI-провайдер перевода новостей</h3>
+            <p className="text-xs text-gray-500">
+              Какая нейронка переводит заголовки и описания при парсинге
+            </p>
+          </div>
+          {providerSaving && <Loader2 className="w-4 h-4 animate-spin text-purple-400 ml-auto" />}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {[
+            { value: 'auto', label: '⚡ Auto', desc: 'Cerebras → Groq → OpenRouter', accent: 'rgb(251, 191, 36)' },
+            { value: 'cerebras', label: '🧠 Cerebras', desc: 'Быстрый inference', accent: 'rgb(74, 222, 128)' },
+            { value: 'groq', label: '🔥 Groq', desc: 'Llama 3.3 70B', accent: 'rgb(96, 165, 250)' },
+            { value: 'openrouter', label: '🌐 OpenRouter', desc: 'Claude / GPT fallback', accent: 'rgb(168, 85, 247)' },
+          ].map(({ value, label, desc, accent }) => {
+            const isActive = translationProvider === value;
+            return (
+              <button
+                key={value}
+                onClick={() => handleProviderChange(value)}
+                className="flex flex-col items-start px-4 py-2.5 rounded-xl text-sm transition-all"
+                style={{
+                  color: isActive ? accent : 'rgb(156, 163, 175)',
+                  background: isActive ? `${accent}15` : 'transparent',
+                  border: `1px solid ${isActive ? `${accent}50` : 'rgba(255, 255, 255, 0.06)'}`,
+                }}
+              >
+                <span className="font-medium">{label}</span>
+                <span className="text-[10px]" style={{ color: 'rgb(107, 114, 128)' }}>{desc}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Quick Actions */}

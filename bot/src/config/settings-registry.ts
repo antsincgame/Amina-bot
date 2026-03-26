@@ -913,6 +913,16 @@ export const SETTINGS_REGISTRY: SettingRegistryEntry[] = [
     runtimeConsumers: ['bot/src/features/news-parser.ts', 'bot/src/features/digest-hybrid.ts'],
   }),
   defineSetting({
+    key: 'news_translation_provider',
+    label: 'News Translation Provider',
+    domain: 'news',
+    visibility: 'visible',
+    valueType: 'string',
+    description: 'AI-провайдер для перевода/локализации новостей: cerebras, groq, openrouter или auto (Cerebras→Groq→OpenRouter).',
+    uiPages: ['NewsSourcesPage'],
+    runtimeConsumers: ['bot/src/features/news-localization.ts'],
+  }),
+  defineSetting({
     key: '__healthcheck__',
     label: 'Healthcheck Marker',
     domain: 'system',

@@ -1,5 +1,6 @@
 import { aiService } from '../ai/openrouter.js';
 import { appLogger } from '../config/logger.js';
+import { settingsRepo } from '../db/appwrite.js';
 import type { ParsedHeadline } from '../../../shared/types/index.js';
 
 const DESCRIPTION_TRANSLATION_BATCH_SIZE = 4;
@@ -267,7 +268,17 @@ function mergeTranslationMaps(target: Map<number, AcceptedTranslation>, source: 
   });
 }
 
-const TRANSLATION_PROVIDERS = ['cerebras', 'groq'] as const;
+const DEFAULT_TRANSLATION_PROVIDERS = ['cerebras', 'groq', 'openrouter'] as const;
+
+async function getTranslationProviders(): Promise<string[]> {
+  try {
+    const saved = await settingsRepo.get('news_translation_provider');
+    if (!saved || saved === 'auto') return [...DEFAULT_TRANSLATION_PROVIDERS];
+    return [saved];
+  } catch {
+    return [...DEFAULT_TRANSLATION_PROVIDERS];
+  }
+}
 
 async function callTranslationProvider(
   items: DescriptionTranslationInput[],
@@ -312,11 +323,13 @@ async function translateDescriptionBatch(
 ): Promise<Map<number, AcceptedTranslation>> {
   if (items.length === 0) return new Map<number, AcceptedTranslation>();
 
-  for (const provider of TRANSLATION_PROVIDERS) {
+  const providers = await getTranslationProviders();
+
+  for (const provider of providers) {
     try {
       const accepted = await callTranslationProvider(items, provider, scope);
       if (accepted.size > 0) {
-        if (provider !== 'cerebras') {
+        if (provider !== providers[0]) {
           appLogger.info({ provider, batchSize: items.length, accepted: accepted.size, scope }, 'News localization: fallback provider succeeded');
         }
         return accepted;
@@ -328,7 +341,7 @@ async function translateDescriptionBatch(
     }
   }
 
-  appLogger.warn({ batchSize: items.length, scope, providers: TRANSLATION_PROVIDERS }, 'News localization: all providers failed');
+  appLogger.warn({ batchSize: items.length, scope, providers }, 'News localization: all providers failed');
   return new Map<number, AcceptedTranslation>();
   }
 }
