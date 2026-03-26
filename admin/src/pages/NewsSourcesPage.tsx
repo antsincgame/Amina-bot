@@ -37,6 +37,9 @@ import {
   PlayCircle,
   Wand2,
   Zap,
+  HeartPulse,
+  Trash,
+  Search,
 } from 'lucide-react';
 
 // ===== Метки =====
@@ -136,6 +139,13 @@ const NewsSourcesPage = () => {
   const [addError, setAddError] = useState('');
   const [suggestLoading, setSuggestLoading] = useState(false);
   const [categoryFilter, setCategoryFilter] = useState<NewsSourceCategory | 'all'>('all');
+
+  const [healthLoading, setHealthLoading] = useState(false);
+  const [healthResult, setHealthResult] = useState<{
+    healthy: number; unhealthy: number; totalChecked: number;
+    dead: Array<{ url: string; name: string; reason: string }>;
+  } | null>(null);
+  const [cleanupLoading, setCleanupLoading] = useState(false);
 
   const [testResult, setTestResult] = useState<{
     url: string;
@@ -454,6 +464,89 @@ const NewsSourcesPage = () => {
             </button>
           ))}
         </div>
+      </div>
+
+      {/* Health Check & Maintenance */}
+      <div className="card mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <HeartPulse className="w-5 h-5 text-green-400" />
+            <h3 className="font-semibold text-gray-200">Здоровье источников</h3>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              disabled={healthLoading}
+              onClick={async () => {
+                setHealthLoading(true);
+                setHealthResult(null);
+                try {
+                  const result = await newsSourcesApi.healthCheck(8000);
+                  const deadResult = await newsSourcesApi.cleanupDead(true);
+                  setHealthResult({
+                    healthy: result.healthy,
+                    unhealthy: result.unhealthy,
+                    totalChecked: result.totalChecked,
+                    dead: deadResult.dead,
+                  });
+                } catch { /* ignore */ }
+                setHealthLoading(false);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg
+                         text-green-400 hover:bg-green-400/10 transition-all"
+              style={{ border: '1px solid rgba(74, 222, 128, 0.25)' }}
+            >
+              {healthLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+              Проверить все
+            </button>
+            {healthResult && healthResult.dead.length > 0 && (
+              <button
+                disabled={cleanupLoading}
+                onClick={async () => {
+                  setCleanupLoading(true);
+                  try {
+                    await newsSourcesApi.cleanupDead(false);
+                    queryClient.invalidateQueries({ queryKey: ['news-sites'] });
+                    setHealthResult(prev => prev ? { ...prev, dead: [] } : null);
+                  } catch { /* ignore */ }
+                  setCleanupLoading(false);
+                }}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg
+                           text-red-400 hover:bg-red-400/10 transition-all"
+                style={{ border: '1px solid rgba(248, 113, 113, 0.25)' }}
+              >
+                {cleanupLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash className="w-3.5 h-3.5" />}
+                Выключить мёртвые ({healthResult.dead.length})
+              </button>
+            )}
+          </div>
+        </div>
+
+        {healthResult && (
+          <div>
+            <div className="flex items-center gap-4 mb-3 text-sm">
+              <span className="text-green-400">✅ Доступны: {healthResult.healthy}</span>
+              <span className="text-red-400">❌ Недоступны: {healthResult.unhealthy}</span>
+              <span className="text-gray-500">Проверено: {healthResult.totalChecked}</span>
+            </div>
+            {healthResult.dead.length > 0 && (
+              <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                {healthResult.dead.map((d, i) => (
+                  <div key={i} className="flex items-center gap-2 p-2 rounded-lg text-xs"
+                    style={{ background: 'rgba(248, 113, 113, 0.05)', border: '1px solid rgba(248, 113, 113, 0.15)' }}>
+                    <span className="text-red-400 font-medium truncate flex-1">{d.name}</span>
+                    <span className="text-gray-500 truncate max-w-[200px]">{d.reason}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {!healthResult && !healthLoading && (
+          <p className="text-xs text-gray-500">
+            Нажми «Проверить все» для диагностики доступности источников. Мёртвые можно отключить одной кнопкой.
+          </p>
+        )}
       </div>
 
       {/* Sites List */}

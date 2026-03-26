@@ -395,6 +395,26 @@ export const newsSourcesApi = {
     }, 'Failed to bulk enable');
     return result.data;
   },
+
+  async healthCheck(timeout?: number): Promise<{
+    totalChecked: number; healthy: number; unhealthy: number;
+    statuses: Array<{ url: string; name: string; status: string; httpCode?: number; responseTimeMs: number; error?: string }>;
+  }> {
+    return fetchBotApiJson('/api/news-sites/health-check', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ timeout: timeout ?? 8000 }),
+    }, 'Health check failed');
+  },
+
+  async cleanupDead(dryRun = true): Promise<{
+    dryRun: boolean; deadCount: number; totalChecked: number;
+    dead: Array<{ url: string; name: string; reason: string }>;
+  }> {
+    return fetchBotApiJson('/api/news-sites/cleanup-dead', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dryRun }),
+    }, 'Cleanup failed');
+  },
 };
 
 // News Parsing Kill Switch

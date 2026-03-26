@@ -327,6 +327,176 @@ export async function registerNewsRoutes(server: FastifyInstance): Promise<void>
     return reply.code(200).send({ success: true, killed: false, message: 'News parsing resumed' });
   });
 
+  // ====== HEALTH CHECK & MAINTENANCE ======
+
+  /**
+   * POST /api/news-sites/health-check
+   * Проверяет доступность всех включённых источников
+   */
+  server.post(
+    '/news-sites/health-check',
+    async (
+      request: FastifyRequest<{ Body: { timeout?: number } }>,
+      reply: FastifyReply,
+    ) => {
+      try {
+        const timeout = Math.min(request.body?.timeout ?? 8000, 15000);
+        const sites = await getConfiguredSites();
+        const enabledSites = sites.filter(s => s.enabled);
+
+        const CONCURRENCY = 6;
+        const statuses: Array<{
+          url: string;
+          name: string;
+          status: 'ok' | 'timeout' | 'error' | 'redirect';
+          httpCode?: number;
+          responseTimeMs: number;
+          error?: string;
+        }> = [];
+
+        for (let i = 0; i < enabledSites.length; i += CONCURRENCY) {
+          const batch = enabledSites.slice(i, i + CONCURRENCY);
+          const results = await Promise.allSettled(
+            batch.map(async (site) => {
+              const start = Date.now();
+              const controller = new AbortController();
+              const timer = setTimeout(() => controller.abort(), timeout);
+              try {
+                const res = await fetch(site.url, {
+                  signal: controller.signal,
+                  headers: { 'User-Agent': 'Amina-Bot/1.0 NewsParser' },
+                  redirect: 'follow',
+                });
+                clearTimeout(timer);
+                return {
+                  url: site.url,
+                  name: site.name,
+                  status: (res.ok ? 'ok' : 'error') as const,
+                  httpCode: res.status,
+                  responseTimeMs: Date.now() - start,
+                };
+              } catch (err) {
+                clearTimeout(timer);
+                const isTimeout = (err as { name?: string }).name === 'AbortError';
+                return {
+                  url: site.url,
+                  name: site.name,
+                  status: (isTimeout ? 'timeout' : 'error') as const,
+                  responseTimeMs: Date.now() - start,
+                  error: err instanceof Error ? err.message : String(err),
+                };
+              }
+            }),
+          );
+
+          for (const result of results) {
+            if (result.status === 'fulfilled') {
+              statuses.push(result.value);
+            }
+          }
+        }
+
+        const healthy = statuses.filter(s => s.status === 'ok').length;
+        const unhealthy = statuses.filter(s => s.status !== 'ok').length;
+
+        return reply.code(200).send({
+          success: true,
+          timestamp: new Date().toISOString(),
+          totalChecked: statuses.length,
+          healthy,
+          unhealthy,
+          statuses: statuses.sort((a, b) => {
+            if (a.status === 'ok' && b.status !== 'ok') return 1;
+            if (a.status !== 'ok' && b.status === 'ok') return -1;
+            return a.responseTimeMs - b.responseTimeMs;
+          }),
+        });
+      } catch (error) {
+        aiLogger.error({ error }, 'Health check error');
+        return reply.code(500).send({ success: false, error: 'Health check failed' });
+      }
+    },
+  );
+
+  /**
+   * POST /api/news-sites/cleanup-dead
+   * Выключает недоступные источники (dry-run по умолчанию)
+   */
+  server.post(
+    '/news-sites/cleanup-dead',
+    async (
+      request: FastifyRequest<{ Body: { dryRun?: boolean; timeout?: number } }>,
+      reply: FastifyReply,
+    ) => {
+      try {
+        const dryRun = request.body?.dryRun !== false;
+        const timeout = Math.min(request.body?.timeout ?? 8000, 15000);
+        const sites = await getConfiguredSites();
+        const enabledSites = sites.filter(s => s.enabled);
+
+        const deadSites: Array<{ url: string; name: string; reason: string }> = [];
+
+        const CONCURRENCY = 6;
+        for (let i = 0; i < enabledSites.length; i += CONCURRENCY) {
+          const batch = enabledSites.slice(i, i + CONCURRENCY);
+          const results = await Promise.allSettled(
+            batch.map(async (site) => {
+              const controller = new AbortController();
+              const timer = setTimeout(() => controller.abort(), timeout);
+              try {
+                const res = await fetch(site.url, {
+                  signal: controller.signal,
+                  headers: { 'User-Agent': 'Amina-Bot/1.0 NewsParser' },
+                  redirect: 'follow',
+                });
+                clearTimeout(timer);
+                if (!res.ok) {
+                  return { url: site.url, name: site.name, reason: `HTTP ${res.status} ${res.statusText}` };
+                }
+                return null;
+              } catch (err) {
+                clearTimeout(timer);
+                const isTimeout = (err as { name?: string }).name === 'AbortError';
+                return {
+                  url: site.url,
+                  name: site.name,
+                  reason: isTimeout ? `Timeout (${timeout}ms)` : (err instanceof Error ? err.message : String(err)),
+                };
+              }
+            }),
+          );
+
+          for (const result of results) {
+            if (result.status === 'fulfilled' && result.value) {
+              deadSites.push(result.value);
+            }
+          }
+        }
+
+        if (!dryRun && deadSites.length > 0) {
+          const deadUrls = new Set(deadSites.map(d => d.url));
+          const updated = sites.map(site =>
+            deadUrls.has(site.url) ? { ...site, enabled: false } : site,
+          );
+          await saveConfiguredSites(updated);
+          settingsRepo.invalidateCache?.();
+        }
+
+        aiLogger.info({ dead: deadSites.length, dryRun }, 'News sites cleanup');
+        return reply.code(200).send({
+          success: true,
+          dryRun,
+          deadCount: deadSites.length,
+          totalChecked: enabledSites.length,
+          dead: deadSites,
+        });
+      } catch (error) {
+        aiLogger.error({ error }, 'Cleanup dead sources error');
+        return reply.code(500).send({ success: false, error: 'Cleanup failed' });
+      }
+    },
+  );
+
   // ====== PUBLIC DIGEST & RAW NEWS ======
 
   /**
