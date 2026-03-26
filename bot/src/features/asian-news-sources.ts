@@ -62,6 +62,10 @@ const CHINA_AI_KEYWORDS = [
   '代码审查',
   'Devin',
   'Gemini Code Assist',
+  'Vibe Coding',
+  '提示词工程',
+  'AI助手',
+  'AI Agent',
 ];
 
 export const ASIA_NEWS_SOURCE_MANIFEST: NewsSite[] = [

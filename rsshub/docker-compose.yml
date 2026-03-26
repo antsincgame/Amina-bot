@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  rsshub:
+    image: diygod/rsshub:latest
+    container_name: amina-rsshub
+    restart: unless-stopped
+    ports:
+      - '1200:1200'
+    environment:
+      NODE_ENV: production
+      CACHE_TYPE: memory
+      CACHE_EXPIRE: 300
+      # Rate limiting
+      REQUEST_RETRY: 3
+      REQUEST_TIMEOUT: 15000
+      # WeChat (через搜狗 proxy)
+      SOGOU_COOKIE: ''
+      # Puppeteer для JS-рендеринга (опционально)
+      # PUPPETEER_WS_ENDPOINT: ws://browserless:3000
+    networks:
+      - coolify
+    labels:
+      - 'coolify.managed=true'
+
+networks:
+  coolify:
+    external: true

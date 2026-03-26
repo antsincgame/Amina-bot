@@ -89,7 +89,9 @@ export const digestControlsKeyboard = (enabled: boolean): InlineKeyboard =>
     .text('🔄 Сейчас', 'digest_now')
     .row()
     .text('🏙️ Город', 'digest_city_help')
-    .text('🕐 Время', 'digest_time_help');
+    .text('🕐 Время', 'digest_time_help')
+    .row()
+    .text('📰 AI-обзор новостей', 'news_curate');
 
 /** Кнопка вкл/выкл дайджеста */
 export const digestToggleKeyboard = (enabled: boolean): InlineKeyboard =>

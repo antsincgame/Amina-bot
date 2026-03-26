@@ -387,6 +387,14 @@ export const newsSourcesApi = {
     }
     return result.data.keywords;
   },
+
+  async bulkEnable(params: { tier?: string; category?: string; enabled: boolean }): Promise<{ affected: number; total: number }> {
+    const result = await fetchBotApiJson<{ data: { affected: number; total: number } }>('/api/news-sites/bulk-enable', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    }, 'Failed to bulk enable');
+    return result.data;
+  },
 };
 
 // News Parsing Kill Switch

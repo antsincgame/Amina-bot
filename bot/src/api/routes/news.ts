@@ -259,6 +259,58 @@ export async function registerNewsRoutes(server: FastifyInstance): Promise<void>
     },
   );
 
+  /**
+   * POST /api/news-sites/bulk-enable
+   * Массовое включение/выключение источников по tier и/или category
+   */
+  server.post(
+    '/news-sites/bulk-enable',
+    async (
+      request: FastifyRequest<{ Body: { tier?: string; category?: string; enabled: boolean } }>,
+      reply: FastifyReply,
+    ) => {
+      try {
+        const bulkSchema = z.object({
+          tier: z.enum(['tier1', 'tier2', 'tier3']).optional(),
+          category: z.enum(['ai_tech', 'city_local', 'community', 'asia_tech']).optional(),
+          enabled: z.boolean(),
+        });
+
+        const parsed = bulkSchema.safeParse(request.body);
+        if (!parsed.success) {
+          return reply.code(400).send({ success: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' });
+        }
+
+        const { tier, category, enabled } = parsed.data;
+        const sites = await getConfiguredSites();
+        let affected = 0;
+
+        const updated = sites.map(site => {
+          const matchTier = !tier || site.tier === tier;
+          const matchCategory = !category || site.category === category;
+          if (matchTier && matchCategory && site.enabled !== enabled) {
+            affected++;
+            return { ...site, enabled };
+          }
+          return site;
+        });
+
+        await saveConfiguredSites(updated);
+        settingsRepo.invalidateCache?.();
+
+        aiLogger.info({ tier, category, enabled, affected, total: updated.length }, 'Bulk enable/disable news sites');
+        return reply.code(200).send({
+          success: true,
+          message: `${enabled ? 'Включено' : 'Выключено'} ${affected} источников`,
+          data: { affected, total: updated.length },
+        });
+      } catch (error) {
+        aiLogger.error({ error }, 'Bulk enable error');
+        return reply.code(500).send({ success: false, error: 'Failed to bulk enable' });
+      }
+    },
+  );
+
   // ====== NEWS PARSING KILL SWITCH ======
 
   server.get('/news/parsing-status', async (_request: FastifyRequest, reply: FastifyReply) => {

@@ -193,6 +193,13 @@ const NewsSourcesPage = () => {
     },
   });
 
+  const { mutate: bulkEnable, isPending: isBulkEnabling } = useMutation({
+    mutationFn: (params: { tier?: string; category?: string; enabled: boolean }) => newsSourcesApi.bulkEnable(params),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['news-sites'] });
+    },
+  });
+
   const resetForm = () => {
     setEditingIndex(null);
     setNewName('');
@@ -403,6 +410,21 @@ const NewsSourcesPage = () => {
             <Sparkles className="w-4 h-4" />
           )}
           Добавить весь каталог ({presetMeta?.counts.all ?? 0})
+        </button>
+
+        <button
+          onClick={() => bulkEnable({ tier: 'tier1', category: 'asia_tech', enabled: true })}
+          disabled={isBulkEnabling}
+          className="flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg
+                     text-green-300 hover:bg-green-400/10 transition-all"
+          style={{ border: '1px solid rgba(74, 222, 128, 0.28)' }}
+        >
+          {isBulkEnabling ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            <Zap className="w-4 h-4" />
+          )}
+          Включить Asia Tier 1
         </button>
 
         <button

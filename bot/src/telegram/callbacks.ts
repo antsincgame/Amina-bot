@@ -5,6 +5,7 @@
  * - Заметки: notes_list, save_to_notes, menu_notes, menu_note_help
  * - Задачи: todos_list, todo_done_N, menu_todos, menu_todo_help
  * - Дайджест: digest_toggle, digest_now, digest_city_help, digest_time_help, menu_digest
+ * - Новости: news_curate (AI-обзор вайбкодинг новостей)
  * - Меню: menu_search, menu_imagine, menu_voice, menu_help, show_menu
  * - Действия: read_aloud, menu_reminders
  */
@@ -340,6 +341,63 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
     } catch (err) {
       telegramLogger.warn({ error: err, userId }, 'Failed to load digest settings (callback)');
       await ctx.reply('😔 Ошибка загрузки настроек дайджеста.');
+    }
+  });
+
+  // ====== AI-КУРИРОВАНИЕ НОВОСТЕЙ ======
+
+  bot.callbackQuery('news_curate', async (ctx) => {
+    if (!ctx.from?.id) {
+      await ctx.answerCallbackQuery({ text: 'Не удалось определить пользователя' });
+      return;
+    }
+    await ctx.answerCallbackQuery({ text: '📰 Собираю AI-обзор...' });
+    await ctx.reply('📰 <b>Собираю AI-обзор новостей вайбкодинга...</b>\nЭто может занять 20-40 секунд.', { parse_mode: 'HTML' });
+
+    try {
+      const { parseAllConfiguredSites } = await import('../features/news-parser.js');
+      const { filterHeadlinesForVibecoding } = await import('../features/news-vibecoding-filter.js');
+      const { aiService } = await import('../ai/openrouter.js');
+
+      const allHeadlines = await parseAllConfiguredSites();
+      const filtered = await filterHeadlinesForVibecoding(allHeadlines);
+      const top = filtered.slice(0, 10);
+
+      if (top.length === 0) {
+        await ctx.reply('😔 Новостей по вайбкодингу не найдено. Попробуй позже.');
+        return;
+      }
+
+      const headlinesList = top
+        .map((h, i) => `${i + 1}. "${h.title}" (${h.source})${h.description ? ` — ${h.description.slice(0, 100)}` : ''}`)
+        .join('\n');
+
+      const curatePrompt = [
+        'Ты — AI-куратор новостей о вайбкодинге и AI-программировании для русскоязычной аудитории.',
+        'Составь краткий обзор-дайджест из этих новостей на русском языке.',
+        'Для каждой новости напиши 1-2 предложения: суть + почему это важно для разработчиков.',
+        'Группируй по темам. Используй эмодзи для визуального разделения.',
+        'Названия инструментов (Cursor, Claude Code и т.д.) оставляй на английском.',
+        '',
+        'Новости:',
+        headlinesList,
+      ].join('\n');
+
+      const result = await aiService.chat(curatePrompt, {
+        temperature: 0.4,
+        maxTokens: 2000,
+        priority: 'background',
+      });
+
+      const parts = result.content.match(/[\s\S]{1,4000}/g) ?? [result.content];
+      for (const part of parts) {
+        await ctx.reply(part, { parse_mode: 'HTML' }).catch(() =>
+          ctx.reply(part),
+        );
+      }
+    } catch (err) {
+      telegramLogger.warn({ error: err instanceof Error ? err.message : String(err) }, 'News curation failed');
+      await ctx.reply('😔 Не удалось собрать AI-обзор. Попробуй позже.');
     }
   });
 
