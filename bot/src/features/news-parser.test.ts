@@ -920,3 +920,90 @@ describe('News Parser — Russian description localization', () => {
     expect(localized[0]?.description).toBe('OpenAI released a new coding agent for enterprise teams.');
   });
 });
+
+// ============================================
+// AutoMode & Deduplication Tests
+// ============================================
+
+describe('Deduplication — fingerprint без даты', () => {
+  function makeHeadline(overrides: Partial<import('../../../shared/types/index.js').ParsedHeadline> = {}): import('../../../shared/types/index.js').ParsedHeadline {
+    return {
+      title: 'AI Coding Tool Released',
+      url: 'https://example.com/news/ai-tool',
+      canonicalUrl: 'https://example.com/news/ai-tool',
+      source: 'Source A',
+      sourceDomain: 'example.com',
+      description: 'A new AI coding tool.',
+      fingerprint: buildHeadlineFingerprint('AI Coding Tool Released', 'https://example.com/news/ai-tool', undefined, 'ai_tech'),
+      alternateSources: [],
+      category: 'ai_tech',
+      ...overrides,
+    };
+  }
+
+  it('дедупликация по fingerprint работает без учёта даты', () => {
+    const fp1 = buildHeadlineFingerprint('Same Title', 'https://a.com/post', '2026-03-25T10:00:00Z', 'ai_tech');
+    const fp2 = buildHeadlineFingerprint('Same Title', 'https://a.com/post', '2026-03-26T10:00:00Z', 'ai_tech');
+    expect(fp1).toBe(fp2);
+  });
+
+  it('разные заголовки дают разные fingerprint', () => {
+    const fp1 = buildHeadlineFingerprint('Title A', 'https://a.com/post', undefined, 'ai_tech');
+    const fp2 = buildHeadlineFingerprint('Title B', 'https://a.com/post', undefined, 'ai_tech');
+    expect(fp1).not.toBe(fp2);
+  });
+
+  it('dedupeParsedHeadlines схлопывает дубли по canonicalUrl', () => {
+    const h1 = makeHeadline({ source: 'Source A', description: 'Short.' });
+    const h2 = makeHeadline({ source: 'Source B', description: 'A longer and more detailed description of the AI tool release.' });
+
+    const result = dedupeParsedHeadlines([h1, h2]);
+    expect(result.headlines).toHaveLength(1);
+    expect(result.duplicatesFiltered).toBe(1);
+    expect(result.headlines[0]!.alternateSources.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('dedupeParsedHeadlines схлопывает дубли по fingerprint при разных URL', () => {
+    const h1 = makeHeadline({
+      url: 'https://source-a.com/ai-tool',
+      canonicalUrl: 'https://source-a.com/ai-tool',
+      sourceDomain: 'source-a.com',
+      fingerprint: buildHeadlineFingerprint('AI Coding Tool Released', 'https://source-a.com/ai-tool', undefined, 'ai_tech'),
+    });
+    const h2 = makeHeadline({
+      url: 'https://source-b.com/ai-tool',
+      canonicalUrl: 'https://source-b.com/ai-tool',
+      sourceDomain: 'source-b.com',
+      fingerprint: buildHeadlineFingerprint('AI Coding Tool Released', 'https://source-b.com/ai-tool', undefined, 'ai_tech'),
+    });
+
+    const result = dedupeParsedHeadlines([h1, h2]);
+    // Разные домены → разные fingerprint → НЕ дедупликация (это правильно)
+    expect(result.headlines).toHaveLength(2);
+  });
+
+  it('dedupeParsedHeadlines с пустым массивом', () => {
+    const result = dedupeParsedHeadlines([]);
+    expect(result.headlines).toEqual([]);
+    expect(result.duplicatesFiltered).toBe(0);
+  });
+
+  it('dedupeParsedHeadlines сохраняет уникальные заголовки', () => {
+    const h1 = makeHeadline({
+      title: 'Unique A', url: 'https://a.com/1', canonicalUrl: 'https://a.com/1',
+      fingerprint: buildHeadlineFingerprint('Unique A', 'https://a.com/1', undefined, 'ai_tech'),
+    });
+    const h2 = makeHeadline({
+      title: 'Unique B', url: 'https://b.com/2', canonicalUrl: 'https://b.com/2',
+      fingerprint: buildHeadlineFingerprint('Unique B', 'https://b.com/2', undefined, 'ai_tech'),
+    });
+    const h3 = makeHeadline({
+      title: 'Unique C', url: 'https://c.com/3', canonicalUrl: 'https://c.com/3',
+      fingerprint: buildHeadlineFingerprint('Unique C', 'https://c.com/3', undefined, 'ai_tech'),
+    });
+
+    const result = dedupeParsedHeadlines([h1, h2, h3]);
+    expect(result.headlines).toHaveLength(3);
+    expect(result.duplicatesFiltered).toBe(0);
+  });
+});

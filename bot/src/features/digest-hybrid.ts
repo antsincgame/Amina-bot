@@ -10,7 +10,9 @@ import { digestCacheRepo, type DigestDeliveryKind, type PreparedDigestCachePaylo
 import { escapeMarkdown, inlineCitations } from '../telegram/format.js';
 
 const HYBRID_DIGEST_VERSION = 'hybrid-v3';
-const HYBRID_CACHE_TTL_MS = 90 * 60 * 1000;
+import { HYBRID_DIGEST_CACHE_TTL } from '../config/constants.js';
+
+const HYBRID_CACHE_TTL_MS = HYBRID_DIGEST_CACHE_TTL;
 export type HybridDigestSearchMode = 'full' | 'skip';
 
 interface HybridDigestBuildOptions {

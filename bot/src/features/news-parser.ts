@@ -649,14 +649,15 @@ function buildDescriptionFallback(
 export function buildHeadlineFingerprint(
   title: string,
   canonicalUrl: string,
-  pubDate: string | undefined,
+  _pubDate: string | undefined,
   category: ParsedHeadlineCategory,
 ): string {
   const parsedCanonical = canonicalizeHeadlineUrl(canonicalUrl);
   const parsedDomain = extractDomain(parsedCanonical);
-  const normalizedDate = pubDate ? pubDate.slice(0, 10) : 'no-date';
+  // Дата убрана из fingerprint: разные источники парсят разные даты/таймзоны,
+  // что ломает дедупликацию. title + domain + category достаточно уникальны.
   return createHash('sha1')
-    .update([normalizeTitle(title), parsedDomain, normalizedDate, category].join('|'))
+    .update([normalizeTitle(title), parsedDomain, category].join('|'))
     .digest('hex');
 }
 
@@ -845,11 +846,15 @@ async function withPromiseTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
   scope: string,
+  abortController?: AbortController,
 ): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | null = null;
   try {
     const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(() => reject(createTimeoutError(scope, timeoutMs)), timeoutMs);
+      timeoutId = setTimeout(() => {
+        abortController?.abort();
+        reject(createTimeoutError(scope, timeoutMs));
+      }, timeoutMs);
     });
     return await Promise.race([promise, timeoutPromise]);
   } finally {
