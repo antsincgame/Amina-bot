@@ -188,10 +188,14 @@ function buildTranslationPrompt(items: DescriptionTranslationInput[]): string {
     return `[${id}] "${headline.title}" | ${desc}${excerpt ? ` | ${excerpt}` : ''}`;
   }).join('\n');
 
-  return `Переведи на русский. Для каждого пункта верни title (заголовок) и description (о чём статья, 1-2 предложения).
-Названия продуктов (Claude Code, Cursor и т.д.) оставь латиницей. Всё остальное — по-русски.
+  return `Переведи каждый пункт на РУССКИЙ язык. ОБЯЗАТЕЛЬНО верни оба поля:
+- title: переведённый заголовок на русском
+- description: о чём статья, 1-2 предложения на русском
+
+Названия продуктов (Claude Code, Cursor, Copilot, DeepSeek и т.д.) оставь на латинице.
+Японские, корейские, китайские заголовки — ОБЯЗАТЕЛЬНО перевести на русский.
 Максимум ${MAX_LOCALIZED_DESCRIPTION_LENGTH} символов на description.
-Ответ — ТОЛЬКО JSON: [{"id":0,"title":"...","description":"..."}]
+Ответ — ТОЛЬКО JSON: [{"id":0,"title":"заголовок на русском","description":"описание на русском"}]
 
 ${lines}`;
 }
@@ -203,7 +207,7 @@ function isTranslationAcceptable(text: string): boolean {
   const cyrillicCount = countMatches(normalized, /[а-яё]/gi);
   if (cyrillicCount < 4) return false;
 
-  const cjkCount = countMatches(normalized, /[\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/g);
+  const cjkCount = countMatches(normalized, /[\u3000-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af\uff00-\uffef]/g);
   if (cjkCount > cyrillicCount) return false;
 
   return true;
@@ -392,10 +396,19 @@ export async function localizeParsedHeadlines(headlines: ParsedHeadline[]): Prom
       const translation = translatedBatch.get(id);
       if (!translation) return;
 
+      const needsTitle = needsTitleTranslation(headline.title);
+      const translatedTitle = translation.title && isTranslationAcceptable(translation.title)
+        ? translation.title
+        : undefined;
+
       localizedHeadlines[id] = {
         ...headline,
         description: translation.description,
-        ...(translation.title ? { translatedTitle: translation.title } : {}),
+        ...(translatedTitle ? { translatedTitle } : {}),
+        // Если title нужен перевод но LLM не дал title — ставим description как fallback hint
+        ...(needsTitle && !translatedTitle && translation.description
+          ? { translatedTitle: translation.description.split('.')[0]?.slice(0, 120) || headline.title }
+          : {}),
       };
     });
   }
