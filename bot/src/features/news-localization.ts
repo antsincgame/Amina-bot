@@ -267,57 +267,69 @@ function mergeTranslationMaps(target: Map<number, AcceptedTranslation>, source: 
   });
 }
 
-// FIX: Cerebras как провайдер перевода + убран priority='background' (дросселирует запросы)
+const TRANSLATION_PROVIDERS = ['cerebras', 'groq'] as const;
+
+async function callTranslationProvider(
+  items: DescriptionTranslationInput[],
+  provider: string,
+  scope: string,
+): Promise<Map<number, AcceptedTranslation>> {
+  const response = await withTimeout(
+    aiService.chat(
+      [
+        {
+          role: 'system',
+          content: 'Переводчик технических новостей. Ответ: только JSON-массив. Никакого другого текста.',
+        },
+        {
+          role: 'user',
+          content: buildTranslationPrompt(items),
+        },
+      ],
+      'telegram',
+      undefined,
+      {
+        promptMode: 'passthrough',
+        maxTokens: DESCRIPTION_TRANSLATION_MAX_TOKENS,
+        temperature: DESCRIPTION_TRANSLATION_TEMPERATURE,
+        providerOverride: provider,
+        priority: 'background',
+      },
+    ),
+    DESCRIPTION_TRANSLATION_TIMEOUT_MS,
+    `News localization ${scope} (${provider})`,
+  );
+
+  const parsed = parseTranslationResponse(response.content);
+  if (parsed.length === 0) return new Map<number, AcceptedTranslation>();
+
+  return acceptTranslatedDescriptions(items, parsed);
+}
+
 async function translateDescriptionBatch(
   items: DescriptionTranslationInput[],
   scope: 'batch' | 'retry_batch' | 'single',
 ): Promise<Map<number, AcceptedTranslation>> {
   if (items.length === 0) return new Map<number, AcceptedTranslation>();
 
-  try {
-    const response = await withTimeout(
-      aiService.chat(
-        [
-          {
-            role: 'system',
-            content: 'Переводчик технических новостей. Ответ: только JSON-массив. Никакого другого текста.',
-          },
-          {
-            role: 'user',
-            content: buildTranslationPrompt(items),
-          },
-        ],
-        'telegram',
-        undefined,
-        {
-          promptMode: 'passthrough',
-          maxTokens: DESCRIPTION_TRANSLATION_MAX_TOKENS,
-          temperature: DESCRIPTION_TRANSLATION_TEMPERATURE,
-          providerOverride: 'cerebras',
-          priority: 'background',
-        },
-      ),
-      DESCRIPTION_TRANSLATION_TIMEOUT_MS,
-      `News localization ${scope}`,
-    );
-
-    const parsed = parseTranslationResponse(response.content);
-    if (parsed.length === 0) {
-      appLogger.warn({ batchSize: items.length, scope }, 'News localization: model returned empty translation batch');
-      return new Map<number, AcceptedTranslation>();
+  for (const provider of TRANSLATION_PROVIDERS) {
+    try {
+      const accepted = await callTranslationProvider(items, provider, scope);
+      if (accepted.size > 0) {
+        if (provider !== 'cerebras') {
+          appLogger.info({ provider, batchSize: items.length, accepted: accepted.size, scope }, 'News localization: fallback provider succeeded');
+        }
+        return accepted;
+      }
+      appLogger.warn({ provider, batchSize: items.length, scope }, 'News localization: provider returned no acceptable translations, trying next');
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      appLogger.warn({ error: errorMsg, provider, batchSize: items.length, scope }, 'News localization: provider failed, trying next');
     }
+  }
 
-    const accepted = acceptTranslatedDescriptions(items, parsed);
-    if (accepted.size === 0) {
-      appLogger.warn({ batchSize: items.length, scope }, 'News localization: batch returned no acceptable Russian translations');
-      return new Map<number, AcceptedTranslation>();
-    }
-
-    return accepted;
-  } catch (error) {
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    appLogger.warn({ error: errorMsg, batchSize: items.length, scope }, 'News localization: translation batch failed');
-    return new Map<number, AcceptedTranslation>();
+  appLogger.warn({ batchSize: items.length, scope, providers: TRANSLATION_PROVIDERS }, 'News localization: all providers failed');
+  return new Map<number, AcceptedTranslation>();
   }
 }
 
