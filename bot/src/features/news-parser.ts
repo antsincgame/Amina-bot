@@ -1582,7 +1582,9 @@ export async function parseNewsFromSite(siteOrUrl: NewsSite | string): Promise<P
           }
         }
       }
-    } catch { /* продолжаем */ }
+    } catch (err) {
+      appLogger.debug({ error: err instanceof Error ? err.message : String(err), siteUrl }, 'RSS autodiscovery failed');
+    }
   }
 
   // Шаг 3: стандартные RSS пути

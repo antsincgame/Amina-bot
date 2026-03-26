@@ -203,10 +203,19 @@ export async function registerNewsRoutes(server: FastifyInstance): Promise<void>
       reply: FastifyReply,
     ) => {
       try {
-        const { url, name, category, language } = request.body ?? {};
-        if (!url) {
-          return reply.code(400).send({ success: false, error: 'URL is required' });
+        const suggestSchema = z.object({
+          url: z.string().url(),
+          name: z.string().min(1).max(500),
+          category: z.string().max(50).optional(),
+          language: z.string().max(10).optional(),
+        });
+
+        const parsed = suggestSchema.safeParse(request.body);
+        if (!parsed.success) {
+          return reply.code(400).send({ success: false, error: parsed.error.issues[0]?.message ?? 'Invalid input' });
         }
+
+        const { url, name, category, language } = parsed.data;
 
         const prompt = [
           'Ты — SEO-эксперт и специалист по AI/tech новостям.',

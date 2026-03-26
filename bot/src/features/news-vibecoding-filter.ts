@@ -24,9 +24,10 @@ const POSITIVE_KEYWORDS: readonly string[] = [
   'cursor ide', 'cursor ai', 'cursor editor',
   'windsurf', 'codeium',
   'copilot', 'github copilot',
-  'claude code', 'claude dev',
+  'claude code', 'claude dev', 'claude opus', 'anthropic',
   'aider', 'continue.dev',
   'bolt.new', 'v0.dev', 'v0 dev',
+  'lovable', 'same.dev',
   'replit agent', 'replit ai',
   'devin', 'cognition ai',
   'sourcegraph cody', 'cody ai',
@@ -51,7 +52,23 @@ const POSITIVE_KEYWORDS: readonly string[] = [
   'code generation model',
   'codex', 'starcoder', 'codellama', 'code llama',
   'deepseek coder', 'qwen coder',
+  'test generation', 'bug detection',
+  'openai codex',
 ] as const;
+
+const CJK_POSITIVE_KEYWORDS: readonly string[] = [
+  'コード生成', 'バイブコーディング', 'AIペアプログラミング',
+  'ジェネレーティブAI', '開発生産性', 'AIエージェント',
+  '바이브 코딩', '코드 생성', 'AI 개발자 도구',
+  '생성형 AI', '프롬프트 엔지니어링', '개발 자동화',
+  'AI编程', '代码生成', 'AI 编程助手',
+  '大模型', '智能体', '模型融合',
+] as const;
+
+const CJK_POSITIVE_REGEX = new RegExp(
+  CJK_POSITIVE_KEYWORDS.map(escapeRegex).join('|'),
+  'gi',
+);
 
 const NEGATIVE_KEYWORDS: readonly string[] = [
   'layoffs', 'layoff', 'уволен', 'увольнен',
@@ -104,6 +121,21 @@ export function scoreHeadlineRelevance(headline: ParsedHeadline): number {
     const excerptPositiveMatches = excerpt.match(POSITIVE_REGEX);
     if (excerptPositiveMatches) {
       score += excerptPositiveMatches.length * EXCERPT_POSITIVE_SCORE;
+    }
+  }
+
+  // CJK-aware scoring: проверяем CJK keywords для азиатских источников
+  if (score === 0) {
+    CJK_POSITIVE_REGEX.lastIndex = 0;
+    const cjkTitleMatches = `${headline.title} ${headline.description}`.match(CJK_POSITIVE_REGEX);
+    if (cjkTitleMatches) {
+      score += cjkTitleMatches.length * TITLE_DESCRIPTION_POSITIVE_SCORE;
+    } else if (excerpt) {
+      CJK_POSITIVE_REGEX.lastIndex = 0;
+      const cjkExcerptMatches = excerpt.match(CJK_POSITIVE_REGEX);
+      if (cjkExcerptMatches) {
+        score += cjkExcerptMatches.length * EXCERPT_POSITIVE_SCORE;
+      }
     }
   }
 

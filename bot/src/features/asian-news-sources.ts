@@ -8,6 +8,15 @@ const JAPAN_AI_KEYWORDS = [
   'Copilot',
   'Cursor',
   'LLM',
+  'Claude Code',
+  'Windsurf',
+  'コード生成',
+  'AIペアプログラミング',
+  '開発生産性',
+  'ジェネレーティブAI',
+  'Gemini Code Assist',
+  'Devin',
+  'Bolt',
 ];
 
 const KOREA_AI_KEYWORDS = [
@@ -19,6 +28,14 @@ const KOREA_AI_KEYWORDS = [
   'LLM',
   'Copilot',
   'Cursor',
+  'Claude Code',
+  'Windsurf',
+  '코드 생성',
+  'AI 개발자 도구',
+  '프롬프트 엔지니어링',
+  '개발 자동화',
+  'Gemini Code Assist',
+  'Devin',
 ];
 
 const CHINA_AI_KEYWORDS = [
@@ -35,6 +52,16 @@ const CHINA_AI_KEYWORDS = [
   'Qwen',
   'Copilot',
   'Cursor',
+  'Claude',
+  'Claude Code',
+  'Windsurf',
+  '模型融合',
+  'LoRA',
+  'Fine-tuning',
+  '向量数据库',
+  '代码审查',
+  'Devin',
+  'Gemini Code Assist',
 ];
 
 export const ASIA_NEWS_SOURCE_MANIFEST: NewsSite[] = [

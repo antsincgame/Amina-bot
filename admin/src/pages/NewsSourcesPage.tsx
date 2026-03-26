@@ -307,16 +307,21 @@ const NewsSourcesPage = () => {
     });
   };
 
+  const matchesCategory = (s: NewsSite, cat: NewsSourceCategory): boolean =>
+    cat === 'city_local'
+      ? !s.category || s.category === 'city_local'
+      : s.category === cat;
+
   const filteredSites = categoryFilter === 'all'
     ? sites
-    : sites.filter(s => s.category === categoryFilter);
+    : sites.filter(s => matchesCategory(s, categoryFilter));
 
   const categoryCounts = {
     all: sites.length,
-    ai_tech: sites.filter(s => s.category === 'ai_tech').length,
-    city_local: sites.filter(s => !s.category || s.category === 'city_local').length,
-    community: sites.filter(s => s.category === 'community').length,
-    asia_tech: sites.filter(s => s.category === 'asia_tech').length,
+    ai_tech: sites.filter(s => matchesCategory(s, 'ai_tech')).length,
+    city_local: sites.filter(s => matchesCategory(s, 'city_local')).length,
+    community: sites.filter(s => matchesCategory(s, 'community')).length,
+    asia_tech: sites.filter(s => matchesCategory(s, 'asia_tech')).length,
   };
 
   if (isLoading) {
