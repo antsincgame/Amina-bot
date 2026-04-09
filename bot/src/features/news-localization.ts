@@ -61,7 +61,7 @@ function hasLongLatinPhrase(text: string): boolean {
   return matches.some(match => countMatches(match, /[a-z]/gi) >= 12);
 }
 
-function hasCjkCharacters(text: string): boolean {
+export function hasCjkCharacters(text: string): boolean {
   return /[\u3000-\u9fff\u3040-\u309f\u30a0-\u30ff\uac00-\ud7af\uff00-\uffef]/.test(text);
 }
 
@@ -343,7 +343,6 @@ async function translateDescriptionBatch(
 
   appLogger.warn({ batchSize: items.length, scope, providers }, 'News localization: all providers failed');
   return new Map<number, AcceptedTranslation>();
-  }
 }
 
 // FIX: убрано `|| items.length <= 1` — single-item батчи тоже должны иметь retry

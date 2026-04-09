@@ -2,7 +2,7 @@ import { webSearch } from '../ai/websearch.js';
 import { summarizeWithAminaCore } from '../ai/amina-core-runtime.js';
 import { appLogger } from '../config/logger.js';
 import { countMergedDuplicates, groupHeadlinesByCategory } from './news-parser.js';
-import { shouldTranslateHeadlineDescription } from './news-localization.js';
+import { shouldTranslateHeadlineDescription, hasCjkCharacters, hasMostlyRussianText } from './news-localization.js';
 import type { ParsedHeadline } from '../../../shared/types/index.js';
 
 export interface DigestSearchResult {
@@ -159,10 +159,30 @@ function buildAlternateSourcesText(headline: ParsedHeadline): string {
   return `Альтернативные источники: ${headline.alternateSources.join(', ')}.`;
 }
 
+function sanitizeDescriptionForDisplay(headline: ParsedHeadline): string {
+  if (!hasCjkCharacters(headline.description)) return headline.description;
+
+  if (headline.articleExcerpt && !hasCjkCharacters(headline.articleExcerpt) && headline.articleExcerpt.length > 10) {
+    const trimmed = headline.articleExcerpt.slice(0, 200).trimEnd();
+    return trimmed.length < headline.articleExcerpt.length ? `${trimmed}…` : trimmed;
+  }
+
+  if (headline.translatedTitle) {
+    return `${headline.translatedTitle} — подробнее в источнике.`;
+  }
+
+  if (!hasCjkCharacters(headline.title)) {
+    return `${headline.title} — подробнее в источнике ${headline.source}.`;
+  }
+
+  return `Материал от ${headline.source} — описание доступно по ссылке.`;
+}
+
 export function renderStructuredHeadlineItem(headline: ParsedHeadline, number: number): string {
   const displayTitle = headline.translatedTitle ?? headline.title;
   const metaLine = `Источник: ${headline.source} · Категория: ${formatCategoryLabel(headline.category)}`;
-  const descriptionLine = `Описание: ${headline.description}`;
+  const description = sanitizeDescriptionForDisplay(headline);
+  const descriptionLine = `Описание: ${description}`;
   const alternateSources = buildAlternateSourcesText(headline);
 
   return [
@@ -224,6 +244,53 @@ export function renderFallbackHeadlineBatch(
   const heading = formatBatchHeading(sectionTitle, batchIndex, totalBatches);
   const body = renderStructuredHeadlineList(batch.headlines, batch.startNumber);
   return `## ${heading}\n\n${body}`;
+}
+
+function salvageAnnotatedDescriptions(
+  text: string,
+  headlines: ParsedHeadline[],
+): Map<number, { description: string; title?: string }> {
+  const salvaged = new Map<number, { description: string; title?: string }>();
+  const linkMatches = [...text.matchAll(MARKDOWN_LINK_REGEX)];
+  const descriptionMatches = [...text.matchAll(/^Описание:\s*(.+)$/gm)];
+  const titleMatches = [...text.matchAll(/^\*\*\d+\.\s*\[([^\]]+)\]/gm)];
+
+  for (let i = 0; i < Math.min(linkMatches.length, descriptionMatches.length); i++) {
+    const url = linkMatches[i]?.[2];
+    const description = descriptionMatches[i]?.[1]?.trim();
+    if (!url || !description) continue;
+
+    const headlineIndex = headlines.findIndex(h => h.url === url);
+    if (headlineIndex === -1) continue;
+
+    const headline = headlines[headlineIndex]!;
+    if (shouldTranslateHeadlineDescription({ ...headline, description })) continue;
+
+    const entry: { description: string; title?: string } = { description };
+    const titleText = titleMatches[i]?.[1]?.trim();
+    if (titleText && hasMostlyRussianText(titleText)) {
+      entry.title = titleText;
+    }
+    salvaged.set(headlineIndex, entry);
+  }
+
+  return salvaged;
+}
+
+function applyPartialSalvage(
+  batch: HeadlineBatch,
+  salvaged: Map<number, { description: string; title?: string }>,
+): HeadlineBatch {
+  const improved = batch.headlines.map((headline, index) => {
+    const fix = salvaged.get(index);
+    if (!fix) return headline;
+    return {
+      ...headline,
+      description: fix.description,
+      ...(fix.title && !headline.translatedTitle ? { translatedTitle: fix.title } : {}),
+    };
+  });
+  return { headlines: improved, startNumber: batch.startNumber };
 }
 
 async function annotateHeadlineBatch(
@@ -296,8 +363,14 @@ ${inputLines}`;
     const content = response.content.trim();
     const normalizedContent = content.startsWith('##') ? content : `## ${heading}\n\n${content}`;
     if (!content || !validateAnnotatedBatch(normalizedContent, batch.headlines)) {
-      appLogger.warn({ sectionTitle, batchIndex, totalBatches }, 'Digest: annotated batch validation failed, using fallback');
-      return renderFallbackHeadlineBatch(sectionTitle, mode, batchIndex, totalBatches, batch);
+      const salvaged = content ? salvageAnnotatedDescriptions(normalizedContent, batch.headlines) : new Map();
+      const salvageCount = salvaged.size;
+      appLogger.warn(
+        { sectionTitle, batchIndex, totalBatches, salvaged: salvageCount },
+        `Digest: annotated batch validation failed, ${salvageCount > 0 ? 'partial salvage applied' : 'using full fallback'}`,
+      );
+      const effectiveBatch = salvageCount > 0 ? applyPartialSalvage(batch, salvaged) : batch;
+      return renderFallbackHeadlineBatch(sectionTitle, mode, batchIndex, totalBatches, effectiveBatch);
     }
     return normalizedContent;
   } catch (error) {
