@@ -18,6 +18,13 @@ vi.mock('../ai/openrouter.js', () => ({
   },
 }));
 
+vi.mock('../db/appwrite.js', () => ({
+  settingsRepo: {
+    get: vi.fn().mockResolvedValue(null),
+    set: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
 import type { ParsedHeadline } from '../../../shared/types/index.js';
 import { aiService } from '../ai/openrouter.js';
 import {
@@ -761,6 +768,7 @@ describe('News Parser — Russian description localization', () => {
   it('не вызывает LLM для уже русских descriptions', async () => {
     const headlines = [
       buildLocalizedHeadline({
+        title: 'Новый AI-агент для код-ревью',
         description: 'Новый AI-агент автоматизирует код-ревью и рутинные задачи команды.',
         language: 'ru',
       }),
@@ -801,7 +809,7 @@ describe('News Parser — Russian description localization', () => {
     expect(mockedAiService.chat).toHaveBeenCalledTimes(1);
     expect(mockedAiService.chat.mock.calls[0]?.[3]).toMatchObject({
       promptMode: 'passthrough',
-      maxTokens: 1400,
+      maxTokens: 2000,
       temperature: 0.2,
     });
     expect(localized[0]?.description).toContain('выпустила нового coding-агента');

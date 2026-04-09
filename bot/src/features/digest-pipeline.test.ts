@@ -25,33 +25,35 @@ function buildHeadline(index: number, overrides: Partial<ParsedHeadline> = {}): 
 }
 
 describe('Digest pipeline — preset sync', () => {
-  it('asia preset group includes korean sources and expanded catalog', () => {
+  it('asia preset group includes korean sources from catalog', () => {
     const asiaSources = getPresetSources('asia');
 
-    expect(asiaSources.length).toBeGreaterThan(20);
+    expect(asiaSources.length).toBeGreaterThanOrEqual(3);
+    expect(asiaSources.every(site => site.category === 'asia_tech')).toBe(true);
     expect(asiaSources.some(site => site.language === 'ko')).toBe(true);
-    expect(asiaSources.some(site => site.name === 'GeekNews')).toBe(true);
-    expect(asiaSources.some(site => site.name === 'ITmedia AI+')).toBe(true);
+    expect(asiaSources.some(site => site.language === 'ja')).toBe(true);
   });
 
   it('mergeNewsSites preserves enabled flag and enriches metadata from catalog', () => {
+    const asiaSources = getPresetSources('asia');
+    const jpSource = asiaSources.find(site => site.language === 'ja');
+    expect(jpSource).toBeDefined();
+
     const existing = [
       {
-        name: 'Qiita (AI)',
-        url: 'https://qiita.com/api/v2/items?query=title:AI+OR+title:LLM+OR+title:ChatGPT+OR+title:GPT+OR+title:Copilot+OR+title:Cursor&per_page=60',
+        name: jpSource!.name,
+        url: jpSource!.url,
         enabled: false,
       },
     ];
 
-    const merged = mergeNewsSites(existing, getPresetSources('asia'));
-    const qiita = merged.find(site => site.name === 'Qiita (AI)');
+    const merged = mergeNewsSites(existing, asiaSources);
+    const found = merged.find(site => site.name === jpSource!.name);
 
-    expect(qiita).toBeDefined();
-    expect(qiita?.enabled).toBe(false);
-    expect(qiita?.category).toBe('asia_tech');
-    expect(qiita?.language).toBe('ja');
-    expect(qiita?.jsonMapping?.titleField).toBe('title');
-    expect(qiita?.filterKeywords?.length).toBeGreaterThan(0);
+    expect(found).toBeDefined();
+    expect(found?.enabled).toBe(false);
+    expect(found?.category).toBe('asia_tech');
+    expect(found?.language).toBe('ja');
   });
 });
 

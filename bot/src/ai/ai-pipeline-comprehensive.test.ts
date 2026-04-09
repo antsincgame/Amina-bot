@@ -23,6 +23,8 @@ vi.mock('../config/index.js', () => ({
       maxTokens: 2048,
       temperature: 0.7,
     },
+    groq: { baseUrl: 'https://api.groq.com/openai/v1', apiKey: '', model: '' },
+    cerebras: { baseUrl: 'https://api.cerebras.ai/v1', apiKey: '', model: '' },
     perplexity: { apiKey: '' },
     botUrl: 'https://amina-bot.test',
     isDev: false,
@@ -30,7 +32,8 @@ vi.mock('../config/index.js', () => ({
   },
   getApiKeys: vi.fn().mockResolvedValue({
     openrouter: 'test-openrouter-key',
-    groq: 'test-groq-key',
+    groq: '',
+    cerebras: '',
   }),
 }));
 
@@ -98,6 +101,14 @@ vi.mock('./persona.js', () => ({
 
 vi.mock('./self-core-kernel.js', () => ({
   getActivePromptContent: vi.fn().mockResolvedValue(''),
+}));
+
+vi.mock('./provider-health.js', () => ({
+  isProviderAvailable: vi.fn().mockReturnValue(true),
+  hasBackgroundBudget: vi.fn().mockReturnValue(true),
+  recordSuccess: vi.fn(),
+  recordFailure: vi.fn(),
+  trackRequest: vi.fn(),
 }));
 
 vi.mock('../features/telephony/service/telephony-runtime-config.js', () => ({
@@ -274,14 +285,15 @@ describe('1. OpenRouter AI Service', () => {
       await expect(aiService.chat([{ role: 'user', content: 'Hi' }])).rejects.toThrow(AppError);
     });
 
-    it('бросает RATE_LIMIT при "rate limit" без кода', async () => {
+    it('запускает fallback при "rate limit" без кода и бросает ALL_MODELS_FAILED когда все упали', async () => {
       mockCreate.mockRejectedValueOnce(new Error('rate limit hit'));
+      mockFetch.mockResolvedValueOnce(makeFreeModelsApiResponse([]));
       try {
         await aiService.chat([{ role: 'user', content: 'Hi' }]);
         expect.unreachable('');
       } catch (e) {
         expect(e).toBeInstanceOf(AppError);
-        expect((e as AppError).code).toBe('RATE_LIMIT');
+        expect((e as AppError).code).toBe('ALL_MODELS_FAILED');
       }
     });
 

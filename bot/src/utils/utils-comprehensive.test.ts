@@ -24,6 +24,7 @@ vi.mock('../config/constants.js', () => ({
   MAX_CONVERSATION_MESSAGES: 1000,
   VALIDATE_LIMIT_MIN: 1,
   VALIDATE_LIMIT_MAX: 1000,
+  RATE_LIMIT_CLEANUP_INTERVAL_MS: 300_000,
 }));
 
 // Импорт validation после мока constants, чтобы zod подхватил правильно

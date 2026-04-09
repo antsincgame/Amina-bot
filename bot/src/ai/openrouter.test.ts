@@ -52,12 +52,15 @@ vi.mock('../config/index.js', () => ({
       maxTokens: 2048,
       temperature: 0.7,
     },
+    groq: { baseUrl: 'https://api.groq.com/openai/v1', apiKey: '', model: '' },
+    cerebras: { baseUrl: 'https://api.cerebras.ai/v1', apiKey: '', model: '' },
     isDev: false,
     isProd: false,
   },
   getApiKeys: vi.fn().mockResolvedValue({
     openrouter: 'test-openrouter-key',
-    groq: 'test-groq-key',
+    groq: '',
+    cerebras: '',
   }),
 }));
 
@@ -70,8 +73,41 @@ vi.mock('../config/logger.js', () => ({
   },
 }));
 
+vi.mock('../config/ai-proxy.js', () => ({
+  getProxyHeaders: vi.fn(() => ({})),
+  getOpenRouterBaseUrl: vi.fn(() => 'https://openrouter.ai/api/v1'),
+  getGroqBaseUrl: vi.fn(() => 'https://api.groq.com/openai/v1'),
+  getCerebrasBaseUrl: vi.fn(() => 'https://api.cerebras.ai/v1'),
+}));
+
+vi.mock('../config/constants.js', () => ({
+  HEALTH_AI_TIMEOUT_MS: 5000,
+}));
+
 vi.mock('./persona.js', () => ({
   buildPersonaSystemPrompt: buildPersonaSystemPromptMock,
+}));
+
+vi.mock('./self-core-kernel.js', () => ({
+  getActivePromptContent: vi.fn().mockResolvedValue(''),
+}));
+
+vi.mock('./lmstudio.js', () => ({
+  getAIProvider: vi.fn().mockResolvedValue('openrouter'),
+  getLMStudioConfig: vi.fn().mockResolvedValue(null),
+  getLMStudioClient: vi.fn(),
+  checkLMStudioHealth: vi.fn().mockResolvedValue(false),
+  isLMStudioCircuitOpen: vi.fn().mockReturnValue(false),
+  recordLMStudioFailure: vi.fn(),
+  recordLMStudioSuccess: vi.fn(),
+}));
+
+vi.mock('./provider-health.js', () => ({
+  isProviderAvailable: vi.fn().mockReturnValue(true),
+  hasBackgroundBudget: vi.fn().mockReturnValue(true),
+  recordSuccess: vi.fn(),
+  recordFailure: vi.fn(),
+  trackRequest: vi.fn(),
 }));
 
 vi.mock('../features/telephony/service/telephony-runtime-config.js', () => ({
