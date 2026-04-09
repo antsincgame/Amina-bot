@@ -11,6 +11,7 @@ import { getProxyHeaders, getOpenRouterBaseUrl, getGroqBaseUrl } from '../../con
 import { aiLogger } from '../../config/logger.js';
 import { settingsRepo } from '../../db/index.js';
 import { getProviderHealthStatus, resetProvider } from '../../ai/provider-health.js';
+import { getLMStudioConfig, getLMStudioHealthStatus, isLMStudioCircuitOpen, getLMStudioCircuitStatus } from '../../ai/lmstudio.js';
 
 interface ProviderTestResult {
   provider: string;
@@ -23,6 +24,10 @@ interface ProviderTestResult {
   keySource?: string;
   keyPreview?: string;
   diagnosis?: string;
+  tunnelUrl?: string;
+  healthSource?: string;
+  heartbeatAt?: string;
+  circuitBreaker?: { state: string; recentFailures: number; cooldownRemainingSec: number };
 }
 
 function maskKey(key: string): string {
@@ -196,6 +201,72 @@ async function testAppwrite(): Promise<ProviderTestResult> {
   }
 }
 
+async function testLMStudio(): Promise<ProviderTestResult> {
+  const start = Date.now();
+  const cfg = await getLMStudioConfig();
+  if (!cfg) {
+    return {
+      provider: 'lmstudio',
+      status: 'skipped',
+      latencyMs: 0,
+      diagnosis: 'LM Studio не настроен. Укажите lmstudio_url в настройках или зарегистрируйте туннель.',
+    };
+  }
+
+  const cbStatus = getLMStudioCircuitStatus();
+  const cbInfo = cbStatus.recentFailures > 0 || cbStatus.state !== 'closed' ? cbStatus : undefined;
+
+  if (isLMStudioCircuitOpen()) {
+    return {
+      provider: 'lmstudio',
+      status: 'error',
+      latencyMs: 0,
+      model: cfg.model || undefined,
+      tunnelUrl: cfg.url,
+      circuitBreaker: cbInfo,
+      diagnosis: `Circuit breaker открыт (${cbStatus.cooldownRemainingSec}с) — LM Studio временно отключён из-за серии ошибок.`,
+    };
+  }
+
+  try {
+    const healthStatus = await getLMStudioHealthStatus(cfg);
+    const latencyMs = Date.now() - start;
+    const base: Partial<ProviderTestResult> = {
+      provider: 'lmstudio',
+      latencyMs,
+      model: cfg.model || '(авто)',
+      tunnelUrl: cfg.url,
+      healthSource: healthStatus.source ?? undefined,
+      heartbeatAt: healthStatus.heartbeatAt ?? undefined,
+      keySource: cfg.apiKey === 'lm-studio' ? 'default' : 'custom',
+      circuitBreaker: cbInfo,
+    };
+
+    if (healthStatus.healthy) {
+      const sourceLabel = healthStatus.source === 'heartbeat' ? 'OK (heartbeat)' : 'OK (direct probe)';
+      return { ...base, status: 'ok', detail: sourceLabel } as ProviderTestResult;
+    }
+
+    return {
+      ...base,
+      status: 'error',
+      error: 'Health check failed',
+      diagnosis: `LM Studio не отвечает по ${cfg.url}. Убедитесь что сервер запущен и туннель активен.`,
+    } as ProviderTestResult;
+  } catch (err) {
+    const d = diagnoseError(err, 'LM Studio');
+    return {
+      provider: 'lmstudio',
+      status: 'error',
+      latencyMs: Date.now() - start,
+      model: cfg.model || undefined,
+      tunnelUrl: cfg.url,
+      circuitBreaker: cbInfo,
+      ...d,
+    };
+  }
+}
+
 export async function registerProvidersRoutes(server: FastifyInstance): Promise<void> {
   server.get('/providers/test', async (_request: FastifyRequest, reply: FastifyReply) => {
     // Сбрасываем кэш ключей чтобы подхватить свежие из БД
@@ -217,6 +288,7 @@ export async function registerProvidersRoutes(server: FastifyInstance): Promise<
     else { tests.push(Promise.resolve({ provider: 'groq_chat', status: 'skipped' as const, latencyMs: 0, diagnosis: 'Ключ не задан. Укажите GROQ_API_KEY.' })); tests.push(Promise.resolve({ provider: 'groq_whisper', status: 'skipped' as const, latencyMs: 0, diagnosis: 'Для Whisper нужен Groq ключ.' })); }
     if (perplexityKey) { tests.push(testPerplexity(perplexityKey)); }
     else { tests.push(Promise.resolve({ provider: 'perplexity', status: 'skipped' as const, latencyMs: 0, diagnosis: 'Ключ не задан. Укажите PERPLEXITY_API_KEY.' })); }
+    tests.push(testLMStudio());
 
     const totalStart = Date.now();
     const results = await Promise.allSettled(tests);

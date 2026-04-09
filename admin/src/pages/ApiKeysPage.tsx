@@ -745,6 +745,7 @@ const PROVIDER_DISPLAY: Record<string, { label: string; icon: string }> = {
   groq_whisper: { label: 'Groq Whisper (Аудио)', icon: '🎙️' },
   perplexity: { label: 'Perplexity (Поиск)', icon: '🌐' },
   vision: { label: 'Vision (Зрение)', icon: '👁️' },
+  lmstudio: { label: 'LM Studio (Локальная)', icon: '🖥️' },
 };
 
 interface TestResult {
@@ -758,6 +759,10 @@ interface TestResult {
   keySource?: string;
   keyPreview?: string;
   diagnosis?: string;
+  tunnelUrl?: string;
+  healthSource?: string;
+  heartbeatAt?: string;
+  circuitBreaker?: { state: string; recentFailures: number; cooldownRemainingSec: number };
 }
 
 const ProviderTestPanel = () => {
@@ -886,6 +891,19 @@ const ProviderTestPanel = () => {
                       )}
                       {r.detail && r.status === 'ok' && <p className="text-xs text-green-500/70 truncate">{r.detail}</p>}
                       {r.keySource && <p className="text-xs text-gray-600">Ключ: {r.keyPreview} — {r.keySource}</p>}
+                      {r.tunnelUrl && (
+                        <p className="text-xs text-gray-600 truncate">
+                          Туннель: <span className="text-gray-400">{r.tunnelUrl}</span>
+                          {r.healthSource && <span className="text-gray-500"> · {r.healthSource}</span>}
+                          {r.heartbeatAt && <span className="text-gray-500"> · heartbeat {new Date(r.heartbeatAt).toLocaleTimeString('ru-RU')}</span>}
+                        </p>
+                      )}
+                      {r.circuitBreaker && r.circuitBreaker.state !== 'closed' && (
+                        <p className="text-xs text-red-400 mt-0.5">
+                          ⚡ CB: {r.circuitBreaker.state} · {r.circuitBreaker.recentFailures} ошибок
+                          {r.circuitBreaker.cooldownRemainingSec > 0 && ` · cooldown ${r.circuitBreaker.cooldownRemainingSec}с`}
+                        </p>
+                      )}
                       {r.diagnosis && r.status !== 'ok' && (
                         <p className="text-xs text-amber-400 mt-0.5">{r.diagnosis}</p>
                       )}
