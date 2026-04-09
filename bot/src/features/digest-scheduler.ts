@@ -21,6 +21,7 @@ import { parseAllConfiguredSites } from './news-parser.js';
 import { summarizeWithAminaCore } from '../ai/amina-core-runtime.js';
 import { config } from '../config/index.js';
 import { appLogger } from '../config/logger.js';
+import { DIGEST_CACHE_TTL } from '../config/constants.js';
 import { buildDigestClosing, buildParserOnlyNewsBundle, getTimeGreeting, webSearchWithRetry } from './digest-core.js';
 import { buildHybridDigest, buildHybridDigestDeliveryKey } from './digest-hybrid.js';
 import { digestDeliveryRepo, type DigestDeliveryKind } from './digest-hybrid-repo.js';
@@ -82,7 +83,6 @@ export function stopDigestScheduler(): void {
 
 // ---- Кэш полных текстов дайджестов для озвучки ----
 const digestFullTextCache = new Map<string, { text: string; createdAt: number }>();
-const DIGEST_CACHE_TTL_MS = 30 * 60 * 1000; // 30 минут
 let nextDigestId = 1;
 const DIGEST_MESSAGE_DELAY_MS = 250;
 const DIGEST_SEND_RETRY_ATTEMPTS = 4;
@@ -105,7 +105,7 @@ function cacheDigestText(text: string): string {
 export function getDigestFullText(id: string): string | null {
   const entry = digestFullTextCache.get(id);
   if (!entry) return null;
-  if (Date.now() - entry.createdAt > DIGEST_CACHE_TTL_MS) {
+  if (Date.now() - entry.createdAt > DIGEST_CACHE_TTL) {
     digestFullTextCache.delete(id);
     return null;
   }

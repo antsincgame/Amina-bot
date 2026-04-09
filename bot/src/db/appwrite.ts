@@ -17,6 +17,7 @@ import {
   checkArraySize,
   MAX_CONVERSATION_MESSAGES,
 } from '../utils/validation.js';
+import { SETTINGS_CACHE_TTL } from '../config/constants.js';
 
 // --------------------------------------------
 // Appwrite Client Singleton
@@ -49,8 +50,11 @@ export const getAppwrite = (): Databases => {
 
 /** Raw client access for other modules (storage, etc.) */
 export const getAppwriteClient = (): Client => {
-  if (!appwriteClient) getAppwrite(); // init
-  return appwriteClient!;
+  if (!appwriteClient) getAppwrite();
+  if (!appwriteClient) {
+    throw new Error('Appwrite client initialization failed');
+  }
+  return appwriteClient;
 };
 
 // --------------------------------------------
@@ -130,7 +134,6 @@ function docToAnalyticsEvent(doc: StoredAnalyticsDoc): AnalyticsEvent {
 // --------------------------------------------
 
 const SETTINGS_CACHE = new Map<string, { value: string | null; ts: number }>();
-const SETTINGS_CACHE_TTL = 5 * 60 * 1000;
 const SETTINGS_CACHE_MAX_SIZE = 100;
 
 export const settingsRepo = {

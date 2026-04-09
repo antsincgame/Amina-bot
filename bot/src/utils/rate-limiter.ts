@@ -5,6 +5,7 @@
  */
 
 import { serverLogger } from '../config/logger.js';
+import { RATE_LIMIT_CLEANUP_INTERVAL_MS } from '../config/constants.js';
 
 interface RateLimitEntry {
   count: number;
@@ -138,13 +139,11 @@ export function createRateLimitKey(
 export function cleanupRateLimitStore(): void {
   const now = Date.now();
   let cleaned = 0;
-  
+  const maxWindow = Math.max(
+    ...Object.values(RATE_LIMIT_CONFIGS).map(c => c.windowMs)
+  );
+
   for (const [key, entry] of rateLimitStore.entries()) {
-    // Найти максимальное окно
-    const maxWindow = Math.max(
-      ...Object.values(RATE_LIMIT_CONFIGS).map(c => c.windowMs)
-    );
-    
     if (now - entry.windowStart > maxWindow * 2) {
       rateLimitStore.delete(key);
       cleaned++;
@@ -161,7 +160,7 @@ let cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
 export function startCleanupInterval(): void {
   if (!cleanupInterval) {
-    cleanupInterval = setInterval(cleanupRateLimitStore, 5 * 60 * 1000);
+    cleanupInterval = setInterval(cleanupRateLimitStore, RATE_LIMIT_CLEANUP_INTERVAL_MS);
     // Позволяет процессу завершиться даже если интервал активен
     if (cleanupInterval && typeof cleanupInterval === 'object' && 'unref' in cleanupInterval) {
       cleanupInterval.unref();

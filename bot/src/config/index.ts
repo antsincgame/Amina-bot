@@ -79,29 +79,21 @@ const envSchema = z.object({
 
 const parseEnv = () => {
   const result = envSchema.safeParse(process.env);
+  if (result.success) return result.data;
 
-  if (!result.success) {
-    const errors = JSON.stringify(result.error.flatten().fieldErrors);
+  const errors = JSON.stringify(result.error.flatten().fieldErrors);
 
-    if (process.env.NODE_ENV === 'test') {
-      throw new Error(`Invalid env vars: ${errors}`);
-    }
+  if (process.env.NODE_ENV === 'test') {
+    throw new Error(`Invalid env vars: ${errors}`);
+  }
 
-    if (process.env.NODE_ENV === 'production' && !process.env.APPWRITE_API_KEY) {
-      throw new Error(
-        `FATAL: APPWRITE_API_KEY is required in production. Validation errors: ${errors}`
-      );
-    }
-
-    const fallback = envSchema.safeParse(process.env);
-    if (fallback.success) return fallback.data;
-
+  if (process.env.NODE_ENV === 'production' && !process.env.APPWRITE_API_KEY) {
     throw new Error(
-      `FATAL: environment configuration is invalid and fallback failed. Errors: ${errors}`
+      `FATAL: APPWRITE_API_KEY is required in production. Validation errors: ${errors}`
     );
   }
 
-  return result.data;
+  throw new Error(`FATAL: environment configuration is invalid. Errors: ${errors}`);
 };
 
 // --------------------------------------------
