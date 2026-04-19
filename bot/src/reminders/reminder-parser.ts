@@ -259,24 +259,25 @@ function parseAbsoluteTime(text: string, now: Date): AbsoluteTimeMatch | null {
   const local = getLocalParts(now);
 
   // "завтра [в HH:MM]" / "завтра утром/вечером/днём/ночью"
+  // ВАЖНО: «завтра» = следующий КАЛЕНДАРНЫЙ день в серверной TZ, а не +24 часа в UTC.
+  // На границе DST или если DAY_MS в UTC попадает в другой календарный день локально —
+  // старая логика сдвигала напоминание на лишний/недостающий день.
+  // Поэтому работаем с local-частями: day+1, и пусть buildDateInServerTZ нормализует
+  // переход через конец месяца (например, 31+1 → следующий месяц).
   const tomorrowMatch = text.match(/завтра\s*(?:(утром|днём|вечером|ночью)|(в\s+\d{1,2}[:.]\s*\d{2}))?/i);
   if (tomorrowMatch) {
-    const tomorrow = new Date(now.getTime() + DAY_MS);
-    const tLocal = getLocalParts(tomorrow);
     const resolved = resolveTimeOfDay(tomorrowMatch[1], text, 9, 0);
-    const date = buildDateInServerTZ(tLocal.year, tLocal.month, tLocal.day, resolved.hour, resolved.minute, 0, now);
+    const date = buildDateInServerTZ(local.year, local.month, local.day + 1, resolved.hour, resolved.minute, 0, now);
     return { date, label: `завтра, в ${formatLocalTime(date)}` };
   }
 
-  // "послезавтра [в HH:MM]"
+  // "послезавтра [в HH:MM]" — то же по локальному дню
   const dayAfterMatch = text.match(/послезавтра/i);
   if (dayAfterMatch) {
-    const dayAfter = new Date(now.getTime() + 2 * DAY_MS);
-    const daLocal = getLocalParts(dayAfter);
     const timeOverride = parseOptionalTime(text);
     const hour = timeOverride?.hour ?? 9;
     const minute = timeOverride?.minute ?? 0;
-    const date = buildDateInServerTZ(daLocal.year, daLocal.month, daLocal.day, hour, minute, 0, now);
+    const date = buildDateInServerTZ(local.year, local.month, local.day + 2, hour, minute, 0, now);
     return { date, label: `послезавтра, в ${formatLocalTime(date)}` };
   }
 

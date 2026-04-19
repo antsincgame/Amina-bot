@@ -32,9 +32,12 @@ export const userPrefsRepo = {
       const doc = r.documents[0]!;
       if ((firstName && doc.first_name !== firstName) || doc.chat_id !== chatId) {
         try {
-          await aw.updateDocument(DB_ID(), COLL, doc.$id, {
+          const updated = await aw.updateDocument(DB_ID(), COLL, doc.$id, {
             first_name: firstName ?? doc.first_name, chat_id: chatId, updated_at: new Date().toISOString(),
           });
+          // Возвращаем СВЕЖИЙ документ, иначе вызывающий код видит старые first_name/chat_id
+          // сразу после успешного апдейта.
+          return docToPrefs(updated);
         } catch (err) { dbLogger.warn({ error: err, userId }, 'Failed to update prefs fields'); }
       }
       return docToPrefs(doc);
@@ -71,12 +74,35 @@ export const userPrefsRepo = {
   },
 
   async getDigestUsers(hour: number): Promise<UserPreferences[]> {
+    // Пагинация: при >100 подписчиков на один час старая версия молча отдавала
+    // первые 100 — остальные пользователи никогда не получали дайджест.
+    // Сетевую ошибку больше не глотаем тихо: лог + проброс наверх, иначе планировщик
+    // считает «нет подписчиков», хотя на самом деле БД недоступна.
     try {
-      const r = await (await getAW()).listDocuments(DB_ID(), COLL, [
-        Query.equal('digest_enabled', true), Query.equal('digest_hour', hour), Query.limit(100),
-      ]);
-      return r.documents.map(docToPrefs);
-    } catch { return []; }
+      const aw = await getAW();
+      const all: UserPreferences[] = [];
+      const PAGE = 100;
+      let offset = 0;
+      while (true) {
+        const r = await aw.listDocuments(DB_ID(), COLL, [
+          Query.equal('digest_enabled', true),
+          Query.equal('digest_hour', hour),
+          Query.limit(PAGE),
+          Query.offset(offset),
+        ]);
+        all.push(...r.documents.map(docToPrefs));
+        if (r.documents.length < PAGE) break;
+        offset += PAGE;
+        if (offset > 10_000) {
+          dbLogger.warn({ hour, offset }, 'getDigestUsers: too many subscribers, stopping pagination');
+          break;
+        }
+      }
+      return all;
+    } catch (error) {
+      dbLogger.error({ error, hour }, 'getDigestUsers failed — returning empty list, scheduler will retry');
+      return [];
+    }
   },
 
   async listDigestCities(limit = 20): Promise<string[]> {

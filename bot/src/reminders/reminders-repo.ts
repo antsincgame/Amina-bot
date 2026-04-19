@@ -84,8 +84,11 @@ export const remindersRepo = {
       const allDue: Reminder[] = [];
       let offset = 0;
       const PAGE_SIZE = 100;
-      const MAX_PAGES = 5;
-      let reachedPageLimitWithFullPage = false;
+      // Раньше было MAX_PAGES = 5 (потолок 500 напоминаний). При большом бэклоге часть due
+      // не обрабатывалась и пользователи не получали уведомления.
+      // Поднимаем потолок до 50 страниц (5000 напоминаний/цикл) — этого достаточно для практики,
+      // и есть страховка на случай битого индекса.
+      const MAX_PAGES = 50;
 
       for (let page = 0; page < MAX_PAGES; page++) {
         const r = await aw.listDocuments(DB_ID(), COLL, [
@@ -96,19 +99,14 @@ export const remindersRepo = {
           Query.offset(offset),
         ]);
         allDue.push(...r.documents.map(docToReminder));
-        if (r.documents.length < PAGE_SIZE) break;
-        if (page === MAX_PAGES - 1) {
-          reachedPageLimitWithFullPage = true;
-        }
+        if (r.documents.length < PAGE_SIZE) return allDue;
         offset += PAGE_SIZE;
       }
 
-      if (reachedPageLimitWithFullPage) {
-        dbLogger.warn(
-          { returnedCount: allDue.length, pageSize: PAGE_SIZE, maxPages: MAX_PAGES },
-          'Reminder due scan reached hard page limit; backlog may be truncated'
-        );
-      }
+      dbLogger.warn(
+        { returnedCount: allDue.length, pageSize: PAGE_SIZE, maxPages: MAX_PAGES },
+        'Reminder due scan reached hard page limit; remaining backlog will be picked up next cycle',
+      );
 
       return allDue;
     } catch (error) {

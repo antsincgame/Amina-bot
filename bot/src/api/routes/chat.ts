@@ -60,8 +60,19 @@ export async function registerChatRoutes(server: FastifyInstance): Promise<void>
       if (body.conversationId) {
         try {
           conversation = await conversationsRepo.get(body.conversationId);
-        } catch {
-          return reply.code(404).send({ error: 'Conversation not found' });
+        } catch (err) {
+          // Раньше любая ошибка (Appwrite down, сеть, права доступа) выглядела как «404 not found».
+          // Различаем «реально не найдена» по тексту/типу ошибки и сетевые сбои.
+          const errMsg = err instanceof Error ? err.message : String(err);
+          if (errMsg.includes('not found') || errMsg.includes('404')) {
+            return reply.code(404).send({ error: 'Conversation not found' });
+          }
+          aiLogger.error({ error: err, conversationId: body.conversationId }, 'API chat: failed to load conversation');
+          return reply.code(502).send({
+            success: false,
+            error: 'Failed to load conversation',
+            message: errMsg,
+          });
         }
       } else {
         conversation = await conversationsRepo.getOrCreate(userId, effectiveChannel, {

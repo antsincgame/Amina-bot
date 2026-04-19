@@ -68,15 +68,22 @@ export function checkRateLimit(
   const config = RATE_LIMIT_CONFIGS[type];
   const now = Date.now();
   
-  // Evict oldest entries if store is too large
+  // Evict oldest entries by windowStart, не «первые по порядку вставки».
+  // Старая логика снимала ключи в порядке вставки — это могло выгнать активного клиента,
+  // оставив устаревшие записи и спровоцировав ложные 429 на ровном месте.
   if (rateLimitStore.size >= MAX_STORE_ENTRIES) {
-    const toDelete = rateLimitStore.size - MAX_STORE_ENTRIES + 100;
-    const iter = rateLimitStore.keys();
-    for (let i = 0; i < toDelete; i++) {
-      const k = iter.next().value;
-      if (k) rateLimitStore.delete(k);
+    const targetSize = MAX_STORE_ENTRIES - 100;
+    const toDelete = rateLimitStore.size - targetSize;
+    // Сортируем по возрасту окна (самые старые — первые на удаление).
+    // Для 10К записей это O(N log N) и происходит редко (только при overflow).
+    const sorted = [...rateLimitStore.entries()].sort((a, b) => a[1].windowStart - b[1].windowStart);
+    let evicted = 0;
+    for (const [k] of sorted) {
+      if (evicted >= toDelete) break;
+      rateLimitStore.delete(k);
+      evicted++;
     }
-    serverLogger.warn({ evicted: toDelete, storeSize: rateLimitStore.size }, 'Rate limit store eviction');
+    serverLogger.warn({ evicted, storeSize: rateLimitStore.size }, 'Rate limit store eviction (oldest by windowStart)');
   }
 
   // Получить или создать запись

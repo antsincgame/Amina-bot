@@ -517,10 +517,17 @@ async function resolveExecutionPlan(
   };
 }
 
-const THINKING_TAG_RE = /<think>[\s\S]*?<\/think>\s*/g;
+// Поддерживаем оба распространённых варианта тегов рассуждений:
+// <think>...</think> (DeepSeek-R1, Qwen3) и <thinking>...</thinking> (Anthropic-стиль).
+// Также убираем «висячий» открывающий тег без закрывающего (модель оборвалась в reasoning).
+const THINKING_TAG_RE = /<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>\s*/gi;
+const DANGLING_THINKING_RE = /<think(?:ing)?>[\s\S]*$/i;
 
 function stripThinkingTags(text: string): string {
-  const cleaned = text.replace(THINKING_TAG_RE, '').trim();
+  const cleaned = text
+    .replace(THINKING_TAG_RE, '')
+    .replace(DANGLING_THINKING_RE, '')
+    .trim();
   return cleaned || text;
 }
 
@@ -894,6 +901,7 @@ export const aiService = {
 
     let streamClient: OpenAI;
     let streamModel: string;
+    let usingLmStudio = false;
 
     const provider = executionPlan.provider;
     if (provider === 'lmstudio' || provider === 'auto') {
@@ -908,6 +916,7 @@ export const aiService = {
           if (healthy) {
             streamClient = getLMStudioClient(lmConfig);
             streamModel = lmConfig.model;
+            usingLmStudio = true;
           } else if (provider === 'lmstudio') {
             throw new AppError('LMSTUDIO_OFFLINE', 'LM Studio недоступна.');
           } else {
@@ -965,6 +974,12 @@ export const aiService = {
         }
       }
 
+      // Учитываем успех/неуспех LM Studio для circuit breaker, иначе streaming-ошибки
+      // не размыкают/не закрывают цепь и расходятся с метриками chat().
+      if (usingLmStudio) {
+        recordLMStudioSuccess();
+      }
+
       return {
         content: stripThinkingTags(fullContent),
         model: streamModel,
@@ -972,6 +987,9 @@ export const aiService = {
         finish_reason: finishReason,
       };
     } catch (error) {
+      if (usingLmStudio) {
+        recordLMStudioFailure();
+      }
       aiLogger.error({ error }, 'Streaming AI request failed');
       throw error;
     }

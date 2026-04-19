@@ -245,6 +245,12 @@ const getAIErrorMessages = (): Record<string, string> => ({
   ALL_MODELS_FAILED: '🔄 Все бесплатные модели AI заняты.\n\nПопробуй через 30 секунд или напиши /start для сброса.',
   RACE_TIMEOUT: '⏰ AI отвечает слишком долго.\n\nПопробуй ещё раз — может повезёт быстрее!',
   SERVER_ERROR: '🔧 Сервер AI временно недоступен.\n\nПопробуй через несколько минут.',
+  // Ошибки LM Studio через тоннель — раньше показывались как «произошла ошибка»,
+  // что мешало отличить проблемы туннеля от проблем моделей.
+  LMSTUDIO_OFFLINE: '🔌 Локальная модель (LM Studio) сейчас недоступна.\n\nПроверь, что туннель запущен и LM Studio открыт. Я попробую ответить через облако.',
+  LMSTUDIO_ERROR: '⚙️ Локальная модель ответила ошибкой.\n\nПерезапусти LM Studio или проверь логи туннеля. Пока попробую другой провайдер.',
+  LMSTUDIO_NOT_CONFIGURED: '🔧 LM Studio не настроена.\n\nАдминистратор должен указать URL и модель в админке.',
+  RATE_BUDGET_EXHAUSTED: '⏸️ Фоновый лимит провайдера превышен. Попробуй ещё раз через минуту.',
 });
 
 const AI_ERROR_DEFAULT = '😔 Извини, произошла ошибка. Попробуй ещё раз.';
@@ -354,8 +360,23 @@ export const processMessageThroughAI = async (
     }
   }
 
-  // Get AI response
-  let aiResponse = await aiService.chat(messagesForAI, 'telegram', fullContext, aiOptions);
+  // Get AI response.
+  // Если AI упал — откатываем последнее user-сообщение из session.messageHistory,
+  // иначе при следующей попытке модель будет видеть «дыру» (вопрос без ответа),
+  // отвечать невпопад и думать, что предыдущий вопрос остался без реакции.
+  let aiResponse: AIResponse;
+  try {
+    aiResponse = await aiService.chat(messagesForAI, 'telegram', fullContext, aiOptions);
+  } catch (err) {
+    if (
+      ctx.session.messageHistory.length > 0
+      && ctx.session.messageHistory[ctx.session.messageHistory.length - 1]?.role === 'user'
+      && ctx.session.messageHistory[ctx.session.messageHistory.length - 1]?.content === userText
+    ) {
+      ctx.session.messageHistory.pop();
+    }
+    throw err;
+  }
 
   // Enhance with web search if AI is uncertain
   if (!webSearchContext) {

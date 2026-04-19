@@ -401,6 +401,21 @@ async function sendHeartbeat() {
     return 'ok';
   }
   if (status === 0) return 'no_response';
+  // 401/403 — токен невалиден; 409 — URL не зарегистрирован/не совпадает с текущим у бота;
+  // 503 — серверная ошибка. По аналогии с tunnel.ps1 различаем эти ветки,
+  // чтобы попытаться перезарегистрировать URL вместо немедленного перезапуска туннеля.
+  if (status === 401 || status === 403) {
+    try { const json = JSON.parse(body); if (json.error) warn(`Heartbeat auth error: ${json.error}`); } catch {}
+    return 'auth_error';
+  }
+  if (status === 409) {
+    try { const json = JSON.parse(body); if (json.error) warn(`Heartbeat conflict: ${json.error}`); } catch {}
+    return 'conflict';
+  }
+  if (status === 503) {
+    try { const json = JSON.parse(body); if (json.error) warn(`Heartbeat server error: ${json.error}`); } catch {}
+    return 'server_error';
+  }
   try { const json = JSON.parse(body); if (json.error) warn(`Heartbeat error: ${json.error}`); } catch {}
   return 'unhealthy';
 }
@@ -502,14 +517,50 @@ async function monitorTunnel() {
     if (hb === 'ok') {
       unhealthyCount = 0; STATE.botRegistered = true;
       dim(`${ts} tunnel: ok | lmstudio: ok | bot: ok`);
+    } else if (hb === 'conflict') {
+      // Бот не знает наш URL (например, перезапустился) — пробуем перерегистрировать на месте,
+      // не убивая cloudflared и не меняя URL. Это поведение совпадает с tunnel.ps1.
+      STATE.botRegistered = false;
+      warn(`${ts} tunnel: ok | lmstudio: ok | bot: conflict — re-registering URL`);
+      if (await registerUrl(currentUrl)) {
+        unhealthyCount = 0;
+        STATE.botRegistered = true;
+        log('Re-registered after conflict');
+      } else {
+        unhealthyCount++;
+        if (unhealthyCount >= CONFIG.unhealthyThreshold) {
+          err('Re-register failed repeatedly — restarting tunnel');
+          if (tunnelProcess && tunnelProcess.exitCode === null) tunnelProcess.kill();
+          tunnelProcess = null; STATE.tunnel = false;
+          return 3;
+        }
+      }
+    } else if (hb === 'auth_error') {
+      err(`${ts} tunnel: ok | lmstudio: ok | bot: auth failed — check LMSTUDIO_TUNNEL_TOKEN`);
+      STATE.botRegistered = false;
+      // Бесконечно перезапускать туннель смысла нет — токен надо менять руками.
+      // Просто ждём, не убивая туннель: пользователь поправит .env и токен заработает.
+      await sleep(60_000);
+    } else if (hb === 'server_error') {
+      warn(`${ts} tunnel: ok | lmstudio: ok | bot: server error 503 — backing off`);
+      STATE.botRegistered = false;
+      await sleep(30_000);
     } else if (hb === 'unhealthy') {
       unhealthyCount++; STATE.botRegistered = false;
       warn(`${ts} tunnel: ok | lmstudio: ok | bot: UNHEALTHY (${unhealthyCount}/${CONFIG.unhealthyThreshold})`);
       if (unhealthyCount >= CONFIG.unhealthyThreshold) {
-        err('Restarting tunnel...');
-        if (tunnelProcess && tunnelProcess.exitCode === null) tunnelProcess.kill();
-        tunnelProcess = null; STATE.tunnel = false;
-        return 3;
+        // Перед рестартом туннеля ещё раз попробуем перерегистрироваться — может, URL
+        // у бота просто потерялся (например, бот переразвернулся).
+        if (await registerUrl(currentUrl)) {
+          unhealthyCount = 0;
+          STATE.botRegistered = true;
+          log('Recovered registration after unhealthy threshold');
+        } else {
+          err('Restarting tunnel...');
+          if (tunnelProcess && tunnelProcess.exitCode === null) tunnelProcess.kill();
+          tunnelProcess = null; STATE.tunnel = false;
+          return 3;
+        }
       }
     } else {
       dim(`${ts} tunnel: ok | lmstudio: ok | bot: no response`);

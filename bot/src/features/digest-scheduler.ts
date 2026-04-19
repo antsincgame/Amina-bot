@@ -364,12 +364,29 @@ export async function sendHybridDigestNow(
  * Сбросить кеш отправленных дайджестов в полночь (по серверному TZ)
  */
 function msUntilNextMidnight(tz: string): number {
+  // Раньше: `new Date('YYYY-MM-DDT00:00:00')` интерпретировался как ЛОКАЛЬНОЕ время процесса,
+  // а не как полночь в `tz`. На контейнере с TZ=UTC и `tz='Europe/Moscow'` это давало
+  // расхождение в 3 часа — SENT_TODAY сбрасывался не в московскую полночь.
+  // Теперь вычисляем реальные UTC-смещения для нужного TZ и берём ближайшую полночь.
   const now = new Date();
-  const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' });
-  const todayStr = formatter.format(now);
-  const tomorrowDate = new Date(`${todayStr}T00:00:00`);
-  tomorrowDate.setDate(tomorrowDate.getDate() + 1);
-  const diffMs = tomorrowDate.getTime() - now.getTime();
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: tz,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).formatToParts(now).reduce<Record<string, string>>((acc, p) => {
+    if (p.type !== 'literal') acc[p.type] = p.value;
+    return acc;
+  }, {});
+
+  const hour = Number(parts.hour ?? '0');
+  const minute = Number(parts.minute ?? '0');
+  const second = Number(parts.second ?? '0');
+
+  // Сколько мс уже прошло сегодня в нужном TZ — столько же осталось до конца секунды,
+  // плюс остаток до полуночи завтра.
+  const dayMs = 24 * 60 * 60 * 1000;
+  const elapsedTodayInTz = ((hour * 60 + minute) * 60 + second) * 1000;
+  const diffMs = dayMs - elapsedTodayInTz;
   return diffMs > 0 ? diffMs : 60_000;
 }
 

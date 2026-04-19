@@ -62,9 +62,18 @@ export const getAppwriteClient = (): Client => {
 // --------------------------------------------
 
 /** Parse JSON string attribute safely */
-function parseJson<T>(raw: string | null | undefined, fallback: T): T {
+function parseJson<T>(raw: string | null | undefined, fallback: T, context?: { collection?: string; field?: string; docId?: string }): T {
   if (!raw) return fallback;
-  try { return JSON.parse(raw); } catch { return fallback; }
+  try { return JSON.parse(raw); } catch (err) {
+    // Раньше битые данные молча превращались в [] / {} — это маскирует реальную потерю смысла.
+    // Логируем (raw усекаем, чтобы не спамить килобайтами) — пользователь увидит проблему в логах.
+    const preview = raw.length > 200 ? `${raw.slice(0, 200)}…(${raw.length - 200}b more)` : raw;
+    dbLogger.warn(
+      { error: err instanceof Error ? err.message : String(err), preview, ...context },
+      'parseJson: malformed JSON in DB field — falling back to default',
+    );
+    return fallback;
+  }
 }
 
 type AppwriteDoc = Models.Document & Record<string, unknown>;
@@ -98,8 +107,16 @@ function docToConversation(doc: AppwriteDoc): Conversation {
     id: doc.$id,
     user_id: doc.user_id,
     channel: doc.channel,
-    messages: parseJson<Message[]>(doc.messages, []),
-    metadata: parseJson(doc.metadata, {}),
+    messages: parseJson<Message[]>(
+      typeof doc.messages === 'string' ? doc.messages : null,
+      [],
+      { collection: COLL.conversations, field: 'messages', docId: doc.$id },
+    ),
+    metadata: parseJson(
+      typeof doc.metadata === 'string' ? doc.metadata : null,
+      {},
+      { collection: COLL.conversations, field: 'metadata', docId: doc.$id },
+    ),
     created_at: doc.created_at || doc.$createdAt,
     updated_at: doc.updated_at || doc.$updatedAt,
   };
@@ -245,15 +262,21 @@ export const settingsRepo = {
     if (missedKeys.length === 0) return result;
 
     try {
-      // Appwrite Query.equal supports array → IN behavior
-      const resp = await getAppwrite().listDocuments(DB_ID(), COLL.settings, [
-        Query.equal('key', missedKeys),
-        Query.limit(100),
-      ]);
+      // Appwrite Query.equal supports array → IN behavior, но Query.limit(100) с массивом >100
+      // тихо обрежет результат — часть значений уйдёт в кэш как null, что даст ложные «нет настройки».
+      // Поэтому разбиваем missedKeys на чанки по 100 и объединяем.
+      const CHUNK = 100;
+      for (let i = 0; i < missedKeys.length; i += CHUNK) {
+        const chunk = missedKeys.slice(i, i + CHUNK);
+        const resp = await getAppwrite().listDocuments(DB_ID(), COLL.settings, [
+          Query.equal('key', chunk),
+          Query.limit(chunk.length),
+        ]);
 
-      for (const doc of resp.documents) {
-        result[doc.key] = doc.value;
-        SETTINGS_CACHE.set(doc.key, { value: doc.value, ts: now });
+        for (const doc of resp.documents) {
+          result[doc.key] = doc.value;
+          SETTINGS_CACHE.set(doc.key, { value: doc.value, ts: now });
+        }
       }
 
       for (const key of missedKeys) {
@@ -264,7 +287,7 @@ export const settingsRepo = {
 
       return result;
     } catch (error) {
-      dbLogger.error({ error, keys: missedKeys }, 'Failed to get settings');
+      dbLogger.error({ error, keysCount: missedKeys.length }, 'Failed to get settings');
       throw error;
     }
   },
@@ -365,15 +388,30 @@ export const promptsRepo = {
       const targetPrompt = await getAppwrite().getDocument(DB_ID(), COLL.prompts, id);
       const targetChannel = String(targetPrompt.channel ?? 'all') as Prompt['channel'];
 
-      const currentResult = await getAppwrite().listDocuments(DB_ID(), COLL.prompts, [
-        Query.equal('is_active', true),
-        Query.equal('channel', targetChannel),
-        Query.limit(100),
-      ]);
+      // Пагинация: при >100 активных промптов одного канала старая логика оставляла часть
+      // is_active=true, ломая инвариант «один активный на канал».
+      const previousActive: AppwriteDoc[] = [];
+      let offset = 0;
+      const PAGE = 100;
+      while (true) {
+        const page = await getAppwrite().listDocuments(DB_ID(), COLL.prompts, [
+          Query.equal('is_active', true),
+          Query.equal('channel', targetChannel),
+          Query.limit(PAGE),
+          Query.offset(offset),
+        ]);
+        previousActive.push(...page.documents);
+        if (page.documents.length < PAGE) break;
+        offset += PAGE;
+        if (offset > 5000) {
+          dbLogger.warn({ targetChannel, offset }, 'setActive: too many active prompts, stopping pagination');
+          break;
+        }
+      }
 
-      const previousActiveId = currentResult.documents[0]?.$id;
+      const previousActiveIds = previousActive.map(doc => doc.$id);
 
-      for (const doc of currentResult.documents) {
+      for (const doc of previousActive) {
         await getAppwrite().updateDocument(DB_ID(), COLL.prompts, doc.$id, {
           is_active: false,
         });
@@ -386,15 +424,15 @@ export const promptsRepo = {
           updated_at: new Date().toISOString(),
         });
       } catch (error) {
-        // Rollback
+        // Rollback всех ранее активных промптов канала, не только первого.
         dbLogger.error({ error, id }, 'Failed to set active prompt — rolling back');
-        if (previousActiveId) {
+        for (const prevId of previousActiveIds) {
           try {
-            await getAppwrite().updateDocument(DB_ID(), COLL.prompts, previousActiveId, {
+            await getAppwrite().updateDocument(DB_ID(), COLL.prompts, prevId, {
               is_active: true,
             });
           } catch (rollbackErr) {
-            dbLogger.error({ error: rollbackErr }, 'Rollback also failed');
+            dbLogger.error({ error: rollbackErr, prevId }, 'Rollback failed for one prompt');
           }
         }
         throw error;
@@ -409,6 +447,31 @@ export const promptsRepo = {
 // --------------------------------------------
 // Conversations Repository
 // --------------------------------------------
+
+// In-process mutex по conversationId. Защищает от lost-update при параллельных addMessage:
+// раньше два одновременных вызова читали один и тот же снимок messages[] и второй upsert
+// затирал первый, теряя сообщения. Multi-worker race это НЕ покрывает — для этого нужен
+// серверный механизм; но 99% потерь происходят именно внутри одного процесса.
+const CONVERSATION_LOCKS = new Map<string, Promise<void>>();
+
+async function withConversationLock<T>(conversationId: string, fn: () => Promise<T>): Promise<T> {
+  const previous = CONVERSATION_LOCKS.get(conversationId) ?? Promise.resolve();
+  let release!: () => void;
+  const done = new Promise<void>((resolve) => { release = resolve; });
+  // Цепочка: ждём предыдущую операцию, затем нашу. В Map кладём именно нашу done-метку,
+  // чтобы потом по идентичности снять её и не утечь Map'у.
+  const chained = previous.then(() => done);
+  CONVERSATION_LOCKS.set(conversationId, chained);
+  try {
+    await previous;
+    return await fn();
+  } finally {
+    release();
+    if (CONVERSATION_LOCKS.get(conversationId) === chained) {
+      CONVERSATION_LOCKS.delete(conversationId);
+    }
+  }
+}
 
 export const conversationsRepo = {
   async getOrCreate(
@@ -453,45 +516,52 @@ export const conversationsRepo = {
   async addMessage(conversationId: string, message: Message): Promise<void> {
     checkArraySize([message], 1, 'Cannot add empty message');
 
-    // Read-modify-write with retry (Appwrite has no atomic JSON append)
-    const maxRetries = 3;
-    let lastError: Error | null = null;
+    // In-process mutex: read-modify-write больше не теряет сообщения при параллельных вызовах
+    // в одном процессе. Retry оставлен для сетевых сбоев.
+    return withConversationLock(conversationId, async () => {
+      const maxRetries = 3;
+      let lastError: Error | null = null;
 
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        const doc = await getAppwrite().getDocument(DB_ID(), COLL.conversations, conversationId);
-        let currentMessages: Message[] = parseJson(doc.messages, []);
-
-        // Авто-обрезка: если достигнут лимит — удаляем старые сообщения вместо throw
-        if (currentMessages.length >= MAX_CONVERSATION_MESSAGES) {
-          const trimTo = Math.floor(MAX_CONVERSATION_MESSAGES * 0.5);
-          dbLogger.info(
-            { conversationId, was: currentMessages.length, trimTo },
-            'Conversation auto-trimmed (exceeded max messages)'
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          const doc = await getAppwrite().getDocument(DB_ID(), COLL.conversations, conversationId);
+          let currentMessages: Message[] = parseJson(
+            typeof doc.messages === 'string' ? doc.messages : null,
+            [],
+            { collection: COLL.conversations, field: 'messages', docId: conversationId },
           );
-          currentMessages = currentMessages.slice(-trimTo);
-        }
 
-        const messages = [...currentMessages, message];
+          // Авто-обрезка: если достигнут лимит — удаляем старые сообщения вместо throw
+          if (currentMessages.length >= MAX_CONVERSATION_MESSAGES) {
+            const trimTo = Math.floor(MAX_CONVERSATION_MESSAGES * 0.5);
+            dbLogger.info(
+              { conversationId, was: currentMessages.length, trimTo },
+              'Conversation auto-trimmed (exceeded max messages)'
+            );
+            currentMessages = currentMessages.slice(-trimTo);
+          }
 
-        await getAppwrite().updateDocument(DB_ID(), COLL.conversations, conversationId, {
-          messages: JSON.stringify(messages),
-          updated_at: new Date().toISOString(),
-        });
+          const messages = [...currentMessages, message];
 
-        dbLogger.debug({ conversationId, attempt }, 'Message added');
-        return;
-      } catch (error) {
-        lastError = error as Error;
-        dbLogger.warn({ error, attempt, conversationId }, 'Retry adding message');
-        if (attempt < maxRetries) {
-          await new Promise(r => setTimeout(r, 100 * Math.pow(2, attempt)));
+          await getAppwrite().updateDocument(DB_ID(), COLL.conversations, conversationId, {
+            messages: JSON.stringify(messages),
+            updated_at: new Date().toISOString(),
+          });
+
+          dbLogger.debug({ conversationId, attempt }, 'Message added');
+          return;
+        } catch (error) {
+          lastError = error as Error;
+          dbLogger.warn({ error, attempt, conversationId }, 'Retry adding message');
+          if (attempt < maxRetries) {
+            await new Promise(r => setTimeout(r, 100 * Math.pow(2, attempt)));
+          }
         }
       }
-    }
 
-    dbLogger.error({ error: lastError, conversationId }, 'Failed to add message after retries');
-    throw lastError;
+      dbLogger.error({ error: lastError, conversationId }, 'Failed to add message after retries');
+      throw lastError;
+    });
   },
 
   async getMessages(conversationId: string, limit = 20): Promise<Message[]> {
@@ -518,15 +588,17 @@ export const conversationsRepo = {
   },
 
   async clearMessages(conversationId: string): Promise<void> {
-    try {
-      await getAppwrite().updateDocument(DB_ID(), COLL.conversations, conversationId, {
-        messages: JSON.stringify([]),
-        updated_at: new Date().toISOString(),
-      });
-    } catch (error) {
-      dbLogger.error({ error, conversationId }, 'Failed to clear messages');
-      throw error;
-    }
+    return withConversationLock(conversationId, async () => {
+      try {
+        await getAppwrite().updateDocument(DB_ID(), COLL.conversations, conversationId, {
+          messages: JSON.stringify([]),
+          updated_at: new Date().toISOString(),
+        });
+      } catch (error) {
+        dbLogger.error({ error, conversationId }, 'Failed to clear messages');
+        throw error;
+      }
+    });
   },
 };
 

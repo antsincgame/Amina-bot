@@ -27,7 +27,10 @@ export interface LMStudioDirectProbeResult {
 
 const HEALTH_CACHE_TTL_MS = 60_000;
 const HEALTH_CHECK_TIMEOUT_MS = 5_000;
-const HEARTBEAT_VALID_MS = 180_000; // 3 min — если туннель слал heartbeat недавно, считаем Online
+// Допускаем не более 1 пропущенного heartbeat (интервал по умолчанию 30с в tunnel.ps1/sh/js).
+// Раньше было 180_000 — это позволяло боту до 3 минут считать LM Studio живой
+// после того как туннель уже умер, и слать туда запросы, которые уходили в таймаут.
+const HEARTBEAT_VALID_MS = 75_000;
 const CONFIG_CACHE_TTL_MS = 60_000;
 const DEFAULT_API_KEY = 'lm-studio';
 
@@ -54,6 +57,10 @@ type CircuitState = 'closed' | 'open' | 'half-open';
 let circuitState: CircuitState = 'closed';
 let circuitOpenedAt = 0;
 let recentFailures: number[] = [];
+// В half-open пропускаем строго ОДИН probe-запрос. Без флага десятки параллельных
+// вызовов могли одновременно перейти из 'open' в 'half-open' и все уйти в LM Studio,
+// перегружая мёртвый туннель.
+let halfOpenProbeInFlight = false;
 
 function pruneOldFailures(): void {
   const cutoff = Date.now() - CIRCUIT_WINDOW_MS;
@@ -69,6 +76,7 @@ export function recordLMStudioFailure(): void {
   if (circuitState === 'half-open') {
     circuitState = 'open';
     circuitOpenedAt = Date.now();
+    halfOpenProbeInFlight = false;
     aiLogger.warn('⚡ LM Studio circuit breaker: half-open → OPEN (проба не удалась)');
     return;
   }
@@ -90,6 +98,7 @@ export function recordLMStudioSuccess(): void {
   }
   circuitState = 'closed';
   recentFailures = [];
+  halfOpenProbeInFlight = false;
 }
 
 /** Проверить, заблокирован ли LM Studio circuit breaker'ом */
@@ -100,13 +109,19 @@ export function isLMStudioCircuitOpen(): boolean {
     const elapsed = Date.now() - circuitOpenedAt;
     if (elapsed >= CIRCUIT_COOLDOWN_MS) {
       circuitState = 'half-open';
-      aiLogger.info('🔄 LM Studio circuit breaker: OPEN → half-open (cooldown истёк, пробуем)');
-      return false; // допускаем один запрос
+      halfOpenProbeInFlight = true;
+      aiLogger.info('🔄 LM Studio circuit breaker: OPEN → half-open (cooldown истёк, проба №1)');
+      return false; // допускаем строго один запрос
     }
     return true; // ещё в cooldown
   }
 
-  // half-open — пропускаем один запрос
+  // half-open: только первый зашедший держит probe in flight; остальные блокируем,
+  // чтобы не послать в LM Studio десяток параллельных запросов.
+  if (halfOpenProbeInFlight) {
+    return true;
+  }
+  halfOpenProbeInFlight = true;
   return false;
 }
 
@@ -151,8 +166,11 @@ export async function getLMStudioConfig(): Promise<LMStudioConfig | null> {
   const envApiKey = process.env.LMSTUDIO_API_KEY?.trim();
   const apiKey = envApiKey || dbApiKey || DEFAULT_API_KEY;
 
+  // Сначала срезаем любые завершающие слэши и /v1 (в любом регистре, с/без слэша),
+  // затем добавляем ровно один /v1 — иначе при URL `.../v1/` получим `.../v1/v1`.
+  const baseUrl = normalizeLMStudioBaseUrl(url);
   const cfg: LMStudioConfig = {
-    url: url.endsWith('/v1') ? url : `${url.replace(/\/+$/, '')}/v1`,
+    url: `${baseUrl}/v1`,
     model: settings['lmstudio_model']?.trim() || '',
     apiKey,
   };
@@ -519,5 +537,6 @@ export function clearLMStudioCache(): void {
   // Сбрасываем circuit breaker при ручной очистке
   circuitState = 'closed';
   recentFailures = [];
+  halfOpenProbeInFlight = false;
   aiLogger.debug('LM Studio caches + circuit breaker cleared');
 }

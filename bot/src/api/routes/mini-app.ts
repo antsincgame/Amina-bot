@@ -100,8 +100,11 @@ async function processAiResponse(userId: string, messageContent: string, request
     content: messageContent,
     timestamp: new Date().toISOString(),
   };
-  // Fire-and-forget: не блокируем AI вызов записью в БД
-  conversationsRepo.addMessage(conversation.id, userMessage).catch(() => {});
+  // Fire-and-forget: не блокируем AI-вызов записью в БД, но ошибки логируем — иначе
+  // потеря сообщения у пользователя видна только косвенно («не помнит мой вопрос»).
+  conversationsRepo.addMessage(conversation.id, userMessage).catch((err) => {
+    aiLogger.warn({ error: err, userId, conversationId: conversation.id }, 'mini-app: addMessage(user) failed');
+  });
 
   // Берём только последние N сообщений (не всю историю)
   const existingMessages = Array.isArray(conversation.messages) ? conversation.messages : [];
@@ -126,7 +129,9 @@ async function processAiResponse(userId: string, messageContent: string, request
     content: aiResponse.content,
     timestamp: new Date().toISOString(),
   };
-  conversationsRepo.addMessage(conversation.id, assistantMessage).catch(() => {});
+  conversationsRepo.addMessage(conversation.id, assistantMessage).catch((err) => {
+    aiLogger.warn({ error: err, userId, conversationId: conversation.id }, 'mini-app: addMessage(assistant) failed');
+  });
 
   const emotion = detectEmotion(aiResponse.content);
 
@@ -243,13 +248,30 @@ export async function registerMiniAppRoutes(server: FastifyInstance): Promise<vo
 
         const tTranscribeStart = Date.now();
         aiLogger.info({ audioSize }, 'Mini-app voice: starting Whisper transcription...');
-        
-        // Таймаут 20с на транскрипцию
+
+        // Таймаут 20с на транскрипцию.
+        // ВАЖНО: при срабатывании таймаута сама transcribeAudio продолжала работать в фоне
+        // (ничего её не отменяло), грея CPU и съедая лимиты Groq. Сохраняем ссылку на таймер,
+        // явно его очищаем после Promise.race и помечаем зависший промис как handled,
+        // чтобы Node не упал на unhandledRejection.
+        let transcribeTimeoutId: ReturnType<typeof setTimeout> | undefined;
         const transcriptionPromise = transcribeAudio(audioBase64, audioMimeType);
-        const timeoutPromise = new Promise<never>((_, reject) => 
-          setTimeout(() => reject(new Error('Whisper transcription timeout (20s)')), 20_000)
-        );
-        const transcription = await Promise.race([transcriptionPromise, timeoutPromise]);
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          transcribeTimeoutId = setTimeout(
+            () => reject(new Error('Whisper transcription timeout (20s)')),
+            20_000,
+          );
+        });
+        let transcription;
+        try {
+          transcription = await Promise.race([transcriptionPromise, timeoutPromise]);
+        } finally {
+          if (transcribeTimeoutId) clearTimeout(transcribeTimeoutId);
+        }
+        // Подавляем unhandled rejection если transcribeAudio в итоге упадёт после таймаута.
+        transcriptionPromise.catch((err) => {
+          aiLogger.debug({ error: err }, 'Whisper transcription resolved after timeout — ignored');
+        });
         const tTranscribeEnd = Date.now();
 
         if (!transcription.text.trim()) {

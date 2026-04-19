@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { config } from '../../config/index.js';
+import { serverLogger } from '../../config/logger.js';
 import { rateLimitHook } from '../../utils/rate-limiter.js';
 import { isRealtimeBridgeTokenValid } from '../../features/telephony/service/realtime-bridge-config.js';
 import { settingsRepo } from '../../db/index.js';
@@ -70,7 +71,11 @@ export async function requireAdminAuth(
     const acc = new AWAccount(client);
     const user = await acc.get();
     return { userId: user.$id, email: user.email ?? null };
-  } catch {
+  } catch (err) {
+    // Раньше любая ошибка тихо превращалась в 403 — сложно отличить протухший JWT от
+    // недоступности Appwrite. Логируем причину (без токена) и ставим внятный код.
+    const message = err instanceof Error ? err.message : String(err);
+    serverLogger.warn({ error: message }, 'requireAdminAuth: token validation failed');
     await reply.code(403).send({ success: false, error: 'Invalid admin session' });
     return null;
   }

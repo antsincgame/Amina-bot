@@ -50,9 +50,17 @@ export interface TelegramUserInfo {
 
 // ---------- Helpers ----------
 
-function parseJson<T>(raw: string | null | undefined, fallback: T): T {
+function parseJson<T>(raw: string | null | undefined, fallback: T, context?: { collection?: string; field?: string; docId?: string }): T {
   if (!raw) return fallback;
-  try { return JSON.parse(raw); } catch { return fallback; }
+  try { return JSON.parse(raw); } catch (err) {
+    // Раньше битые данные молча превращались в {} — это маскировало потерю настроек/preferences.
+    const preview = raw.length > 200 ? `${raw.slice(0, 200)}…` : raw;
+    dbLogger.warn(
+      { error: err instanceof Error ? err.message : String(err), preview, ...context },
+      'user-memory parseJson: malformed JSON in DB field — falling back to default',
+    );
+    return fallback;
+  }
 }
 
 
@@ -99,13 +107,14 @@ export const userProfileRepo = {
       const r = await aw.listDocuments(DB_ID(), COLL.profiles, [Query.equal('user_id', userId), Query.limit(1)]);
       if (r.documents.length > 0) {
         const doc = r.documents[0]!;
-        await aw.updateDocument(DB_ID(), COLL.profiles, doc.$id, {
-          last_seen_at: new Date().toISOString(),
-          ...(telegramInfo?.username && { username: telegramInfo.username }),
-          ...(telegramInfo?.first_name && { first_name: telegramInfo.first_name }),
-          ...(telegramInfo?.last_name && { last_name: telegramInfo.last_name }),
-        });
-        return docToProfile(doc);
+        const patch: Record<string, unknown> = { last_seen_at: new Date().toISOString() };
+        if (telegramInfo?.username) patch.username = telegramInfo.username;
+        if (telegramInfo?.first_name) patch.first_name = telegramInfo.first_name;
+        if (telegramInfo?.last_name) patch.last_name = telegramInfo.last_name;
+        const updated = await aw.updateDocument(DB_ID(), COLL.profiles, doc.$id, patch);
+        // Раньше возвращали `docToProfile(doc)` со старыми last_seen_at/именами — вызывающий
+        // код видел stale-данные сразу после успешного апдейта. Возвращаем свежий документ.
+        return docToProfile(updated);
       }
       const now = new Date().toISOString();
       const nd = await aw.createDocument(DB_ID(), COLL.profiles, ID.unique(), {

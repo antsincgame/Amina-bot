@@ -20,12 +20,21 @@ export async function registerVoiceMessagesRoutes(server: FastifyInstance): Prom
           userId?: string; dateFrom?: string; dateTo?: string; limit?: string; offset?: string;
         };
 
+        // parseInt('abc', 10) → NaN, и NaN утечёт в Appwrite Query, что валит запрос с
+        // непонятной ошибкой. Используем Number.isFinite + дефолт + clamp.
+        const parseIntSafe = (raw: string | undefined, fallback: number, min: number, max: number): number => {
+          if (!raw) return fallback;
+          const parsed = Number.parseInt(raw, 10);
+          if (!Number.isFinite(parsed)) return fallback;
+          return Math.min(Math.max(parsed, min), max);
+        };
+
         const result = await voiceMessagesRepo.list({
           userId,
           dateFrom,
           dateTo,
-          limit: limit ? parseInt(limit, 10) : 50,
-          offset: offset ? parseInt(offset, 10) : 0,
+          limit: parseIntSafe(limit, 50, 1, 500),
+          offset: parseIntSafe(offset, 0, 0, 1_000_000),
         });
 
         return reply.code(200).send({ success: true, data: result.data, total: result.total });
