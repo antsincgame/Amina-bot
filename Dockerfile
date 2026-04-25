@@ -38,8 +38,10 @@ WORKDIR /app
 COPY shared/ ./shared/
 
 # Install bot dependencies
-COPY bot/package.json bot/package-lock.json ./bot/
-RUN cd bot && npm ci --omit=dev
+# Используем npm install (не ci) т.к. lock-файл удалён для пересборки на node-appwrite 16.
+# После первого успешного билда Coolify сгенерит свежий lock — можно вернуть npm ci.
+COPY bot/package.json ./bot/
+RUN cd bot && npm install --omit=dev --no-audit --no-fund
 
 # Copy bot source (мини-приложение: bot/src/telegram/mini-app-web.html)
 COPY bot/ ./bot/
