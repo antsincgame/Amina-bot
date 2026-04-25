@@ -16,7 +16,7 @@ interface RuntimeTruthTts {
   resolvedProvider: string;
   model: string;
   voice: string;
-  fallbackReason: string;
+  fallbackReason: string | null;
 }
 
 interface TtsSettingsCardProps {
