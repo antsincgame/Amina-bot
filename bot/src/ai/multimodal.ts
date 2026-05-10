@@ -588,7 +588,9 @@ async function analyzeImageUrl(
           ],
         },
       ],
-      max_tokens: multiConfig.maxTokens,
+      // Vision-only path должен использовать vision_max_tokens, а не общий max_tokens.
+      // Раньше менялся chat-лимит — vision внезапно обрезался по чату.
+      max_tokens: multiConfig.visionMaxTokens,
     });
 
     const content = response.choices[0]?.message?.content;
@@ -1066,6 +1068,10 @@ async function groqVisionFallback(
     ],
   });
 
+  // Vision config один на все vision-вызовы (OpenRouter direct + Groq fallback).
+  // Раньше Groq хардкодил 2048 — admin-настройка vision_max_tokens игнорировалась.
+  const groqMultiConfig = await getMultimodalConfig();
+
   // Пробуем модели последовательно (быстрая → качественная)
   for (const model of GROQ_VISION_MODELS) {
     try {
@@ -1073,7 +1079,7 @@ async function groqVisionFallback(
       const response = await groqClient.chat.completions.create({
         model,
         messages,
-        max_tokens: 2048,
+        max_tokens: groqMultiConfig.visionMaxTokens,
         temperature: isOcrRequest ? 0.2 : 0.7,
       });
 
