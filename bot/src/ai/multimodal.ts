@@ -644,7 +644,7 @@ export async function transcribeAudio(
     throw new AppError('FILE_TOO_LARGE', `Файл слишком большой (${fileSizeMB}MB, максимум 25MB)`);
   }
 
-  const ext = mimeType.split(';')[0].split('/').pop() || 'ogg';
+  const ext = (mimeType.split(';')[0] ?? '').split('/').pop() || 'ogg';
   const filename = `voice.${ext === 'mpeg' ? 'mp3' : ext}`;
   return await transcribeAudioGroq(audioBuffer, filename, multimodalConfig.audioModel);
 }

@@ -83,12 +83,14 @@ export async function registerModelsRoutes(server: FastifyInstance): Promise<voi
     }
 
     const start = Date.now();
+    // Hoisted перед try, иначе catch (line 127) не видит isGroq и
+    // diagnosis для 404 падает на TS2304.
+    const isGroq = model.trim().startsWith('groq:');
     try {
       const keys = await getApiKeys();
       const { getProxyHeaders: getHeaders, getOpenRouterBaseUrl, getGroqBaseUrl } = await import('../../config/ai-proxy.js');
       const { default: OpenAI } = await import('openai');
 
-      const isGroq = model.trim().startsWith('groq:');
       const actualModel = isGroq ? model.trim().replace('groq:', '') : model.trim();
 
       let client: InstanceType<typeof OpenAI>;

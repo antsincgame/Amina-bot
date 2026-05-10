@@ -234,11 +234,16 @@ export async function registerNewsRoutes(server: FastifyInstance): Promise<void>
           '["keyword1", "keyword2", ...]',
         ].filter(Boolean).join('\n');
 
-        const result = await aiService.chat(prompt, {
-          temperature: 0.3,
-          maxTokens: 500,
-          priority: 'background',
-        });
+        const result = await aiService.chat(
+          [{ role: 'user', content: prompt }],
+          'telegram',
+          undefined,
+          {
+            temperature: 0.3,
+            maxTokens: 500,
+            priority: 'background',
+          },
+        );
 
         const cleaned = result.content.replace(/```json\s*/g, '').replace(/```/g, '').trim();
         const keywords: string[] = JSON.parse(cleaned);
@@ -371,7 +376,7 @@ export async function registerNewsRoutes(server: FastifyInstance): Promise<void>
                 return {
                   url: site.url,
                   name: site.name,
-                  status: (res.ok ? 'ok' : 'error') as const,
+                  status: (res.ok ? 'ok' : 'error') as 'ok' | 'error',
                   httpCode: res.status,
                   responseTimeMs: Date.now() - start,
                 };
@@ -381,7 +386,7 @@ export async function registerNewsRoutes(server: FastifyInstance): Promise<void>
                 return {
                   url: site.url,
                   name: site.name,
-                  status: (isTimeout ? 'timeout' : 'error') as const,
+                  status: (isTimeout ? 'timeout' : 'error') as 'timeout' | 'error',
                   responseTimeMs: Date.now() - start,
                   error: err instanceof Error ? err.message : String(err),
                 };

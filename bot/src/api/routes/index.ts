@@ -19,8 +19,11 @@ import { registerMiniAppRoutes } from './mini-app.js';
 import { registerProvidersRoutes } from './providers.js';
 
 export async function registerApiRoutes(server: FastifyInstance): Promise<void> {
-  // Multipart для голосовых сообщений (mini-app voice)
-  await server.register(multipart, {
+  // Multipart для голосовых сообщений (mini-app voice).
+  // Типы @fastify/multipart и fastify@4 расходятся (mismatch на FastifyTypeProvider),
+  // в runtime всё работает. Cast необходим, чтобы TS overload-resolution не падал.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  await server.register(multipart as any, {
     limits: { fileSize: 10 * 1024 * 1024, files: 1 },
   });
   // Register application/x-www-form-urlencoded parser at root level

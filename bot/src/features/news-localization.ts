@@ -1,4 +1,5 @@
 import { aiService } from '../ai/openrouter.js';
+import type { AIProvider } from '../ai/lmstudio.js';
 import { appLogger } from '../config/logger.js';
 import { settingsRepo } from '../db/appwrite.js';
 import type { ParsedHeadline } from '../../../shared/types/index.js';
@@ -270,13 +271,16 @@ function mergeTranslationMaps(target: Map<number, AcceptedTranslation>, source: 
   });
 }
 
-const DEFAULT_TRANSLATION_PROVIDERS = ['cerebras', 'groq', 'openrouter'] as const;
+const DEFAULT_TRANSLATION_PROVIDERS: readonly AIProvider[] = ['cerebras', 'groq', 'openrouter'] as const;
 
-async function getTranslationProviders(): Promise<string[]> {
+async function getTranslationProviders(): Promise<AIProvider[]> {
   try {
     const saved = await settingsRepo.get('news_translation_provider');
     if (!saved || saved === 'auto') return [...DEFAULT_TRANSLATION_PROVIDERS];
-    return [saved];
+    if (DEFAULT_TRANSLATION_PROVIDERS.includes(saved as AIProvider)) {
+      return [saved as AIProvider];
+    }
+    return [...DEFAULT_TRANSLATION_PROVIDERS];
   } catch {
     return [...DEFAULT_TRANSLATION_PROVIDERS];
   }
@@ -284,7 +288,7 @@ async function getTranslationProviders(): Promise<string[]> {
 
 async function callTranslationProvider(
   items: DescriptionTranslationInput[],
-  provider: string,
+  provider: AIProvider,
   scope: string,
 ): Promise<Map<number, AcceptedTranslation>> {
   const response = await withTimeout(

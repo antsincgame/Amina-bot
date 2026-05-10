@@ -383,11 +383,16 @@ export const setupCallbacks = (bot: Bot<BotContext>): void => {
         headlinesList,
       ].join('\n');
 
-      const result = await aiService.chat(curatePrompt, {
-        temperature: 0.4,
-        maxTokens: 2000,
-        priority: 'background',
-      });
+      const result = await aiService.chat(
+        [{ role: 'user', content: curatePrompt }],
+        'telegram',
+        undefined,
+        {
+          temperature: 0.4,
+          maxTokens: 2000,
+          priority: 'background',
+        },
+      );
 
       const parts = result.content.match(/[\s\S]{1,4000}/g) ?? [result.content];
       for (const part of parts) {
