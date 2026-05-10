@@ -76,7 +76,7 @@ export const processAIResponse = async (
     const fixed = await tryGetPerplexityData(webSearchContext, userMessage, userId);
     if (fixed) return { ...response, content: fixed };
 
-    const forced = await forceAnswer(userMessage, userId);
+    const forced = await forceAnswer(userMessage, userId, response.model);
     if (forced) return { ...response, content: forced };
 
     // Последний рубеж: честно сообщаем об ограничении
@@ -103,7 +103,7 @@ export const processAIResponse = async (
     const perplexityFix = await tryGetPerplexityData(webSearchContext, userMessage, userId);
     if (perplexityFix) return { ...response, content: perplexityFix };
 
-    const forced = await forceAnswer(userMessage, userId);
+    const forced = await forceAnswer(userMessage, userId, response.model);
     if (forced) return { ...response, content: forced };
 
     // Последний рубеж: честно сообщаем об ограничении
@@ -190,11 +190,13 @@ export const selfDisclosureAnswer = async (
 export const forceAnswer = async (
   userMessage: string,
   userId: string,
+  modelId?: string,
 ): Promise<string | null> => {
   try {
     telegramLogger.info({ userId, query: userMessage.substring(0, 60) }, '🔄 Force-answering with strict prompt');
     const forcePrompt = await buildPersonaSystemPrompt({
       channel: 'telegram',
+      modelId, // density подбирается под реально использованную модель
       extraRules: [
         'Режим задачи: force-answer.',
         'Ответь кратко, честно и по делу.',

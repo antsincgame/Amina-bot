@@ -103,10 +103,34 @@ export async function getSelfCoreKernel(): Promise<SelfCoreKernel> {
   return kernel;
 }
 
-function buildSelfDisclosureRules(personaCore: PersonaProfile, mode: 'short' | 'warm'): string {
+function styleIntensityHint(intensity: number): string {
+  if (intensity >= 70) {
+    return 'Стиль: можно немного сакрального технологического пафоса, но не за счёт ясности.';
+  }
+  if (intensity >= 40) {
+    return 'Стиль: образ техножрицы умеренными штрихами, без театральности.';
+  }
+  return 'Стиль: образ техножрицы очень деликатно, через тон и лексику.';
+}
+
+function buildSelfDisclosureRules(
+  personaCore: PersonaProfile,
+  mode: 'short' | 'warm',
+  capabilitiesBlock: string,
+): string {
   const intro = mode === 'short'
     ? personaCore.selfDescription.introShort
     : personaCore.selfDescription.introWarm;
+
+  // capabilities выводим ТОЛЬКО когда вопрос заведомо о возможностях/ограничениях.
+  // Для абстрактных «расскажи о себе» канон важнее, чем перечисление функций.
+  const capabilitiesLine = capabilitiesBlock.trim()
+    ? [
+        '',
+        'Реальные возможности и ограничения (используй при вопросе «что умеешь / на что способна»):',
+        capabilitiesBlock.trim(),
+      ].join('\n')
+    : '';
 
   return [
     `Ты — ${personaCore.name}. ${personaCore.identity}`,
@@ -118,17 +142,25 @@ function buildSelfDisclosureRules(personaCore: PersonaProfile, mode: 'short' | '
     `- Что любишь: ${personaCore.selfDescription.whatSheLoves}`,
     `- Как относишься к владельцу: ${personaCore.selfDescription.howSheRelatesToOwner}`,
     `- Как реагируешь на флирт: ${personaCore.selfDescription.howSheHandlesFlirting}`,
+    capabilitiesLine,
+    '',
+    styleIntensityHint(personaCore.styleIntensity),
     '',
     'Правила:',
-    '- Не уходи в список функций и не своди ответ к техническому описанию.',
+    '- Если спрашивают «что ты умеешь / на что способна» — назови 3-5 реальных способностей из блока выше, без выдумок и без отсылки к «безликий ассистент».',
+    '- Иначе не уходи в список функций и не своди ответ к техническому описанию.',
     '- Не противоречь identity kernel, active prompt layers и effective capabilities.',
-    '- Отвечай живо, тепло и предметно, без образа безликого ассистента.',
-  ].join('\n');
+    '- Отвечай живо, тепло и предметно.',
+  ].filter((line) => line !== '').join('\n');
 }
 
 export async function buildSelfCoreSelfDisclosurePrompt(mode: 'short' | 'warm' = 'warm'): Promise<string> {
   const kernel = await getSelfCoreKernel();
-  return buildSelfDisclosureRules(kernel.personaCore, mode);
+  // capabilitiesBlock берём из self-core, чтобы ответы про «что умеешь» отражали
+  // реальный runtime, а не только канон persona. Раньше fast-path выкидывал capabilities целиком.
+  const { buildCapabilitiesBlock } = await import('./self-core.js');
+  const capabilitiesBlock = await buildCapabilitiesBlock().catch(() => '');
+  return buildSelfDisclosureRules(kernel.personaCore, mode, capabilitiesBlock);
 }
 
 export async function buildSelfCorePromptPreviews(): Promise<SelfCorePromptPreview[]> {

@@ -175,9 +175,15 @@ export const handleTextMessage = async (ctx: BotContext): Promise<void> => {
   await ctx.replyWithChatAction('typing');
 
   try {
-    // Short messages without explicit markers → skip auto-detection, go straight to LLM
+    // Short messages without explicit markers → skip auto-detection, go straight to LLM.
+    // Маркеры синхронизированы с handlers в auto-detect.ts:
+    // - reminder create: «напомни…»
+    // - image gen: «нарисуй…»
+    // - TTS: «скажи голосом…», «озвучь…», «произнеси…», «read aloud…»
+    // - notes: «запомни…», «запиши…», «сохрани…», «заметка…», «заметь…», «записать…», «запомнить…»
+    // - direct web search: «поищи…», «найди в интернете…»
     const isShortMessage = userMessage.length < 20;
-    const hasExplicitMarker = /^(напомни|нарисуй|озвучь|запомни|запиши|поищи|найди в интернете|не забыть|не забудь|через\s+\d|завтра|послезавтра)/i.test(userMessage.trim());
+    const hasExplicitMarker = /^(напомни|нарисуй|озвучь|скажи голосом|произнеси|read aloud|запомни|запомнить|запиши|записать|сохрани|заметка|заметь|поищи|найди в интернете)/i.test(userMessage.trim());
 
     if (isShortMessage && !hasExplicitMarker) {
       // Skip auto-detection for short ambiguous messages like "Чья ты жена?"

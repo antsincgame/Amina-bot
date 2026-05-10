@@ -323,13 +323,37 @@ export function clearPersonaCache(): void {
   PERSONA_CACHE.clear();
 }
 
+/**
+ * Возвращает идентификатор канонической модели текущего канала,
+ * чтобы корректно подобрать density для слабых/сильных LLM.
+ * Используется когда вызывающий код не знает modelId заранее
+ * (force-answer, telephony, scenario-compiler).
+ */
+async function resolveCanonicalModelId(channel: PersonaChannel): Promise<string | undefined> {
+  try {
+    // Lazy import — runtime-truth → persona создаёт цикл при eager require.
+    const mod = await import('./runtime-truth.js');
+    if (channel === 'voice') {
+      // Голосовой канал использует ту же chat-модель, если не задано иное;
+      // отдельной voice-runtime-модели в коде нет.
+      const chat = await mod.getChatRuntimeState();
+      return chat.resolvedModel || undefined;
+    }
+    const chat = await mod.getChatRuntimeState();
+    return chat.resolvedModel || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function buildPersonaSystemPrompt(options: {
   channel: PersonaChannel;
   modelId?: string;
   extraRules?: string[];
 }): Promise<string> {
   const profile = await getPersonaProfile();
-  const density = detectPromptDensity(options.modelId);
+  const modelId = options.modelId ?? await resolveCanonicalModelId(options.channel);
+  const density = detectPromptDensity(modelId);
   const rules = [
     ...buildStyleRules(profile),
     ...getChannelRules(profile, options.channel),
