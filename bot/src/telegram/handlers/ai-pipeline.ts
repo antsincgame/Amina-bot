@@ -324,8 +324,11 @@ export const processMessageThroughAI = async (
     { role: 'user', content: augmentedUserText },
   ];
 
-  // Build full context with search warning
-  let fullContext = memoryContext + webSearchContext;
+  // Build full context with search warning.
+  // Раньше memoryContext и webSearchContext склеивались БЕЗ разделителя — блок
+  // веб-поиска прилипал прямо к последней строке memory-блока, и слабые модели
+  // путались, где кончается память и начинаются данные из интернета.
+  let fullContext = [memoryContext, webSearchContext].filter((block) => block?.trim()).join('\n\n');
   fullContext = addSearchWarning(fullContext, userText, webSearchContext, userId);
 
   // === Self-disclosure fast path: вопросы про саму Амину ===

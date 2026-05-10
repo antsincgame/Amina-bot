@@ -181,6 +181,20 @@ export async function buildAminaRuntimeContext(
   };
 }
 
+/**
+ * Объединяет combinedContext + searchContext с явным разделителем.
+ * Раньше searchContext вычислялся, но не попадал в LLM в default- и
+ * passthrough-режимах respondWithAminaCore — vision/mini-app/digest
+ * теряли веб-поиск.
+ */
+function mergeContextWithSearch(context?: AminaRuntimeContextResult): string {
+  if (!context) return '';
+  const blocks: string[] = [];
+  if (context.combinedContext.trim()) blocks.push(context.combinedContext.trim());
+  if (context.searchContext.trim()) blocks.push(context.searchContext.trim());
+  return blocks.join('\n\n');
+}
+
 export async function buildAminaPassthroughSystemPrompt(input: {
   channel: AminaRuntimeChannel;
   context?: AminaRuntimeContextResult;
@@ -198,7 +212,7 @@ export async function buildAminaPassthroughSystemPrompt(input: {
   ]);
 
   return composeEffectivePrompt({
-    contextBlock: input.context?.combinedContext ?? '',
+    contextBlock: mergeContextWithSearch(input.context),
     personaPrompt,
     activePromptContent,
     systemInstruction: input.systemInstruction ?? '',
@@ -282,10 +296,13 @@ export async function respondWithAminaCore(input: AminaRespondInput): Promise<Am
       },
     );
   } else {
+    // Передаём searchContext вместе с combinedContext: иначе результат webSearch,
+    // полученный внутри buildAminaRuntimeContext, не попадал в LLM (баг был виден
+    // в vision/mini-app/digest, где TG-обходного пути нет).
     response = await aiService.chat(
       input.messages,
       aiChannel,
-      context.combinedContext,
+      mergeContextWithSearch(context),
       input.options,
     );
   }
