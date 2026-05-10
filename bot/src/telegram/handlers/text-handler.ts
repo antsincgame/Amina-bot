@@ -1,12 +1,11 @@
 import { InputFile } from 'grammy';
 import type { BotContext } from '../bot.js';
-import { config } from '../../config/index.js';
 import { telegramLogger } from '../../config/logger.js';
 import { analyticsRepo } from '../../db/index.js';
 import { checkTelegramRateLimit } from '../../utils/rate-limiter.js';
 import { getErrorCode } from '../../utils/error-handler.js';
 import { userLogsRepo, type TelegramUserInfo } from '../../memory/user-memory.js';
-import { detectImageEditIntent, generateImage, classifyImageEditIntentGroq } from '../../ai/image-gen.js';
+import { generateImage } from '../../ai/image-gen.js';
 import { searchAndFormat } from '../../ai/websearch.js';
 import { normalizeNoteInput } from '../../features/note-normalizer.js';
 import { notesRepo } from '../../features/notes-repo.js';
@@ -15,9 +14,10 @@ import { escapeHtml, sendLongMessage } from '../format.js';
 import { notesListKeyboard, todosListKeyboard } from '../keyboards.js';
 import { handleAutoDetections } from './auto-detect.js';
 import { buildReplyButtonHandlers, clearAwaitingFlags } from './reply-buttons.js';
-import { downloadTelegramPhoto, handleImageEdit } from './image-helpers.js';
+import { downloadTelegramPhoto, downloadTelegramImageDocument, handleImageEdit } from './image-helpers.js';
 import { handleDirectWebSearch, shouldForceWebSearch, needsWebSearch } from './web-search-handler.js';
 import { processMessageThroughAI, formatAIError } from './ai-pipeline.js';
+import { detectImageEditFromText } from './turn-helpers.js';
 
 export const handleTextMessage = async (ctx: BotContext): Promise<void> => {
   if (!ctx.from?.id) {
@@ -141,27 +141,12 @@ export const handleTextMessage = async (ctx: BotContext): Promise<void> => {
   const isImageDoc = replyDoc?.mime_type?.startsWith('image/');
 
   if ((replyPhoto && replyPhoto.length > 0) || isImageDoc) {
-    const isEditIntent = detectImageEditIntent(userMessage) || await classifyImageEditIntentGroq(userMessage);
-    if (isEditIntent) {
+    if (await detectImageEditFromText(userMessage)) {
       telegramLogger.info({ userId, prompt: userMessage.substring(0, 60) }, 'Image edit detected via reply to photo/document');
       try {
-        let imageData;
-        if (replyPhoto && replyPhoto.length > 0) {
-          imageData = await downloadTelegramPhoto(ctx, replyPhoto);
-        } else {
-          const file = await ctx.api.getFile(replyDoc!.file_id);
-          if (!file.file_path) throw new Error('File path not found');
-          const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
-          const dlAbort = new AbortController();
-          const dlTimeout = setTimeout(() => dlAbort.abort(), 30_000);
-          let resp: Response;
-          try { resp = await fetch(fileUrl, { signal: dlAbort.signal }); } finally { clearTimeout(dlTimeout); }
-          if (!resp.ok) throw new Error('Failed to download document');
-          imageData = {
-            base64: Buffer.from(await resp.arrayBuffer()).toString('base64'),
-            mimeType: replyDoc!.mime_type!,
-          };
-        }
+        const imageData = (replyPhoto && replyPhoto.length > 0)
+          ? await downloadTelegramPhoto(ctx, replyPhoto)
+          : await downloadTelegramImageDocument(ctx, replyDoc!);
         await handleImageEdit(ctx, imageData.base64, imageData.mimeType, userMessage, userId);
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : 'Не удалось отредактировать изображение.';
@@ -175,9 +160,15 @@ export const handleTextMessage = async (ctx: BotContext): Promise<void> => {
   await ctx.replyWithChatAction('typing');
 
   try {
-    // Short messages without explicit markers → skip auto-detection, go straight to LLM
+    // Short messages without explicit markers → skip auto-detection, go straight to LLM.
+    // Маркеры синхронизированы с handlers в auto-detect.ts:
+    // - reminder create: «напомни…»
+    // - image gen: «нарисуй…»
+    // - TTS: «скажи голосом…», «озвучь…», «произнеси…», «read aloud…»
+    // - notes: «запомни…», «запиши…», «сохрани…», «заметка…», «заметь…», «записать…», «запомнить…»
+    // - direct web search: «поищи…», «найди в интернете…»
     const isShortMessage = userMessage.length < 20;
-    const hasExplicitMarker = /^(напомни|нарисуй|озвучь|запомни|запиши|поищи|найди в интернете|не забыть|не забудь|через\s+\d|завтра|послезавтра)/i.test(userMessage.trim());
+    const hasExplicitMarker = /^(напомни|нарисуй|озвучь|скажи голосом|произнеси|read aloud|запомни|запомнить|запиши|записать|сохрани|заметка|заметь|поищи|найди в интернете)/i.test(userMessage.trim());
 
     if (isShortMessage && !hasExplicitMarker) {
       // Skip auto-detection for short ambiguous messages like "Чья ты жена?"

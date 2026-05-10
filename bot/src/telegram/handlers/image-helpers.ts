@@ -7,6 +7,35 @@ import { editImage } from '../../ai/image-gen.js';
 import { escapeHtml } from '../format.js';
 
 /**
+ * Скачивает «документ-как-картинка» из reply-to. Используется в text/voice
+ * handlers для PATH B/C (редактирование фото через reply). Раньше
+ * соответствующий fetch-block был скопирован дважды с одинаковым
+ * AbortController/timeout/проверкой mime_type.
+ */
+export const downloadTelegramImageDocument = async (
+  ctx: BotContext,
+  doc: { file_id: string; mime_type?: string },
+): Promise<{ base64: string; mimeType: string }> => {
+  if (!doc.mime_type) throw new Error('Document has no mime_type');
+  const file = await ctx.api.getFile(doc.file_id);
+  if (!file.file_path) throw new Error('File path not found');
+  const fileUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${file.file_path}`;
+  const dlAbort = new AbortController();
+  const dlTimeout = setTimeout(() => dlAbort.abort(), 30_000);
+  let resp: Response;
+  try {
+    resp = await fetch(fileUrl, { signal: dlAbort.signal });
+  } finally {
+    clearTimeout(dlTimeout);
+  }
+  if (!resp.ok) throw new Error('Failed to download document');
+  return {
+    base64: Buffer.from(await resp.arrayBuffer()).toString('base64'),
+    mimeType: doc.mime_type,
+  };
+};
+
+/**
  * Скачивает фото из Telegram по массиву PhotoSize.
  * Возвращает { base64, mimeType } для дальнейшей обработки.
  */

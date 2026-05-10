@@ -1,6 +1,11 @@
 # Dependencies
 node_modules/
 
+# Lock files — намеренно не коммитим bot/package-lock.json:
+# Coolify собирает образ через `npm install` (не `npm ci`), и закрепление
+# lock'а ломает планируемые бампы зависимостей (см. b8831c7, 11e9cb7).
+bot/package-lock.json
+
 # Build outputs
 dist/
 build/

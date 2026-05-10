@@ -765,20 +765,17 @@ export async function buildSelfCoreContext(): Promise<string> {
   ]);
 
   const parts = [capabilitiesBlock];
-  const identityFacts = facts.filter((fact) => fact.category === 'identity');
-  const relationshipFacts = facts.filter((fact) => fact.category === 'relationship');
+  // Identity и relationship уже идут в personaPrompt (`buildPersonaSystemPrompt`)
+  // — повторное упоминание здесь приводило к дублированию «Ты — Amina» / «Связь
+  // с владельцем» в одном system-message. Self-core оставляет только behavioral
+  // grounding: что мы наблюдаем, какие уроки извлекли, какие предпочтения и
+  // вопросы у нас есть.
   const observations = facts.filter((fact) => fact.category === 'observation');
   const lessons = facts.filter((fact) => fact.category === 'lesson');
   const preferences = facts.filter((fact) => fact.category === 'preference');
   const questions = facts.filter((fact) => fact.category === 'question');
   const limitations = facts.filter((fact) => fact.category === 'limitation');
 
-  if (identityFacts.length > 0) {
-    parts.push(`Кто я:\n${identityFacts.slice(0, 3).map((fact) => `• ${fact.content}`).join('\n')}`);
-  }
-  if (relationshipFacts.length > 0) {
-    parts.push(`Связь с владельцем и системой:\n${relationshipFacts.slice(0, 3).map((fact) => `• ${fact.content}`).join('\n')}`);
-  }
   if (observations.length > 0) {
     parts.push(`Мои наблюдения:\n${observations.slice(0, 8).map((fact) => `• ${fact.content}`).join('\n')}`);
   }

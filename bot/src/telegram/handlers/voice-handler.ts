@@ -7,12 +7,12 @@ import { analyticsRepo } from '../../db/index.js';
 import { checkTelegramRateLimit } from '../../utils/rate-limiter.js';
 import { getErrorCode } from '../../utils/error-handler.js';
 import type { TelegramUserInfo } from '../../memory/user-memory.js';
-import { detectImageEditIntent, classifyImageEditIntentGroq } from '../../ai/image-gen.js';
 import { voiceMessagesRepo } from '../../features/voice-messages-repo.js';
 import { handleAutoDetections } from './auto-detect.js';
-import { downloadTelegramPhoto, handleImageEdit } from './image-helpers.js';
+import { downloadTelegramPhoto, downloadTelegramImageDocument, handleImageEdit } from './image-helpers.js';
 import { handleDirectWebSearch } from './web-search-handler.js';
 import { processMessageThroughAI, formatAIError } from './ai-pipeline.js';
+import { detectImageEditFromText } from './turn-helpers.js';
 
 /** Маппинг кодов ошибок голоса → сообщения */
 const VOICE_ERROR_MESSAGES: Record<string, string> = {
@@ -102,27 +102,12 @@ export const handleVoiceMessage = async (ctx: BotContext): Promise<void> => {
     const isImageDoc = voiceReplyDoc?.mime_type?.startsWith('image/');
 
     if ((voiceReplyPhoto && voiceReplyPhoto.length > 0) || isImageDoc) {
-      const isEditIntent = detectImageEditIntent(transcribedText) || await classifyImageEditIntentGroq(transcribedText);
-      if (isEditIntent) {
+      if (await detectImageEditFromText(transcribedText)) {
         telegramLogger.info({ userId, prompt: transcribedText.substring(0, 60) }, 'Image edit detected via voice reply to photo/document');
         try {
-          let imageData;
-          if (voiceReplyPhoto && voiceReplyPhoto.length > 0) {
-            imageData = await downloadTelegramPhoto(ctx, voiceReplyPhoto);
-          } else {
-            const docFile = await ctx.api.getFile(voiceReplyDoc!.file_id);
-            if (!docFile.file_path) throw new Error('File path not found');
-            const docUrl = `https://api.telegram.org/file/bot${config.telegram.token}/${docFile.file_path}`;
-            const docAbort = new AbortController();
-            const docTimeout = setTimeout(() => docAbort.abort(), 30_000);
-            let resp: Response;
-            try { resp = await fetch(docUrl, { signal: docAbort.signal }); } finally { clearTimeout(docTimeout); }
-            if (!resp.ok) throw new Error('Failed to download document');
-            imageData = {
-              base64: Buffer.from(await resp.arrayBuffer()).toString('base64'),
-              mimeType: voiceReplyDoc!.mime_type!,
-            };
-          }
+          const imageData = (voiceReplyPhoto && voiceReplyPhoto.length > 0)
+            ? await downloadTelegramPhoto(ctx, voiceReplyPhoto)
+            : await downloadTelegramImageDocument(ctx, voiceReplyDoc!);
           await handleImageEdit(ctx, imageData.base64, imageData.mimeType, transcribedText, userId);
         } catch (editError) {
           const editMsg = editError instanceof Error ? editError.message : 'Не удалось отредактировать изображение.';

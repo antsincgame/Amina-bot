@@ -4,7 +4,7 @@ import { config } from '../../config/index.js';
 import { telegramLogger } from '../../config/logger.js';
 import { aiService, isGibberish } from '../../ai/openrouter.js';
 import { enhanceResponseIfNeeded, needsWebSearch, webSearch } from '../../ai/websearch.js';
-import { conversationsRepo, analyticsRepo } from '../../db/index.js';
+import { analyticsRepo } from '../../db/index.js';
 import { getErrorCode } from '../../utils/error-handler.js';
 import {
   userProfileRepo,
@@ -38,6 +38,7 @@ import {
 import { buildSelfCoreSelfDisclosurePrompt } from '../../ai/self-core-kernel.js';
 import { captureSelfCoreFromInteraction } from '../../ai/self-core.js';
 import type { AIChatOptions } from '../../ai/openrouter.js';
+import { persistTurn, pushSessionTurn } from './turn-helpers.js';
 
 /**
  * Обрабатывает AI-ответ: верификация, защита от отказов, симуляции, галлюцинаций.
@@ -76,7 +77,7 @@ export const processAIResponse = async (
     const fixed = await tryGetPerplexityData(webSearchContext, userMessage, userId);
     if (fixed) return { ...response, content: fixed };
 
-    const forced = await forceAnswer(userMessage, userId);
+    const forced = await forceAnswer(userMessage, userId, response.model);
     if (forced) return { ...response, content: forced };
 
     // Последний рубеж: честно сообщаем об ограничении
@@ -103,7 +104,7 @@ export const processAIResponse = async (
     const perplexityFix = await tryGetPerplexityData(webSearchContext, userMessage, userId);
     if (perplexityFix) return { ...response, content: perplexityFix };
 
-    const forced = await forceAnswer(userMessage, userId);
+    const forced = await forceAnswer(userMessage, userId, response.model);
     if (forced) return { ...response, content: forced };
 
     // Последний рубеж: честно сообщаем об ограничении
@@ -190,11 +191,13 @@ export const selfDisclosureAnswer = async (
 export const forceAnswer = async (
   userMessage: string,
   userId: string,
+  modelId?: string,
 ): Promise<string | null> => {
   try {
     telegramLogger.info({ userId, query: userMessage.substring(0, 60) }, '🔄 Force-answering with strict prompt');
     const forcePrompt = await buildPersonaSystemPrompt({
       channel: 'telegram',
+      modelId, // density подбирается под реально использованную модель
       extraRules: [
         'Режим задачи: force-answer.',
         'Ответь кратко, честно и по делу.',
@@ -309,10 +312,7 @@ export const processMessageThroughAI = async (
   const augmentedUserText = contextPrefix + userText;
 
   // Add to history (original text without prefix to keep history clean)
-  ctx.session.messageHistory.push({ role: 'user', content: userText });
-  if (ctx.session.messageHistory.length > MAX_HISTORY_MESSAGES) {
-    ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
-  }
+  pushSessionTurn(ctx, { role: 'user', content: userText });
 
   // Build messages: deduplicate similar past questions to prevent model from copying old answers
   const historyWithoutLast = ctx.session.messageHistory.slice(0, -1);
@@ -322,8 +322,11 @@ export const processMessageThroughAI = async (
     { role: 'user', content: augmentedUserText },
   ];
 
-  // Build full context with search warning
-  let fullContext = memoryContext + webSearchContext;
+  // Build full context with search warning.
+  // Раньше memoryContext и webSearchContext склеивались БЕЗ разделителя — блок
+  // веб-поиска прилипал прямо к последней строке memory-блока, и слабые модели
+  // путались, где кончается память и начинаются данные из интернета.
+  let fullContext = [memoryContext, webSearchContext].filter((block) => block?.trim()).join('\n\n');
   fullContext = addSearchWarning(fullContext, userText, webSearchContext, userId);
 
   // === Self-disclosure fast path: вопросы про саму Амину ===
@@ -337,17 +340,15 @@ export const processMessageThroughAI = async (
         tokens_used: { prompt: 0, completion: 0, total: 0 },
         finish_reason: 'stop',
       };
-      ctx.session.messageHistory.push({ role: 'assistant', content: selfAnswer });
+      pushSessionTurn(ctx, { role: 'assistant', content: selfAnswer });
       await sendLongMessage(ctx, selfAnswer);
 
-      // DB writes (same pattern as main path)
-      const selfConvId = ctx.session.conversationId;
-      if (selfConvId) {
-        const nowISO = new Date().toISOString();
-        conversationsRepo.addMessage(selfConvId, { role: 'user', content: userText, timestamp: nowISO })
-          .then(() => conversationsRepo.addMessage(selfConvId, { role: 'assistant', content: selfAnswer, timestamp: nowISO, metadata: { model: 'persona-self-disclosure' } }))
-          .catch((err) => { telegramLogger.warn({ error: err, userId }, 'Self-disclosure DB write failed'); });
-      }
+      persistTurn(
+        ctx.session.conversationId,
+        { content: userText },
+        { content: selfAnswer, metadata: { model: 'persona-self-disclosure' } },
+        { userId, channel: 'self-disclosure' },
+      );
       userProfileRepo.updateOnMessage(userId, messageType, 0, telegramInfo).catch((e) => telegramLogger.warn({ error: e, userId }, 'updateOnMessage failed'));
 
       analyticsRepo.log('message_received', 'telegram', {
@@ -416,24 +417,19 @@ export const processMessageThroughAI = async (
 
   // Save to history (skip gibberish to avoid poisoning context)
   if (!isGibberish(aiResponse.content)) {
-    ctx.session.messageHistory.push({ role: 'assistant', content: aiResponse.content });
-    if (ctx.session.messageHistory.length > MAX_HISTORY_MESSAGES) {
-      ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
-    }
+    pushSessionTurn(ctx, { role: 'assistant', content: aiResponse.content });
   } else {
     telegramLogger.warn({ userId, contentPreview: aiResponse.content.slice(0, 100) }, 'Gibberish response detected — not saving to history');
   }
 
   // Post-AI image interception
   if (await tryPostAIImageInterception(ctx, aiResponse.content, userText, userId)) {
-    // Сохраняем в БД даже при image interception
-    const imgConvId = ctx.session.conversationId;
-    if (imgConvId) {
-      const nowISO = new Date().toISOString();
-      conversationsRepo.addMessage(imgConvId, { role: 'user', content: userText, timestamp: nowISO, metadata: extraMetadata })
-        .then(() => conversationsRepo.addMessage(imgConvId, { role: 'assistant', content: aiResponse.content, timestamp: nowISO, metadata: { tokens_used: aiResponse.tokens_used.total, model: aiResponse.model, image_intercepted: true } }))
-        .catch((err) => { telegramLogger.warn({ error: err, userId }, 'Image interception DB write failed'); });
-    }
+    persistTurn(
+      ctx.session.conversationId,
+      { content: userText, metadata: extraMetadata as never },
+      { content: aiResponse.content, metadata: { tokens_used: aiResponse.tokens_used.total, model: aiResponse.model, image_intercepted: true } },
+      { userId, channel: 'image-interception' },
+    );
     userProfileRepo.updateOnMessage(userId, messageType, aiResponse.tokens_used.total, telegramInfo).catch((e) => telegramLogger.warn({ error: e, userId }, 'updateOnMessage failed'));
     return;
   }
@@ -480,11 +476,12 @@ export const processMessageThroughAI = async (
   }
 
   if (convId) {
-    const nowISO = new Date().toISOString();
-    // Последовательная запись — параллельный addMessage теряет сообщения (read-modify-write race)
-    conversationsRepo.addMessage(convId, { role: 'user', content: userText, timestamp: nowISO, metadata: extraMetadata })
-      .then(() => conversationsRepo.addMessage(convId, { role: 'assistant', content: aiResponse.content, timestamp: nowISO, metadata: { tokens_used: aiResponse.tokens_used.total, model: aiResponse.model } }))
-      .catch((err) => { telegramLogger.warn({ error: err, userId }, `Background ${messageType} DB writes failed`); });
+    persistTurn(
+      convId,
+      { content: userText, metadata: extraMetadata as never },
+      { content: aiResponse.content, metadata: { tokens_used: aiResponse.tokens_used.total, model: aiResponse.model } },
+      { userId, channel: messageType },
+    );
     analyticsRepo.log('ai_response', 'telegram', { userId, type: messageType, model: aiResponse.model, tokens: aiResponse.tokens_used.total }).catch((e) => telegramLogger.warn({ error: e }, 'analyticsRepo.log failed'));
   }
 

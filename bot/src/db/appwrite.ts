@@ -482,35 +482,66 @@ export const conversationsRepo = {
     const validUserId = validateUserId(userId);
     const validChannel = validateChannel(channel);
 
-    try {
-      // Try to find existing
-      const result = await getAppwrite().listDocuments(DB_ID(), COLL.conversations, [
-        Query.equal('user_id', validUserId),
-        Query.equal('channel', validChannel),
-        Query.orderDesc('updated_at'),
-        Query.limit(1),
-      ]);
+    // Без mutex два параллельных «первых сообщения» одного пользователя создавали
+    // ДВА document'а в amina_conversations. Дальше queries вернут одну из двух —
+    // история разъезжается между запросами. Для multi-worker нужен ещё уникальный
+    // индекс (user_id, channel) — см. scripts/ensure-unique-indexes.mjs.
+    return withConversationLock(`getOrCreate:${validUserId}:${validChannel}`, async () => {
+      try {
+        // Try to find existing
+        const result = await getAppwrite().listDocuments(DB_ID(), COLL.conversations, [
+          Query.equal('user_id', validUserId),
+          Query.equal('channel', validChannel),
+          Query.orderDesc('updated_at'),
+          Query.limit(1),
+        ]);
 
-      if (result.documents.length > 0) {
-        return docToConversation(result.documents[0]!);
+        if (result.documents.length > 0) {
+          return docToConversation(result.documents[0]!);
+        }
+
+        // Create new
+        const now = new Date().toISOString();
+        try {
+          const doc = await getAppwrite().createDocument(DB_ID(), COLL.conversations, ID.unique(), {
+            user_id: validUserId,
+            channel: validChannel,
+            messages: JSON.stringify([]),
+            metadata: JSON.stringify(metadata || {}),
+            created_at: now,
+            updated_at: now,
+          });
+
+          return docToConversation(doc);
+        } catch (createErr) {
+          // Multi-worker race: между list и create другой процесс уже создал conversation
+          // и сработал unique-индекс (user_id, channel). Перечитываем существующий.
+          const e = createErr as { code?: number; status?: number; type?: string; message?: string } | undefined;
+          const isConflict = !!e && (
+            e.code === 409
+            || e.status === 409
+            || (typeof e.type === 'string' && e.type.includes('document_already_exists'))
+            || (typeof e.message === 'string' && /already\s+exists|409/i.test(e.message))
+          );
+          if (isConflict) {
+            const re = await getAppwrite().listDocuments(DB_ID(), COLL.conversations, [
+              Query.equal('user_id', validUserId),
+              Query.equal('channel', validChannel),
+              Query.orderDesc('updated_at'),
+              Query.limit(1),
+            ]);
+            if (re.documents.length > 0) {
+              dbLogger.info({ userId: validUserId, channel: validChannel }, 'getOrCreate conversation: 409 conflict resolved by re-read');
+              return docToConversation(re.documents[0]!);
+            }
+          }
+          throw createErr;
+        }
+      } catch (error) {
+        dbLogger.error({ error, userId: validUserId, channel: validChannel }, 'Failed to getOrCreate conversation');
+        throw error;
       }
-
-      // Create new
-      const now = new Date().toISOString();
-      const doc = await getAppwrite().createDocument(DB_ID(), COLL.conversations, ID.unique(), {
-        user_id: validUserId,
-        channel: validChannel,
-        messages: JSON.stringify([]),
-        metadata: JSON.stringify(metadata || {}),
-        created_at: now,
-        updated_at: now,
-      });
-
-      return docToConversation(doc);
-    } catch (error) {
-      dbLogger.error({ error, userId: validUserId, channel: validChannel }, 'Failed to getOrCreate conversation');
-      throw error;
-    }
+    });
   },
 
   async addMessage(conversationId: string, message: Message): Promise<void> {

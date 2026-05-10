@@ -8,6 +8,7 @@ import { config } from '../config/index.js';
 import { dbLogger, aiLogger } from '../config/logger.js';
 import { aiService } from '../ai/openrouter.js';
 import { ID, Query, type Models } from 'node-appwrite';
+import { withPerKeyLock } from '../utils/per-key-mutex.js';
 
 type AppwriteDoc = Models.Document & Record<string, unknown>;
 
@@ -99,65 +100,106 @@ function docToLog(d: AppwriteDoc): UserLog {
 
 // ---------- User Profile Repository ----------
 
+// Блокируем все read-modify-write операции по профилю одной мьютекс-цепочкой per user.
+// Это устраняет lost-update на счётчиках (total_messages, total_tokens_used и т.п.)
+// и дубликат-документ при первом параллельном сообщении нового пользователя.
+// Multi-worker race это НЕ покрывает — для этого нужен уникальный индекс Appwrite
+// на user_id (см. scripts/ensure-unique-indexes.mjs).
+const profileLockKey = (userId: string) => `profile:${userId}`;
+
+/**
+ * Распознаёт ошибку Appwrite 409 (нарушение уникального индекса), чтобы
+ * перечитать существующий документ вместо падения.
+ */
+function isUniqueConflict(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const e = error as { code?: number; status?: number; type?: string; message?: string };
+  if (e.code === 409 || e.status === 409) return true;
+  if (typeof e.type === 'string' && e.type.includes('document_already_exists')) return true;
+  if (typeof e.message === 'string' && /already\s+exists|409/i.test(e.message)) return true;
+  return false;
+}
+
 export const userProfileRepo = {
   async getOrCreate(userId: string, telegramInfo?: TelegramUserInfo): Promise<UserProfile> {
     if (!(await checkTablesExist())) return createEmptyProfile(userId, telegramInfo);
-    try {
-      const aw = await getAW();
-      const r = await aw.listDocuments(DB_ID(), COLL.profiles, [Query.equal('user_id', userId), Query.limit(1)]);
-      if (r.documents.length > 0) {
-        const doc = r.documents[0]!;
-        const patch: Record<string, unknown> = { last_seen_at: new Date().toISOString() };
-        if (telegramInfo?.username) patch.username = telegramInfo.username;
-        if (telegramInfo?.first_name) patch.first_name = telegramInfo.first_name;
-        if (telegramInfo?.last_name) patch.last_name = telegramInfo.last_name;
-        const updated = await aw.updateDocument(DB_ID(), COLL.profiles, doc.$id, patch);
-        // Раньше возвращали `docToProfile(doc)` со старыми last_seen_at/именами — вызывающий
-        // код видел stale-данные сразу после успешного апдейта. Возвращаем свежий документ.
-        return docToProfile(updated);
-      }
-      const now = new Date().toISOString();
-      const nd = await aw.createDocument(DB_ID(), COLL.profiles, ID.unique(), {
-        user_id: userId, username: telegramInfo?.username || null, first_name: telegramInfo?.first_name || null,
-        last_name: telegramInfo?.last_name || null, language_code: telegramInfo?.language_code || 'ru',
-        total_messages: 0, total_voice_messages: 0, total_images: 0, total_tokens_used: 0,
-        first_seen_at: now, last_seen_at: now, preferences: JSON.stringify({}), created_at: now, updated_at: now,
-      });
-      dbLogger.info({ userId }, 'New user profile created');
-      return docToProfile(nd);
+    return withPerKeyLock(profileLockKey(userId), async () => {
+      try {
+        const aw = await getAW();
+        const r = await aw.listDocuments(DB_ID(), COLL.profiles, [Query.equal('user_id', userId), Query.limit(1)]);
+        if (r.documents.length > 0) {
+          const doc = r.documents[0]!;
+          const patch: Record<string, unknown> = { last_seen_at: new Date().toISOString() };
+          if (telegramInfo?.username) patch.username = telegramInfo.username;
+          if (telegramInfo?.first_name) patch.first_name = telegramInfo.first_name;
+          if (telegramInfo?.last_name) patch.last_name = telegramInfo.last_name;
+          const updated = await aw.updateDocument(DB_ID(), COLL.profiles, doc.$id, patch);
+          // Раньше возвращали `docToProfile(doc)` со старыми last_seen_at/именами — вызывающий
+          // код видел stale-данные сразу после успешного апдейта. Возвращаем свежий документ.
+          return docToProfile(updated);
+        }
+        const now = new Date().toISOString();
+        try {
+          const nd = await aw.createDocument(DB_ID(), COLL.profiles, ID.unique(), {
+            user_id: userId, username: telegramInfo?.username || null, first_name: telegramInfo?.first_name || null,
+            last_name: telegramInfo?.last_name || null, language_code: telegramInfo?.language_code || 'ru',
+            total_messages: 0, total_voice_messages: 0, total_images: 0, total_tokens_used: 0,
+            first_seen_at: now, last_seen_at: now, preferences: JSON.stringify({}), created_at: now, updated_at: now,
+          });
+          dbLogger.info({ userId }, 'New user profile created');
+          return docToProfile(nd);
+        } catch (createErr) {
+          // Multi-worker race: между нашим list и create другой процесс уже создал профиль
+          // и сработал unique-индекс на user_id. Перечитываем существующий документ.
+          if (isUniqueConflict(createErr)) {
+            const re = await aw.listDocuments(DB_ID(), COLL.profiles, [Query.equal('user_id', userId), Query.limit(1)]);
+            if (re.documents.length > 0) {
+              dbLogger.info({ userId }, 'getOrCreate profile: 409 conflict resolved by re-read');
+              return docToProfile(re.documents[0]!);
+            }
+          }
+          throw createErr;
+        }
 
-    } catch (error) { dbLogger.error({ error, userId }, 'Error in getOrCreate profile'); return createEmptyProfile(userId, telegramInfo); }
+      } catch (error) { dbLogger.error({ error, userId }, 'Error in getOrCreate profile'); return createEmptyProfile(userId, telegramInfo); }
+    });
   },
 
   async updateOnMessage(userId: string, messageType: 'message' | 'voice' | 'image', tokensUsed = 0, telegramInfo?: TelegramUserInfo): Promise<void> {
     if (!(await checkTablesExist())) return;
-    try {
-      const aw = await getAW();
-      const r = await aw.listDocuments(DB_ID(), COLL.profiles, [Query.equal('user_id', userId), Query.limit(1)]);
-      const now = new Date().toISOString();
-      if (r.documents.length > 0) {
-        const doc = r.documents[0]!;
-        const u: Record<string, unknown> = { last_seen_at: now, last_message_at: now, updated_at: now };
-        if (messageType === 'message') u.total_messages = (doc.total_messages ?? 0) + 1;
-        else if (messageType === 'voice') u.total_voice_messages = (doc.total_voice_messages ?? 0) + 1;
-        else if (messageType === 'image') u.total_images = (doc.total_images ?? 0) + 1;
-        u.interaction_count = (doc.interaction_count ?? 0) + 1;
-        if (tokensUsed > 0) u.total_tokens_used = (doc.total_tokens_used ?? 0) + tokensUsed;
-        if (telegramInfo?.username) u.username = telegramInfo.username;
-        if (telegramInfo?.first_name) u.first_name = telegramInfo.first_name;
-        await aw.updateDocument(DB_ID(), COLL.profiles, doc.$id, u);
-      } else {
-        await aw.createDocument(DB_ID(), COLL.profiles, ID.unique(), {
-          user_id: userId, username: telegramInfo?.username || null, first_name: telegramInfo?.first_name || null,
-          last_name: telegramInfo?.last_name || null, language_code: telegramInfo?.language_code || 'ru',
-          total_messages: messageType === 'message' ? 1 : 0, total_voice_messages: messageType === 'voice' ? 1 : 0,
-          total_images: messageType === 'image' ? 1 : 0, total_tokens_used: tokensUsed,
-          first_seen_at: now, last_seen_at: now, last_message_at: now,
-          preferences: JSON.stringify({}), created_at: now, updated_at: now,
-        });
-      }
+    return withPerKeyLock(profileLockKey(userId), async () => {
+      try {
+        const aw = await getAW();
+        const r = await aw.listDocuments(DB_ID(), COLL.profiles, [Query.equal('user_id', userId), Query.limit(1)]);
+        const now = new Date().toISOString();
+        if (r.documents.length > 0) {
+          const doc = r.documents[0]!;
+          const u: Record<string, unknown> = { last_seen_at: now, last_message_at: now, updated_at: now };
+          if (messageType === 'message') u.total_messages = (doc.total_messages ?? 0) + 1;
+          else if (messageType === 'voice') u.total_voice_messages = (doc.total_voice_messages ?? 0) + 1;
+          else if (messageType === 'image') u.total_images = (doc.total_images ?? 0) + 1;
+          u.interaction_count = (doc.interaction_count ?? 0) + 1;
+          if (tokensUsed > 0) u.total_tokens_used = (doc.total_tokens_used ?? 0) + tokensUsed;
+          if (telegramInfo?.username) u.username = telegramInfo.username;
+          if (telegramInfo?.first_name) u.first_name = telegramInfo.first_name;
+          await aw.updateDocument(DB_ID(), COLL.profiles, doc.$id, u);
+          // memoryContextCache хранит «Имя/Всего взаимодействий…» — после инкремента счётчиков
+          // возвращался stale текст до 45с. Сбрасываем для актуальности.
+          memoryContextBuilder.invalidateCache(userId);
+        } else {
+          await aw.createDocument(DB_ID(), COLL.profiles, ID.unique(), {
+            user_id: userId, username: telegramInfo?.username || null, first_name: telegramInfo?.first_name || null,
+            last_name: telegramInfo?.last_name || null, language_code: telegramInfo?.language_code || 'ru',
+            total_messages: messageType === 'message' ? 1 : 0, total_voice_messages: messageType === 'voice' ? 1 : 0,
+            total_images: messageType === 'image' ? 1 : 0, total_tokens_used: tokensUsed,
+            first_seen_at: now, last_seen_at: now, last_message_at: now,
+            preferences: JSON.stringify({}), created_at: now, updated_at: now,
+          });
+          memoryContextBuilder.invalidateCache(userId);
+        }
 
-    } catch (error) { dbLogger.warn({ error, userId }, 'Error updating user profile'); }
+      } catch (error) { dbLogger.warn({ error, userId }, 'Error updating user profile'); }
+    });
   },
 
   async get(userId: string): Promise<UserProfile | null> {
@@ -190,15 +232,19 @@ export const userProfileRepo = {
 
   async setLastGreetingDate(userId: string, date: string): Promise<void> {
     if (!(await checkTablesExist())) return;
-    try {
-      const aw = await getAW();
-      const r = await aw.listDocuments(DB_ID(), COLL.profiles, [Query.equal('user_id', userId), Query.limit(1)]);
-      if (!r.documents.length) return;
-      const prefs = parseJson<Record<string, unknown>>(r.documents[0]!.preferences, {});
-      prefs.last_greeting_date = date;
-      await aw.updateDocument(DB_ID(), COLL.profiles, r.documents[0]!.$id, { preferences: JSON.stringify(prefs) });
+    // Без mutex параллельные мутации `preferences` теряли друг друга:
+    // оба запроса читали один снимок, второй upsert затирал ключи первого.
+    return withPerKeyLock(profileLockKey(userId), async () => {
+      try {
+        const aw = await getAW();
+        const r = await aw.listDocuments(DB_ID(), COLL.profiles, [Query.equal('user_id', userId), Query.limit(1)]);
+        if (!r.documents.length) return;
+        const prefs = parseJson<Record<string, unknown>>(r.documents[0]!.preferences, {});
+        prefs.last_greeting_date = date;
+        await aw.updateDocument(DB_ID(), COLL.profiles, r.documents[0]!.$id, { preferences: JSON.stringify(prefs) });
 
-    } catch (error) { dbLogger.warn({ error, userId }, 'Failed to set last greeting date'); }
+      } catch (error) { dbLogger.warn({ error, userId }, 'Failed to set last greeting date'); }
+    });
   },
 
   async getStats(userId: string): Promise<Record<string, unknown>> {

@@ -1,10 +1,9 @@
 import { InlineKeyboard } from 'grammy';
 import type { BotContext } from '../bot.js';
-import { MAX_HISTORY_MESSAGES } from '../bot.js';
 import { telegramLogger } from '../../config/logger.js';
 import { aiService } from '../../ai/openrouter.js';
 import { webSearch, isWebSearchEnabled, shouldForceWebSearch, needsWebSearch } from '../../ai/websearch.js';
-import { conversationsRepo, analyticsRepo } from '../../db/index.js';
+import { analyticsRepo } from '../../db/index.js';
 import { userProfileRepo } from '../../memory/user-memory.js';
 import type { TelegramUserInfo } from '../../memory/user-memory.js';
 import {
@@ -15,6 +14,7 @@ import {
   inlineCitations,
 } from '../format.js';
 import { ensureConversation } from './context-builder.js';
+import { persistTurn, pushSessionTurn } from './turn-helpers.js';
 
 export { shouldForceWebSearch, needsWebSearch };
 
@@ -65,10 +65,7 @@ export const handleDirectWebSearch = async (
       `7. Просто возьми данные из блока "=== ДАННЫЕ ИЗ ИНТЕРНЕТА ===" и представь их.`;
 
     await ensureConversation(ctx, userId, chatId);
-    ctx.session.messageHistory.push({ role: 'user', content: userMessage });
-    if (ctx.session.messageHistory.length > MAX_HISTORY_MESSAGES) {
-      ctx.session.messageHistory = ctx.session.messageHistory.slice(-MAX_HISTORY_MESSAGES);
-    }
+    pushSessionTurn(ctx, { role: 'user', content: userMessage });
 
     await ctx.replyWithChatAction('typing');
     const response = await aiService.chat(ctx.session.messageHistory, 'telegram', searchContext);
@@ -84,7 +81,7 @@ export const handleDirectWebSearch = async (
       finalContent = inlineCitations(finalContent, validCitations);
     }
 
-    ctx.session.messageHistory.push({ role: 'assistant', content: finalContent });
+    pushSessionTurn(ctx, { role: 'assistant', content: finalContent });
 
     const searchKeyboard = new InlineKeyboard().text('📌 В заметки', 'save_to_notes').text('🔊 Озвучить', 'read_aloud');
     await sendLongMessage(ctx, finalContent, searchKeyboard);
@@ -96,13 +93,12 @@ export const handleDirectWebSearch = async (
       username: ctx.from?.username, language_code: ctx.from?.language_code,
     };
     userProfileRepo.updateOnMessage(userId, 'message', response.tokens_used.total, telegramInfo).catch(() => {});
-    const convId = ctx.session.conversationId;
-    if (convId) {
-      const nowISO = new Date().toISOString();
-      conversationsRepo.addMessage(convId, { role: 'user', content: userMessage, timestamp: nowISO })
-        .then(() => conversationsRepo.addMessage(convId, { role: 'assistant', content: finalContent, timestamp: nowISO }))
-        .catch((err) => { telegramLogger.warn({ error: err }, 'Search DB write failed'); });
-    }
+    persistTurn(
+      ctx.session.conversationId,
+      { content: userMessage },
+      { content: finalContent },
+      { userId, channel: 'web-search' },
+    );
     analyticsRepo.log('message_sent', 'telegram', { userId, model: response.model, tokens: response.tokens_used.total, responseTimeMs: responseTime, webSearch: true, webSearchModel: searchResult.model }).catch(() => {});
 
     telegramLogger.info({ userId, responseTimeMs: responseTime, webSearchModel: searchResult.model }, 'Direct search response sent');

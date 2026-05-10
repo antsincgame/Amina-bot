@@ -59,8 +59,8 @@ export async function parseNewsFromSite(siteOrUrl: NewsSite | string): Promise<P
     }
 
     const deduped = dedupeParsedHeadlines(allHeadlines);
-    appLogger.info({ siteUrl, totalDeduped: deduped.length, rawTotal: allHeadlines.length }, 'Auto-mode: merged results');
-    return deduped;
+    appLogger.info({ siteUrl, totalDeduped: deduped.headlines.length, duplicatesFiltered: deduped.duplicatesFiltered, rawTotal: allHeadlines.length }, 'Auto-mode: merged results');
+    return deduped.headlines;
   }
 
   if (site.type === 'json_api') {
