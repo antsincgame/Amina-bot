@@ -345,6 +345,24 @@ let lastVisionFallbackSwitch: {
   toModel: string | null;
 } = { reason: null, time: null, fromModel: null, toModel: null };
 
+/**
+ * Языко-нейтральная проверка пригодности vision-описания перед тем как закрепить
+ * модель-победителя как durable `effective_vision_model`. tryVisionModel отсекает
+ * только пустой ответ, поэтому модель, вернувшая мусор (символы/повторы/одна буква),
+ * раньше сохранялась как «эффективная» и отравляла все последующие запросы.
+ * Сам ответ пользователю мы всё равно отдаём (лучше, чем ничего) — но НЕ пиннингуем
+ * такую модель.
+ */
+export function looksLikeUsableVisionDescription(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length < 20) return false;
+  const letters = (trimmed.match(/\p{L}/gu) ?? []).length;
+  if (letters / trimmed.length < 0.5) return false;
+  const distinct = new Set(trimmed.replace(/\s/g, '')).size;
+  if (distinct < 5) return false;
+  return true;
+}
+
 /** Получить статус fallback vision модели */
 export function getVisionFallbackStatus() {
   return { ...lastVisionFallbackSwitch };
@@ -528,19 +546,28 @@ export async function analyzeImage(
       );
     }
 
-    aiLogger.info({ winner: winner.usedModel, tokens: winner.tokens_used }, '🏆 Vision sequential fallback winner! Saving as effective model');
+    // Закрепляем победителя как effective-модель ТОЛЬКО если ответ выглядит пригодным.
+    // Иначе мусорный (но непустой) ответ модели запиннился бы и портил все запросы.
+    if (looksLikeUsableVisionDescription(winner.description)) {
+      aiLogger.info({ winner: winner.usedModel, tokens: winner.tokens_used }, '🏆 Vision sequential fallback winner! Saving as effective model');
 
-    lastVisionFallbackSwitch = {
-      reason: `Vision sequential fallback winner: ${winner.usedModel} (primary ${multiConfig.visionModel} failed)`,
-      time: new Date(),
-      fromModel: multiConfig.visionModel,
-      toModel: winner.usedModel,
-    };
+      lastVisionFallbackSwitch = {
+        reason: `Vision sequential fallback winner: ${winner.usedModel} (primary ${multiConfig.visionModel} failed)`,
+        time: new Date(),
+        fromModel: multiConfig.visionModel,
+        toModel: winner.usedModel,
+      };
 
-    // Сохраняем победителя отдельно как effective runtime модель, не трогая ручной выбор администратора.
-    settingsRepo.set('effective_vision_model', winner.usedModel).catch(err => {
-      aiLogger.warn({ error: err }, 'Failed to save effective vision fallback winner');
-    });
+      // Сохраняем победителя отдельно как effective runtime модель, не трогая ручной выбор администратора.
+      settingsRepo.set('effective_vision_model', winner.usedModel).catch(err => {
+        aiLogger.warn({ error: err }, 'Failed to save effective vision fallback winner');
+      });
+    } else {
+      aiLogger.warn(
+        { winner: winner.usedModel, preview: winner.description.slice(0, 80) },
+        'Vision fallback winner looks unusable — returning to user but NOT pinning as effective model',
+      );
+    }
 
     return winner;
   } catch (raceError) {

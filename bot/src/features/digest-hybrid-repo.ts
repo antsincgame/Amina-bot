@@ -5,8 +5,19 @@
 import { config } from '../config/index.js';
 import { dbLogger } from '../config/logger.js';
 import { ID, Query, type Models } from 'node-appwrite';
+import { withPerKeyLock } from '../utils/per-key-mutex.js';
 
 type AppwriteDoc = Models.Document & Record<string, unknown>;
+
+/** Распознаёт Appwrite 409 (нарушение уникального индекса) для re-read вместо падения. */
+function isUniqueConflict(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const e = error as { code?: number; status?: number; type?: string; message?: string };
+  if (e.code === 409 || e.status === 409) return true;
+  if (typeof e.type === 'string' && e.type.includes('document_already_exists')) return true;
+  if (typeof e.message === 'string' && /already\s+exists|409/i.test(e.message)) return true;
+  return false;
+}
 
 function safeJsonParse(raw: string): unknown {
   try { return JSON.parse(raw); } catch { return null; }
@@ -105,22 +116,38 @@ export const digestCacheRepo = {
     } catch (e) { dbLogger.error({ error: e, city }, 'Failed to get latest cache'); throw e; }
   },
 
+  // Per-key mutex: без него два параллельных upsert одного cache_key (prewarm + ручной
+  // /digest) оба видят 0 документов и оба создают строку → дубликаты, а getByKey(limit 1)
+  // потом возвращает произвольную. На multi-worker дополнительно ловим 409 уникального
+  // индекса и перечитываем существующий документ.
   async upsert(input: UpsertDigestCacheInput): Promise<DigestCacheRecord> {
-    const now = new Date().toISOString();
-    const aw = await getAW();
-    const r = await aw.listDocuments(DB_ID(), COLL_CACHE, [Query.equal('cache_key', input.cache_key), Query.limit(1)]);
-    const docData = {
-      pipeline: HYBRID_PIPELINE, cache_key: input.cache_key, digest_date: input.digest_date,
-      city: input.city, source_hash: input.source_hash, payload: JSON.stringify(input.payload),
-      expires_at: input.expires_at, last_error: input.last_error ?? null, updated_at: now,
-    };
-    if (r.documents.length > 0) {
-      const doc = await aw.updateDocument(DB_ID(), COLL_CACHE, r.documents[0]!.$id, docData);
-      return docToCache(doc);
-    } else {
-      const doc = await aw.createDocument(DB_ID(), COLL_CACHE, ID.unique(), { ...docData, created_at: now });
-      return docToCache(doc);
-    }
+    return withPerKeyLock(`digest-cache:${input.cache_key}`, async () => {
+      const now = new Date().toISOString();
+      const aw = await getAW();
+      const r = await aw.listDocuments(DB_ID(), COLL_CACHE, [Query.equal('cache_key', input.cache_key), Query.limit(1)]);
+      const docData = {
+        pipeline: HYBRID_PIPELINE, cache_key: input.cache_key, digest_date: input.digest_date,
+        city: input.city, source_hash: input.source_hash, payload: JSON.stringify(input.payload),
+        expires_at: input.expires_at, last_error: input.last_error ?? null, updated_at: now,
+      };
+      if (r.documents.length > 0) {
+        const doc = await aw.updateDocument(DB_ID(), COLL_CACHE, r.documents[0]!.$id, docData);
+        return docToCache(doc);
+      }
+      try {
+        const doc = await aw.createDocument(DB_ID(), COLL_CACHE, ID.unique(), { ...docData, created_at: now });
+        return docToCache(doc);
+      } catch (createErr) {
+        if (isUniqueConflict(createErr)) {
+          const re = await aw.listDocuments(DB_ID(), COLL_CACHE, [Query.equal('cache_key', input.cache_key), Query.limit(1)]);
+          if (re.documents.length > 0) {
+            const doc = await aw.updateDocument(DB_ID(), COLL_CACHE, re.documents[0]!.$id, docData);
+            return docToCache(doc);
+          }
+        }
+        throw createErr;
+      }
+    });
   },
 };
 
@@ -132,22 +159,36 @@ export const digestDeliveryRepo = {
     } catch (e) { dbLogger.error({ error: e, deliveryKey }, 'Failed to get delivery'); throw e; }
   },
 
+  // Аналогично digestCacheRepo.upsert: mutex по delivery_key + 409 re-read,
+  // чтобы параллельные доставки не плодили дубликаты записей о доставке.
   async upsert(input: UpsertDigestDeliveryInput): Promise<DigestDeliveryRecord> {
-    const now = new Date().toISOString();
-    const aw = await getAW();
-    const r = await aw.listDocuments(DB_ID(), COLL_DELIVERY, [Query.equal('delivery_key', input.delivery_key), Query.limit(1)]);
-    const docData = {
-      pipeline: HYBRID_PIPELINE, delivery_key: input.delivery_key, delivery_kind: input.delivery_kind,
-      user_id: input.user_id, chat_id: input.chat_id, city: input.city, digest_date: input.digest_date,
-      cache_key: input.cache_key, status: input.status, attempt_count: input.attempt_count ?? 0,
-      last_error: input.last_error ?? null, sent_at: input.sent_at ?? null, updated_at: now,
-    };
-    if (r.documents.length > 0) {
-      const doc = await aw.updateDocument(DB_ID(), COLL_DELIVERY, r.documents[0]!.$id, docData);
-      return docToDelivery(doc);
-    } else {
-      const doc = await aw.createDocument(DB_ID(), COLL_DELIVERY, ID.unique(), { ...docData, created_at: now });
-      return docToDelivery(doc);
-    }
+    return withPerKeyLock(`digest-delivery:${input.delivery_key}`, async () => {
+      const now = new Date().toISOString();
+      const aw = await getAW();
+      const r = await aw.listDocuments(DB_ID(), COLL_DELIVERY, [Query.equal('delivery_key', input.delivery_key), Query.limit(1)]);
+      const docData = {
+        pipeline: HYBRID_PIPELINE, delivery_key: input.delivery_key, delivery_kind: input.delivery_kind,
+        user_id: input.user_id, chat_id: input.chat_id, city: input.city, digest_date: input.digest_date,
+        cache_key: input.cache_key, status: input.status, attempt_count: input.attempt_count ?? 0,
+        last_error: input.last_error ?? null, sent_at: input.sent_at ?? null, updated_at: now,
+      };
+      if (r.documents.length > 0) {
+        const doc = await aw.updateDocument(DB_ID(), COLL_DELIVERY, r.documents[0]!.$id, docData);
+        return docToDelivery(doc);
+      }
+      try {
+        const doc = await aw.createDocument(DB_ID(), COLL_DELIVERY, ID.unique(), { ...docData, created_at: now });
+        return docToDelivery(doc);
+      } catch (createErr) {
+        if (isUniqueConflict(createErr)) {
+          const re = await aw.listDocuments(DB_ID(), COLL_DELIVERY, [Query.equal('delivery_key', input.delivery_key), Query.limit(1)]);
+          if (re.documents.length > 0) {
+            const doc = await aw.updateDocument(DB_ID(), COLL_DELIVERY, re.documents[0]!.$id, docData);
+            return docToDelivery(doc);
+          }
+        }
+        throw createErr;
+      }
+    });
   },
 };
