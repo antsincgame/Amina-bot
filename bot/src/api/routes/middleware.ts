@@ -103,27 +103,42 @@ export async function requireRealtimeBridgeAuth(
 // Admin Guard
 // --------------------------------------------
 
-const ADMIN_GUARDED_API_ROUTES = [
-  /^\/chat(?:\/|$)/,
-  /^\/conversations(?:\/|$)/,
-  /^\/settings(?:\/|$)/,
-  /^\/prompts(?:\/|$)/,
-  /^\/logs(?:\/|$)/,
-  /^\/analytics(?:\/|$)/,
-  /^\/models(?:\/|$)/,
-  /^\/websearch(?:\/|$)/,
-  /^\/users(?:\/|$)/,
-  /^\/news-sites(?:\/|$)/,
-  /^\/voice-messages(?:\/|$)/,
-  /^\/lmstudio(?:\/|$)/,
-  /^\/self-core(?:\/|$)/,
-  /^\/reconciliation(?:\/|$)/,
-  /^\/providers(?:\/|$)/,
-  /^\/debug\/raw-news$/,
-] as const;
+// Default-deny: каждый роут под префиксом /api требует валидный admin Appwrite JWT,
+// КРОМЕ перечисленных ниже публичных, у которых есть собственный механизм
+// аутентификации (Telegram initData, LiraX webhook-токен, tunnel-токен, bridge-токен)
+// либо которые намеренно открыты.
+//
+// Раньше был allowlist «защищённых» путей с regex'ами без префикса /api — в Fastify v4
+// `routeOptions.url` содержит префикс (`/api/chat`), поэтому regex'ы НИКОГДА не совпадали
+// и весь админский API оставался без авторизации. Default-deny устраняет этот класс
+// ошибок: забыть добавить новый роут в список теперь означает «закрыт», а не «открыт».
+const PUBLIC_API_ROUTES: ReadonlySet<string> = new Set([
+  // Mini-app — авторизуется через Telegram initData внутри хендлера
+  '/api/mini-app/message',
+  '/api/mini-app/voice',
+  '/api/mini-app/tts',
+  // LiraX PBX webhooks — проверяют from_LiraX_token в теле запроса
+  '/api/lirax',
+  '/api/telephony/webhook',
+  // Realtime bridge — проверяет bridge-токен внутри хендлера
+  '/api/telephony/realtime/bridge/events',
+  '/api/telephony/realtime/bridge/respond',
+  // LM Studio туннель — проверяет x-amina-tunnel-token внутри хендлера
+  '/api/tunnel/register',
+  '/api/tunnel/heartbeat',
+]);
 
-function isAdminGuardedApiRoute(routePath: string): boolean {
-  return ADMIN_GUARDED_API_ROUTES.some((pattern) => pattern.test(routePath));
+/** Нормализует путь: убирает query и trailing slash (кроме корня). */
+function normalizeRoutePath(routePath: string): string {
+  const noQuery = routePath.split('?')[0] ?? '';
+  if (noQuery.length > 1 && noQuery.endsWith('/')) {
+    return noQuery.slice(0, -1);
+  }
+  return noQuery;
+}
+
+function isPublicApiRoute(routePath: string): boolean {
+  return PUBLIC_API_ROUTES.has(normalizeRoutePath(routePath));
 }
 
 // --------------------------------------------
@@ -213,8 +228,11 @@ export function escapeHtmlSimple(text: string): string {
 export async function registerMiddleware(apiServer: FastifyInstance): Promise<void> {
   apiServer.addHook('preHandler', rateLimitHook('api'));
   apiServer.addHook('preHandler', async (request, reply) => {
-    const routePath = request.routeOptions.url ?? request.url.split('?')[0] ?? '';
-    if (!isAdminGuardedApiRoute(routePath)) {
+    // routeOptions.url содержит префикс плагина (`/api/...`). Для незаматченных
+    // путей (404) routeOptions.url отсутствует — тогда берём request.url, чтобы
+    // не пропустить запрос мимо проверки.
+    const routePath = request.routeOptions.url ?? request.url ?? '';
+    if (isPublicApiRoute(routePath)) {
       return;
     }
 

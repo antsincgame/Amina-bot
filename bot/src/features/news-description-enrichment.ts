@@ -1,15 +1,13 @@
 import { load } from 'cheerio';
 import { appLogger } from '../config/logger.js';
 import type { ParsedHeadline } from '../../../shared/types/index.js';
+import { fetchWithTimeout } from './news/news-fetch.js';
 
 const ARTICLE_DESCRIPTION_FETCH_TIMEOUT_MS = 8_000;
 const ARTICLE_DESCRIPTION_CONCURRENCY = 4;
 const MIN_MEANINGFUL_DESCRIPTION_LENGTH = 50;
 const MAX_ARTICLE_DESCRIPTION_LENGTH = 200;
 const MAX_ARTICLE_EXCERPT_LENGTH = 500;
-
-const USER_AGENT =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 const GENERIC_DESCRIPTION_PATTERNS = [
   /^[^:]{2,200}: материал о новых AI-инструментах, моделях или продуктах для разработки\.$/iu,
@@ -275,14 +273,12 @@ function pickBestCandidate(headline: ParsedHeadline, html: string): string | nul
 
 async function fetchArticleEnrichment(headline: ParsedHeadline): Promise<ArticleEnrichmentResult> {
   try {
-    const response = await fetch(headline.url, {
-      headers: {
-        'User-Agent': USER_AGENT,
-        Accept: 'text/html,application/xhtml+xml;q=0.9',
-      },
-      redirect: 'follow',
-      signal: AbortSignal.timeout(ARTICLE_DESCRIPTION_FETCH_TIMEOUT_MS),
-    });
+    // SSRF-защита: раньше тут был сырой fetch с redirect:'follow' без валидации хоста,
+    // поэтому article-URL (приходит из распарсенных фидов, потенциально подконтролен
+    // источнику) мог увести на internal/metadata-адрес. fetchWithTimeout валидирует
+    // каждый хоп вручную (assertNewsSiteUrlIsSafe + redirect:'manual'), как основной
+    // путь парсинга новостей.
+    const response = await fetchWithTimeout(headline.url, ARTICLE_DESCRIPTION_FETCH_TIMEOUT_MS);
 
     if (!response.ok) {
       return { description: null, excerpt: null };

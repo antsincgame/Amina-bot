@@ -315,11 +315,45 @@ function normalizeForDedup(content: string): string {
   return content.toLowerCase().replace(/[^\wа-яёa-z0-9]/gi, ' ').replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * «Тема» факта для супер-седанса: о чём он (имя/возраст/город/работа).
+ * Позволяет новому подтверждённому факту вытеснять устаревший той же темы,
+ * чтобы исправления заменяли старые данные, а не копились как противоречия
+ * («зовут Игорь» + «зовут Иван» одновременно в контексте).
+ */
+const FACT_SUBJECT_PATTERNS: ReadonlyArray<{ subject: string; re: RegExp }> = [
+  { subject: 'name', re: /(зовут|\bимя\b|\bname\b)/i },
+  { subject: 'age', re: /(\d+\s*(?:лет|год)|возраст|\bage\b|years?\s+old)/i },
+  { subject: 'city', re: /(город|жив[ёе]т|\bживу\b|\bживешь\b|\bиз\b|lives?\s+in|\bcity\b)/i },
+  { subject: 'job', re: /(работа|работает|работаю|профессия|должность|\bjob\b|works?\s+as)/i },
+];
+
+function deriveFactSubject(content: string): string | null {
+  for (const { subject, re } of FACT_SUBJECT_PATTERNS) {
+    if (re.test(content)) return subject;
+  }
+  return null;
+}
+
+const STATED_FACT_INDICATORS = /(меня зовут|я работаю|мне \d+\s*(?:лет|год)|я живу|я из|мой город|моя работа|мой номер|я учусь|я занимаюсь)/i;
+const STATED_PREFERENCE_INDICATORS = /(мне нравится|я люблю|я предпочитаю|мне не нравится|я не люблю|я хочу)/i;
+
+/**
+ * Классифицирует, заявил ли пользователь факт о себе ЯВНО (от первого лица),
+ * и к какому типу памяти он относится. Явно заявленные факты сохраняются как
+ * подтверждённые (source='message'), а не как низкоуверенные «предположения».
+ */
+function classifyStatedFact(userMessage: string): { stated: boolean; type: UserMemory['memory_type'] } {
+  if (STATED_PREFERENCE_INDICATORS.test(userMessage)) return { stated: true, type: 'preference' };
+  if (STATED_FACT_INDICATORS.test(userMessage)) return { stated: true, type: 'fact' };
+  return { stated: false, type: 'fact' };
+}
+
 // ---------- User Memory Repository ----------
 
 export const userMemoryRepo = {
   async add(userId: string, memoryType: UserMemory['memory_type'], content: string,
-    options: { source?: string; confidence?: number; isPinned?: boolean; expiresAt?: Date } = {}): Promise<UserMemory | null> {
+    options: { source?: string; confidence?: number; isPinned?: boolean; expiresAt?: Date; supersede?: boolean } = {}): Promise<UserMemory | null> {
     if (!(await checkTablesExist())) return null;
 
     // Защита от prompt-injection
@@ -350,6 +384,27 @@ export const userMemoryRepo = {
         return null;
       }
 
+      const now = new Date().toISOString();
+
+      // Супер-седанс: подтверждённый факт вытесняет старые активные факты той же
+      // «темы» (имя/возраст/город/работа). Без этого исправление данных
+      // («теперь меня зовут Иван») не заменяло старое, а добавлялось рядом —
+      // в контексте оказывались противоречивые факты, и модель путалась.
+      if (options.supersede) {
+        const subject = deriveFactSubject(content);
+        if (subject) {
+          const normNew = normalizeForDedup(content);
+          for (const d of existing.documents) {
+            if (d.is_pinned) continue;
+            if (normalizeForDedup(String(d.content)) === normNew) continue;
+            if (deriveFactSubject(String(d.content)) === subject) {
+              await aw.updateDocument(DB_ID(), COLL.memory, d.$id, { is_active: false, updated_at: now })
+                .catch((e) => dbLogger.warn({ error: e, memoryId: d.$id }, 'Memory supersede deactivation failed'));
+            }
+          }
+        }
+      }
+
       // Применяем лимит: деактивируем самые старые если превышен
       const activeCount = existing.documents.length;
       if (activeCount >= MEMORY_LIMITS[memoryType]) {
@@ -361,7 +416,6 @@ export const userMemoryRepo = {
         }
       }
 
-      const now = new Date().toISOString();
       const doc = await aw.createDocument(DB_ID(), COLL.memory, ID.unique(), {
         user_id: userId, memory_type: memoryType, content, source: options.source || 'message',
         confidence: options.confidence ?? 1.0, is_pinned: options.isPinned ?? false, is_active: true,
@@ -605,11 +659,25 @@ export const memoryExtractor = {
         return;
       }
 
-      // Inference-факты сохраняем с явно пониженным confidence (< INFERRED_CONFIDENCE_THRESHOLD)
-      // Они попадут в «предположения»-блок, а не в основной контекст
-      await userMemoryRepo.add(userId, 'fact', extracted, { source: 'inference', confidence: 0.75 });
-      await userLogsRepo.add(userId, 'memory_created', extracted, { memory_type: 'fact', source: 'inference' });
-      aiLogger.info({ userId }, 'Fact extracted (inferred, low-confidence)');
+      // Различаем ЯВНО заявленные факты и догадки:
+      //  - заявленные («меня зовут…», «я работаю…») → подтверждённые (source='message',
+      //    высокий confidence) → попадают в основной контекст и реально используются
+      //    моделью. Раньше ВСЁ сохранялось как inference/0.75 и уходило в блок
+      //    «предположения (не подтверждены)» — модель буквально игнорировала имя/факты
+      //    пользователя. Это и была главная причина «бот не запоминает».
+      //  - догадки → inference/0.75, отдельный осторожный блок (как раньше).
+      const classified = classifyStatedFact(userMessage);
+      if (classified.stated) {
+        await userMemoryRepo.add(userId, classified.type, extracted, {
+          source: 'message', confidence: 0.95, supersede: true,
+        });
+        await userLogsRepo.add(userId, 'memory_created', extracted, { memory_type: classified.type, source: 'message' });
+        aiLogger.info({ userId, type: classified.type }, 'Fact extracted (stated, confirmed)');
+      } else {
+        await userMemoryRepo.add(userId, 'fact', extracted, { source: 'inference', confidence: 0.75 });
+        await userLogsRepo.add(userId, 'memory_created', extracted, { memory_type: 'fact', source: 'inference' });
+        aiLogger.info({ userId }, 'Fact extracted (inferred, low-confidence)');
+      }
     } catch (error) { aiLogger.error({ error, userId }, 'Failed to extract facts'); }
   },
 

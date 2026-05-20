@@ -182,7 +182,7 @@ async function tryWarpRoutes(
   const keys = await getApiKeys();
   const chatMessages = messages as OpenAI.ChatCompletionMessageParam[];
 
-  const tryModel = async (provider: string, baseURL: string, apiKey: string, model: string, headers: Record<string, string>): Promise<AIResponse & { usedModel: string }> => {
+  const tryModel = async (provider: string, baseURL: string, apiKey: string, model: string, headers: Record<string, string>, signal?: AbortSignal): Promise<AIResponse & { usedModel: string }> => {
     providerHealth.trackRequest(provider);
     const client = new OpenAI({ apiKey, baseURL, timeout: 8000, defaultHeaders: headers });
     const completion = await client.chat.completions.create({
@@ -190,7 +190,7 @@ async function tryWarpRoutes(
       messages: chatMessages,
       max_tokens: aiConfig.maxTokens,
       temperature: aiConfig.temperature,
-    });
+    }, signal ? { signal } : undefined);
     const content = completion.choices?.[0]?.message?.content;
     if (!content) throw new Error('Empty response');
     providerHealth.recordSuccess(provider);
@@ -232,14 +232,22 @@ async function tryWarpRoutes(
 
   aiLogger.info({ count: candidates.length }, '🔮 Warp routes: racing all candidates');
 
+  // Отменяем проигравших, как только появился победитель. Раньше все кандидаты
+  // (Cerebras/Groq) доезжали до конца даже после победы первого — это жгло RPM-бюджет
+  // именно тех бесплатных провайдеров, которые мы пытаемся беречь.
+  const raceAbort = new AbortController();
   try {
     const winner = await Promise.any(
       candidates.map(async (c) => {
         try {
-          const result = await tryModel(c.provider, c.baseURL, c.apiKey, c.model, c.headers);
+          const result = await tryModel(c.provider, c.baseURL, c.apiKey, c.model, c.headers, raceAbort.signal);
           aiLogger.info({ model: result.usedModel, tokens: result.tokens_used.total }, '🔮 Warp route winner');
           return result;
         } catch (error) {
+          // Отменённые после победы запросы — не реальный сбой провайдера.
+          // Не записываем их в circuit breaker, иначе один успех «ронял» бы
+          // здоровые маршруты ложными failure'ами.
+          if (raceAbort.signal.aborted) throw error;
           const msg = error instanceof Error ? error.message : String(error);
           providerHealth.recordFailure(c.provider, msg);
           aiLogger.debug({ model: `${c.provider}/${c.model}`, error: msg }, 'Warp candidate failed');
@@ -251,6 +259,8 @@ async function tryWarpRoutes(
   } catch {
     aiLogger.error('All warp routes exhausted — the Astronomican grows dim');
     return null;
+  } finally {
+    raceAbort.abort();
   }
 }
 

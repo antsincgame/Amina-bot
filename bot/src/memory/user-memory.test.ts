@@ -52,10 +52,12 @@ vi.mock('../db/appwrite.js', () => ({
 
 import {
   memoryContextBuilder,
+  memoryExtractor,
   userMemoryRepo,
   userProfileRepo,
   type UserProfile,
 } from './user-memory.js';
+import { aiService } from '../ai/openrouter.js';
 
 function buildProfile(overrides: Partial<UserProfile> = {}): UserProfile {
   return {
@@ -153,5 +155,109 @@ describe('userMemoryRepo cache invalidation', () => {
       }),
     );
     expect(invalidateSpy).toHaveBeenCalledWith('123456');
+  });
+});
+
+describe('memoryExtractor.extractFacts — stated vs inferred', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listDocumentsMock.mockReset();
+    createDocumentMock.mockReset();
+    updateDocumentMock.mockReset();
+    // Нет существующих записей → без дедупа/лимита
+    listDocumentsMock.mockResolvedValue({ documents: [], total: 0 });
+    createDocumentMock.mockResolvedValue({ $id: 'mem-new', user_id: '123456' });
+  });
+
+  const memoryCreatePayload = (): Record<string, unknown> => {
+    const call = createDocumentMock.mock.calls.find((c) => c[1] === 'amina_user_memory');
+    if (!call) throw new Error('no amina_user_memory createDocument call');
+    return call[3] as Record<string, unknown>;
+  };
+
+  it('сохраняет ЯВНО заявленный факт как подтверждённый (source=message, supersede)', async () => {
+    vi.mocked(aiService.complete).mockResolvedValueOnce('Пользователя зовут Иван');
+
+    await memoryExtractor.extractFacts('123456', 'Меня зовут Иван', 'Приятно познакомиться, Иван!');
+
+    const payload = memoryCreatePayload();
+    expect(payload.source).toBe('message');
+    expect(payload.confidence).toBe(0.95);
+    expect(payload.memory_type).toBe('fact');
+  });
+
+  it('сохраняет предпочтение с типом preference', async () => {
+    vi.mocked(aiService.complete).mockResolvedValueOnce('Пользователь предпочитает краткие ответы');
+
+    await memoryExtractor.extractFacts('123456', 'Я предпочитаю краткие ответы', 'Поняла, буду краткой.');
+
+    const payload = memoryCreatePayload();
+    expect(payload.source).toBe('message');
+    expect(payload.memory_type).toBe('preference');
+  });
+
+  it('сохраняет догадку как inference/0.75', async () => {
+    vi.mocked(aiService.complete).mockResolvedValueOnce('Пользователь, вероятно, интересуется котами');
+
+    await memoryExtractor.extractFacts(
+      '123456',
+      'Сегодня видел рыжего кота во дворе, такой милый, долго на него смотрел',
+      'Коты и правда чудесные!',
+    );
+
+    const payload = memoryCreatePayload();
+    expect(payload.source).toBe('inference');
+    expect(payload.confidence).toBe(0.75);
+  });
+});
+
+describe('userMemoryRepo.add — supersedence', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    listDocumentsMock.mockReset();
+    createDocumentMock.mockReset();
+    updateDocumentMock.mockReset();
+    createDocumentMock.mockResolvedValue({ $id: 'mem-new', user_id: '123456' });
+    updateDocumentMock.mockResolvedValue(undefined);
+  });
+
+  it('деактивирует устаревший факт той же темы при supersede', async () => {
+    listDocumentsMock.mockResolvedValue({
+      documents: [
+        { $id: 'old-name', content: 'Пользователя зовут Игорь', is_pinned: false, is_active: true },
+        { $id: 'unrelated', content: 'Пользователь работает программистом', is_pinned: false, is_active: true },
+      ],
+      total: 2,
+    });
+
+    await userMemoryRepo.add('123456', 'fact', 'Пользователя зовут Иван', {
+      source: 'message', confidence: 0.95, supersede: true,
+    });
+
+    // Деактивирован только старый факт про имя, не про работу
+    const deactivatedIds = updateDocumentMock.mock.calls
+      .filter((c) => (c[3] as Record<string, unknown>).is_active === false)
+      .map((c) => c[2]);
+    expect(deactivatedIds).toContain('old-name');
+    expect(deactivatedIds).not.toContain('unrelated');
+    expect(createDocumentMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('не деактивирует ничего без флага supersede', async () => {
+    listDocumentsMock.mockResolvedValue({
+      documents: [
+        { $id: 'old-name', content: 'Пользователя зовут Игорь', is_pinned: false, is_active: true },
+      ],
+      total: 1,
+    });
+
+    await userMemoryRepo.add('123456', 'fact', 'Пользователя зовут Иван', {
+      source: 'message', confidence: 0.95,
+    });
+
+    const deactivated = updateDocumentMock.mock.calls.filter(
+      (c) => (c[3] as Record<string, unknown>).is_active === false,
+    );
+    expect(deactivated).toHaveLength(0);
   });
 });

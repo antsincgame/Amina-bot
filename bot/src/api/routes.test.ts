@@ -341,6 +341,7 @@ describe('API Routes', () => {
       const response = await app.inject({
         method: 'GET',
         url: '/api/conversations/non-existent',
+        headers: adminHeaders,
       });
 
       // Should handle error gracefully
@@ -451,6 +452,7 @@ describe('API Routes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/chat',
+        headers: adminHeaders,
         payload: {
           message: 'Hello',
           userId: '12345',
@@ -469,6 +471,7 @@ describe('API Routes', () => {
       const response = await app.inject({
         method: 'POST',
         url: '/api/chat',
+        headers: adminHeaders,
         payload: {
           userId: '12345',
         },
@@ -526,6 +529,7 @@ describe('API Routes', () => {
       const response = await app.inject({
         method: 'GET',
         url: '/api/digest/latest?format=json&city=Минск',
+        headers: adminHeaders,
       });
 
       expect(response.statusCode).toBe(200);
@@ -552,6 +556,7 @@ describe('API Routes', () => {
       const response = await app.inject({
         method: 'GET',
         url: '/api/digest/latest?format=json&pipeline=legacy&city=Минск',
+        headers: adminHeaders,
       });
 
       expect(response.statusCode).toBe(200);
@@ -576,6 +581,7 @@ describe('API Routes', () => {
       const response = await app.inject({
         method: 'GET',
         url: '/api/digest/latest?format=json&city=Минск',
+        headers: adminHeaders,
       });
 
       expect(response.statusCode).toBe(503);
@@ -716,6 +722,52 @@ describe('API Routes', () => {
       expect(body.success).toBe(true);
       expect(body.data.updated).toBe(true);
       expect(body.data.url).toBe('https://fresh.trycloudflare.com');
+    });
+  });
+
+  describe('Admin auth guard (default-deny)', () => {
+    const protectedRoutes: Array<{ method: 'GET' | 'POST' | 'PUT' | 'DELETE'; url: string }> = [
+      { method: 'GET', url: '/api/settings' },
+      { method: 'GET', url: '/api/prompts' },
+      { method: 'GET', url: '/api/users' },
+      { method: 'GET', url: '/api/conversations/some-id' },
+      { method: 'POST', url: '/api/chat' },
+      { method: 'GET', url: '/api/models/vision' },
+      { method: 'GET', url: '/api/digest/latest' },
+      { method: 'POST', url: '/api/news/parsing-kill' },
+      { method: 'POST', url: '/api/news/parsing-resume' },
+      { method: 'POST', url: '/api/lmstudio/reload' },
+      { method: 'POST', url: '/api/providers/reset' },
+      { method: 'GET', url: '/api/providers/test' },
+    ];
+
+    it.each(protectedRoutes)('rejects unauthenticated $method $url with 401', async ({ method, url }) => {
+      const response = await app.inject({ method, url, payload: method === 'GET' ? undefined : {} });
+      expect(response.statusCode).toBe(401);
+    });
+
+    it('rejects a valid-shaped but invalid admin JWT with 403', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/settings',
+        headers: { authorization: 'Bearer not-a-valid-jwt' },
+      });
+      expect(response.statusCode).toBe(403);
+    });
+
+    it('does not require admin JWT for self-authenticating public routes', async () => {
+      // tunnel/register без admin JWT доходит до собственной проверки токена (401 от хендлера),
+      // а не отбивается admin-гвардом раньше времени — то есть роут публичный для гварда.
+      const response = await app.inject({
+        method: 'POST',
+        url: '/api/tunnel/register',
+        payload: { url: 'https://ok.trycloudflare.com' },
+      });
+      // 401 здесь от getTunnelAuthFailure (нет tunnel-токена), что подтверждает, что
+      // admin-гвард пропустил запрос к хендлеру.
+      expect(response.statusCode).toBe(401);
+      const body = JSON.parse(response.body);
+      expect(body.error).toMatch(/tunnel token/i);
     });
   });
 });

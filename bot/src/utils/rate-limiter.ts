@@ -192,11 +192,12 @@ if (process.env.NODE_ENV !== 'test') {
  */
 export function rateLimitHook(type: RateLimitType = 'api') {
   return async (request: { ip: string; headers: Record<string, string | string[] | undefined> }, reply: { code: (code: number) => { send: (body: unknown) => void }; header: (name: string, value: string) => void }) => {
-    // Получить идентификатор клиента
-    const clientId = 
-      request.headers['x-forwarded-for']?.toString().split(',')[0] ||
-      request.ip ||
-      'unknown';
+    // Идентификатор клиента — строго request.ip. Fastify вычисляет его на основе
+    // trustProxy (см. config.server.trustProxy / env TRUST_PROXY). Раньше тут вручную
+    // бралось x-forwarded-for[0], который клиент может подделать и так обойти лимиты,
+    // ротируя «адреса». request.ip уважает доверенный hop-count и не подделывается
+    // за пределами доверенных прокси.
+    const clientId = request.ip || 'unknown';
     
     const key = createRateLimitKey(clientId, type);
     const result = checkRateLimit(key, type);
