@@ -36,6 +36,9 @@ const DEFAULT_API_KEY = 'lm-studio';
 
 const healthCache = new SingleCache<boolean>(HEALTH_CACHE_TTL_MS);
 const configCache = new SingleCache<LMStudioConfig>(CONFIG_CACHE_TTL_MS);
+// Кэш авто-выбранной модели (когда lmstudio_model в настройках пуст): не дёргаем
+// /models на каждый запрос.
+const resolvedModelCache = new SingleCache<string>(CONFIG_CACHE_TTL_MS);
 
 const RETRY_BACKOFF_MS = [500, 1000, 2000] as const;
 const MAX_CONSECUTIVE_FAILURES = 3;
@@ -486,6 +489,35 @@ export async function fetchLMStudioModels(cfg: LMStudioConfig): Promise<LMStudio
 }
 
 /**
+ * Возвращает модель для запроса к LM Studio.
+ * Если в настройках задана конкретная модель — используем её.
+ * Если поле пустое — авто-выбираем первую ЗАГРУЖЕННУЮ модель (через /models),
+ * чтобы бот работал «из коробки», когда на связанном ПК уже что-то открыто,
+ * без ручного копирования точного id. Результат кэшируется.
+ * Возвращает '' если модель не задана и список получить не удалось.
+ */
+export async function getEffectiveLMStudioModel(cfg: LMStudioConfig): Promise<string> {
+  if (cfg.model) return cfg.model;
+
+  const cached = resolvedModelCache.get();
+  if (cached) return cached;
+
+  try {
+    const models = await fetchLMStudioModels(cfg);
+    const first = models[0]?.id;
+    if (first) {
+      resolvedModelCache.set(first);
+      aiLogger.info({ model: first, total: models.length }, 'LM Studio: модель не задана — авто-выбрана загруженная модель');
+      return first;
+    }
+    aiLogger.warn({ url: cfg.url }, 'LM Studio: модель не задана и список загруженных пуст');
+  } catch (error) {
+    aiLogger.debug({ error: error instanceof Error ? error.message : String(error) }, 'LM Studio: не удалось авто-выбрать модель');
+  }
+  return '';
+}
+
+/**
  * Проверяет tunnel endpoint без Authorization.
  * 200 требует валидный JSON формата LM Studio/OpenAI, 401/403 считаем защищённым,
  * но живым LM Studio API. Это не раскрывает LMSTUDIO_API_KEY внешнему URL.
@@ -550,6 +582,7 @@ export async function checkLMStudioReachable(cfg: LMStudioConfig): Promise<boole
 export function clearLMStudioCache(): void {
   healthCache.clear();
   configCache.clear();
+  resolvedModelCache.clear();
   lmStudioClient = null;
   currentLmStudioUrl = '';
   currentLmStudioKey = '';

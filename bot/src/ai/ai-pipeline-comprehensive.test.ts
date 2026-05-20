@@ -89,6 +89,8 @@ vi.mock('./lmstudio.js', () => ({
   getAIProvider: vi.fn().mockResolvedValue('openrouter'),
   getLMStudioConfig: vi.fn().mockResolvedValue(null),
   getLMStudioClient: vi.fn(),
+  // Зеркалит реальное поведение: при заданной модели возвращает её (без /models).
+  getEffectiveLMStudioModel: vi.fn(async (cfg?: { model?: string }) => cfg?.model ?? ''),
   checkLMStudioHealth: vi.fn().mockResolvedValue(false),
   isLMStudioCircuitOpen: vi.fn().mockReturnValue(false),
   recordLMStudioFailure: vi.fn(),

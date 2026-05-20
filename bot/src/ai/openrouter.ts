@@ -10,6 +10,7 @@ import {
   getAIProvider,
   getLMStudioConfig,
   getLMStudioClient,
+  getEffectiveLMStudioModel,
   checkLMStudioHealth,
   isLMStudioCircuitOpen,
   recordLMStudioFailure,
@@ -639,18 +640,20 @@ export const aiService = {
         aiLogger.debug('LM Studio circuit breaker open — пропускаем, идём на OpenRouter');
       } else {
         const lmConfig = await getLMStudioConfig();
+        // Модель: заданная в настройках или авто-выбранная из загруженных на ПК.
+        const lmModel = lmConfig ? await getEffectiveLMStudioModel(lmConfig) : '';
 
-        if (lmConfig && lmConfig.model) {
+        if (lmConfig && lmModel) {
           const healthy = await checkLMStudioHealth(lmConfig);
 
           if (healthy) {
             try {
               const lmClient = getLMStudioClient(lmConfig);
               aiLogger.debug(
-                { model: lmConfig.model, provider: 'lmstudio' },
+                { model: lmModel, provider: 'lmstudio' },
                 'Trying LM Studio'
               );
-              const result = await tryWithClient(lmClient, lmConfig.model);
+              const result = await tryWithClient(lmClient, lmModel);
               recordLMStudioSuccess();
               aiLogger.info(
                 { model: result.model, tokens: result.tokens_used.total, provider: 'lmstudio' },
@@ -926,11 +929,12 @@ export const aiService = {
         streamModel = aiConfig.model;
       } else {
         const lmConfig = await getLMStudioConfig();
-        if (lmConfig?.model) {
+        const lmModel = lmConfig ? await getEffectiveLMStudioModel(lmConfig) : '';
+        if (lmConfig && lmModel) {
           const healthy = await checkLMStudioHealth(lmConfig);
           if (healthy) {
             streamClient = getLMStudioClient(lmConfig);
-            streamModel = lmConfig.model;
+            streamModel = lmModel;
             usingLmStudio = true;
           } else if (provider === 'lmstudio') {
             throw new AppError('LMSTUDIO_OFFLINE', 'LM Studio недоступна.');
