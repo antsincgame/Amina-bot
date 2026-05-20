@@ -26,6 +26,16 @@ const VERIFY_CACHE_TTL = 5 * 60 * 1000;
 const VERIFY_CACHE_MAX_SIZE = 50;
 const verifyCache = new Map<string, { result: string | null; ts: number }>();
 
+/**
+ * Нормализует пользовательский запрос для ключа кэша: нижний регистр, схлопнутые
+ * пробелы, без хвостовой пунктуации. Раньше ключом была сырая строка, поэтому
+ * «Какой курс?» / «какой курс» / «Какой курс??» давали разные ключи → near-zero
+ * hit rate и лишние вызовы Perplexity на по сути один и тот же вопрос.
+ */
+function normalizeVerifyKey(query: string): string {
+  return query.toLowerCase().trim().replace(/\s+/g, ' ').replace(/[?!.,;:\s]+$/u, '');
+}
+
 function getFromVerifyCache(query: string): string | null | undefined {
   const entry = verifyCache.get(query);
   if (!entry) return undefined;
@@ -312,7 +322,8 @@ async function callPerplexityOnce(
  * Вызывает Perplexity напрямую и возвращает форматированный результат.
  */
 async function replaceWithRealSearch(userMessage: string): Promise<string | null> {
-  const cached = getFromVerifyCache(`search:${userMessage}`);
+  const cacheKey = `search:${normalizeVerifyKey(userMessage)}`;
+  const cached = getFromVerifyCache(cacheKey);
   if (cached !== undefined) return cached;
 
   try {
@@ -326,14 +337,14 @@ async function replaceWithRealSearch(userMessage: string): Promise<string | null
         '✅ Verifier: replaced simulation with real Perplexity data'
       );
 
-      setVerifyCache(`search:${userMessage}`, result);
+      setVerifyCache(cacheKey, result);
       return result;
     }
   } catch (error) {
     aiLogger.warn({ error: error instanceof Error ? error.message : String(error) }, 'Verifier: Perplexity search failed');
   }
 
-  setVerifyCache(`search:${userMessage}`, null);
+  setVerifyCache(cacheKey, null);
   return null;
 }
 
@@ -353,7 +364,7 @@ function extractSignificantNumbers(text: string): string[] {
  * 3. Если числа расходятся — возвращаем Perplexity-ответ как замену.
  */
 async function factCheckViaPerplexity(userMessage: string, aiResponse: string): Promise<string | null> {
-  const cacheKey = `factcheck:${userMessage}`;
+  const cacheKey = `factcheck:${normalizeVerifyKey(userMessage)}`;
   const cached = getFromVerifyCache(cacheKey);
   if (cached !== undefined) return cached;
 

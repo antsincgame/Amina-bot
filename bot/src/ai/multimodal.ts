@@ -330,12 +330,22 @@ export async function getAudioModelState(): Promise<{
 // Vision Service
 // --------------------------------------------
 
-// Ошибки при которых запускаем гонку vision моделей
-const VISION_RACE_ERROR_PATTERNS = [
-  'Provider returned error', 'Empty response', 'No endpoints found',
-  '503', '502', '500', '400', '402', 'Payment Required',
-  'temporarily unavailable', 'overloaded', '404', 'not found',
+// Текстовые признаки ошибки, при которых запускаем гонку vision-моделей.
+const VISION_RACE_ERROR_TEXT_PATTERNS = [
+  'provider returned error', 'empty response', 'no endpoints found',
+  'payment required', 'temporarily unavailable', 'overloaded', 'not found',
 ];
+
+// HTTP-статусы — отдельными числами (\b), а не подстрокой: иначе число в теле
+// ошибки/usage или id модели ложно запускали бы гонку (как было с bare '400'/'500').
+const VISION_RACE_ERROR_STATUS_RE = /\b(?:400|402|404|500|502|503)\b/;
+
+/** Нужен ли параллельный fallback vision-моделей по тексту ошибки. */
+export function visionErrorTriggersRace(errorMessage: string): boolean {
+  const lower = errorMessage.toLowerCase();
+  if (VISION_RACE_ERROR_TEXT_PATTERNS.some((p) => lower.includes(p))) return true;
+  return VISION_RACE_ERROR_STATUS_RE.test(errorMessage);
+}
 
 // Трекер последнего переключения vision модели
 let lastVisionFallbackSwitch: {
@@ -344,6 +354,24 @@ let lastVisionFallbackSwitch: {
   fromModel: string | null;
   toModel: string | null;
 } = { reason: null, time: null, fromModel: null, toModel: null };
+
+/**
+ * Языко-нейтральная проверка пригодности vision-описания перед тем как закрепить
+ * модель-победителя как durable `effective_vision_model`. tryVisionModel отсекает
+ * только пустой ответ, поэтому модель, вернувшая мусор (символы/повторы/одна буква),
+ * раньше сохранялась как «эффективная» и отравляла все последующие запросы.
+ * Сам ответ пользователю мы всё равно отдаём (лучше, чем ничего) — но НЕ пиннингуем
+ * такую модель.
+ */
+export function looksLikeUsableVisionDescription(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length < 20) return false;
+  const letters = (trimmed.match(/\p{L}/gu) ?? []).length;
+  if (letters / trimmed.length < 0.5) return false;
+  const distinct = new Set(trimmed.replace(/\s/g, '')).size;
+  if (distinct < 5) return false;
+  return true;
+}
 
 /** Получить статус fallback vision модели */
 export function getVisionFallbackStatus() {
@@ -440,7 +468,7 @@ export async function analyzeImage(
       throw new AppError('AUTH_ERROR', 'Неверный API ключ OpenRouter', primaryError);
     }
 
-    const needsRace = VISION_RACE_ERROR_PATTERNS.some(p => errorMessage.toLowerCase().includes(p.toLowerCase()));
+    const needsRace = visionErrorTriggersRace(errorMessage);
     if (!needsRace) {
       if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
         throw new AppError('RATE_LIMIT', 'Превышен лимит запросов для vision. Подождите минуту.', primaryError);
@@ -528,19 +556,28 @@ export async function analyzeImage(
       );
     }
 
-    aiLogger.info({ winner: winner.usedModel, tokens: winner.tokens_used }, '🏆 Vision sequential fallback winner! Saving as effective model');
+    // Закрепляем победителя как effective-модель ТОЛЬКО если ответ выглядит пригодным.
+    // Иначе мусорный (но непустой) ответ модели запиннился бы и портил все запросы.
+    if (looksLikeUsableVisionDescription(winner.description)) {
+      aiLogger.info({ winner: winner.usedModel, tokens: winner.tokens_used }, '🏆 Vision sequential fallback winner! Saving as effective model');
 
-    lastVisionFallbackSwitch = {
-      reason: `Vision sequential fallback winner: ${winner.usedModel} (primary ${multiConfig.visionModel} failed)`,
-      time: new Date(),
-      fromModel: multiConfig.visionModel,
-      toModel: winner.usedModel,
-    };
+      lastVisionFallbackSwitch = {
+        reason: `Vision sequential fallback winner: ${winner.usedModel} (primary ${multiConfig.visionModel} failed)`,
+        time: new Date(),
+        fromModel: multiConfig.visionModel,
+        toModel: winner.usedModel,
+      };
 
-    // Сохраняем победителя отдельно как effective runtime модель, не трогая ручной выбор администратора.
-    settingsRepo.set('effective_vision_model', winner.usedModel).catch(err => {
-      aiLogger.warn({ error: err }, 'Failed to save effective vision fallback winner');
-    });
+      // Сохраняем победителя отдельно как effective runtime модель, не трогая ручной выбор администратора.
+      settingsRepo.set('effective_vision_model', winner.usedModel).catch(err => {
+        aiLogger.warn({ error: err }, 'Failed to save effective vision fallback winner');
+      });
+    } else {
+      aiLogger.warn(
+        { winner: winner.usedModel, preview: winner.description.slice(0, 80) },
+        'Vision fallback winner looks unusable — returning to user but NOT pinning as effective model',
+      );
+    }
 
     return winner;
   } catch (raceError) {

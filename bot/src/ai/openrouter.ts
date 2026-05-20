@@ -264,20 +264,27 @@ async function tryWarpRoutes(
   }
 }
 
-// Ошибки при которых нужен параллельный fallback (включая 402!)
-const RACE_ERROR_PATTERNS = [
-  'Provider returned error',
-  'Empty response',
-  'No endpoints found',
-  '503',
-  '502',
-  '500',
-  '400',
-  '402',  // ← ДОБАВЛЕНО: Payment Required тоже запускает гонку бесплатных
-  'Payment Required',
+// Текстовые признаки ошибки, при которых нужен параллельный fallback бесплатных моделей.
+const RACE_ERROR_TEXT_PATTERNS = [
+  'provider returned error',
+  'empty response',
+  'no endpoints found',
+  'payment required',  // 402 — Payment Required тоже запускает гонку бесплатных
   'temporarily unavailable',
   'overloaded',
 ];
+
+// HTTP-статусы матчим как ОТДЕЛЬНЫЕ числа (\b), а не подстроку. Раньше bare
+// includes('400'/'500') ложно срабатывал на «12400 tokens», id модели вроде
+// «…-400b» или числа в теле ошибки — и зря запускал дорогую гонку моделей.
+const RACE_ERROR_STATUS_RE = /\b(?:400|402|500|502|503)\b/;
+
+/** Нужен ли параллельный fallback бесплатных моделей по тексту ошибки primary-модели. */
+export function errorTriggersFreeModelRace(errorMessage: string): boolean {
+  const lower = errorMessage.toLowerCase();
+  if (RACE_ERROR_TEXT_PATTERNS.some((p) => lower.includes(p))) return true;
+  return RACE_ERROR_STATUS_RE.test(errorMessage);
+}
 
 // Трекер последнего переключения
 let lastFallbackSwitch: {
@@ -763,9 +770,7 @@ export const aiService = {
         throw new AppError('AUTH_ERROR', 'Неверный API ключ OpenRouter. Проверьте OPENROUTER_API_KEY.', primaryError);
       }
 
-      const needsRace = RACE_ERROR_PATTERNS.some(pattern =>
-        errorMessage.toLowerCase().includes(pattern.toLowerCase())
-      );
+      const needsRace = errorTriggersFreeModelRace(errorMessage);
 
       if (!needsRace && !errorMessage.includes('429') && !errorMessage.toLowerCase().includes('rate limit')) {
         throw primaryError;
@@ -968,10 +973,15 @@ export const aiService = {
         max_tokens: aiConfig.maxTokens,
         temperature: aiConfig.temperature,
         stream: true,
+        // Просим финальный usage-чанк. Раньше chatStream всегда возвращал нулевой
+        // tokens_used — учёт стоимости стриминга был слеп. Для LM Studio не просим:
+        // старые локальные сборки могут не понимать stream_options.
+        ...(usingLmStudio ? {} : { stream_options: { include_usage: true } }),
       });
 
       let fullContent = '';
       let finishReason = 'unknown';
+      let usage = { prompt: 0, completion: 0, total: 0 };
 
       for await (const chunk of stream) {
         const delta = chunk.choices[0]?.delta?.content;
@@ -981,6 +991,14 @@ export const aiService = {
         }
         if (chunk.choices[0]?.finish_reason) {
           finishReason = chunk.choices[0].finish_reason;
+        }
+        // Финальный чанк include_usage приходит с пустым choices[] и заполненным usage.
+        if (chunk.usage) {
+          usage = {
+            prompt: chunk.usage.prompt_tokens ?? 0,
+            completion: chunk.usage.completion_tokens ?? 0,
+            total: chunk.usage.total_tokens ?? 0,
+          };
         }
       }
 
@@ -993,7 +1011,7 @@ export const aiService = {
       return {
         content: stripThinkingTags(fullContent),
         model: streamModel,
-        tokens_used: { prompt: 0, completion: 0, total: 0 },
+        tokens_used: usage,
         finish_reason: finishReason,
       };
     } catch (error) {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { AUDIO_MODELS, getFreeVisionModels, refreshFreeVisionModelsCache, getVisionFallbackStatus, getAllAudioModels } from './multimodal.js';
+import { AUDIO_MODELS, getFreeVisionModels, refreshFreeVisionModelsCache, getVisionFallbackStatus, getAllAudioModels, looksLikeUsableVisionDescription, visionErrorTriggersRace } from './multimodal.js';
 
 describe('multimodal', () => {
   describe('constants', () => {
@@ -32,6 +32,41 @@ describe('multimodal', () => {
       expect(status).toHaveProperty('time');
       expect(status).toHaveProperty('fromModel');
       expect(status).toHaveProperty('toModel');
+    });
+  });
+
+  describe('looksLikeUsableVisionDescription', () => {
+    it('принимает осмысленное описание (RU)', () => {
+      expect(looksLikeUsableVisionDescription('На фото рыжий кот сидит на подоконнике у окна.')).toBe(true);
+    });
+
+    it('принимает осмысленное описание (EN) — без ложного срабатывания на язык', () => {
+      expect(looksLikeUsableVisionDescription('A ginger cat is sitting on the windowsill near the window.')).toBe(true);
+    });
+
+    it('отклоняет слишком короткий ответ', () => {
+      expect(looksLikeUsableVisionDescription('кот')).toBe(false);
+    });
+
+    it('отклоняет мусор из символов', () => {
+      expect(looksLikeUsableVisionDescription('### @@@ %%% &&& *** !!! ??? ::: ;;; ~~~ ^^^')).toBe(false);
+    });
+
+    it('отклоняет повтор одного символа', () => {
+      expect(looksLikeUsableVisionDescription('ааааааааааааааааааааааааааааааа')).toBe(false);
+    });
+  });
+
+  describe('visionErrorTriggersRace', () => {
+    it('срабатывает на статусы и текстовые признаки', () => {
+      expect(visionErrorTriggersRace('500 Internal Server Error')).toBe(true);
+      expect(visionErrorTriggersRace('404 not found')).toBe(true);
+      expect(visionErrorTriggersRace('Provider returned error')).toBe(true);
+    });
+
+    it('НЕ срабатывает на число внутри токена (ложный 400/500/404)', () => {
+      expect(visionErrorTriggersRace('processed 5004 pixels')).toBe(false);
+      expect(visionErrorTriggersRace('model llava-400m failed to load weights')).toBe(false);
     });
   });
 });

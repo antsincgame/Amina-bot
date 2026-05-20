@@ -106,8 +106,41 @@ async function processReminders(bot: BotLike): Promise<void> {
         }
 
         const message = `🔔 Напоминание\n\n${reminder.task}`;
-        await bot.api.sendMessage(reminder.chat_id, message);
-        await markReminderSent(reminder.id, new Date().toISOString());
+
+        // Отправка — единственное место, где сбой означает «не доставлено» и
+        // оправдывает retry (markFailed). Раньше markReminderSent/markCompleted были
+        // в том же try, и сбой записи реестра ПОСЛЕ успешной отправки попадал в
+        // catch → markFailed → повторная отправка того же напоминания.
+        try {
+          await bot.api.sendMessage(reminder.chat_id, message);
+        } catch (sendError) {
+          const err = sendError as { description?: string; error_code?: number };
+          if (err.error_code === 403 || err.description?.includes('bot was blocked')) {
+            appLogger.warn(
+              { id: reminder.id, userId: reminder.user_id },
+              'User blocked bot, marking reminder completed'
+            );
+            await remindersRepo.markCompleted(reminder.id).then(
+              () => clearReminderSent(reminder.id),
+            ).catch(e => appLogger.debug({ error: e }, 'markCompleted failed'));
+          } else {
+            appLogger.error(
+              { error: sendError, id: reminder.id, userId: reminder.user_id },
+              'Failed to send reminder'
+            );
+            await remindersRepo.markFailed(reminder.id).catch(e => appLogger.debug({ error: e }, 'markFailed failed'));
+          }
+          continue;
+        }
+
+        // Доставлено. Дальше — только пометки «не доставлять повторно». markCompleted
+        // (is_completed=true) — авторитетный признак, который не даст getDue() забрать
+        // напоминание снова. Сбой реестра логируем, но markFailed НЕ вызываем.
+        await markReminderSent(reminder.id, new Date().toISOString()).catch(e =>
+          appLogger.error(
+            { error: e, id: reminder.id, userId: reminder.user_id },
+            'Reminder sent but registry write failed (will rely on markCompleted to avoid resend)'
+          ));
 
         try {
           await remindersRepo.markCompleted(reminder.id);
@@ -123,24 +156,13 @@ async function processReminders(bot: BotLike): Promise<void> {
           { id: reminder.id, userId: reminder.user_id, task: reminder.task },
           'Reminder sent'
         );
-      } catch (sendError) {
-        const err = sendError as { description?: string; error_code?: number };
-
-        if (err.error_code === 403 || err.description?.includes('bot was blocked')) {
-          appLogger.warn(
-            { id: reminder.id, userId: reminder.user_id },
-            'User blocked bot, marking reminder completed'
-          );
-          await remindersRepo.markCompleted(reminder.id).then(
-            () => clearReminderSent(reminder.id),
-          ).catch(e => appLogger.debug({ error: e }, 'markCompleted failed'));
-        } else {
-          appLogger.error(
-            { error: sendError, id: reminder.id, userId: reminder.user_id },
-            'Failed to send reminder'
-          );
-          await remindersRepo.markFailed(reminder.id).catch(e => appLogger.debug({ error: e }, 'markFailed failed'));
-        }
+      } catch (unexpectedError) {
+        // Непредвиденная ошибка вне пути отправки. Намеренно НЕ вызываем markFailed:
+        // если ошибка возникла уже после успешной отправки, повторная отправка недопустима.
+        appLogger.error(
+          { error: unexpectedError, id: reminder.id, userId: reminder.user_id },
+          'Unexpected error while processing reminder'
+        );
       } finally {
         inFlightReminderIds.delete(reminder.id);
       }

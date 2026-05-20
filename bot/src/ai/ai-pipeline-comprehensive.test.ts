@@ -740,6 +740,28 @@ describe('1. OpenRouter AI Service', () => {
       expect(parts.join('')).toBe('Привет мир!');
       expect(result.value.content).toBe('Привет мир!');
     });
+
+    it('собирает usage из финального include_usage-чанка', async () => {
+      const chunks = [
+        { choices: [{ delta: { content: 'Ответ' }, finish_reason: null }] },
+        { choices: [{ delta: { content: ' готов' }, finish_reason: 'stop' }] },
+        // Финальный usage-чанк: пустой choices[], заполненный usage
+        { choices: [], usage: { prompt_tokens: 12, completion_tokens: 8, total_tokens: 20 } },
+      ];
+
+      mockCreate.mockResolvedValueOnce({
+        [Symbol.asyncIterator]: async function* () {
+          for (const c of chunks) yield c;
+        },
+      });
+
+      const gen = aiService.chatStream([{ role: 'user', content: 'Hi' }]);
+      let result = await gen.next();
+      while (!result.done) result = await gen.next();
+
+      expect(result.value.content).toBe('Ответ готов');
+      expect(result.value.tokens_used).toEqual({ prompt: 12, completion: 8, total: 20 });
+    });
   });
 });
 
