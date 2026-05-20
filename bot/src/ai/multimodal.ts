@@ -330,12 +330,22 @@ export async function getAudioModelState(): Promise<{
 // Vision Service
 // --------------------------------------------
 
-// Ошибки при которых запускаем гонку vision моделей
-const VISION_RACE_ERROR_PATTERNS = [
-  'Provider returned error', 'Empty response', 'No endpoints found',
-  '503', '502', '500', '400', '402', 'Payment Required',
-  'temporarily unavailable', 'overloaded', '404', 'not found',
+// Текстовые признаки ошибки, при которых запускаем гонку vision-моделей.
+const VISION_RACE_ERROR_TEXT_PATTERNS = [
+  'provider returned error', 'empty response', 'no endpoints found',
+  'payment required', 'temporarily unavailable', 'overloaded', 'not found',
 ];
+
+// HTTP-статусы — отдельными числами (\b), а не подстрокой: иначе число в теле
+// ошибки/usage или id модели ложно запускали бы гонку (как было с bare '400'/'500').
+const VISION_RACE_ERROR_STATUS_RE = /\b(?:400|402|404|500|502|503)\b/;
+
+/** Нужен ли параллельный fallback vision-моделей по тексту ошибки. */
+export function visionErrorTriggersRace(errorMessage: string): boolean {
+  const lower = errorMessage.toLowerCase();
+  if (VISION_RACE_ERROR_TEXT_PATTERNS.some((p) => lower.includes(p))) return true;
+  return VISION_RACE_ERROR_STATUS_RE.test(errorMessage);
+}
 
 // Трекер последнего переключения vision модели
 let lastVisionFallbackSwitch: {
@@ -458,7 +468,7 @@ export async function analyzeImage(
       throw new AppError('AUTH_ERROR', 'Неверный API ключ OpenRouter', primaryError);
     }
 
-    const needsRace = VISION_RACE_ERROR_PATTERNS.some(p => errorMessage.toLowerCase().includes(p.toLowerCase()));
+    const needsRace = visionErrorTriggersRace(errorMessage);
     if (!needsRace) {
       if (errorMessage.includes('429') || errorMessage.includes('rate limit')) {
         throw new AppError('RATE_LIMIT', 'Превышен лимит запросов для vision. Подождите минуту.', primaryError);

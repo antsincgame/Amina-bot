@@ -76,6 +76,26 @@ describe('reminder scheduler delivery integrity', () => {
     expect(markFailedMock).not.toHaveBeenCalled();
   });
 
+  it('does NOT markFailed when registry write fails after a successful send (no resend)', async () => {
+    getDueMock.mockResolvedValue([
+      { id: 'rem-3', user_id: 'user-3', chat_id: 99, task: 'Без повторов' },
+    ]);
+    // Отправка успешна, но запись в реестр падает.
+    markReminderSentMock.mockRejectedValueOnce(new Error('registry write boom'));
+
+    const sendMessageMock = vi.fn().mockResolvedValue(undefined);
+    const { startReminderScheduler } = await import('./reminder-scheduler.js');
+
+    startReminderScheduler({ api: { sendMessage: sendMessageMock } } as never);
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(sendMessageMock).toHaveBeenCalledTimes(1);
+    // Несмотря на сбой реестра, markCompleted всё равно вызван → resend не произойдёт,
+    // а markFailed (который вёл бы к повторной отправке) НЕ вызван.
+    expect(markCompletedMock).toHaveBeenCalledWith('rem-3');
+    expect(markFailedMock).not.toHaveBeenCalled();
+  });
+
   it('does not re-send reminders already marked as sent in registry', async () => {
     getDueMock.mockResolvedValue([
       {

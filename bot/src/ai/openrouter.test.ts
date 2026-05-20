@@ -156,7 +156,7 @@ vi.mock('openai', () => ({
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
-import { aiService, getFallbackModels, getFallbackStatus, refreshFreeModelsCache } from './openrouter.js';
+import { aiService, getFallbackModels, getFallbackStatus, refreshFreeModelsCache, errorTriggersFreeModelRace } from './openrouter.js';
 import { AppError } from '../utils/error-handler.js';
 
 describe('OpenRouter AI Service', () => {
@@ -384,6 +384,30 @@ describe('OpenRouter AI Service', () => {
       expect(models.length).toBeGreaterThanOrEqual(1);
       expect(models[0]).toHaveProperty('id');
       expect(models[0]).toHaveProperty('name');
+    });
+  });
+
+  describe('errorTriggersFreeModelRace', () => {
+    it('срабатывает на HTTP-статусы как отдельные числа', () => {
+      expect(errorTriggersFreeModelRace('Request failed with status 500')).toBe(true);
+      expect(errorTriggersFreeModelRace('400 Bad Request')).toBe(true);
+      expect(errorTriggersFreeModelRace('Error 503: Service Unavailable')).toBe(true);
+    });
+
+    it('срабатывает на текстовые признаки', () => {
+      expect(errorTriggersFreeModelRace('Provider returned error')).toBe(true);
+      expect(errorTriggersFreeModelRace('No endpoints found')).toBe(true);
+      expect(errorTriggersFreeModelRace('Model is temporarily unavailable')).toBe(true);
+    });
+
+    it('НЕ срабатывает на число внутри другого числа/токена (ложный 400/500)', () => {
+      expect(errorTriggersFreeModelRace('Used 12400 tokens in request')).toBe(false);
+      expect(errorTriggersFreeModelRace('model qwen-400b-instruct unknown field')).toBe(false);
+      expect(errorTriggersFreeModelRace('context window 15000 exceeded by 200')).toBe(false);
+    });
+
+    it('НЕ срабатывает на нерелевантную ошибку', () => {
+      expect(errorTriggersFreeModelRace('Some unrelated validation message')).toBe(false);
     });
   });
 });

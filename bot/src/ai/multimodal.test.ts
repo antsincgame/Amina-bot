@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { AUDIO_MODELS, getFreeVisionModels, refreshFreeVisionModelsCache, getVisionFallbackStatus, getAllAudioModels, looksLikeUsableVisionDescription } from './multimodal.js';
+import { AUDIO_MODELS, getFreeVisionModels, refreshFreeVisionModelsCache, getVisionFallbackStatus, getAllAudioModels, looksLikeUsableVisionDescription, visionErrorTriggersRace } from './multimodal.js';
 
 describe('multimodal', () => {
   describe('constants', () => {
@@ -54,6 +54,19 @@ describe('multimodal', () => {
 
     it('отклоняет повтор одного символа', () => {
       expect(looksLikeUsableVisionDescription('ааааааааааааааааааааааааааааааа')).toBe(false);
+    });
+  });
+
+  describe('visionErrorTriggersRace', () => {
+    it('срабатывает на статусы и текстовые признаки', () => {
+      expect(visionErrorTriggersRace('500 Internal Server Error')).toBe(true);
+      expect(visionErrorTriggersRace('404 not found')).toBe(true);
+      expect(visionErrorTriggersRace('Provider returned error')).toBe(true);
+    });
+
+    it('НЕ срабатывает на число внутри токена (ложный 400/500/404)', () => {
+      expect(visionErrorTriggersRace('processed 5004 pixels')).toBe(false);
+      expect(visionErrorTriggersRace('model llava-400m failed to load weights')).toBe(false);
     });
   });
 });

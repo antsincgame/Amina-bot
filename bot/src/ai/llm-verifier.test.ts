@@ -123,6 +123,25 @@ describe('LLM Verifier', () => {
       expect(result.skipped).toBe(true);
     });
 
+    it('переиспользует кэш Perplexity для эквивалентных запросов (нормализация ключа)', async () => {
+      mockWebSearch.mockResolvedValueOnce({
+        answer: 'Котировка зюзюблика: 42 тугрика.',
+        citations: ['https://example.test'],
+        model: 'sonar',
+        tokens_used: { prompt: 10, completion: 10, total: 20 },
+      });
+      const simulation = '🔍 Ищу котировку зюзюблика...\n\n*(Поиск в интернете)*\n\nЗагружаю данные...';
+
+      const first = await verifyResponse('актуальная котировка зюзюблика', simulation);
+      const second = await verifyResponse('Актуальная   котировка зюзюблика??', simulation);
+
+      expect(first.correctedResponse).toContain('42 тугрика');
+      // Второй (эквивалентный после нормализации) запрос обслужен из кэша:
+      // webSearch вызван ровно один раз, mockResolvedValueOnce не исчерпан повторно.
+      expect(second.correctedResponse).toContain('42 тугрика');
+      expect(mockWebSearch).toHaveBeenCalledTimes(1);
+    });
+
     it('should detect and replace search simulation', async () => {
       mockWebSearch.mockResolvedValueOnce({
         answer: 'Курс доллара на 09.02.2026: 92.5 руб.',
