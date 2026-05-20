@@ -36,6 +36,8 @@ const envSchema = z.object({
   CEREBRAS_MODEL: z.string().optional(),
   GROQ_MODEL: z.string().optional(),
   PERPLEXITY_API_KEY: z.string().optional(), // Для веб-поиска
+  // Основной провайдер веб-поиска. openrouter = модель :online (без ключа Perplexity).
+  WEB_SEARCH_PROVIDER: z.enum(['openrouter', 'perplexity']).default('openrouter'),
 
   // Server
   PORT: z.string().default('3000').transform(Number),
@@ -199,6 +201,13 @@ export const config = {
   perplexity: {
     apiKey: env.PERPLEXITY_API_KEY || '', // Может быть пустым, загрузится из БД
     baseUrl: getPerplexityBaseUrl(),
+  },
+
+  // Веб-поиск: какой провайдер основной. 'openrouter' → модель с суффиксом :online
+  // (не требует Perplexity-ключа), 'perplexity' → Perplexity API основным.
+  // По умолчанию openrouter — Perplexity остаётся запасным, если ключ задан.
+  search: {
+    provider: env.WEB_SEARCH_PROVIDER,
   },
 
   // Database backend — always Appwrite

@@ -29,8 +29,10 @@ jobs:
       - name: Install dependencies
         run: npm install --no-audit --no-fund
 
+      # npm run использует локальный node_modules/.bin/tsc — детерминированно,
+      # без риска, что npx подтянет постороннюю одноимённую утилиту.
       - name: Typecheck
-        run: npx tsc --noEmit --skipLibCheck
+        run: npm run typecheck
 
       - name: Tests
         run: npx vitest run
@@ -54,4 +56,4 @@ jobs:
         run: npm ci
 
       - name: Typecheck
-        run: npx tsc --noEmit
+        run: npm run typecheck
