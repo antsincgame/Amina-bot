@@ -8,11 +8,12 @@
  * Документация: https://api.lirax.net/general
  */
 
+import { timingSafeEqual } from 'node:crypto';
 import { telegramLogger } from '../../config/logger.js';
 import { settingsRepo } from '../../db/index.js';
 import { LIRAX_FETCH_TIMEOUT_MS } from '../../config/constants.js';
 import { getTelephonyRuntimeConfig, clearTelephonyRuntimeConfigCache } from './service/telephony-runtime-config.js';
-import { escapeHtml } from './shared.js';
+import { escapeHtml, prefixRu } from './shared.js';
 
 // ---------------------------------------------------------------
 // Config helpers
@@ -232,7 +233,9 @@ export async function connectCall(
       to1: cfg.operatorPhone,
       to2: targetPhone,
     };
-    if (speech) params['speech'] = `ru ${speech}`;
+    // prefixRu идемпотентен (не добавит второй «ru », если он уже есть) — раньше тут
+    // был сырой шаблон, и уже-префиксованный текст превращался в «ru ru …».
+    if (speech) { const s = prefixRu(speech); if (s) params['speech'] = s; }
 
     const result = await liraXRequest('make2Calls', params) as Make2CallsResult;
     return { id: result.id_make2calls, mode: 'make2calls' };
@@ -431,10 +434,33 @@ export async function isTelephonyAllowed(telegramId: string): Promise<boolean> {
 // Webhook token verification
 // ---------------------------------------------------------------
 
+let warnedAboutMissingWebhookToken = false;
+
+/** Сравнение строк за постоянное время — не сливает длину/префикс через тайминг. */
+function constantTimeEquals(a: string, b: string): boolean {
+  const bufA = Buffer.from(a, 'utf8');
+  const bufB = Buffer.from(b, 'utf8');
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
+}
+
 export async function verifyWebhookToken(token: string): Promise<boolean> {
   const cfg = await getLiraXConfig();
-  if (!cfg.webhookToken) return true; // если не настроен — пропускаем
-  return token === cfg.webhookToken;
+  if (!cfg.webhookToken) {
+    // Fail-open сохранён, чтобы не сломать развёртывания без настроенного токена,
+    // но это значит, что КТО УГОДНО может слать поддельные вебхуки. Предупреждаем
+    // один раз, чтобы оператор заметил и настроил LIRAX_WEBHOOK_TOKEN.
+    if (!warnedAboutMissingWebhookToken) {
+      warnedAboutMissingWebhookToken = true;
+      telegramLogger.warn(
+        'LiraX webhook token is NOT configured — inbound webhooks are accepted without verification. Set LIRAX_WEBHOOK_TOKEN to secure telephony webhooks.',
+      );
+    }
+    return true;
+  }
+  // Раньше было `token === cfg.webhookToken` — обычное сравнение сливает длину и
+  // совпадающий префикс через тайминг. Сравниваем за постоянное время.
+  return constantTimeEquals(token, cfg.webhookToken);
 }
 
 // ---------------------------------------------------------------

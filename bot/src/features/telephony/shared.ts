@@ -78,13 +78,39 @@ export function safeJsonParse<T>(value: string): T | null {
 }
 
 export function extractJsonObject(value: string): string | null {
+  // Раньше брали первый '{' и ПОСЛЕДНИЙ '}'. Если модель добавляла прозу с '}'
+  // после JSON или несколько JSON-блоков, срез захватывал мусор → parse падал и
+  // терялся реальный outcome. Идём по глубине скобок (учитывая строки/экранирование)
+  // и возвращаем первый сбалансированный объект.
   const start = value.indexOf('{');
-  const end = value.lastIndexOf('}');
-  if (start === -1 || end === -1 || end <= start) {
+  if (start === -1) {
     return null;
   }
 
-  return value.slice(start, end + 1);
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < value.length; i++) {
+    const ch = value[i]!;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+    } else if (ch === '{') {
+      depth++;
+    } else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        return value.slice(start, i + 1);
+      }
+    }
+  }
+
+  return null; // несбалансированный объект (например, обрезанный ответ модели)
 }
 
 export function createDefaultScenarioPolicy(goal: string): TelephonyAiScenarioPolicy {

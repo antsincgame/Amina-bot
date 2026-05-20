@@ -220,9 +220,9 @@ export const stripHtml = (text: string): string => {
 // Long Message Splitting
 // ============================================
 
-/** Разбивает длинный текст на чанки по лимиту Telegram (4096) */
-export const splitIntoChunks = (text: string): string[] => {
-  if (text.length <= MAX_MESSAGE_LENGTH) {
+/** Разбивает длинный текст на чанки по лимиту Telegram (по умолчанию 4096). */
+export const splitIntoChunks = (text: string, maxLen: number = MAX_MESSAGE_LENGTH): string[] => {
+  if (text.length <= maxLen) {
     return [text];
   }
 
@@ -231,23 +231,23 @@ export const splitIntoChunks = (text: string): string[] => {
 
   const paragraphs = text.split('\n\n');
   for (const paragraph of paragraphs) {
-    if (currentChunk.length + paragraph.length + 2 > MAX_MESSAGE_LENGTH) {
+    if (currentChunk.length + paragraph.length + 2 > maxLen) {
       if (currentChunk) {
         chunks.push(currentChunk.trim());
         currentChunk = '';
       }
 
       // If single paragraph is too long, split by sentences
-      if (paragraph.length > MAX_MESSAGE_LENGTH) {
+      if (paragraph.length > maxLen) {
         const sentences = paragraph.split(/(?<=[.!?])\s+/);
         for (const sentence of sentences) {
           // If a single sentence exceeds the limit, hard-split by character count
-          if (sentence.length > MAX_MESSAGE_LENGTH) {
+          if (sentence.length > maxLen) {
             if (currentChunk) { chunks.push(currentChunk.trim()); currentChunk = ''; }
-            for (let j = 0; j < sentence.length; j += MAX_MESSAGE_LENGTH) {
-              chunks.push(sentence.slice(j, j + MAX_MESSAGE_LENGTH));
+            for (let j = 0; j < sentence.length; j += maxLen) {
+              chunks.push(sentence.slice(j, j + maxLen));
             }
-          } else if (currentChunk.length + sentence.length + 1 > MAX_MESSAGE_LENGTH) {
+          } else if (currentChunk.length + sentence.length + 1 > maxLen) {
             if (currentChunk) chunks.push(currentChunk.trim());
             currentChunk = sentence;
           } else {
@@ -267,6 +267,26 @@ export const splitIntoChunks = (text: string): string[] => {
   }
 
   return chunks;
+};
+
+/**
+ * Бюджет для чанкинга ИСХОДНОГО markdown перед конвертацией в HTML.
+ * Ниже лимита Telegram (4096), чтобы оставить запас на расширение при
+ * markdown→HTML (теги <b></b>, сущности &amp; и т.п.).
+ */
+const HTML_SAFE_MARKDOWN_BUDGET = 3500;
+
+/**
+ * Готовит готовые-к-отправке HTML-чанки из markdown, НЕ разрывая теги/сущности.
+ * Если итоговый HTML влезает в одно сообщение — один чанк. Иначе дробим ИСХОДНЫЙ
+ * markdown с запасом и конвертируем каждый чанк отдельно (markdownToTelegramHtml
+ * всегда даёт сбалансированный HTML, поэтому границы чанков безопасны).
+ */
+export const markdownToHtmlChunks = (text: string): string[] => {
+  const htmlText = markdownToTelegramHtml(text);
+  return htmlText.length <= MAX_MESSAGE_LENGTH
+    ? [htmlText]
+    : splitIntoChunks(text, HTML_SAFE_MARKDOWN_BUDGET).map(markdownToTelegramHtml);
 };
 
 // ---- Кэш полного текста для озвучки (TTLCache, max 100 записей) ----
@@ -309,8 +329,11 @@ export const sendLongMessage = async (
   text: string,
   keyboard?: InlineKeyboard
 ): Promise<void> => {
-  const htmlText = markdownToTelegramHtml(text);
-  const chunks = splitIntoChunks(htmlText);
+  // Раньше markdown конвертировался в HTML, а потом splitIntoChunks резал ГОТОВЫЙ HTML —
+  // граница могла попасть внутрь тега/сущности или разнести <b>…</b> по чанкам → Telegram
+  // отвечал 400 "can't parse entities". markdownToHtmlChunks чанкует исходный markdown и
+  // конвертирует каждый чанк отдельно, гарантируя сбалансированный HTML на границах.
+  const chunks = markdownToHtmlChunks(text);
   const isMultiChunk = chunks.length > 1;
 
   // Для многочастных сообщений: кэшируем полный текст и подменяем кнопку озвучки

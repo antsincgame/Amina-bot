@@ -374,9 +374,23 @@ describe('extractJsonObject — извлечение JSON из текста', ()
     expect(result).toBe('{"a":{"b":1}}');
   });
 
-  it('множественные JSON — берёт от первого { до последнего }', () => {
+  it('множественные JSON — берёт ПЕРВЫЙ сбалансированный объект (валидный JSON)', () => {
+    // Раньше возвращалось '{"a":1} text {"b":2}' — невалидный JSON, который потом
+    // не парсился. Теперь возвращаем первый завершённый объект.
     const result = extractJsonObject('{"a":1} text {"b":2}');
-    expect(result).toBe('{"a":1} text {"b":2}');
+    expect(result).toBe('{"a":1}');
+  });
+
+  it('игнорирует прозу с фигурной скобкой ПОСЛЕ JSON', () => {
+    const result = extractJsonObject('{"outcome":"ok"} спасибо :} конец');
+    expect(result).toBe('{"outcome":"ok"}');
+    expect(() => JSON.parse(result!)).not.toThrow();
+  });
+
+  it('не путается из-за } внутри строкового значения', () => {
+    const result = extractJsonObject('prefix {"note":"smile :}","n":1} suffix');
+    expect(result).toBe('{"note":"smile :}","n":1}');
+    expect(JSON.parse(result!)).toEqual({ note: 'smile :}', n: 1 });
   });
 
   it('с переводами строк', () => {

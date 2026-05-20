@@ -18,6 +18,7 @@ import {
   looksLikeSearchSimulation,
   looksLikeSearchRefusal,
   markdownToTelegramHtml,
+  markdownToHtmlChunks,
   splitIntoChunks,
   escapeMarkdown,
   escapeHtml,
@@ -205,11 +206,57 @@ describe('markdownToTelegramHtml', () => {
 // splitIntoChunks
 // ============================================
 
+describe('markdownToHtmlChunks', () => {
+  const countTag = (s: string, tag: string): number =>
+    (s.match(new RegExp(`<${tag}>`, 'g')) ?? []).length;
+  const countClose = (s: string, tag: string): number =>
+    (s.match(new RegExp(`</${tag}>`, 'g')) ?? []).length;
+
+  it('короткий markdown → один конвертированный чанк', () => {
+    const chunks = markdownToHtmlChunks('Привет **мир**');
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]).toBe('Привет <b>мир</b>');
+  });
+
+  it('длинный markdown с жирным текстом: каждый чанк ≤ 4096 и с балансом <b>/</b>', () => {
+    // Много жирных абзацев — после конвертации это раньше рвало <b>…</b> по чанкам.
+    const paragraph = `**Заголовок раздела** ${'обычный текст с деталями и фактами. '.repeat(8)}`;
+    const longText = Array(120).fill(paragraph).join('\n\n');
+    const chunks = markdownToHtmlChunks(longText);
+
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const chunk of chunks) {
+      expect(chunk.length).toBeLessThanOrEqual(4096);
+      // Теги сбалансированы внутри каждого чанка — Telegram не отвергнет parse.
+      expect(countTag(chunk, 'b')).toBe(countClose(chunk, 'b'));
+      // Не обрывается посреди тега/сущности.
+      expect(chunk.endsWith('<')).toBe(false);
+      expect(/&[a-z]*$/i.test(chunk)).toBe(false);
+    }
+  });
+
+  it('не оставляет «висячих» открытых тегов между чанками', () => {
+    const longText = Array(300).fill('Текст со **акцентом** внутри. ').join('');
+    const chunks = markdownToHtmlChunks(longText);
+    expect(chunks.length).toBeGreaterThan(1);
+    const totalOpen = chunks.reduce((n, c) => n + countTag(c, 'b'), 0);
+    const totalClose = chunks.reduce((n, c) => n + countClose(c, 'b'), 0);
+    expect(totalOpen).toBe(totalClose);
+  });
+});
+
 describe('splitIntoChunks', () => {
   it('should not split short messages', () => {
     const chunks = splitIntoChunks('Short message');
     expect(chunks).toHaveLength(1);
     expect(chunks[0]).toBe('Short message');
+  });
+
+  it('respects a custom maxLen', () => {
+    const text = Array(20).fill('абзац').join('\n\n');
+    const chunks = splitIntoChunks(text, 30);
+    expect(chunks.length).toBeGreaterThan(1);
+    chunks.forEach((c) => expect(c.length).toBeLessThanOrEqual(30));
   });
 
   it('should split messages exceeding 4096 chars by paragraphs', () => {
