@@ -10,8 +10,12 @@ vi.mock('../config/logger.js', () => ({
   },
 }));
 
+// Enrichment ходит в сеть через fetchWithTimeout (SSRF-safe: валидация хоста + manual redirect).
+// В юните мокаем именно его — нас интересует scoring-логика, а не механика fetch/DNS.
 const mockFetch = vi.fn();
-vi.stubGlobal('fetch', mockFetch);
+vi.mock('./news/news-fetch.js', () => ({
+  fetchWithTimeout: (url: string, timeoutMs?: number) => mockFetch(url, timeoutMs),
+}));
 
 import {
   enrichParsedHeadlineDescriptions,

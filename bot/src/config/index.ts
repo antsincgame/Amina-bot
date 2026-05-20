@@ -41,6 +41,13 @@ const envSchema = z.object({
   PORT: z.string().default('3000').transform(Number),
   HOST: z.string().default('0.0.0.0'),
   TZ: z.string().default('UTC'),
+  // Доверие к X-Forwarded-For. Влияет на request.ip и, как следствие, на rate-limiting.
+  //  - число   → доверять ровно N прокси-хопам (рекомендуется: точное число reverse-proxy);
+  //  - true     → доверять всей цепочке XFF (УЯЗВИМО: клиент может подделать IP и обойти лимиты);
+  //  - false    → игнорировать XFF (request.ip = socket, неподделываем);
+  //  - строка   → IP/CIDR/список доверенных прокси.
+  // По умолчанию 'true' для обратной совместимости — в проде задайте точный hop-count.
+  TRUST_PROXY: z.string().default('true'),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error', 'fatal']).default('info'),
 
@@ -102,6 +109,18 @@ const parseEnv = () => {
 
 const env = parseEnv();
 
+/**
+ * Нормализует TRUST_PROXY в значение, понятное Fastify:
+ * 'true'/'false' → boolean, целое число → hop-count, иначе → строка (IP/CIDR/список).
+ */
+function parseTrustProxy(raw: string): boolean | number | string {
+  const value = raw.trim();
+  if (value.toLowerCase() === 'true') return true;
+  if (value.toLowerCase() === 'false') return false;
+  if (/^\d+$/.test(value)) return Number(value);
+  return value;
+}
+
 // Токен Telegram: env или БД (устанавливается при старте в index.ts)
 let resolvedTelegramToken: string = env.TELEGRAM_BOT_TOKEN || '';
 
@@ -123,6 +142,8 @@ export const config = {
     host: env.HOST,
     timeZone: env.TZ,
     logLevel: env.LOG_LEVEL,
+    /** Значение для Fastify `trustProxy`. Нормализовано из TRUST_PROXY. */
+    trustProxy: parseTrustProxy(env.TRUST_PROXY),
   },
 
   /** URL админки (для CORS, ссылок в сообщениях). */

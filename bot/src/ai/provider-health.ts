@@ -10,7 +10,7 @@
  *
  * Rate budget:
  * - Трекает RPM (requests per minute) per provider
- * - Фоновые задачи дросселируются когда >70% бюджета израсходовано
+ * - Фоновые задачи дросселируются когда >50% бюджета израсходовано (BACKGROUND_BUDGET_RATIO)
  * - Пользовательские запросы всегда проходят
  */
 
@@ -82,12 +82,16 @@ function classifyError(error: string): { code: string; cooldownMs: number } {
 // Public API
 // ============================================
 
-/** Записать успешный запрос — сбрасывает circuit breaker */
+/**
+ * Записать успешный запрос — сбрасывает circuit breaker.
+ * RPM-счётчик НЕ трогаем: запрос уже учтён в trackRequest (вызывается перед каждым
+ * запросом). Раньше здесь был ещё один push — каждый успешный запрос считался дважды,
+ * и фоновый бюджет дросселировался вдвое раньше, чем нужно.
+ */
 export function recordSuccess(provider: string): void {
   const state = getState(provider);
   state.consecutiveFailures = 0;
   state.cooldownUntil = 0;
-  state.requestTimestamps.push(Date.now());
 }
 
 /** Записать ошибку — может открыть circuit breaker */

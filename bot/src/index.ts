@@ -19,7 +19,7 @@ const APP_VERSION: string = (require('../package.json') as { version: string }).
 
 const app = Fastify({
   logger: false,
-  trustProxy: true,
+  trustProxy: config.server.trustProxy,
   requestTimeout: REQUEST_TIMEOUT_MS,
   connectionTimeout: CONNECTION_TIMEOUT_MS,
   keepAliveTimeout: KEEP_ALIVE_TIMEOUT_MS,
