@@ -36,6 +36,9 @@ const DEFAULT_API_KEY = 'lm-studio';
 
 const healthCache = new SingleCache<boolean>(HEALTH_CACHE_TTL_MS);
 const configCache = new SingleCache<LMStudioConfig>(CONFIG_CACHE_TTL_MS);
+// Кэш авто-выбранной модели (когда lmstudio_model в настройках пуст): не дёргаем
+// /models на каждый запрос.
+const resolvedModelCache = new SingleCache<string>(CONFIG_CACHE_TTL_MS);
 
 const RETRY_BACKOFF_MS = [500, 1000, 2000] as const;
 const MAX_CONSECUTIVE_FAILURES = 3;
@@ -61,6 +64,20 @@ let recentFailures: number[] = [];
 // вызовов могли одновременно перейти из 'open' в 'half-open' и все уйти в LM Studio,
 // перегружая мёртвый туннель.
 let halfOpenProbeInFlight = false;
+// Момент выдачи half-open пробы. Нужен как deadline-аренда: если вызывающий код
+// получил пробу (isLMStudioCircuitOpen()→false), но НЕ вызвал recordSuccess/Failure
+// (например, конфиг/модель отсутствуют или health-check упал на пути к запросу —
+// см. openrouter.ts:670-677), флаг halfOpenProbeInFlight раньше залипал в true
+// НАВСЕГДА и LM Studio блокировался до ручного reload. Теперь аренда истекает.
+let halfOpenProbeStartedAt = 0;
+// Чуть больше таймаута клиента LM Studio (60с) — к этому моменту реальная проба
+// гарантированно завершилась бы и вызвала record*. Если нет — аренду освобождаем.
+const HALF_OPEN_PROBE_TIMEOUT_MS = 70_000;
+
+function grantHalfOpenProbe(): void {
+  halfOpenProbeInFlight = true;
+  halfOpenProbeStartedAt = Date.now();
+}
 
 function pruneOldFailures(): void {
   const cutoff = Date.now() - CIRCUIT_WINDOW_MS;
@@ -77,6 +94,7 @@ export function recordLMStudioFailure(): void {
     circuitState = 'open';
     circuitOpenedAt = Date.now();
     halfOpenProbeInFlight = false;
+    halfOpenProbeStartedAt = 0;
     aiLogger.warn('⚡ LM Studio circuit breaker: half-open → OPEN (проба не удалась)');
     return;
   }
@@ -99,6 +117,7 @@ export function recordLMStudioSuccess(): void {
   circuitState = 'closed';
   recentFailures = [];
   halfOpenProbeInFlight = false;
+  halfOpenProbeStartedAt = 0;
 }
 
 /** Проверить, заблокирован ли LM Studio circuit breaker'ом */
@@ -109,19 +128,22 @@ export function isLMStudioCircuitOpen(): boolean {
     const elapsed = Date.now() - circuitOpenedAt;
     if (elapsed >= CIRCUIT_COOLDOWN_MS) {
       circuitState = 'half-open';
-      halfOpenProbeInFlight = true;
+      grantHalfOpenProbe();
       aiLogger.info('🔄 LM Studio circuit breaker: OPEN → half-open (cooldown истёк, проба №1)');
       return false; // допускаем строго один запрос
     }
     return true; // ещё в cooldown
   }
 
-  // half-open: только первый зашедший держит probe in flight; остальные блокируем,
-  // чтобы не послать в LM Studio десяток параллельных запросов.
-  if (halfOpenProbeInFlight) {
+  // half-open: пропускаем один probe за раз. Аренда пробы истекает по таймауту —
+  // иначе «потерянная» проба (без последующего record*) залипала бы навсегда.
+  if (halfOpenProbeInFlight && Date.now() - halfOpenProbeStartedAt < HALF_OPEN_PROBE_TIMEOUT_MS) {
     return true;
   }
-  halfOpenProbeInFlight = true;
+  if (halfOpenProbeInFlight) {
+    aiLogger.warn('⚠️ LM Studio circuit breaker: half-open проба истекла без результата — выдаём новую');
+  }
+  grantHalfOpenProbe();
   return false;
 }
 
@@ -467,6 +489,35 @@ export async function fetchLMStudioModels(cfg: LMStudioConfig): Promise<LMStudio
 }
 
 /**
+ * Возвращает модель для запроса к LM Studio.
+ * Если в настройках задана конкретная модель — используем её.
+ * Если поле пустое — авто-выбираем первую ЗАГРУЖЕННУЮ модель (через /models),
+ * чтобы бот работал «из коробки», когда на связанном ПК уже что-то открыто,
+ * без ручного копирования точного id. Результат кэшируется.
+ * Возвращает '' если модель не задана и список получить не удалось.
+ */
+export async function getEffectiveLMStudioModel(cfg: LMStudioConfig): Promise<string> {
+  if (cfg.model) return cfg.model;
+
+  const cached = resolvedModelCache.get();
+  if (cached) return cached;
+
+  try {
+    const models = await fetchLMStudioModels(cfg);
+    const first = models[0]?.id;
+    if (first) {
+      resolvedModelCache.set(first);
+      aiLogger.info({ model: first, total: models.length }, 'LM Studio: модель не задана — авто-выбрана загруженная модель');
+      return first;
+    }
+    aiLogger.warn({ url: cfg.url }, 'LM Studio: модель не задана и список загруженных пуст');
+  } catch (error) {
+    aiLogger.debug({ error: error instanceof Error ? error.message : String(error) }, 'LM Studio: не удалось авто-выбрать модель');
+  }
+  return '';
+}
+
+/**
  * Проверяет tunnel endpoint без Authorization.
  * 200 требует валидный JSON формата LM Studio/OpenAI, 401/403 считаем защищённым,
  * но живым LM Studio API. Это не раскрывает LMSTUDIO_API_KEY внешнему URL.
@@ -531,6 +582,7 @@ export async function checkLMStudioReachable(cfg: LMStudioConfig): Promise<boole
 export function clearLMStudioCache(): void {
   healthCache.clear();
   configCache.clear();
+  resolvedModelCache.clear();
   lmStudioClient = null;
   currentLmStudioUrl = '';
   currentLmStudioKey = '';
@@ -538,5 +590,6 @@ export function clearLMStudioCache(): void {
   circuitState = 'closed';
   recentFailures = [];
   halfOpenProbeInFlight = false;
+  halfOpenProbeStartedAt = 0;
   aiLogger.debug('LM Studio caches + circuit breaker cleared');
 }

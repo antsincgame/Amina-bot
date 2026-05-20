@@ -1,8 +1,10 @@
 /**
- * Web Search via Perplexity API
+ * Web Search — основной провайдер настраивается через WEB_SEARCH_PROVIDER:
+ *   openrouter (по умолчанию) — модель с суффиксом :online (без ключа Perplexity),
+ *   perplexity — Perplexity API. Второй провайдер используется как запасной.
  * Агрессивный движок поиска в интернете.
  * Бот АКТИВНО ищет информацию — при любых вопросах требующих актуальных данных.
- * 
+ *
  * Принцип: лучше поискать лишний раз, чем ответить устаревшей информацией.
  */
 
@@ -616,21 +618,6 @@ async function webSearchInternal(
     forDigest?: boolean;
   } = {}
 ): Promise<WebSearchResult> {
-  const apiKey = await getPerplexityApiKey();
-  
-  if (!apiKey) {
-    // Perplexity не настроен → пробуем OpenRouter :online
-    telegramLogger.info('Perplexity not configured, trying OpenRouter :online');
-    const enhancedQuery = enhanceSearchQuery(query);
-    const fallback = await webSearchViaOpenRouter(enhancedQuery, options.maxTokens || DEFAULT_SEARCH_MAX_TOKENS,
-      'Ты — поисковый ассистент. Найди актуальную информацию и ответь подробно на русском.');
-    if (fallback) return fallback;
-    throw Object.assign(
-      new Error('Perplexity API key not configured and OpenRouter fallback failed'),
-      { code: 'PERPLEXITY_NOT_CONFIGURED' }
-    );
-  }
-
   // Для новостных/сводочных запросов нужно больше токенов
   const isNewsQuery = /новост|сводк|событи|дайджест/i.test(query);
 
@@ -646,11 +633,9 @@ async function webSearchInternal(
       ? Math.max(configuredTokens, DEFAULT_NEWS_MAX_TOKENS) // Для новостей минимум 2000
       : configuredTokens;
   }
-  
-  const selectedModel = await getSelectedModel();
-  const modelInfo = getModelInfo(selectedModel);
+
   const enhancedQuery = enhanceSearchQuery(query);
-  
+
   // Системный промпт для новостных запросов
   const systemPrompt = isNewsQuery
     ? `Ты — новостной ассистент. Найди РЕАЛЬНЫЕ АКТУАЛЬНЫЕ новости и события.
@@ -674,6 +659,45 @@ async function webSearchInternal(
 6. Отвечай ПОДРОБНО и РАЗВЁРНУТО с фактами
 7. Если спрашивают цену — дай цену, а не описание
 8. Формат: структурированный, с фактами. Язык: русский.`;
+
+  const preferOpenRouter = (config.search?.provider ?? 'openrouter') === 'openrouter';
+
+  // === Основной провайдер: OpenRouter :online (по умолчанию) ===
+  // Не требует ключа Perplexity. webSearchViaOpenRouter сам возвращает результат с
+  // citations или null/throw — в обоих случаях падаем на Perplexity-фоллбэк ниже.
+  if (preferOpenRouter) {
+    try {
+      // webSearchViaOpenRouter сам отбрасывает пустые/слишком короткие ответы (<50),
+      // поэтому любой ненулевой результат пригоден.
+      const primary = await webSearchViaOpenRouter(enhancedQuery, maxTokens, systemPrompt);
+      if (primary && primary.answer) {
+        return primary;
+      }
+    } catch (err) {
+      telegramLogger.debug(
+        { error: err instanceof Error ? err.message : String(err) },
+        'OpenRouter :online primary failed — falling back to Perplexity',
+      );
+    }
+  }
+
+  // === Perplexity (основной, если выбран явно; иначе — фоллбэк) ===
+  const apiKey = await getPerplexityApiKey();
+  if (!apiKey) {
+    // Ключа Perplexity нет. Если OpenRouter ещё не пробовали (provider=perplexity) —
+    // пробуем его как фоллбэк; иначе оба провайдера недоступны.
+    if (!preferOpenRouter) {
+      const fb = await webSearchViaOpenRouter(enhancedQuery, maxTokens, systemPrompt).catch(() => null);
+      if (fb) return fb;
+    }
+    throw Object.assign(
+      new Error('Web search unavailable: OpenRouter :online failed and Perplexity is not configured'),
+      { code: 'SEARCH_UNAVAILABLE' },
+    );
+  }
+
+  const selectedModel = await getSelectedModel();
+  const modelInfo = getModelInfo(selectedModel);
 
   telegramLogger.info(
     { originalQuery: query.slice(0, 50) + (query.length > 50 ? '...' : ''), enhancedQuery: enhancedQuery.slice(0, 50) + (enhancedQuery.length > 50 ? '...' : ''), model: selectedModel, maxTokens },

@@ -38,6 +38,10 @@ describe('Configuration', () => {
       expect(config.server.host).toBeTypeOf('string');
     });
 
+    it('defaults web search provider to openrouter (:online, без ключа Perplexity)', () => {
+      expect(config.search.provider).toBe('openrouter');
+    });
+
     it('should have AI config with defaults', () => {
       expect(config.ai.baseUrl).toBe('https://openrouter.ai/api/v1');
       expect(config.ai.maxTokens).toBeTypeOf('number');

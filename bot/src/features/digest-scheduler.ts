@@ -16,7 +16,7 @@ import { InlineKeyboard, type Api, type RawApi } from 'grammy';
 import { userPrefsRepo } from './user-prefs-repo.js';
 import { todosRepo } from './todos-repo.js';
 import { remindersRepo } from '../reminders/reminders-repo.js';
-import { inlineCitations, markdownToTelegramHtml, splitIntoChunks, stripHtml } from '../telegram/format.js';
+import { inlineCitations, markdownToHtmlChunks, splitIntoChunks, stripHtml } from '../telegram/format.js';
 import { parseAllConfiguredSites } from './news-parser.js';
 import { summarizeWithAminaCore } from '../ai/amina-core-runtime.js';
 import { config } from '../config/index.js';
@@ -229,8 +229,12 @@ async function sendLongMessage(
   const digestId = cacheDigestText(text);
   const keyboard = new InlineKeyboard().text('🔊 Озвучить дайджест', `read_aloud_digest:${digestId}`);
 
-  const htmlText = parseMode === 'Markdown' ? markdownToTelegramHtml(text) : text;
-  const chunks = splitIntoChunks(htmlText);
+  // Чанкуем так, чтобы не рвать HTML-теги/сущности (markdownToHtmlChunks дробит исходный
+  // markdown и конвертирует по-чанково). Готовый HTML (parseMode!=='Markdown') приходит
+  // уже собранным — режем как есть.
+  const chunks = parseMode === 'Markdown'
+    ? markdownToHtmlChunks(text)
+    : splitIntoChunks(text);
 
   for (let i = 0; i < chunks.length; i++) {
     const isLast = i === chunks.length - 1;

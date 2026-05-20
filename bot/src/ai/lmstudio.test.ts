@@ -10,6 +10,11 @@ import {
   checkLMStudioReachable,
   probeLMStudioDirect,
   probeLMStudioTunnelUrl,
+  isLMStudioCircuitOpen,
+  recordLMStudioFailure,
+  recordLMStudioSuccess,
+  getLMStudioCircuitStatus,
+  getEffectiveLMStudioModel,
 } from './lmstudio.js';
 
 vi.mock('../db/index.js', () => {
@@ -253,6 +258,97 @@ describe('lmstudio', () => {
       const requestInit = fetchMock.mock.calls[0]?.[1];
       const headers = requestInit?.headers as Record<string, string> | undefined;
       expect(headers?.Authorization).toBeUndefined();
+    });
+  });
+
+  describe('getEffectiveLMStudioModel', () => {
+    it('возвращает заданную модель без обращения к /models', async () => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const model = await getEffectiveLMStudioModel({ url: 'https://t.example/v1', model: 'qwen/qwen3-8b', apiKey: 'lm-studio' });
+      expect(model).toBe('qwen/qwen3-8b');
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('авто-выбирает первую загруженную модель, когда модель не задана', async () => {
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ data: [{ id: 'local/loaded-model' }, { id: 'local/other' }] }),
+      });
+      vi.stubGlobal('fetch', fetchMock);
+      const model = await getEffectiveLMStudioModel({ url: 'https://t.example/v1', model: '', apiKey: 'lm-studio' });
+      expect(model).toBe('local/loaded-model');
+    });
+
+    it('возвращает пустую строку, если модель не задана и список получить не удалось', async () => {
+      const fetchMock = vi.fn().mockRejectedValue(new Error('tunnel down'));
+      vi.stubGlobal('fetch', fetchMock);
+      const model = await getEffectiveLMStudioModel({ url: 'https://t.example/v1', model: '', apiKey: 'lm-studio' });
+      expect(model).toBe('');
+    });
+  });
+
+  describe('circuit breaker', () => {
+    const CIRCUIT_COOLDOWN_MS = 3 * 60_000;
+    const HALF_OPEN_PROBE_TIMEOUT_MS = 70_000;
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-05-20T00:00:00.000Z'));
+      clearLMStudioCache(); // сбрасывает состояние брейкера в closed
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const trip = () => {
+      for (let i = 0; i < 5; i++) recordLMStudioFailure();
+    };
+
+    it('открывается после порога ошибок и блокирует запросы', () => {
+      expect(isLMStudioCircuitOpen()).toBe(false);
+      trip();
+      expect(isLMStudioCircuitOpen()).toBe(true);
+      expect(getLMStudioCircuitStatus().state).toBe('open');
+    });
+
+    it('после cooldown пропускает ровно одну half-open пробу', () => {
+      trip();
+      vi.advanceTimersByTime(CIRCUIT_COOLDOWN_MS);
+      expect(isLMStudioCircuitOpen()).toBe(false); // проба №1 разрешена
+      expect(getLMStudioCircuitStatus().state).toBe('half-open');
+      expect(isLMStudioCircuitOpen()).toBe(true);  // вторая параллельная — заблокирована
+    });
+
+    it('освобождает «зависшую» half-open пробу по таймауту аренды (без record*)', () => {
+      trip();
+      vi.advanceTimersByTime(CIRCUIT_COOLDOWN_MS);
+      expect(isLMStudioCircuitOpen()).toBe(false); // выдали пробу
+      expect(isLMStudioCircuitOpen()).toBe(true);  // ещё в аренде
+
+      // Вызывающий код не вызвал recordSuccess/Failure (конфиг/health упал на пути).
+      // Раньше флаг залипал навсегда. Теперь аренда истекает и выдаётся новая проба.
+      vi.advanceTimersByTime(HALF_OPEN_PROBE_TIMEOUT_MS);
+      expect(isLMStudioCircuitOpen()).toBe(false);
+    });
+
+    it('успех в half-open закрывает брейкер', () => {
+      trip();
+      vi.advanceTimersByTime(CIRCUIT_COOLDOWN_MS);
+      expect(isLMStudioCircuitOpen()).toBe(false);
+      recordLMStudioSuccess();
+      expect(getLMStudioCircuitStatus().state).toBe('closed');
+      expect(isLMStudioCircuitOpen()).toBe(false);
+    });
+
+    it('неудача в half-open снова открывает брейкер', () => {
+      trip();
+      vi.advanceTimersByTime(CIRCUIT_COOLDOWN_MS);
+      expect(isLMStudioCircuitOpen()).toBe(false);
+      recordLMStudioFailure();
+      expect(getLMStudioCircuitStatus().state).toBe('open');
+      expect(isLMStudioCircuitOpen()).toBe(true);
     });
   });
 });
