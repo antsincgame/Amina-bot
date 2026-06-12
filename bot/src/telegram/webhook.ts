@@ -1,9 +1,19 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Bot } from 'grammy';
 import type { Update } from 'grammy/types';
+import { timingSafeEqual } from 'node:crypto';
 import { config } from '../config/index.js';
 import { telegramLogger } from '../config/logger.js';
 import type { BotContext } from './bot.js';
+
+/** Сравнение секрета вебхука за постоянное время — не сливает длину/префикс через тайминг. */
+function secretsMatch(provided: string | null, expected: string): boolean {
+  if (!provided) return false;
+  const a = Buffer.from(provided, 'utf8');
+  const b = Buffer.from(expected, 'utf8');
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
 
 type TelegramUpdateHandler = Pick<Bot<BotContext>, 'handleUpdate'>;
 const PROCESSED_UPDATE_TTL_MS = 15 * 60 * 1000;
@@ -116,7 +126,7 @@ export function registerTelegramWebhookRoute(
       const expectedSecret = config.telegram.webhook.secret?.trim();
       const providedSecret = readSecretHeader(request.headers['x-telegram-bot-api-secret-token']);
 
-      if (expectedSecret && providedSecret !== expectedSecret) {
+      if (expectedSecret && !secretsMatch(providedSecret, expectedSecret)) {
         return reply.code(401).send({
           ok: false,
           error: 'Invalid Telegram webhook secret',

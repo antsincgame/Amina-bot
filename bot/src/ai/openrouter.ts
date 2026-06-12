@@ -179,9 +179,16 @@ const CEREBRAS_CHAT_MODELS = [
 async function tryWarpRoutes(
   messages: AIMessage[],
   aiConfig: { model: string; maxTokens: number; temperature: number },
+  priority: 'user' | 'background' = 'user',
 ): Promise<(AIResponse & { usedModel: string }) | null> {
   const keys = await getApiKeys();
   const chatMessages = messages as OpenAI.ChatCompletionMessageParam[];
+
+  // Фоновые задачи (извлечение фактов, суммаризация) НЕ должны воровать дефицитный
+  // free-бюджет у живого диалога: пропускаем провайдера, если он уже за порогом
+  // фонового бюджета. Пользовательские запросы проходят всегда.
+  const hasBudget = (provider: 'cerebras' | 'groq'): boolean =>
+    priority !== 'background' || providerHealth.hasBackgroundBudget(provider);
 
   const tryModel = async (provider: string, baseURL: string, apiKey: string, model: string, headers: Record<string, string>, signal?: AbortSignal): Promise<AIResponse & { usedModel: string }> => {
     providerHealth.trackRequest(provider);
@@ -215,19 +222,23 @@ async function tryWarpRoutes(
   const candidates: Array<{ provider: string; baseURL: string; apiKey: string; model: string; headers: Record<string, string> }> = [];
 
   const cerebrasFlagship = CEREBRAS_CHAT_MODELS[0];
-  if (keys.cerebras && providerHealth.isProviderAvailable('cerebras') && cerebrasFlagship) {
+  if (keys.cerebras && providerHealth.isProviderAvailable('cerebras') && cerebrasFlagship && hasBudget('cerebras')) {
     candidates.push({ provider: 'cerebras', baseURL: config.cerebras.baseUrl, apiKey: keys.cerebras, model: cerebrasFlagship, headers: getProxyHeaders() });
-  } else if (keys.cerebras) {
+  } else if (keys.cerebras && !providerHealth.isProviderAvailable('cerebras')) {
     aiLogger.warn({ provider: 'cerebras' }, 'Cerebras has key but circuit-broken — skipped in warp routes');
-  } else {
+  } else if (keys.cerebras && !hasBudget('cerebras')) {
+    aiLogger.debug({ provider: 'cerebras' }, 'Cerebras over background budget — skipped for background task');
+  } else if (!keys.cerebras) {
     aiLogger.warn({ provider: 'cerebras' }, 'Cerebras: no API key');
   }
   const groqFlagship = GROQ_CHAT_MODELS[0];
-  if (keys.groq && providerHealth.isProviderAvailable('groq') && groqFlagship) {
+  if (keys.groq && providerHealth.isProviderAvailable('groq') && groqFlagship && hasBudget('groq')) {
     candidates.push({ provider: 'groq', baseURL: config.groq.baseUrl, apiKey: keys.groq, model: groqFlagship, headers: getProxyHeaders() });
-  } else if (keys.groq) {
+  } else if (keys.groq && !providerHealth.isProviderAvailable('groq')) {
     aiLogger.warn({ provider: 'groq' }, 'Groq has key but circuit-broken — skipped in warp routes');
-  } else {
+  } else if (keys.groq && !hasBudget('groq')) {
+    aiLogger.debug({ provider: 'groq' }, 'Groq over background budget — skipped for background task');
+  } else if (!keys.groq) {
     aiLogger.warn({ provider: 'groq' }, 'Groq: no API key');
   }
 
@@ -590,7 +601,10 @@ export const aiService = {
     const maxTokens = options?.maxTokens ?? aiConfig.maxTokens;
     const temperature = options?.temperature ?? aiConfig.temperature;
     const fallbackStrategy = options?.fallbackStrategy ?? 'race';
-    const fallbackModelLimit = options?.fallbackModelLimit ?? 7;
+    // Гонка бесплатных моделей сокращена 7→3: free-tier OpenRouter — 20 RPM / 50 в
+    // день, и КАЖДАЯ попытка (даже неудачная) списывается. Гонять 7 моделей на один
+    // сбой — выжигать дневной лимит. 3 кандидатов хватает для быстрого восстановления.
+    const fallbackModelLimit = options?.fallbackModelLimit ?? 3;
 
     const fullMessages: AIMessage[] = promptMode === 'passthrough'
       ? messages
@@ -744,7 +758,7 @@ export const aiService = {
     //  - 'openrouter' → warp пропускаем, выбранная модель идёт первой (honoring выбора).
     // Free-гонка (ШАГ 3) остаётся аварийным fallback в обоих случаях.
     if (provider === 'auto') {
-      const warpResult = await tryWarpRoutes(fullMessages, aiConfig);
+      const warpResult = await tryWarpRoutes(fullMessages, aiConfig, priority);
       if (warpResult) {
         aiLogger.info(
           { model: warpResult.usedModel, tokens: warpResult.tokens_used.total },
@@ -799,7 +813,7 @@ export const aiService = {
     // 'openrouter' warp сюда доходит впервые: выбранная модель упала → пробуем
     // быстрые бесплатные Cerebras/Groq до дорогой гонки :free-моделей.
     if (provider === 'openrouter') {
-      const warpFallback = await tryWarpRoutes(fullMessages, aiConfig);
+      const warpFallback = await tryWarpRoutes(fullMessages, aiConfig, priority);
       if (warpFallback) {
         lastFallbackSwitch = {
           reason: `Warp fallback: ${warpFallback.usedModel} (primary ${aiConfig.model} failed)`,

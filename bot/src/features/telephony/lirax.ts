@@ -9,6 +9,7 @@
  */
 
 import { timingSafeEqual } from 'node:crypto';
+import { config } from '../../config/index.js';
 import { telegramLogger } from '../../config/logger.js';
 import { settingsRepo } from '../../db/index.js';
 import { LIRAX_FETCH_TIMEOUT_MS } from '../../config/constants.js';
@@ -447,16 +448,28 @@ function constantTimeEquals(a: string, b: string): boolean {
 export async function verifyWebhookToken(token: string): Promise<boolean> {
   const cfg = await getLiraXConfig();
   if (!cfg.webhookToken) {
-    // Fail-open сохранён, чтобы не сломать развёртывания без настроенного токена,
-    // но это значит, что КТО УГОДНО может слать поддельные вебхуки. Предупреждаем
-    // один раз, чтобы оператор заметил и настроил LIRAX_WEBHOOK_TOKEN.
+    // Боевая готовность: в production без токена вебхуки телефонии ОТКЛОНЯЮТСЯ
+    // (fail-closed) — иначе кто угодно подделает события звонков, транскрипты и
+    // итоги. Для dev и для совместимости со старыми развёртываниями оставлен
+    // аварийный выход: LIRAX_ALLOW_INSECURE_WEBHOOK=true возвращает прежнее
+    // fail-open поведение без правки кода (только env в Coolify).
+    const allowInsecure = process.env.LIRAX_ALLOW_INSECURE_WEBHOOK === 'true';
+    if (!config.isProd || allowInsecure) {
+      if (!warnedAboutMissingWebhookToken) {
+        warnedAboutMissingWebhookToken = true;
+        telegramLogger.warn(
+          'LiraX webhook token is NOT configured — inbound webhooks accepted WITHOUT verification (dev or LIRAX_ALLOW_INSECURE_WEBHOOK opt-in). Set LIRAX_WEBHOOK_TOKEN to secure telephony webhooks.',
+        );
+      }
+      return true;
+    }
     if (!warnedAboutMissingWebhookToken) {
       warnedAboutMissingWebhookToken = true;
-      telegramLogger.warn(
-        'LiraX webhook token is NOT configured — inbound webhooks are accepted without verification. Set LIRAX_WEBHOOK_TOKEN to secure telephony webhooks.',
+      telegramLogger.error(
+        'LiraX webhook token is NOT configured in PRODUCTION — rejecting all inbound telephony webhooks (fail-closed). Set LIRAX_WEBHOOK_TOKEN, or LIRAX_ALLOW_INSECURE_WEBHOOK=true to restore the previous insecure behavior.',
       );
     }
-    return true;
+    return false;
   }
   // Раньше было `token === cfg.webhookToken` — обычное сравнение сливает длину и
   // совпадающий префикс через тайминг. Сравниваем за постоянное время.

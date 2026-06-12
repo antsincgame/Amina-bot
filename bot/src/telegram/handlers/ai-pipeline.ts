@@ -98,6 +98,17 @@ export const processAIResponse = async (
 
   // === Шаг 4: LLM отказалась отвечать → forceAnswer ===
   if (looksLikeSearchRefusal(response.content)) {
+    // Фактор IV: примиряем детектор отказов с правилами честности персоны.
+    // Если данные из интернета не предоставлялись И запрос не требует актуальных
+    // данных — «точно не знаю / не уверена» это честность (её прямо требуют
+    // ACCURACY_RULES), а не сбой. Коррекцию (Perplexity/forceAnswer) запускаем
+    // только когда поиск реально релевантен, иначе оставляем честный ответ.
+    const searchRelevant = Boolean(webSearchContext) || needsWebSearch(userMessage);
+    if (!searchRelevant) {
+      telegramLogger.debug({ userId }, 'Refusal-like phrasing on non-search query — accepting honest answer');
+      return response;
+    }
+
     telegramLogger.warn({ userId, responseSnippet: response.content.substring(0, 100) },
       '🚨 LLM refused to answer → forcing retry');
 
@@ -415,8 +426,16 @@ export const processMessageThroughAI = async (
     };
   }
 
-  // Save to history (skip gibberish to avoid poisoning context)
-  if (!isGibberish(aiResponse.content)) {
+  // Save to history (skip gibberish to avoid poisoning context).
+  // Фактор V: язык берём из Telegram-профиля. Раньше дефолт был 'ru', и ответ на
+  // английском англоязычному пользователю отбраковывался как «мусор» (мало кириллицы)
+  // и пропадал из истории — диалог рвался. Без language_code считаем 'ru' (бот
+  // русскоязычный по умолчанию), сохраняя защиту от латинского gibberish.
+  const langCode = telegramInfo.language_code;
+  const userLang: 'ru' | 'en' | 'other' = langCode?.startsWith('en')
+    ? 'en'
+    : langCode && !langCode.startsWith('ru') ? 'other' : 'ru';
+  if (!isGibberish(aiResponse.content, userLang)) {
     pushSessionTurn(ctx, { role: 'assistant', content: aiResponse.content });
   } else {
     telegramLogger.warn({ userId, contentPreview: aiResponse.content.slice(0, 100) }, 'Gibberish response detected — not saving to history');
