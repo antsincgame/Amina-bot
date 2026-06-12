@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   Activity,
@@ -92,10 +92,19 @@ export default function SelfCorePage(): JSX.Element {
   const [statusMessage, setStatusMessage] = useState('');
   const [personaEditorState, setPersonaEditorState] = useState({ isDirty: false, isSaving: false });
 
-  const showStatus = (message: string): void => {
+  // Один общий таймер статуса: очищаем предыдущий (иначе быстрые подряд статусы
+  // плодили таймеры, и старый стирал свежий) и чистим при размонтировании (иначе
+  // setState бил после unmount). Стабильная ссылка через useCallback — чтобы не
+  // дёргать дочерние компоненты лишними рендерами.
+  const statusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showStatus = useCallback((message: string, durationMs = 3000): void => {
     setStatusMessage(message);
-    setTimeout(() => setStatusMessage(''), 3000);
-  };
+    if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
+    statusTimerRef.current = setTimeout(() => setStatusMessage(''), durationMs);
+  }, []);
+  useEffect(() => () => {
+    if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
+  }, []);
 
   const { data: kernel, isLoading: isLoadingKernel } = useQuery({
     queryKey: ['self-core', 'effective'],
@@ -142,8 +151,7 @@ export default function SelfCorePage(): JSX.Element {
       showStatus('Факт добавлен в ядро');
     },
     onError: (error) => {
-      setStatusMessage(error instanceof Error ? error.message : 'Не удалось добавить факт');
-      setTimeout(() => setStatusMessage(''), 4000);
+      showStatus(error instanceof Error ? error.message : 'Не удалось добавить факт', 4000);
     },
   });
 

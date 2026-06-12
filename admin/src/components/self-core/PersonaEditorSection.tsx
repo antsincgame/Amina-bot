@@ -116,12 +116,20 @@ export function PersonaEditorSection(props: {
     reset(buildPersonaFormDefaults(props.kernel));
   }, [isDirty, props.kernel, reset, saveMutation.isPending]);
 
+  // ВАЖНО: зависим от стабильного onStateChange, а НЕ от всего объекта props.
+  // Раньше в deps стоял `props` — новый объект на каждом рендере → эффект срабатывал
+  // каждый рендер → setPersonaEditorState(новый объект) в родителе → новый рендер →
+  // новый props → снова эффект. Это был бесконечный цикл рендера (зомби-процесс),
+  // из-за которого Self Core «дёргался» и грузил CPU. onStateChange = setState из
+  // useState родителя — стабилен, поэтому эффект теперь срабатывает только когда
+  // реально меняются isDirty/isSaving.
+  const { onStateChange } = props;
   useEffect(() => {
-    props.onStateChange?.({
+    onStateChange?.({
       isDirty,
       isSaving: saveMutation.isPending,
     });
-  }, [isDirty, props, saveMutation.isPending]);
+  }, [isDirty, saveMutation.isPending, onStateChange]);
 
   const personaName = watch('persona_name');
   const ownerTitle = watch('persona_owner_title');
