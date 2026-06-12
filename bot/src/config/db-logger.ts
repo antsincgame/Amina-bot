@@ -36,7 +36,9 @@ export function queueLog(log: Omit<SystemLog, 'id'>): void {
   if (!CONFIG.enabled || !shouldLogToDb(log.level)) return;
   logQueue.push(log);
   if (logQueue.length >= CONFIG.maxQueueSize) { flushLogs(); return; }
-  if (!flushTimeout) flushTimeout = setTimeout(flushLogs, CONFIG.flushInterval);
+  // unref: таймер сброса логов не должен держать event loop живым (на завершении
+  // flush всё равно вызывают beforeExit/SIGTERM/SIGINT-хендлеры ниже).
+  if (!flushTimeout) { flushTimeout = setTimeout(flushLogs, CONFIG.flushInterval); flushTimeout.unref?.(); }
 }
 
 export async function flushLogs(): Promise<void> {
@@ -144,22 +146,32 @@ export async function getLogs(params: { level?: LogLevel; module?: string; from?
 export async function getLogStats(from: Date, to: Date): Promise<{ total: number; byLevel: Record<LogLevel, number>; byModule: Record<string, number> }> {
   const empty = { total: 0, byLevel: { debug: 0, info: 0, warn: 0, error: 0, fatal: 0 } as Record<LogLevel, number>, byModule: {} as Record<string, number> };
   try {
-    let logs: Array<{ level: string; module: string }> = [];
-    const all: AppwriteDoc[] = []; let offset = 0;
+    // Потоковая агрегация: считаем по level/module постранично и НЕ копим полные
+    // документы в памяти. Раньше до 5000 полных лог-документов (message ≤10КБ +
+    // data ≤100КБ каждый) накапливались в массиве ради простого подсчёта — это давало
+    // transient-всплеск в сотни МБ на один запрос статистики («теряет память»).
+    // Query.select тянет только нужные поля, не перекачивая тяжёлый data-блоб.
+    const byLevel = { ...empty.byLevel };
+    const byModule: Record<string, number> = {};
+    let total = 0;
+    let offset = 0;
     while (offset < 5000) {
       const r = await (await getAW()).listDocuments(DB_ID(), COLL, [
         Query.greaterThanEqual('timestamp', from.toISOString()),
         Query.lessThanEqual('timestamp', to.toISOString()),
+        Query.select(['level', 'module']),
         Query.limit(100), Query.offset(offset),
       ]);
-      all.push(...r.documents); if (r.documents.length < 100) break; offset += 100;
+      for (const d of r.documents) {
+        const lvl = d.level as LogLevel;
+        byLevel[lvl] = (byLevel[lvl] || 0) + 1;
+        byModule[d.module as string] = (byModule[d.module as string] || 0) + 1;
+        total++;
+      }
+      if (r.documents.length < 100) break;
+      offset += 100;
     }
-    logs = all.map(d => ({ level: d.level, module: d.module }));
-
-    const byLevel = { ...empty.byLevel };
-    const byModule: Record<string, number> = {};
-    for (const l of logs) { byLevel[l.level as LogLevel] = (byLevel[l.level as LogLevel] || 0) + 1; byModule[l.module] = (byModule[l.module] || 0) + 1; }
-    return { total: logs.length, byLevel, byModule };
+    return { total, byLevel, byModule };
   } catch { return empty; }
 }
 

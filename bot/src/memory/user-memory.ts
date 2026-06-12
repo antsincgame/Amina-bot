@@ -610,16 +610,23 @@ export const userLogsRepo = {
   async getEventStats(userId: string, days = 30): Promise<Record<string, number>> {
     try {
       const from = new Date(); from.setDate(from.getDate() - days);
-      const all: AppwriteDoc[] = []; let offset = 0;
+      // Потоковый подсчёт по event_type постранично, без накопления полных лог-документов
+      // (раньше до 5000 docs с content+metadata висели в памяти ради счётчика — всплеск).
+      // Query.select тянет только event_type.
+      const s: Record<string, number> = {};
+      let offset = 0;
       while (offset < 5000) {
         const r = await (await getAW()).listDocuments(DB_ID(), COLL.logs, [
           Query.equal('user_id', userId), Query.greaterThanEqual('timestamp', from.toISOString()),
+          Query.select(['event_type']),
           Query.limit(100), Query.offset(offset),
         ]);
-        all.push(...r.documents); if (r.documents.length < 100) break; offset += 100;
+        for (const d of r.documents) {
+          const et = d.event_type as string;
+          s[et] = (s[et] || 0) + 1;
+        }
+        if (r.documents.length < 100) break; offset += 100;
       }
-      const s: Record<string, number> = {};
-      for (const d of all) s[d.event_type] = (s[d.event_type] || 0) + 1;
       return s;
 
     } catch (error) { dbLogger.warn({ error, userId }, 'userLogsRepo: getEventStats failed'); return {}; }

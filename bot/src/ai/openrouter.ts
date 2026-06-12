@@ -176,6 +176,22 @@ const CEREBRAS_CHAT_MODELS = [
  * Варп-маршруты: Cerebras → Groq — первый fallback перед OpenRouter
  * Псайкер Амина находит путь к свободным нейронкам через Имматериум
  */
+// Кэш клиентов варп-маршрутов: раньше tryWarpRoutes создавал `new OpenAI(...)` на
+// КАЖДОГО кандидата на КАЖДЫЙ запрос (2 клиента/сообщение), каждый — со своими
+// connection-пулами и listeners. Переиспользуем по ключу baseURL+apiKey.
+const warpClientCache = new Map<string, OpenAI>();
+function getWarpClient(baseURL: string, apiKey: string, headers: Record<string, string>): OpenAI {
+  const key = `${baseURL}::${apiKey}`;
+  let client = warpClientCache.get(key);
+  if (!client) {
+    client = new OpenAI({ apiKey, baseURL, timeout: 8000, defaultHeaders: headers });
+    // Ключи/URL меняются крайне редко; защита от роста при ротации ключей.
+    if (warpClientCache.size > 16) warpClientCache.clear();
+    warpClientCache.set(key, client);
+  }
+  return client;
+}
+
 async function tryWarpRoutes(
   messages: AIMessage[],
   aiConfig: { model: string; maxTokens: number; temperature: number },
@@ -192,7 +208,7 @@ async function tryWarpRoutes(
 
   const tryModel = async (provider: string, baseURL: string, apiKey: string, model: string, headers: Record<string, string>, signal?: AbortSignal): Promise<AIResponse & { usedModel: string }> => {
     providerHealth.trackRequest(provider);
-    const client = new OpenAI({ apiKey, baseURL, timeout: 8000, defaultHeaders: headers });
+    const client = getWarpClient(baseURL, apiKey, headers);
     const completion = await client.chat.completions.create({
       model,
       messages: chatMessages,
