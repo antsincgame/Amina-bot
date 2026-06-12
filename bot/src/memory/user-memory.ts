@@ -647,7 +647,9 @@ export const memoryExtractor = {
 
 Сообщение пользователя: "${userMessage}"
 Ответ ассистента: "${aiResponse}"`;
-      const response = await aiService.complete(prompt, 'telegram');
+      // Извлечение фактов — фоновая задача: дросселируется, когда бесплатные провайдеры
+      // близки к лимиту, чтобы не выжигать RPM/RPD ради второстепенной памяти.
+      const response = await aiService.complete(prompt, 'telegram', { priority: 'background' });
       const text = response.trim().toLowerCase();
       if (text === 'нет' || text.length < 5) return;
 
@@ -685,7 +687,7 @@ export const memoryExtractor = {
     if (messages.length < 4) return null;
     try {
       const text = messages.map(m => `${m.role === 'user' ? 'Пользователь' : 'Ассистент'}: ${m.content}`).join('\n');
-      const summary = await aiService.complete(`Создай краткое содержание (2-3 предложения):\n\n${text}\n\nКраткое содержание:`, 'telegram');
+      const summary = await aiService.complete(`Создай краткое содержание (2-3 предложения):\n\n${text}\n\nКраткое содержание:`, 'telegram', { priority: 'background' });
       await userMemoryRepo.add(userId, 'summary', summary.trim(), { source: 'summarization', confidence: 0.9 });
       return summary.trim();
     } catch (error) { aiLogger.error({ error, userId }, 'Failed to summarize'); return null; }

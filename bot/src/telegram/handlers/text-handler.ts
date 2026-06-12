@@ -18,6 +18,7 @@ import { downloadTelegramPhoto, downloadTelegramImageDocument, handleImageEdit }
 import { handleDirectWebSearch, shouldForceWebSearch, needsWebSearch } from './web-search-handler.js';
 import { processMessageThroughAI, formatAIError } from './ai-pipeline.js';
 import { detectImageEditFromText } from './turn-helpers.js';
+import { detectSelfDisclosureIntent } from '../../ai/persona.js';
 
 export const handleTextMessage = async (ctx: BotContext): Promise<void> => {
   if (!ctx.from?.id) {
@@ -176,7 +177,14 @@ export const handleTextMessage = async (ctx: BotContext): Promise<void> => {
       return;
     }
 
-    if (shouldForceWebSearch(userMessage) || needsWebSearch(userMessage)) {
+    // Вопросы про саму Амину («кто ты», «расскажи о себе», «чья ты жена») НЕ уходят
+    // в веб-поиск: иначе паттерн `/расскажи (про|о|об)/` перехватывал идентичность и
+    // Амина искала саму себя в интернете вместо канона самораскрытия (fast-path в
+    // processMessageThroughAI). Личность важнее поиска.
+    if (
+      !detectSelfDisclosureIntent(userMessage)
+      && (shouldForceWebSearch(userMessage) || needsWebSearch(userMessage))
+    ) {
       const handled = await handleDirectWebSearch(ctx, userMessage, userId, chatId, startTime);
       if (handled) return;
     }

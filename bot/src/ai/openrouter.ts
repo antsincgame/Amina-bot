@@ -208,18 +208,23 @@ async function tryWarpRoutes(
     };
   };
 
-  // Собираем все доступные варп-маршруты, пропуская мёртвые провайдеры (circuit breaker)
+  // Собираем варп-маршруты, пропуская мёртвые провайдеры (circuit breaker).
+  // Берём ТОЛЬКО флагманскую модель каждого провайдера (по одной), а не весь список:
+  // warp теперь — аварийный fallback, и гонка 2 кандидатов вместо 8 не выжигает
+  // дневной лимит Groq (1000/день) и поминутный лимит Cerebras с одного сбоя.
   const candidates: Array<{ provider: string; baseURL: string; apiKey: string; model: string; headers: Record<string, string> }> = [];
 
-  if (keys.cerebras && providerHealth.isProviderAvailable('cerebras')) {
-    for (const m of CEREBRAS_CHAT_MODELS) candidates.push({ provider: 'cerebras', baseURL: config.cerebras.baseUrl, apiKey: keys.cerebras, model: m, headers: getProxyHeaders() });
+  const cerebrasFlagship = CEREBRAS_CHAT_MODELS[0];
+  if (keys.cerebras && providerHealth.isProviderAvailable('cerebras') && cerebrasFlagship) {
+    candidates.push({ provider: 'cerebras', baseURL: config.cerebras.baseUrl, apiKey: keys.cerebras, model: cerebrasFlagship, headers: getProxyHeaders() });
   } else if (keys.cerebras) {
     aiLogger.warn({ provider: 'cerebras' }, 'Cerebras has key but circuit-broken — skipped in warp routes');
   } else {
     aiLogger.warn({ provider: 'cerebras' }, 'Cerebras: no API key');
   }
-  if (keys.groq && providerHealth.isProviderAvailable('groq')) {
-    for (const m of GROQ_CHAT_MODELS) candidates.push({ provider: 'groq', baseURL: config.groq.baseUrl, apiKey: keys.groq, model: m, headers: getProxyHeaders() });
+  const groqFlagship = GROQ_CHAT_MODELS[0];
+  if (keys.groq && providerHealth.isProviderAvailable('groq') && groqFlagship) {
+    candidates.push({ provider: 'groq', baseURL: config.groq.baseUrl, apiKey: keys.groq, model: groqFlagship, headers: getProxyHeaders() });
   } else if (keys.groq) {
     aiLogger.warn({ provider: 'groq' }, 'Groq has key but circuit-broken — skipped in warp routes');
   } else {
@@ -732,10 +737,13 @@ export const aiService = {
       }
     }
 
-    // === ШАГ 1: Warp routes (Cerebras → Groq) — быстрый fallback до OpenRouter ===
-    // Бесплатные быстрые провайдеры проверяются первыми, OpenRouter — крайний fallback
-    if (provider !== 'cerebras' && provider !== 'groq') {
-      // Пропускаем если уже пробовали как основной провайдер
+    // === ШАГ 1: Warp routes (Cerebras → Groq) — упреждающий быстрый путь ТОЛЬКО в auto ===
+    // Раньше warp гонялся и в явном 'openrouter'-режиме — выбранная Магосом модель шла
+    // ПОСЛЕДНЕЙ, а админка обещала обратное (ложь). Теперь:
+    //  - 'auto'       → warp как быстрый дешёвый путь до OpenRouter (одна флагманская модель/провайдер);
+    //  - 'openrouter' → warp пропускаем, выбранная модель идёт первой (honoring выбора).
+    // Free-гонка (ШАГ 3) остаётся аварийным fallback в обоих случаях.
+    if (provider === 'auto') {
       const warpResult = await tryWarpRoutes(fullMessages, aiConfig);
       if (warpResult) {
         aiLogger.info(
@@ -784,6 +792,27 @@ export const aiService = {
       }
 
       aiLogger.info({ originalError: errorMessage, fallbackStrategy }, '🔄 Will try free models fallback');
+    }
+
+    // === ШАГ 2.5: Warp routes как аварийный fallback после сбоя выбранной модели ===
+    // В 'auto' warp уже пробовался упреждающе (ШАГ 1) — не повторяем. В явном
+    // 'openrouter' warp сюда доходит впервые: выбранная модель упала → пробуем
+    // быстрые бесплатные Cerebras/Groq до дорогой гонки :free-моделей.
+    if (provider === 'openrouter') {
+      const warpFallback = await tryWarpRoutes(fullMessages, aiConfig);
+      if (warpFallback) {
+        lastFallbackSwitch = {
+          reason: `Warp fallback: ${warpFallback.usedModel} (primary ${aiConfig.model} failed)`,
+          time: new Date(),
+          fromModel: aiConfig.model,
+          toModel: warpFallback.usedModel,
+        };
+        aiLogger.info(
+          { model: warpFallback.usedModel, tokens: warpFallback.tokens_used.total },
+          '🔮 Warp route used as fallback after selected model failed',
+        );
+        return warpFallback;
+      }
     }
 
     // === ШАГ 3: Динамический fallback бесплатных моделей OpenRouter (крайний) ===
@@ -1032,11 +1061,14 @@ export const aiService = {
    */
   async complete(
     userMessage: string,
-    channel: 'telegram' | 'voice' = 'telegram'
+    channel: 'telegram' | 'voice' = 'telegram',
+    options?: AIChatOptions,
   ): Promise<string> {
     const response = await this.chat(
       [{ role: 'user', content: userMessage }],
-      channel
+      channel,
+      undefined,
+      options,
     );
     return response.content;
   },

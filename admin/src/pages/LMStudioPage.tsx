@@ -43,7 +43,7 @@ interface HealthStatus {
 const PROVIDER_LABELS: Record<AIProvider, { label: string; desc: string }> = {
   auto: {
     label: 'Auto',
-    desc: 'LM Studio → Cerebras → Groq → OpenRouter (каскадный fallback)',
+    desc: 'LM Studio (если онлайн) → быстрые бесплатные Cerebras/Groq (параллельная гонка флагманов) → выбранная модель OpenRouter → бесплатные :free. Дёшево и быстро, но ваша модель OpenRouter может не использоваться.',
   },
   lmstudio: {
     label: 'LM Studio',
@@ -51,15 +51,15 @@ const PROVIDER_LABELS: Record<AIProvider, { label: string; desc: string }> = {
   },
   cerebras: {
     label: 'Cerebras',
-    desc: 'Сверхбыстрый inference (~1400-3000 tok/s), fallback → Groq → OpenRouter',
+    desc: 'Только Cerebras (~1400-3000 tok/s). При сбое → OpenRouter → бесплатные :free. Groq в этом режиме не пробуется.',
   },
   groq: {
     label: 'Groq',
-    desc: 'Быстрый inference (30 RPM free), fallback → Cerebras → OpenRouter',
+    desc: 'Только Groq (30 RPM / 1000 в день free). При сбое → OpenRouter → бесплатные :free. Cerebras в этом режиме не пробуется.',
   },
   openrouter: {
     label: 'OpenRouter',
-    desc: 'Облачные модели (крайний fallback, бесплатные модели)',
+    desc: 'Выбранная модель OpenRouter идёт ПЕРВОЙ. Cerebras/Groq — лишь аварийный fallback при её сбое. Выберите этот режим, чтобы гарантированно работала ваша модель.',
   },
 };
 

@@ -15,10 +15,12 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
+    // baseUrl убран: TypeScript 5.9 (зафиксирован в package-lock) делает его TS5101-ошибкой.
+    // При moduleResolution: "bundler" пути paths резолвятся относительно этого tsconfig,
+    // поэтому "@/*" → "./src/*" работает без baseUrl. Реальный bundling алиас задаёт Vite.
     "paths": {
       "@/*": ["./src/*"]
-    },
-    "baseUrl": "."
+    }
   },
   "include": ["src"],
   "references": [{ "path": "./tsconfig.node.json" }]
