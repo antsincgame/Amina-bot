@@ -585,8 +585,11 @@ export async function webSearch(
     throw Object.assign(new Error('Search temporarily unavailable (circuit breaker)'), { code: 'SEARCH_CIRCUIT_OPEN' });
   }
 
-  // In-flight dedup: если этот запрос уже выполняется — ждём результат
-  const cacheKey = query.substring(0, 120).toLowerCase().trim();
+  // In-flight dedup: если этот запрос уже выполняется — ждём результат.
+  // Нормализуем ключ (схлопнутые пробелы, без хвостовой пунктуации), иначе
+  // «Какой курс?» / «какой курс» / «Какой курс ?» считались разными и запускали
+  // несколько одинаковых платных поисков параллельно.
+  const cacheKey = query.substring(0, 120).toLowerCase().trim().replace(/\s+/g, ' ').replace(/[?!.,;:\s]+$/u, '');
   const inflight = inflightSearches.get(cacheKey);
   if (inflight) {
     telegramLogger.debug({ query: query.substring(0, 50) }, 'Reusing in-flight search');

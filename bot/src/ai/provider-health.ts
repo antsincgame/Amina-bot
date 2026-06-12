@@ -175,9 +175,3 @@ export function resetProvider(provider: string): void {
   providers.delete(provider);
   aiLogger.info({ provider }, 'Circuit breaker reset manually');
 }
-
-/** Сбросить все */
-export function resetAll(): void {
-  providers.clear();
-  aiLogger.info('All circuit breakers reset');
-}

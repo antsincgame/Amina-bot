@@ -700,8 +700,15 @@ export const analyticsRepo = {
     tokensByDay: { date: string; tokens: number }[];
   }> {
     try {
-      // Fetch all events in range (paginated)
-      const allEvents: StoredAnalyticsDoc[] = [];
+      // Потоковая агрегация постранично: держим в памяти только маленькие производные
+      // (Set уникальных юзеров, карту токенов по дням, счётчики), а НЕ до 5000 полных
+      // документов аналитики. Раньше весь массив событий висел в памяти ради подсчётов —
+      // на каждый запрос дашборда (опрашивается каждые 30с) это давало всплеск памяти.
+      // Заодно tokensByDay через Map вместо acc.find() — было O(n²).
+      const uniqueUsers = new Set<string>();
+      const tokensByDayMap = new Map<string, number>();
+      let totalMessages = 0;
+      let totalCalls = 0;
       let offset = 0;
       const limit = 100;
 
@@ -712,39 +719,37 @@ export const analyticsRepo = {
           Query.limit(limit),
           Query.offset(offset),
         ]);
-        allEvents.push(...result.documents as StoredAnalyticsDoc[]);
+        for (const e of result.documents as StoredAnalyticsDoc[]) {
+          if (e.user_id) uniqueUsers.add(String(e.user_id));
+          if (e.event_type === 'message_sent' || e.event_type === 'message_received') {
+            totalMessages++;
+          } else if (e.event_type === 'call_started') {
+            totalCalls++;
+          }
+          if (e.event_type === 'ai_response') {
+            const timestamp = typeof e.timestamp === 'string' ? e.timestamp : '';
+            const date = timestamp ? new Date(timestamp).toISOString().split('T')[0]! : '';
+            if (date) {
+              const eventData = parseJson<{ tokens?: number }>(e.data, {});
+              tokensByDayMap.set(date, (tokensByDayMap.get(date) ?? 0) + (eventData?.tokens ?? 0));
+            }
+          }
+        }
         if (result.documents.length < limit) break;
         offset += limit;
         // Safety limit — max 5000 events
         if (offset > 5000) break;
       }
 
-      const uniqueUsers = new Set(allEvents.map(e => e.user_id).filter(Boolean));
-
-      const tokensByDay = allEvents
-        .filter(e => e.event_type === 'ai_response')
-        .reduce((acc, e) => {
-          const timestamp = typeof e.timestamp === 'string' ? e.timestamp : '';
-          const date = timestamp ? new Date(timestamp).toISOString().split('T')[0] : '';
-          const eventData = parseJson<{ tokens?: number }>(e.data, {});
-          const tokens = eventData?.tokens ?? 0;
-          if (!date) return acc;
-          const existing = acc.find((entry) => entry.date === date);
-          if (existing) {
-            existing.tokens += tokens;
-          } else {
-            acc.push({ date, tokens });
-          }
-          return acc;
-        }, [] as { date: string; tokens: number }[]);
+      const tokensByDay = [...tokensByDayMap.entries()]
+        .map(([date, tokens]) => ({ date, tokens }))
+        .sort((left, right) => left.date.localeCompare(right.date));
 
       return {
-        totalMessages: allEvents.filter(
-          e => e.event_type === 'message_sent' || e.event_type === 'message_received'
-        ).length,
-        totalCalls: allEvents.filter(e => e.event_type === 'call_started').length,
+        totalMessages,
+        totalCalls,
         uniqueUsers: uniqueUsers.size,
-        tokensByDay: tokensByDay.sort((left, right) => left.date.localeCompare(right.date)),
+        tokensByDay,
       };
     } catch (error) {
       dbLogger.error({ error }, 'Failed to get analytics stats');

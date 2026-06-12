@@ -36,6 +36,15 @@ const start = async (): Promise<void> => {
       port: config.server.port,
     }, 'Configuration loaded');
 
+    // Боевая готовность: TRUST_PROXY=true доверяет всей цепочке X-Forwarded-For —
+    // клиент может подделать IP и обойти rate-limiting. В production это нужно сузить
+    // до точного числа прокси-хопов (за одним reverse-proxy/Coolify обычно TRUST_PROXY=1).
+    if (config.isProd && config.server.trustProxy === true) {
+      appLogger.warn(
+        'TRUST_PROXY=true в production: вся цепочка X-Forwarded-For доверяется, IP подделываем (обход rate-limit). Задайте точный hop-count, например TRUST_PROXY=1 за одним reverse-proxy.',
+      );
+    }
+
     await setupRoutes(app, {
       getBot: () => botHolder.bot,
       appVersion: APP_VERSION,

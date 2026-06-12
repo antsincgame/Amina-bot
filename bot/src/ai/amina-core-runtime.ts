@@ -1,7 +1,6 @@
 import type {
   AIMessage,
   AIResponse,
-  SelfCorePromptPreview,
 } from '../../../shared/types/index.js';
 import { aiLogger, telegramLogger } from '../config/logger.js';
 import { type TelegramUserInfo, memoryContextBuilder } from '../memory/user-memory.js';
@@ -21,7 +20,6 @@ import {
   captureSelfCoreFromInteraction,
 } from './self-core.js';
 import {
-  buildSelfCorePromptPreviews,
   composeEffectivePrompt,
   getActivePromptContent,
 } from './self-core-kernel.js';
@@ -356,23 +354,6 @@ export async function summarizeWithAminaCore(input: {
   });
 }
 
-export async function extractWithAminaCore(input: {
-  messages: AIMessage[];
-  extraRules?: string[];
-  systemInstruction?: string;
-  context?: Omit<AminaRuntimeContextOptions, 'channel'>;
-  options?: AIChatOptions;
-}): Promise<AminaRespondResult> {
-  return summarizeWithAminaCore({
-    channel: 'system',
-    messages: input.messages,
-    extraRules: input.extraRules,
-    systemInstruction: input.systemInstruction,
-    context: input.context,
-    options: input.options,
-  });
-}
-
 export async function planWithAminaCore(input: {
   channel?: AminaRuntimeChannel;
   messages: AIMessage[];
@@ -389,8 +370,4 @@ export async function planWithAminaCore(input: {
     context: input.context,
     options: input.options,
   });
-}
-
-export async function buildAminaPromptPreviews(): Promise<SelfCorePromptPreview[]> {
-  return buildSelfCorePromptPreviews();
 }

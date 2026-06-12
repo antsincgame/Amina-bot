@@ -284,6 +284,14 @@ const SettingsPage = () => {
                 Активен `custom_model_override`: runtime сейчас использует `{runtimeTruth.chat.customModelOverride}` поверх селектора модели.
               </div>
             )}
+            {runtimeTruth.chat.savedProvider === 'auto' && (
+              <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/10 p-3 text-sm text-amber-200">
+                Режим «Auto»: перед выбранной моделью OpenRouter сначала параллельно
+                запускаются бесплатные Cerebras/Groq — поэтому ваша модель может не
+                использоваться. Чтобы гарантированно работала выбранная модель, выберите
+                провайдер «OpenRouter» на странице «LM Studio / AI Provider».
+              </div>
+            )}
           </div>
         )}
 
@@ -558,7 +566,10 @@ const SettingsPage = () => {
       <div className="card mt-6">
         <h3 className="font-semibold text-lg mb-2">Модели провайдеров (Cerebras / Groq)</h3>
         <p className="text-xs text-gray-500 mb-4">
-          Эти модели используются когда провайдер выбран как основной (в разделе AI Provider) или как fallback.
+          Используются, когда Cerebras или Groq выбран основным провайдером на странице
+          «LM Studio / AI Provider», а также как быстрый бесплатный fallback в режиме
+          «Auto». В режиме «OpenRouter» они включаются только при сбое выбранной модели.
+          Берётся флагманская (верхняя) модель каждого провайдера.
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

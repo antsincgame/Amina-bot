@@ -837,14 +837,6 @@ export async function generateImage(prompt: string): Promise<ImageGenResult> {
   );
 }
 
-/**
- * Проверить доступность генерации изображений
- */
-export async function isImageGenAvailable(): Promise<boolean> {
-  // Pollinations.ai всегда доступен (без ключа), поэтому генерация всегда возможна
-  return true;
-}
-
 // ============================================
 // Image Editing (input image + text → output image)
 // ============================================
